@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Target Allocation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Instrument+Serif:ital@0;1&display=swap"
+    rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <span class="brand-dot"></span>
+        <span class="brand-name">Target Allocation</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:16px;">
+        <div class="topbar-total" id="topbarTotalContainer" style="display:none;">
+          เป้ารวม <strong id="totalTargetDisplay">—</strong>
+        </div>
+        <div class="topbar-period" id="topbarPeriodContainer" style="display:none;">
+          <span id="topbarPeriodText">—</span>
+        </div>
+        <button id="logoutBtn" class="btn-logout" style="display:none;" onclick="handleLogout()">
+          ออกจากระบบ
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div class="page">
+
+    <!-- ─── LOGIN VIEW ─── -->
+    <div id="loginView" class="login-wrap">
+      <div class="login-card">
+        <div class="login-icon-badge">🎯</div>
+        <h2 class="login-title">Target Allocation</h2>
+        <p class="login-sub">ลงชื่อเข้าสู่ระบบเพื่อจัดการกระจายเป้าหมาย</p>
+
+        <div class="field-group">
+          <label class="field-label">Supervisor (Super Code)</label>
+          <div style="position: relative;">
+            <input type="text" id="supSelect" class="field-input" placeholder="⏳ กำลังดึงข้อมูล..." autocomplete="off">
+            <div id="customDropdown" class="custom-dropdown" style="display:none;"></div>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <label class="field-label">เดือนที่จะกระจายเป้า</label>
+          <div class="month-year-row">
+            <select id="monthSelect" class="field-select">
+              <option value="1">มกราคม</option>
+              <option value="2">กุมภาพันธ์</option>
+              <option value="3">มีนาคม</option>
+              <option value="4" selected>เมษายน</option>
+              <option value="5">พฤษภาคม</option>
+              <option value="6">มิถุนายน</option>
+              <option value="7">กรกฎาคม</option>
+              <option value="8">สิงหาคม</option>
+              <option value="9">กันยายน</option>
+              <option value="10">ตุลาคม</option>
+              <option value="11">พฤศจิกายน</option>
+              <option value="12">ธันวาคม</option>
+            </select>
+            <select id="yearSelect" class="field-select year-select"></select>
+          </div>
+        </div>
+
+        <div class="date-preview">
+          <div class="preview-row">
+            <span class="preview-label">📊 ประวัติ 3 เดือน (L3M)</span>
+            <span class="preview-val" id="prevHistRange">—</span>
+          </div>
+          <div class="preview-row">
+            <span class="preview-label">📅 LY เดือนเดียวกัน</span>
+            <span class="preview-val" id="prevLYMonth">—</span>
+          </div>
+        </div>
+
+        <button class="btn-run login-btn" id="loginBtn" onclick="handleLogin()">
+          เข้าสู่ระบบ Dashboard
+        </button>
+        <div class="login-error" id="loginError" style="display:none;"></div>
+      </div>
+    </div>
+
+    <!-- ─── DASHBOARD VIEW ─── -->
+    <div id="dashboardView" style="display:none;">
+
+      <div class="page-header">
+        <div style="display:flex; align-items:baseline; gap:12px; flex-wrap:wrap;">
+          <h1 class="page-title">ระบบกระจายเป้าหมายยอดขาย</h1>
+          <span id="currentSupName" class="page-sup-badge"></span>
+        </div>
+        <p class="page-sub" id="pagePeriodDesc">—</p>
+      </div>
+
+      <!-- ══ STEP 1 ══ -->
+      <section class="step-section">
+        <div class="step-label-row">
+          <span class="step-num">1</span>
+          <div>
+            <h2 class="step-title">ข้อมูลตั้งต้น</h2>
+            <p class="step-desc">ยอดขาย LY · เฉลี่ย 3 เดือน · Target Sun ดึงจาก Fabric — เป้าหีบต่อ SKU ที่ HQ กำหนด</p>
+          </div>
+        </div>
+
+        <div class="two-col">
+          <div class="panel">
+            <div class="panel-head">
+              <span class="panel-icon">👤</span>
+              <span class="panel-title">เป้าหมายตั้งต้นรายพนักงาน</span>
+              <span class="panel-count" id="empCount"></span>
+            </div>
+            <div class="panel-scroll">
+              <table class="tbl">
+                <thead>
+                  <tr>
+                    <th>พนักงาน</th>
+                    <th class="r">LY ยอดขาย</th>
+                    <th class="r">เฉลี่ย 3M</th>
+                    <th class="r">Target Sun</th>
+                  </tr>
+                </thead>
+                <tbody id="empTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <span class="panel-icon">📦</span>
+              <span class="panel-title">เป้าหีบรวม (SKU Master)</span>
+              <span class="panel-count" id="skuCount"></span>
+              <div class="sec1-sort-wrap">
+                <button id="sec1SortCode" class="sec1-sort-btn sec1-sort-active"
+                  onclick="sec1SetSort('code')">รหัสสินค้า</button>
+                <button id="sec1SortBrand" class="sec1-sort-btn" onclick="sec1SetSort('brand')">แบรนด์</button>
+              </div>
+            </div>
+            <div class="panel-scroll">
+              <table class="tbl">
+                <thead>
+                  <tr>
+                    <th>SKU</th>
+                    <th>แบรนด์</th>
+                    <th class="r">ราคา/หีบ</th>
+                    <th class="r">เป้าหีบ</th>
+                    <th class="r">มูลค่า</th>
+                  </tr>
+                </thead>
+                <tbody id="skuTableBody"></tbody>
+                <tfoot>
+                  <tr>
+                    <td colspan="4" class="tfoot-label">มูลค่าหีบทั้งหมด</td>
+                    <td class="r tfoot-val" id="totalBoxValue">—</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="divider"></div>
+
+      <!-- ══ STEP 2 ══ -->
+      <section class="step-section">
+        <div class="step-label-row">
+          <span class="step-num">2</span>
+          <div>
+            <h2 class="step-title">ปรับเป้าสีเหลือง</h2>
+            <p class="step-desc">คลิกช่อง <em>เป้าสีเหลือง</em> แล้วพิมพ์แก้ได้เลย · ยอดรวมต้องเท่ากับเป้ารวมพอดีก่อนกด
+              AI</p>
+          </div>
+        </div>
+
+        <div class="status-bar" id="statusBar">
+          <div class="status-left">
+            <span class="status-icon-wrap" id="statusIcon">○</span>
+            <span id="statusText">กำลังโหลด...</span>
+          </div>
+          <div class="status-right">
+            <div class="stat-item">
+              <span class="stat-label">เป้ารวม</span>
+              <span class="stat-val" id="bTotal">—</span>
+            </div>
+            <div class="stat-sep"></div>
+            <div class="stat-item">
+              <span class="stat-label">ยอดสีเหลือง</span>
+              <span class="stat-val" id="bYellow">—</span>
+            </div>
+            <div class="stat-sep"></div>
+            <div class="stat-item">
+              <span class="stat-label">ส่วนต่าง</span>
+              <span class="stat-val" id="bDiff">—</span>
+            </div>
+          </div>
+        </div>
+        <div class="track">
+          <div class="track-fill" id="trackFill"></div>
+        </div>
+
+        <div class="panel no-head">
+          <div class="panel-scroll" style="max-height:400px;">
+            <table class="tbl editor-tbl">
+              <thead>
+                <tr>
+                  <th>พนักงาน</th>
+                  <th class="r">LY ยอดขาย</th>
+                  <th class="r">เฉลี่ย 3M</th>
+                  <th class="r">Target Sun</th>
+                  <th class="r editable-th">✏️ เป้าสีเหลือง</th>
+                  <th class="r">Growth</th>
+                  <th class="r">สัดส่วน</th>
+                </tr>
+              </thead>
+              <tbody id="yellowTableBody"></tbody>
+              <tfoot>
+                <tr>
+                  <td class="tfoot-label" colspan="3">รวม</td>
+                  <td class="r tfoot-val" id="footTargetSum">—</td>
+                  <td class="r tfoot-val" id="footYellowSum">—</td>
+                  <td class="r tfoot-val" id="footGrowth">—</td>
+                  <td class="r tfoot-val">100%</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <div class="divider"></div>
+
+      <!-- ══ STEP 3 ══ -->
+      <section class="step-section">
+        <div class="step-label-row">
+          <span class="step-num">3</span>
+          <div>
+            <h2 class="step-title">AI กระจายหีบ</h2>
+            <p class="step-desc">เลือกวิธีกระจาย · กดเริ่ม · กรองแบรนด์ · แก้ตัวเลข · Export Excel รายแบรนด์หรือทั้งหมด
+            </p>
+          </div>
+        </div>
+
+        <!-- Strategy selector -->
+        <div class="strategy-wrap">
+          <div class="field-label" style="margin-bottom:10px;">วิธีกระจายหีบ</div>
+          <div class="strategy-pills" id="strategyPills">
+            <label class="s-pill active">
+              <input type="radio" name="strategy" value="L3M" checked>
+              <span class="s-pill-icon">📊</span>
+              <div>
+                <div class="s-pill-name">อ้างอิง L3M</div>
+                <div class="s-pill-desc">ตามยอดขาย 3 เดือนล่าสุด</div>
+              </div>
+            </label>
+            <label class="s-pill">
+              <input type="radio" name="strategy" value="L6M">
+              <span class="s-pill-icon">📈</span>
+              <div>
+                <div class="s-pill-name">อ้างอิง L6M</div>
+                <div class="s-pill-desc">ตามยอดขาย 6 เดือนล่าสุด</div>
+              </div>
+            </label>
+            <label class="s-pill">
+              <input type="radio" name="strategy" value="EVEN">
+              <span class="s-pill-icon">⚖️</span>
+              <div>
+                <div class="s-pill-name">เกลี่ยเท่ากัน</div>
+                <div class="s-pill-desc">แบ่งเท่าๆ กันทุกคน</div>
+              </div>
+            </label>
+            <label class="s-pill">
+              <input type="radio" name="strategy" value="PUSH">
+              <span class="s-pill-icon">🚀</span>
+              <div>
+                <div class="s-pill-name">ผลักดันพนักงาน</div>
+                <div class="s-pill-desc">คนขายน้อยได้หีบมากกว่า</div>
+              </div>
+            </label>
+            <label class="s-pill">
+              <input type="radio" name="strategy" value="LP">
+              <span class="s-pill-icon">🤖</span>
+              <div>
+                <div class="s-pill-name">AI Smart Suggestion</div>
+                <div class="s-pill-desc">ปรับยอดเงินให้ตรงเป้า</div>
+              </div>
+            </label>
+          </div>
+
+          <div style="margin-top: 16px; padding-top: 16px; border-top: 1px dashed var(--border);">
+            <label
+              style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: var(--text-2);">
+              <input type="checkbox" id="forceMinOneBox"
+                style="accent-color: var(--accent); width: 16px; height: 16px;">
+              <b>บังคับ AI กระจายอย่างน้อย 1 หีบ/คน</b> (เฉพาะสินค้าที่เป้าหีบมีจำนวนมากกว่าจำนวนพนักงาน)
+            </label>
+          </div>
+        </div>
+
+        <div class="run-card">
+          <div class="run-left">
+            <div class="run-emoji" id="runEmoji">🤖</div>
+            <div>
+              <div class="run-title" id="runTitle">พร้อมคำนวณ</div>
+              <div class="run-sub" id="runSub">ตรวจสอบยอดรวมก่อนกดเริ่ม</div>
+            </div>
+          </div>
+          <button class="btn-run" id="runBtn" onclick="runOptimization()" disabled>
+            เริ่มคำนวณ
+          </button>
+        </div>
+
+        <div class="prog-list" id="progList" style="display:none">
+          <div class="prog-row" id="prog1"><span class="prog-circle"></span><span>โหลดข้อมูลและประวัติ</span></div>
+          <div class="prog-row" id="prog2"><span class="prog-circle"></span><span>เตรียม Model</span></div>
+          <div class="prog-row" id="prog3"><span class="prog-circle"></span><span>กระจายหีบ</span></div>
+          <div class="prog-row" id="prog4"><span class="prog-circle"></span><span>สร้างไฟล์ Excel</span></div>
+        </div>
+
+        <div class="result-block" id="resultBlock" style="display:none">
+          <div class="result-head">
+            <div class="result-title">ผลลัพธ์การกระจายหีบ</div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <select id="skuSortSelect" class="field-select"
+                style="min-width: 140px; padding: 6px 30px 6px 12px; height: auto; border-radius: 6px;"
+                onchange="renderResult(S.allocations)">
+                <option value="code">เรียงตาม รหัสสินค้า</option>
+                <option value="brand">เรียงตาม ชื่อแบรนด์</option>
+                <option value="qty">เรียงตาม จำนวนหีบ (มากไปน้อย)</option>
+              </select>
+
+              <select id="brandSelect" class="field-select"
+                style="min-width: 180px; padding: 6px 30px 6px 12px; height: auto; border-radius: 6px; font-weight: 600; color: var(--accent); border-color: var(--accent-brd); background-color: var(--accent-bg);"
+                onchange="switchBrand(this.value)"></select>
+
+              <button class="btn-dl"
+                style="color:var(--text-2); border-color:var(--border-md); background:var(--bg-main);"
+                onclick="saveDraft()">💾 บันทึกร่าง</button>
+              <button class="btn-dl" style="color:var(--amber); border-color:var(--amber-brd);"
+                onclick="autoRebalance()">⚖️ เกลี่ยอัตโนมัติ</button>
+              <button class="btn-dl" onclick="showExportModal()">↓ ดาวน์โหลด Excel</button>
+            </div>
+          </div>
+
+          <!-- brand summary bar (แสดงเมื่อ filter) -->
+          <div class="brand-summary" id="brandSummary"></div>
+
+          <!-- deviation warning bar (แสดงเมื่อมีคนที่ยอดห่างเกิน 1000 บาท) -->
+          <div class="deviation-bar" id="deviationBar" style="display:none"></div>
+
+          <div class="tbl-scroll">
+            <table class="tbl result-tbl">
+              <thead id="resultHead"></thead>
+              <tbody id="resultBody"></tbody>
+              <tfoot id="resultFoot"></tfoot>
+            </table>
+          </div>
+
+          <div class="edit-note">
+            💡 คลิกตัวเลข <span style="color:var(--accent);font-weight:700;">สีส้ม</span> เพื่อแก้ไขจำนวนหีบ
+            · ยอดรวมอัปเดตอัตโนมัติ
+            · <span style="color:var(--green);font-weight:600;">สีเขียว</span> = ±1,000 บาทจากเป้า
+            · <span style="color:var(--amber);font-weight:600;">สีเหลือง</span> = เกิน ±1,000 บาท
+          </div>
+        </div>
+      </section>
+
+    </div><!-- /dashboardView -->
+  </div><!-- /page -->
+
+  <!-- ─── EXPORT MODAL ─── -->
+  <div id="exportModal" class="modal-overlay" style="display:none;" onclick="closeModalOnBg(event)">
+    <div class="modal-card">
+      <div class="modal-title">📥 เลือกแบรนด์ที่ต้องการ Export</div>
+      <div class="modal-body" id="exportOpts"></div>
+      <div class="modal-foot">
+        <button class="btn-run" onclick="doExport()">Export Excel</button>
+        <button class="btn-logout" onclick="closeExportModal()">ยกเลิก</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    backend: <code>uvicorn main:app --reload</code>
+    · ตั้งค่า <code>API_BASE_URL</code> ใน <code>app.js</code>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+
+</html>
