@@ -45,6 +45,14 @@ document.addEventListener("DOMContentLoaded", () => {
       r.closest(".s-pill").classList.add("active");
     });
   });
+
+  // beforeunload — เตือนเมื่อปิดหน้าต่างหรือรีเฟรช และมี allocation ที่ยังไม่ได้ export/save
+  window.addEventListener("beforeunload", e => {
+    if (S.allocations && S.allocations.length > 0 && S._hasUnsaved) {
+      e.preventDefault();
+      e.returnValue = ""; // browser จะแสดง dialog ยืนยันเอง
+    }
+  });
 });
 
 function populateYearSelect() {
@@ -218,6 +226,7 @@ function handleLogout() {
 
 function _doLogout() {
   const keepManagers = S.managers || [];
+  S._hasUnsaved = false;
   S = {
     employees: [], skus: [], totalTarget: 0, yellow: {}, allocations: [],
     activeBrand: "ALL", targetMonth: null, targetYear: null, supId: null,
@@ -733,6 +742,22 @@ function renderResult(allocs) {
   headerHtml += `<th class="r sticky-grand-val">มูลค่ารวม<div style="font-size:9px;color:var(--text-3)">ทุกแบรนด์</div></th></tr>`;
   qs("#resultHead").innerHTML = headerHtml;
 
+  // Pre-compute per-emp grand/brand totals — single O(n) pass แทน O(n²) filter loop
+  const _skuPriceMap = Object.fromEntries(S.skus.map(x => [x.sku, Number(x.price_per_box) || 0]));
+  const _empTotals = {};
+  for (const a of allocs) {
+    if (!_empTotals[a.emp_id]) _empTotals[a.emp_id] = { grandBoxes: 0, grandValue: 0, brandBoxes: 0, brandValue: 0 };
+    const t = _empTotals[a.emp_id];
+    const b = a.allocated_boxes || 0;
+    const p = _skuPriceMap[a.sku] ?? Number(a.price_per_box) ?? 0;
+    t.grandBoxes += b;
+    t.grandValue += b * p;
+    if (isFiltered && (a.brand_name_thai || a.brand_name_english || "") === S.activeBrand) {
+      t.brandBoxes += b;
+      t.brandValue += b * p;
+    }
+  }
+
   const skuTotals = skus.map(() => 0);
 
   qs("#resultBody").innerHTML = emps.map(emp => {
@@ -745,12 +770,7 @@ function renderResult(allocs) {
 
     boxes.forEach((b, i) => { skuTotals[i] += b; });
 
-    const _bMatch = a => (a.brand_name_thai || a.brand_name_english || "") === S.activeBrand;
-    const brandBoxes = allocs.filter(a => a.emp_id === emp && (isFiltered ? _bMatch(a) : true)).reduce((s, a) => s + (a.allocated_boxes || 0), 0);
-    const brandValue = allocs.filter(a => a.emp_id === emp && (isFiltered ? _bMatch(a) : true)).reduce((s, a) => s + ((a.allocated_boxes || 0) * (S.skus.find(x => x.sku === a.sku)?.price_per_box || 0)), 0);
-
-    const grandBoxes = _empAllBrandBoxes(emp);
-    const grandValue = _empAllBrandValue(emp);
+    const { grandBoxes = 0, grandValue = 0, brandBoxes = 0, brandValue = 0 } = _empTotals[emp] || {};
 
     const yellowTarget = S.yellow[emp] || 0;
     const deviation = grandValue - yellowTarget;
@@ -796,11 +816,19 @@ function renderResult(allocs) {
 // 🔴 ตรึงคอลัมน์ S/M กับ W/H ไว้ด้วยกัน ไม่ให้ตารางเบี้ยว 
 function renderResultFooter(skus, skuTotals, emps) {
   const isFiltered = S.activeBrand !== "ALL";
-  const grandBoxesAll = emps.reduce((acc, e) => acc + _empAllBrandBoxes(e), 0);
-  const grandValueAll = emps.reduce((acc, e) => acc + _empAllBrandValue(e), 0);
-
-  const brandBoxesTotal = isFiltered ? emps.reduce((acc, e) => acc + S.allocations.filter(a => a.emp_id === e && a.brand_name_thai === S.activeBrand).reduce((s,a)=>s+(a.allocated_boxes||0),0), 0) : 0;
-  const brandValueTotal = isFiltered ? emps.reduce((acc, e) => acc + S.allocations.filter(a => a.emp_id === e && a.brand_name_thai === S.activeBrand).reduce((s,a)=>s+(a.allocated_boxes * (S.skus.find(x=>x.sku===a.sku)?.price_per_box||0)),0), 0) : 0;
+  // Reuse single-pass price map — no extra filter loops needed
+  const _p = Object.fromEntries(S.skus.map(x => [x.sku, Number(x.price_per_box) || 0]));
+  let grandBoxesAll = 0, grandValueAll = 0, brandBoxesTotal = 0, brandValueTotal = 0;
+  for (const a of S.allocations) {
+    const b = a.allocated_boxes || 0;
+    const p = _p[a.sku] ?? 0;
+    grandBoxesAll += b;
+    grandValueAll += b * p;
+    if (isFiltered && (a.brand_name_thai || "") === S.activeBrand) {
+      brandBoxesTotal += b;
+      brandValueTotal += b * p;
+    }
+  }
 
   let topRow = `<tr><td class="tfoot-label" colspan="2" style="position:sticky;left:0;z-index:15;background:var(--bg-main);border-right:2px solid var(--border);">เป้ารวม (หีบ)</td>`;
   skus.forEach(s => {
@@ -831,6 +859,8 @@ function renderResultFooter(skus, skuTotals, emps) {
 /* ══════════════════════════════════════════════
    RESULT EDIT + AUTO REBALANCE (เกลี่ยหีบ)
 ══════════════════════════════════════════════ */
+let _rebalanceTimer = null;
+
 function onResultEdit(el) {
   const emp = el.dataset.emp;
   const sku = el.dataset.sku;
@@ -838,6 +868,8 @@ function onResultEdit(el) {
   const raw = parseInt(el.textContent.replace(/[^0-9]/g, "")) || 0;
   const val = Math.max(0, raw);
   el.textContent = val;
+  el.classList.add("is-edited");
+  S._hasUnsaved = true;
 
   let alloc = S.allocations.find(a => a.emp_id === emp && a.sku === sku);
   if (alloc) {
@@ -852,10 +884,13 @@ function onResultEdit(el) {
     });
   }
 
-  el.classList.add("is-edited");
-  autoRebalance(true); // 🔴 เกลี่ยอัตโนมัติทันที
-  _saveAllocationSnapshot();
-  saveDraft(true);
+  // Debounce 250ms — ป้องกัน renderResult ยิงทุก blur เมื่อแก้หลายช่องต่อเนื่องเร็วๆ
+  clearTimeout(_rebalanceTimer);
+  _rebalanceTimer = setTimeout(() => {
+    autoRebalance(true);
+    _saveAllocationSnapshot();
+    saveDraft(true);
+  }, 250);
 }
 
 function autoRebalance(silent = false) {
@@ -899,6 +934,7 @@ function autoRebalance(silent = false) {
   });
 
   renderResult(S.allocations); // วาดตารางใหม่เสมอ ให้ยอดอัปเดต
+  if (changed) S._hasUnsaved = true;
   if (changed && !silent) toast("⚖️ เกลี่ยส่วนต่างหีบสำเร็จ (แจกจ่ายให้พนักงานอื่นแล้ว)", "green");
 }
 
@@ -999,6 +1035,7 @@ async function doExport() {
       ? `Target_${S.supId}_${MONTH_TH[S.targetMonth]}${S.targetYear}_AllBrand.xlsx`
       : `Target_${S.supId}_${brand}_${MONTH_TH[S.targetMonth]}${S.targetYear}.xlsx`;
     dl(blob, fname);
+    S._hasUnsaved = false;
     toast(`✅ Export สำเร็จ: ${fname}`, "green");
   } catch (err) {
     toast("❌ Export ไม่สำเร็จ: " + err.message);
@@ -1054,6 +1091,7 @@ function saveDraft(silent = false) {
   const draftData = { yellow: S.yellow, yellowLocked: S.yellowLocked, allocations: S.allocations };
   try {
     localStorage.setItem(draftKey, JSON.stringify(draftData));
+    S._hasUnsaved = false;
     if (!silent) toast("💾 บันทึกแบบร่างลงในเครื่องเรียบร้อยแล้ว\n(สามารถปิดเว็บแล้วกลับมาทำต่อได้)", "green");
   } catch (err) {
     // QuotaExceededError — พื้นที่ browser เต็ม (~5MB)

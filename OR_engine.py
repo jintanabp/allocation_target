@@ -43,36 +43,87 @@ def allocate_boxes(
 
     return df_out
 
+# ── Cap multiplier: คนใดคนหนึ่งจะได้หีบสูงสุดไม่เกิน CAP_MULTIPLIER × ค่าเฉลี่ย
+# ค่า 3.0 หมายความว่าถ้าค่าเฉลี่ยคือ 10 หีบ คนที่ประวัติสูงที่สุดจะได้ไม่เกิน 30 หีบ
+# ป้องกัน outlier กองหีบใส่คนเดียวจนผิดสัดส่วนอย่างในรูปตัวอย่าง
+_CAP_MULTIPLIER = 3.0
+
+def _cap_and_redistribute(raw: dict, total: int) -> dict:
+    """
+    จำกัด weight outlier: ถ้าใครได้ > mean * CAP ให้ cap แล้วกระจายส่วนเกินให้คนที่เหลือ
+    ทำซ้ำจนไม่มีคนเกิน cap (max 10 รอบ)
+    """
+    emps = list(raw.keys())
+    if not emps or total <= 0:
+        return {e: 0 for e in emps}
+
+    allocated = dict(raw)
+    for _ in range(10):
+        mean_alloc = total / len(emps)
+        cap = mean_alloc * _CAP_MULTIPLIER
+        overflow = 0.0
+        uncapped = []
+        for e in emps:
+            if allocated[e] > cap:
+                overflow += allocated[e] - cap
+                allocated[e] = cap
+            else:
+                uncapped.append(e)
+        if overflow < 0.5 or not uncapped:
+            break
+        # กระจาย overflow ให้คนที่ยังไม่ถูก cap ตามสัดส่วนเดิม
+        unc_sum = sum(allocated[e] for e in uncapped)
+        if unc_sum <= 0:
+            per = overflow / len(uncapped)
+            for e in uncapped:
+                allocated[e] += per
+        else:
+            for e in uncapped:
+                allocated[e] += overflow * (allocated[e] / unc_sum)
+
+    # floor + remainder distribution
+    floored = {e: int(allocated[e]) for e in emps}
+    remain = total - sum(floored.values())
+    order = sorted(emps, key=lambda e: -(allocated[e] - floored[e]))
+    for i in range(max(0, remain)):
+        floored[order[i % len(order)]] += 1
+    return floored
+
+
 def _proportional(df_emp_targets, df_sku, df_hist, strategy, force_min_one=False, locked_map=None):
     locked_map = locked_map or {}
     employees = df_emp_targets["emp_id"].tolist()
     target_boxes = dict(zip(df_sku["sku"], df_sku["supervisor_target_boxes"]))
+
+    # Pre-compute brand map สำหรับ intra-brand fairness
+    brand_of = dict(zip(df_sku["sku"], df_sku.get("brand_name_thai", df_sku.get("brand_name_english", ""))))
+
     results = []
 
     for sku, total_orig in target_boxes.items():
         total_orig = max(0, int(round(float(total_orig))))
-        
-        # 🔴 แยกคนที่โดน Lock หีบไว้ออกมาก่อน
+
+        # แยกคนที่โดน Lock ออกก่อน
         locked_emps = {e: boxes for (e, s), boxes in locked_map.items() if s == sku}
         locked_sum = sum(locked_emps.values())
-        
-        # ใส่ของคนที่โดน Lock เข้าไปในผลลัพธ์เลย
+
         for e, b in locked_emps.items():
             if b > 0:
                 results.append({"emp_id": e, "sku": sku, "allocated_boxes": b})
-                
-        # คำนวณหีบที่เหลือ และคนที่ยังไม่ได้ Lock
+
         total = max(0, total_orig - locked_sum)
         active_employees = [e for e in employees if e not in locked_emps]
 
         if total <= 0 or not active_employees:
             continue
 
+        # force_min_one: กระจายอย่างน้อย 1 หีบ/คน เฉพาะเมื่อเป้าหีบ >= จำนวนพนักงาน
         base_box = 0
         if force_min_one and total >= len(active_employees):
             base_box = 1
             total -= len(active_employees)
 
+        # ── คำนวณ hist weight ──
         hist_by_emp = {}
         for emp in active_employees:
             if df_hist.empty:
@@ -97,13 +148,9 @@ def _proportional(df_emp_targets, df_sku, df_hist, strategy, force_min_one=False
         total_w = sum(weights.values())
 
         if total_w > 0 and total > 0:
-            raw     = {e: total * weights[e] / total_w for e in active_employees}
-            floored = {e: int(raw[e]) for e in active_employees}
-            remain  = total - sum(floored.values())
-
-            order = sorted(active_employees, key=lambda e: -(raw[e] - floored[e]))
-            for i in range(remain):
-                floored[order[i % len(order)]] += 1
+            raw = {e: total * weights[e] / total_w for e in active_employees}
+            # ใช้ capped distribution แทน plain floor เพื่อป้องกัน outlier กองหีบ
+            floored = _cap_and_redistribute(raw, total)
         else:
             floored = {e: 0 for e in active_employees}
 
