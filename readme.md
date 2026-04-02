@@ -1,141 +1,194 @@
-# Target Allocation System v3 — Setup & Guide
+# 📦 Target Allocation Dashboard
 
-## การติดตั้ง
+ระบบกระจายเป้ายอดขาย (หีบ) ให้พนักงานขายรายคน  
+ดึงข้อมูลจาก Microsoft Fabric · คำนวณด้วย OR Engine · Export เป็น Excel
 
-```bash
-pip install fastapi uvicorn pandas msal requests openpyxl pulp
-```
+---
 
 ## โครงสร้างไฟล์
 
 ```
-├── main.py                    ← FastAPI backend (v3)
-├── fabric_dax_connector.py   ← Power BI DAX connector
-├── OR_engine.py               ← 5 strategies: L3M / L6M / EVEN / PUSH / LP
-├── generate_excel.py          ← Excel export (รองรับ filter แบรนด์)
-├── generate_dummy_targets.py  ← สร้าง dummy CSV
-├── index.html                 ← Frontend
-├── app.js                     ← Frontend logic (v3)
-├── style.css                  ← Styling (v3)
-└── data/
-    ├── target_boxes.csv       ← [ต้องสร้าง] SKU + เป้าหีบ + brand
-    ├── target_sun.csv         ← [ต้องสร้าง] เป้าบาทรายพนักงาน
-    ├── hist_cache_SL330_*.csv ← [auto] cache per supervisor per month
-    ├── emp_cache_SL330.csv    ← [auto] cache รายชื่อพนักงาน
-    ├── final_allocation_SL330.csv  ← [auto] ผลล่าสุด
-    ├── Final_Dashboard_SL330.xlsx  ← [auto] Excel output per supervisor
-    └── app.log                ← [auto] structured log
+allocation_target/
+├── index.html              # หน้า Dashboard (เปิดใน browser)
+├── app.js                  # Logic ฝั่ง frontend ทั้งหมด
+├── style.css               # สไตล์ UI
+├── main.py                 # FastAPI backend — API endpoints
+├── OR_engine.py            # เครื่องมือกระจายหีบ (L3M / L6M / EVEN / PUSH / LP)
+├── generate_excel.py       # สร้างไฟล์ Excel สรุปผล
+├── fabric_dax_connector.py # เชื่อมต่อ Microsoft Fabric ผ่าน DAX
+│
+├── data/                   # โฟลเดอร์ข้อมูล (สร้างอัตโนมัติ)
+│   ├── target_boxes.csv    # เป้าหีบรายแบรนด์ (แก้ได้เอง หรือ generate อัตโนมัติ)
+│   ├── target_sun.csv      # เป้าเงินรายพนักงานตั้งต้น
+│   ├── app.log             # log การทำงาน
+│   └── ...                 # cache files (ลบอัตโนมัติทุก 7 วัน)
+│
+├── requirements.txt        # Python packages ที่ต้องใช้
+├── setup.bat               # ติดตั้ง environment (รันครั้งแรกครั้งเดียว)
+└── start_server.bat        # เริ่ม server (รันทุกครั้งที่จะใช้งาน)
 ```
-
-## วิธีรัน
-
-### 1. สร้าง dummy targets (ครั้งแรก)
-
-**Offline (ทดสอบ):**
-```bash
-python generate_dummy_targets.py --manager SL330 --month 4 --year 2026 --offline
-python generate_dummy_targets.py --manager SL374 --month 4 --year 2026 --offline --seed 99
-```
-
-**Online (จาก Fabric):**
-```bash
-python generate_dummy_targets.py --manager SL330 --month 4 --year 2026
-```
-
-### 2. รัน backend
-```bash
-uvicorn main:app --reload
-```
-
-### 3. เปิด frontend
-เปิด `index.html` ในเบราว์เซอร์ (หรือ Live Server ใน VS Code)
 
 ---
 
-## Features v3
+## การติดตั้ง (ครั้งแรก)
 
-### วิธีกระจายหีบ (เลือกได้ใน UI)
-| Strategy | คำอธิบาย | ความเร็ว |
-|---|---|---|
-| L3M | สัดส่วนตามยอดขาย 3 เดือนล่าสุด (default) | ⚡ เร็ว |
-| L6M | สัดส่วนตามยอดขาย 6 เดือนล่าสุด | ⚡ เร็ว |
-| EVEN | เกลี่ยเท่ากันทุกคน | ⚡ เร็ว |
-| PUSH | ผลักดันคนขายน้อย (inverse ratio) | ⚡ เร็ว |
-| LP | AI Revenue Balance ตาม yellow target | 🐌 20-90 วินาที |
+### สิ่งที่ต้องมีก่อน
 
-### UI Features
-- **Brand filter tabs** — scroll แนวนอน ไม่ wrap
-- **Sticky totals** — คอลัมน์ "รวมหีบ" และ "มูลค่ารวม" ค้างอยู่ขวามือเสมอ (ALL brand)
-- **Deviation highlight** — สีเขียว = ±1,000 บาทจากเป้าเหลือง / สีเหลือง = เกิน ±1,000 บาท
-- **Export modal** — เลือกได้ว่าจะ export แบรนด์ไหน หรือทั้งหมด
-- **Editable cells** — คลิกตัวเลขสีส้มในตารางผลลัพธ์แก้ไขได้ทันที (upsert safe)
+| โปรแกรม | ดาวน์โหลด | หมายเหตุ |
+|---------|-----------|---------|
+| Miniconda | https://docs.conda.io/en/latest/miniconda.html | เลือก Windows 64-bit |
+| Git | https://git-scm.com | สำหรับดึงโค้ดจาก GitHub |
 
-### Security
-- `sup_id` ถูก sanitize ก่อนใส่ใน filename (ป้องกัน path traversal)
-- CORS configurable ผ่าน `CORS_ORIGINS` env variable
-- Cache เก่ากว่า 7 วันถูก cleanup อัตโนมัติ
+> ⚠️ ตอนติดตั้ง Miniconda ต้องติ๊ก **"Add Miniconda3 to PATH environment variable"** ด้วย  
+> (ค่า default ไม่ติ๊กให้ — ถ้าลืมติ๊ก `.bat` จะหา conda ไม่เจอ)
+
+---
+
+### ขั้นตอนติดตั้ง
+
+**1. ดึงโค้ดจาก GitHub**
+
+เปิด Command Prompt หรือ Terminal แล้วรัน:
+
+```bash
+git clone https://github.com/<username>/<repo-name>.git
+cd <repo-name>
+```
+
+**2. รัน setup.bat (ครั้งเดียว)**
+
+ดับเบิลคลิกไฟล์ `setup.bat` — ระบบจะ:
+- สร้าง conda environment ชื่อ `allocation_env`
+- ติดตั้ง Python packages ทั้งหมดจาก `requirements.txt` อัตโนมัติ
+
+> ถ้า setup.bat แจ้งว่าหา Miniconda ไม่เจอ → ให้รันด้วยมือใน Anaconda Prompt แทน:
+> ```bash
+> conda create -n allocation_env python=3.11 -y
+> conda activate allocation_env
+> pip install -r requirements.txt
+> ```
+
+---
+
+## การใช้งาน
+
+### เริ่ม Server
+
+ดับเบิลคลิก `start_server.bat` ทุกครั้งที่จะใช้งาน
+
+หรือรันด้วยมือ:
+```bash
+conda activate allocation_env
+uvicorn main:app --host 127.0.0.1 --port 8000
+```
+
+### เปิด Dashboard
+
+เปิดไฟล์ `index.html` ในเบราว์เซอร์โดยตรง (Chrome แนะนำ)
+
+> Server ต้องรันอยู่ก่อนเสมอ ถ้าเปิด Dashboard แล้วขึ้น error ให้เช็คว่า `start_server.bat` ทำงานอยู่
+
+---
+
+## วิธีใช้งาน Dashboard
+
+```
+[1] เลือก Supervisor + เดือน/ปี → เข้าสู่ระบบ
+        ↓
+[2] ตั้งเป้าเงินรายพนักงาน (ปรับได้ — ยอดรวมต้องตรงกับเป้ารวม)
+        ↓
+[3] เลือก Strategy แล้วกด "กระจายหีบ"
+        ↓
+[4] ตรวจสอบผล / แก้หีบด้วยมือ (ระบบเกลี่ยส่วนต่างให้อัตโนมัติ)
+        ↓
+[5] Export Excel
+```
+
+### Strategy ที่มีให้เลือก
+
+| Strategy | ใช้เมื่อ |
+|----------|---------|
+| **L3M** | กระจายตามยอดขายเฉลี่ย 3 เดือนล่าสุด (แนะนำ) |
+| **L6M** | กระจายตามยอดขายเฉลี่ย 6 เดือน (เรียบกว่า) |
+| **EVEN** | เกลี่ยเท่ากันทุกคน |
+| **PUSH** | ผลักดันคนขายน้อย (ให้หีบมากกว่าปกติ) |
+| **LP** | Linear Programming ตามเป้าเงิน (แม่นยำสุด แต่ช้า) |
+
+---
+
+## ไฟล์ข้อมูลที่ต้องเตรียม
+
+### `data/target_boxes.csv` — เป้าหีบรายแบรนด์
+
+```csv
+sku,price_per_box,supervisor_target_boxes,brand_name_thai,brand_name_english,product_name_thai
+624007,240.00,150,แบรนด์ A,Brand A,สินค้า A
+624015,212.00,80,แบรนด์ B,Brand B,สินค้า B
+```
+
+> ถ้าไม่มีไฟล์นี้ ระบบจะ generate ค่าตัวอย่างจากประวัติ Fabric ให้อัตโนมัติ
+
+### `data/target_sun.csv` — เป้าเงินตั้งต้นรายพนักงาน
+
+```csv
+emp_id,target_sun
+EMP001,125000.00
+EMP002,98000.00
+```
+
+> ยอดรวม `target_sun` ทุกคนต้องเท่ากับ `price_per_box × supervisor_target_boxes` รวมทุก SKU
 
 ---
 
 ## API Endpoints
 
-| Method | Path | คำอธิบาย |
-|---|---|---|
-| GET | `/health` | เช็คสถานะ |
-| GET | `/managers` | list SuperCode ที่รองรับ |
-| GET | `/data/employees?sup_id=SL330&target_month=4&target_year=2026` | ดึงข้อมูล dashboard |
-| GET | `/data/employees?...&regen_target=true` | force regenerate targets |
-| POST | `/optimize?sup_id=SL330&target_month=4&target_year=2026` | รัน OR optimization |
-| POST | `/export/excel?sup_id=SL330` | สร้าง Excel (รับ brand_filter) |
-| GET | `/download/excel?sup_id=SL330` | ดาวน์โหลด Excel |
+| Method | Path | หน้าที่ |
+|--------|------|---------|
+| `GET` | `/data/employees` | ดึงพนักงาน + SKU + ประวัติจาก Fabric |
+| `POST` | `/optimize` | คำนวณกระจายหีบตาม strategy |
+| `POST` | `/export/excel` | สร้างไฟล์ Excel |
+| `GET` | `/download/excel` | ดาวน์โหลด Excel ที่สร้างแล้ว |
+| `GET` | `/managers` | ดึงรายชื่อ Supervisor ทั้งหมด |
+| `GET` | `/health` | ตรวจสอบสถานะ server |
+| `GET` | `/debug/fabric` | debug การเชื่อมต่อ Fabric |
 
-### ตัวอย่าง POST /optimize payload
-```json
-{
-  "yellowTargets": [
-    {"emp_id": "S001", "yellow_target": 85000.00},
-    {"emp_id": "S002", "yellow_target": 72000.00}
-  ],
-  "strategy": "L3M"
-}
-```
-
-### ตัวอย่าง POST /export/excel payload
-```json
-{
-  "allocations": [...],
-  "brand_filter": "เบียร์ช้าง",
-  "yellow_targets": [
-    {"emp_id": "S001", "yellow_target": 85000.00}
-  ]
-}
-```
+Swagger UI: http://localhost:8000/docs
 
 ---
 
-## Production Deployment
+## การอัปเดตโค้ด
 
 ```bash
-# ตั้งค่า CORS สำหรับ production
-export CORS_ORIGINS="https://your-domain.com,http://localhost:5500"
-
-# รัน production server
-uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
-
-# หรือด้วย gunicorn
-pip install gunicorn
-gunicorn main:app -k uvicorn.workers.UvicornWorker --workers 2 --bind 0.0.0.0:8000
+git pull
 ```
+
+ไม่ต้องรัน `setup.bat` ใหม่ — รัน `start_server.bat` ได้เลย
 
 ---
 
-## ข้อมูลที่ดึงจาก Fabric
+## แก้ปัญหาเบื้องต้น
 
-| ข้อมูล | Table | Filter |
-|---|---|---|
-| รายชื่อพนักงาน | `dim_salesman` | `SuperCode = "SL330"` |
-| SKU ที่เคยขาย | `cross_sold_history_2y_qu` | emp + 6 เดือนล่าสุด |
-| ข้อมูลสินค้า | `dim_product` | SKU list |
-| ยอดขาย 3 เดือน | `cross_sold_history_2y_qu` | emp + sku + month/year |
-| ยอดขายปีก่อน | `cross_sold_history_2y_qu` | emp + sku + same month LY |
-| Warehouse | `cross_sold_history_2y_qu` | emp |
+| อาการ | สาเหตุ | วิธีแก้ |
+|-------|--------|---------|
+| `conda is not recognized` | ยังไม่ได้ลง Miniconda หรือไม่ได้ติ๊ก Add to PATH | ติดตั้ง Miniconda ใหม่ ติ๊ก Add to PATH |
+| Dashboard ขึ้น error เชื่อมต่อ | Server ไม่ได้รัน | เปิด `start_server.bat` ก่อน |
+| หน้าเว็บแสดงผลไม่ครบ | ข้อมูลจาก Fabric ดึงไม่ได้ | เช็ค log ที่ `data/app.log` |
+| ติดตั้งช้ามาก | conda กำลัง solve dependencies | รอได้เลย อาจใช้เวลา 5-10 นาที |
+
+Log file อยู่ที่ `data/app.log` — เปิดดูได้ทุกเมื่อ
+
+---
+
+## เพิ่ม Supervisor ใหม่
+
+เปิดไฟล์ `main.py` หา `KNOWN_MANAGERS` แล้วเพิ่มรหัสเข้าไป:
+
+```python
+KNOWN_MANAGERS = ["SL330", "SL374", "SL999", "SL001"]  # เพิ่มตรงนี้
+```
+
+แล้ว restart server ใหม่
+
+---
+
+*Target Allocation Dashboard v3 · Python 3.11 · FastAPI · Microsoft Fabric*
