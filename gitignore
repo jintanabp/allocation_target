@@ -4,18 +4,8 @@ __pycache__/
 *.pyo
 *.pyd
 
-# ── Data folder — cache + output files (ไม่ควรขึ้น GitHub) ──
-data/app.log
-data/*_cache_*.csv
-data/emp_cache_*.csv
-data/hist_cache_*.csv
-data/final_allocation_*.csv
-data/export_*.csv
-data/*.xlsx
-data/token_cache.bin
-data/managers_cache.json
-data/target_boxes.csv
-data/target_sun.csv
+# ── Data folder — ยกเว้นทั้งโฟลเดอร์ ──────────────────────
+data/
 
 # ── Environment ────────────────────────────────────────────
 .env
