@@ -2,8 +2,8 @@
 OR_engine.py — Target Box Allocation Engine
 ────────────────────────────────────────────
 Strategies:
-  L3M   — proportional ตามยอดขายเฉลี่ย 3 เดือนล่าสุด (fast, stable)
-  L6M   — proportional ตามยอดขายเฉลี่ย 6 เดือนล่าสุด (smoother baseline)
+  L3M   — proportional ตามยอดขายย้อนหลัง 3 เดือน (fast, stable) — ต้องส่ง df_hist จาก cache 3 เดือน
+  L6M   — proportional ตามยอดขายย้อนหลัง 6 เดือน (smoother baseline) — ต้องส่ง df_hist จาก cache 6 เดือน
   EVEN  — เกลี่ยเท่ากันทุกคน (fair distribution)
   PUSH  — ผลักดันคนขายน้อย (inverse ratio)
   LP    — Linear Programming ตาม yellow_target (revenue-optimal, slow)

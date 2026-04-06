@@ -19,9 +19,10 @@ import json
 
 class FabricDAXConnector:
     def __init__(self):
-        self.client_id  = "d0d1f812-d677-490e-a9df-25c00baea1ab"
-        self.tenant_id  = "e442d6a7-a8dc-4ac8-880b-d272b11642e9"
-        self.dataset_id = "fac4dff8-9c2f-45fe-8971-ab2c429bea80"
+        # Production: ตั้งค่า FABRIC_CLIENT_ID, FABRIC_TENANT_ID, FABRIC_DATASET_ID ใน environment
+        self.client_id  = os.environ.get("FABRIC_CLIENT_ID", "d0d1f812-d677-490e-a9df-25c00baea1ab")
+        self.tenant_id  = os.environ.get("FABRIC_TENANT_ID", "e442d6a7-a8dc-4ac8-880b-d272b11642e9")
+        self.dataset_id = os.environ.get("FABRIC_DATASET_ID", "fac4dff8-9c2f-45fe-8971-ab2c429bea80")
         self.authority  = f"https://login.microsoftonline.com/{self.tenant_id}"
         self.scope      = ["https://analysis.windows.net/powerbi/api/.default"]
 
@@ -327,24 +328,27 @@ SELECTCOLUMNS(
     def get_brands_and_skus(self, sku_list: list = None) -> pd.DataFrame:
         return self.get_product_info(sku_list)
 
-    # ── 4. Historical 3 เดือน รายคู่ emp×sku ──────────
+    # ── 4. Historical ย้อนหลัง n เดือน รายคู่ emp×sku ──────────
     def get_historical_sales(self,
                               target_month: int, target_year: int,
                               sku_list: list = None,
-                              emp_list: list = None) -> pd.DataFrame:
+                              emp_list: list = None,
+                              n_months: int = 3) -> pd.DataFrame:
         """
-        ดึงยอดขาย (จำนวนหีบ + บาท) ย้อนหลัง 3 เดือน รายคู่ (emp, sku)
+        ดึงยอดขาย (จำนวนหีบ + บาท) ย้อนหลัง n_months เดือน รายคู่ (emp, sku)
+        ใช้ n_months=3 สำหรับ L3M / n_months=6 สำหรับ L6M
 
         ใช้ CALCULATETABLE สำหรับ date filter แทน FILTER('DimDate',...)
         เพื่อให้ Power BI ใช้ relationship อย่างถูกต้องและเร็วขึ้น
         """
-        prev_months = self._prev_months(target_month, target_year, 3)
+        n_months = max(1, min(int(n_months), 24))
+        prev_months = self._prev_months(target_month, target_year, n_months)
         date_filter = self._dax_date_filter(prev_months)
         sku_filter  = self._sku_treatas(sku_list)
         emp_filter  = self._emp_treatas(emp_list)
 
         months_str = ", ".join(f"{m}/{y}" for m, y in prev_months)
-        print(f"📡 [historical] ดึงยอด 3 เดือน: {months_str} (emp={len(emp_list) if emp_list else 'all'}, sku={len(sku_list) if sku_list else 'all'})...")
+        print(f"📡 [historical] ดึงยอด {n_months} เดือน: {months_str} (emp={len(emp_list) if emp_list else 'all'}, sku={len(sku_list) if sku_list else 'all'})...")
 
         dax = f"""
 EVALUATE
@@ -390,7 +394,7 @@ SUMMARIZECOLUMNS(
             found_emps = set(df["emp_id"].unique())
             missing_emps = [e for e in emp_list if e not in found_emps]
             if missing_emps:
-                print(f"  ℹ️ ไม่มีประวัติ 3M: {missing_emps} (จะได้ hist_avg_3m=0)")
+                print(f"  ℹ️ ไม่มีประวัติ {n_months}M: {missing_emps} (จะได้ hist_avg=0)")
 
         return df
 

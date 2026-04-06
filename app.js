@@ -129,7 +129,9 @@ function getPrevThreeMonths(m, y) {
 async function loadManagers() {
   const supInput = document.getElementById("supSelect");
   try {
-    const res = await fetch(`${API_BASE_URL}/managers`);
+    const res = await fetch(`${API_BASE_URL}/managers`, {
+      signal: AbortSignal.timeout(15000),
+    });
     if (res.ok) {
       const data = await res.json();
       if (data.managers && data.managers.length > 0) {
@@ -212,12 +214,19 @@ async function handleLogin() {
     return;
   }
 
+  const tm = parseInt(document.getElementById("monthSelect").value, 10);
+  const ty = parseInt(document.getElementById("yearSelect").value, 10);
+  if (!ty || Number.isNaN(tm) || Number.isNaN(ty)) {
+    showLoginError("❌ กรุณาเลือกเดือนและปี (ค.ศ.) ให้ครบ");
+    return;
+  }
+
   loginBtn.textContent = "กำลังเชื่อมต่อ Fabric...";
   loginBtn.disabled = true;
 
   S.supId = rawSupId;
-  S.targetMonth = parseInt(document.getElementById("monthSelect").value);
-  S.targetYear = parseInt(document.getElementById("yearSelect").value);
+  S.targetMonth = tm;
+  S.targetYear = ty;
 
   const ok = await loadData(S.supId, S.targetMonth, S.targetYear);
 
@@ -1599,9 +1608,10 @@ async function uploadTargetFile(file, fileType) {
     const ping = await fetch(`${API_BASE_URL}/health`, { signal: AbortSignal.timeout(3000) });
     if (!ping.ok) throw new Error(`server ตอบ HTTP ${ping.status}`);
   } catch (pingErr) {
-    _setUploadStatus(fileType, "err",
-      "❌ Server ยังไม่ได้รัน
-✅ แก้ไข: เปิด start_server.bat ก่อน แล้วค่อยอัปโหลดไฟล์"
+    _setUploadStatus(
+      fileType,
+      "err",
+      "❌ Server ยังไม่ได้รัน\n✅ แก้ไข: เปิด start_server.bat ก่อน แล้วค่อยอัปโหลดไฟล์"
     );
     return;
   }
@@ -1665,6 +1675,5 @@ function _setUploadStatus(fileType, level, msg) {
   // รองรับ multiline — แปลง \n เป็น <br> แต่ escape HTML ก่อน
   el.innerHTML = msg
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-    .replace(/
-/g, "<br>");
+    .replace(/\n/g, "<br>");
 }

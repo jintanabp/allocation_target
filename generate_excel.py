@@ -65,11 +65,14 @@ def create_target_excel(
     brand_filter: str = "ALL",
     yellow_map:  dict | None = None,  # emp_id → yellow_target
     sup_id:      str = "",
+    target_boxes_csv: str | None = "data/target_boxes.csv",
 ) -> str | None:
     """
     สร้างไฟล์ Excel จาก result_csv
     brand_filter = "ALL" → ทุกแบรนด์ | "ชื่อแบรนด์" → กรองเฉพาะแบรนด์นั้น
     yellow_map   = {emp_id: yellow_target_baht} สำหรับแสดงใน header และ validate deviation
+    target_boxes_csv — ถ้ามีไฟล์ จะอ่าน supervisor_target_boxes มาแสดงเป็นแถว "เป้าหีบ (หัวหน้า)"
+    แถวถัดไปเป็น "ผลรวมกระจาย" เพื่อให้เทียบกับผลคำนวณได้
     """
     if not os.path.exists(result_csv):
         print(f"❌ ไม่พบ {result_csv}")
@@ -98,8 +101,22 @@ def create_target_excel(
     sku_brand  = dict(zip(df["sku"], df["brand_name_thai"]))
     yellow_map = yellow_map or {}
 
-    # supervisor_target_boxes ต่อ SKU = sum ของทุก emp
-    sku_sup_target = df.groupby("sku")["allocated_boxes"].sum().to_dict()
+    # ผลรวมหีบที่กระจายแล้วต่อ SKU
+    sku_allocated = df.groupby("sku")["allocated_boxes"].sum().to_dict()
+
+    # เป้าหีบจากหัวหน้า (จาก target_boxes.csv) — ถ้าไม่มีไฟล์จะใช้ผลรวมกระจายแทน
+    sku_official: dict[str, int] = {}
+    tpath = target_boxes_csv or ""
+    if tpath and os.path.exists(tpath):
+        try:
+            df_t = pd.read_csv(tpath, dtype={"sku": str}).dropna(subset=["sku"])
+            df_t["sku"] = df_t["sku"].astype(str).str.strip()
+            if brand_filter != "ALL" and "brand_name_thai" in df_t.columns:
+                df_t = df_t[df_t["brand_name_thai"].astype(str) == str(brand_filter)]
+            for _, r in df_t.iterrows():
+                sku_official[str(r["sku"]).strip()] = int(round(float(r.get("supervisor_target_boxes", 0) or 0)))
+        except Exception as ex:
+            print(f"⚠️ อ่าน {tpath} สำหรับเป้าหีบหัวหน้าไม่ได้: {ex}")
 
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -167,24 +184,24 @@ def create_target_excel(
     _c(ws, 7, 2, None, fill=YELLOW_FILL, border=THIN_BRD)
     _c(ws, 7, 3, None, fill=YELLOW_FILL, border=THIN_BRD)
     _c(ws, 7, 4, None, fill=YELLOW_FILL, border=THIN_BRD)
-    _c(ws, 7, 5, "ยอดรวม", font=BOLD_BLK, fill=ORANGE_FILL, align=CTR, border=THIN_BRD)
+    _c(ws, 7, 5, "เป้าหีบ (หัวหน้า)", font=BOLD_BLK, fill=ORANGE_FILL, align=CTR, border=THIN_BRD)
     row7_val = 0
     for i, sku in enumerate(skus):
-        boxes = int(sku_sup_target.get(sku, 0))
+        boxes = int(sku_official[sku]) if sku in sku_official else int(sku_allocated.get(sku, 0))
         row7_val += boxes * sku_price.get(sku, 0)
         _c(ws, 7, DATA_COL_START + i, boxes,
            font=BOLD_BLK, fill=YELLOW_FILL, align=CTR, border=THIN_BRD, num_fmt=NUM_FMT)
     _c(ws, 7, total_col, row7_val,
        font=BOLD_BLK, fill=YELLOW_FILL, align=RGT, border=THIN_BRD, num_fmt=BAHT_FMT)
 
-    # ── แถว 8: เป้าย่อย (same as allocated) ────────────
+    # ── แถว 8: ผลรวมกระจาย (หลังคำนวณ) ────────────
     ws.row_dimensions[8].height = 20
-    _c(ws, 8, 5, "เป้าย่อย", font=BOLD_BLK, fill=YELLOW_FILL, align=CTR, border=THIN_BRD)
+    _c(ws, 8, 5, "ผลรวมกระจาย", font=BOLD_BLK, fill=YELLOW_FILL, align=CTR, border=THIN_BRD)
     for ci in [1,2,3,4]:
         _c(ws, 8, ci, None, fill=YELLOW_FILL, border=THIN_BRD)
     row8_val = 0
     for i, sku in enumerate(skus):
-        boxes = int(sku_sup_target.get(sku, 0))
+        boxes = int(sku_allocated.get(sku, 0))
         row8_val += boxes * sku_price.get(sku, 0)
         _c(ws, 8, DATA_COL_START + i, boxes,
            font=NORM, fill=YELLOW_FILL, align=CTR, border=THIN_BRD, num_fmt=NUM_FMT)
@@ -261,8 +278,8 @@ def create_target_excel(
     for i, sku in enumerate(skus):
         tot = int(df[df["sku"] == sku]["allocated_boxes"].sum())
         foot_val += tot * sku_price.get(sku, 0)
-        sup_t = int(sku_sup_target.get(sku, 0))
-        isMatch = tot == sup_t
+        off = sku_official.get(sku)
+        isMatch = (tot == off) if off is not None else True
         cell_font = Font(name="Cordia New", bold=True, size=11,
                          color="2F7A4D" if isMatch else "C0392B")
         _c(ws, current_row, DATA_COL_START + i, tot,

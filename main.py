@@ -97,6 +97,9 @@ PRICE_FALLBACK = {
 
 VALID_STRATEGIES = ("L3M", "L6M", "EVEN", "PUSH", "LP")
 
+# Production: ตั้ง ENABLE_DEBUG_ENDPOINTS=1 เท่านั้นเมื่อต้องการเปิด GET /debug/fabric
+_ENABLE_DEBUG = os.environ.get("ENABLE_DEBUG_ENDPOINTS", "").strip().lower() in ("1", "true", "yes")
+
 # ── API key สำหรับ /translate/strategy ───────────────────
 # ใช้ OpenRouter (แนะนำ) หรือ Anthropic โดยตรง
 # OpenRouter:  set OPENROUTER_API_KEY=sk-or-...  ใน start_server.bat
@@ -253,8 +256,15 @@ def _safe_id(s: str) -> str:
     """Sanitize sup_id / strategy สำหรับใส่ใน filename"""
     return re.sub(r"[^A-Za-z0-9_]", "_", str(s))
 
-def hist_cache_path(sup_id: str, month: int, year: int) -> str:
-    return f"data/hist_cache_{_safe_id(sup_id)}_{year}_{month:02d}.csv"
+def hist_cache_path(sup_id: str, month: int, year: int, n_months: int = 3) -> str:
+    """
+    3 เดือน: data/hist_cache_{sup}_{year}_{mm}.csv (รูปแบบเดิม)
+    6 เดือน: data/hist_cache_{sup}_{year}_{mm}_6m.csv (สำหรับกลยุทธ์ L6M)
+    """
+    base = f"data/hist_cache_{_safe_id(sup_id)}_{year}_{month:02d}"
+    if n_months == 3:
+        return f"{base}.csv"
+    return f"{base}_{int(n_months)}m.csv"
 
 def emp_cache_path(sup_id: str, month: int, year: int) -> str:
     return f"data/emp_cache_{_safe_id(sup_id)}_{year}_{month:02d}.csv"
@@ -272,6 +282,31 @@ def excel_path(sup_id: str) -> str:
 def export_result_path(sup_id: str, brand: str) -> str:
     brand_safe = _safe_id(brand) if brand != "ALL" else "ALL"
     return f"data/export_{_safe_id(sup_id)}_{brand_safe}.csv"
+
+
+def _validate_allocation_vs_targets(df_alloc: pd.DataFrame, df_sku: pd.DataFrame) -> list[dict]:
+    """ตรวจว่าผลรวมหีบที่กระจายแล้วต่อ SKU ตรงกับ supervisor_target_boxes หรือไม่"""
+    if df_alloc.empty or df_sku is None or df_sku.empty:
+        return []
+    df_a = df_alloc.copy()
+    df_a["sku"] = df_a["sku"].astype(str).str.strip()
+    sums = df_a.groupby("sku", as_index=True)["allocated_boxes"].sum()
+    out: list[dict] = []
+    for _, row in df_sku.iterrows():
+        sku = str(row["sku"]).strip()
+        try:
+            tgt = int(round(float(row.get("supervisor_target_boxes", 0) or 0)))
+        except (TypeError, ValueError):
+            tgt = 0
+        got = int(sums[sku]) if sku in sums.index else 0
+        if got != tgt:
+            out.append({
+                "sku": sku,
+                "expected_boxes": tgt,
+                "allocated_sum": got,
+                "message": f"SKU {sku}: กระจายรวม {got} หีบ แต่เป้าหีบจากหัวหน้า {tgt} หีบ",
+            })
+    return out
 
 
 # ══════════════════════════════════════════════════════════
@@ -604,7 +639,7 @@ def get_employees(
         df_hist_pre = pd.DataFrame()
         try:
             df_hist_pre = fabric.get_historical_sales(
-                target_month, target_year, sku_list=sku_list, emp_list=emp_list
+                target_month, target_year, sku_list=sku_list, emp_list=emp_list, n_months=3
             )
         except Exception as e:
             logger.warning("historical (pre-gen): %s", e)
@@ -640,15 +675,15 @@ def get_employees(
         df_emp["ly_sales"] = 0.0
     df_emp["ly_sales"] = df_emp["ly_sales"].fillna(0.0)
 
-    # ── Step 5: Historical 3M ─────────────────────────────
+    # ── Step 5: Historical 3M (+ cache 6M แยกไฟล์สำหรับกลยุทธ์ L6M) ─────
     df_hist = pd.DataFrame()
     try:
         df_hist = fabric.get_historical_sales(
-            target_month, target_year, sku_list=sku_list, emp_list=emp_list
+            target_month, target_year, sku_list=sku_list, emp_list=emp_list, n_months=3
         )
         if not df_hist.empty:
             df_hist_emp = df_hist[df_hist["emp_id"].isin(emp_list)].copy()
-            df_hist_emp.to_csv(hist_cache_path(sup_id, target_month, target_year), index=False)
+            df_hist_emp.to_csv(hist_cache_path(sup_id, target_month, target_year, n_months=3), index=False)
 
             df_hist_val = pd.merge(df_hist_emp, df_sku[["sku", "price_per_box"]], on="sku", how="left")
             df_hist_val["hist_value"] = df_hist_val["hist_boxes"] * df_hist_val["price_per_box"]
@@ -657,8 +692,23 @@ def get_employees(
             df_emp = pd.merge(df_emp, df_hist_agg[["emp_id", "hist_avg_3m"]], on="emp_id", how="left")
         else:
             df_emp["hist_avg_3m"] = 0.0
+
+        # ดึง 6 เดือนเพิ่ม (ไม่ fatal) — ใช้ตอน optimize ด้วยกลยุทธ์ L6M
+        try:
+            df_hist_6 = fabric.get_historical_sales(
+                target_month, target_year, sku_list=sku_list, emp_list=emp_list, n_months=6
+            )
+            if not df_hist_6.empty:
+                df_hist_6_emp = df_hist_6[df_hist_6["emp_id"].isin(emp_list)].copy()
+                p6 = hist_cache_path(sup_id, target_month, target_year, n_months=6)
+                df_hist_6_emp.to_csv(p6, index=False)
+                logger.info("historical 6M cache saved: %d rows → %s", len(df_hist_6_emp), p6)
+        except Exception as e6:
+            logger.warning("historical 6M cache skipped: %s", e6)
     except Exception as e:
         logger.warning("historical 3M: %s", e)
+        df_emp["hist_avg_3m"] = 0.0
+    if "hist_avg_3m" not in df_emp.columns:
         df_emp["hist_avg_3m"] = 0.0
     df_emp["hist_avg_3m"] = df_emp["hist_avg_3m"].fillna(0.0)
 
@@ -781,19 +831,27 @@ def run_optimization(
     if df_sku is None:
         raise HTTPException(500, detail="ไม่พบ target_boxes.csv กรุณาโหลดหน้า Dashboard ก่อน")
 
-    df_emp_targets = pd.DataFrame([t.dict() for t in req.yellowTargets])
+    df_emp_targets = pd.DataFrame([t.model_dump() for t in req.yellowTargets])
     emp_list = df_emp_targets["emp_id"].tolist()
 
-    # โหลด historical cache (ต่อ supervisor)
-    cache_file = hist_cache_path(sup_id, target_month, target_year)
+    strategy_u = req.strategy.upper()
+    # L6M ใช้ประวัติ 6 เดือน (ไฟล์ _6m.csv) — ถ้าไม่มีให้ fallback 3 เดือน
+    want_6m = strategy_u == "L6M"
+    cache_6 = hist_cache_path(sup_id, target_month, target_year, n_months=6)
+    cache_3 = hist_cache_path(sup_id, target_month, target_year, n_months=3)
+    cache_file = cache_6 if want_6 and os.path.exists(cache_6) else cache_3
+    if want_6 and not os.path.exists(cache_6) and os.path.exists(cache_3):
+        logger.warning("ไม่พบ hist 6M cache — ใช้ cache 3M แทนสำหรับ L6M (โหลดหน้า Dashboard ใหม่เพื่อสร้าง 6M cache)")
     if os.path.exists(cache_file):
         df_hist = pd.read_csv(cache_file, dtype={"sku": str, "emp_id": str})
-        logger.info("hist cache loaded: %d rows", len(df_hist))
+        logger.info("hist cache loaded (%s): %d rows", os.path.basename(cache_file), len(df_hist))
     else:
         logger.warning("ไม่พบ hist cache → ใช้ตารางเปล่า")
         df_hist = pd.DataFrame(columns=["emp_id", "sku", "hist_boxes"])
 
     df_hist = df_hist[df_hist["emp_id"].isin(emp_list)]
+
+    hist_months = 6 if (want_6 and os.path.exists(cache_6)) else 3
 
     # รัน allocation ตาม strategy ที่เลือก
     logger.info("Running strategy=%s for sup=%s", req.strategy, sup_id)
@@ -806,10 +864,10 @@ def run_optimization(
         cap_multiplier=req.cap_multiplier,
     )
 
-    # คำนวณ hist_avg 3M รายพนักงาน×SKU
+    # คำนวณ hist_avg รายพนักงาน×SKU (เฉลี่ยต่อเดือนจากช่วงที่โหลด: 3 หรือ 6 เดือน)
     if not df_hist.empty:
         df_hist_avg = df_hist.groupby(["emp_id", "sku"])["hist_boxes"].sum().reset_index()
-        df_hist_avg["hist_avg"] = (df_hist_avg["hist_boxes"] / 3.0).round(1)
+        df_hist_avg["hist_avg"] = (df_hist_avg["hist_boxes"] / float(hist_months)).round(1)
     else:
         df_hist_avg = pd.DataFrame(columns=["emp_id", "sku", "hist_avg"])
 
@@ -833,15 +891,24 @@ def run_optimization(
 
     # สร้าง Excel ทั้งหมด (ALL brand) ทันที
     yellow_map = {y.emp_id: y.yellow_target for y in req.yellowTargets}
+    sku_checks = _validate_allocation_vs_targets(df_final, df_sku)
+    if sku_checks:
+        logger.warning("allocation vs target mismatch: %s", sku_checks)
+
     create_target_excel(
         result_csv=result_path(sup_id),
         output_path=excel_path(sup_id),
         brand_filter="ALL",
         yellow_map=yellow_map,
         sup_id=sup_id,
+        target_boxes_csv="data/target_boxes.csv",
     )
 
-    return {"allocations": df_final.to_dict(orient="records")}
+    return {
+        "allocations": df_final.to_dict(orient="records"),
+        "sku_total_checks": sku_checks,
+        "hist_window_months": hist_months,
+    }
 
 
 # ══════════════════════════════════════════════════════════
@@ -858,7 +925,7 @@ def export_excel(
     os.makedirs("data", exist_ok=True)
 
     # Build DataFrame จาก validated Pydantic models
-    df_final = pd.DataFrame([a.dict() for a in req.allocations])
+    df_final = pd.DataFrame([a.model_dump() for a in req.allocations])
 
     # เติม price_per_box ถ้าไม่ครบ
     df_sku_tmp, _ = load_target_csv()
@@ -892,6 +959,7 @@ def export_excel(
         brand_filter=brand_filter,
         yellow_map=yellow_map,
         sup_id=sup_id,
+        target_boxes_csv="data/target_boxes.csv",
     )
 
     logger.info("Export excel: sup=%s brand=%s rows=%d", sup_id, brand_filter, len(df_export))
@@ -926,6 +994,7 @@ def health():
         "status": "ok",
         "known_managers": KNOWN_MANAGERS,
         "valid_strategies": list(VALID_STRATEGIES),
+        "debug_endpoints_enabled": _ENABLE_DEBUG,
         "files": {
             "target_boxes.csv": os.path.exists("data/target_boxes.csv"),
             "target_sun.csv":   os.path.exists("data/target_sun.csv"),
@@ -944,7 +1013,10 @@ def debug_fabric(sup_id: str = Query("SL330")):
     - SuperCode ทั้งหมดที่มีใน dim_salesman
     - พนักงานที่ SuperCode นี้ดูแล (ถ้าเจอ)
     เปิด: http://localhost:8000/debug/fabric?sup_id=SL330
+    Production: ตั้ง ENABLE_DEBUG_ENDPOINTS=1 เท่านั้น
     """
+    if not _ENABLE_DEBUG:
+        raise HTTPException(404, detail="ไม่พบ endpoint")
     try:
         fabric = FabricDAXConnector()
 
