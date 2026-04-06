@@ -21,7 +21,8 @@ let S = {
   targetYear: null,
   supId: null,
   managers: [],
-  yellowLocked: {}, 
+  yellowLocked: {},
+  skuWarnings: [],    // SKU reconciliation warnings จาก backend
 };
 
 const MONTH_TH = ["", "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
@@ -43,6 +44,9 @@ document.addEventListener("DOMContentLoaded", () => {
     r.addEventListener("change", () => {
       document.querySelectorAll(".s-pill").forEach(p => p.classList.remove("active"));
       r.closest(".s-pill").classList.add("active");
+      // ซ่อน custom panel ถ้าเลือก strategy อื่น
+      const panel = document.getElementById("customStrategyPanel");
+      if (panel) panel.style.display = r.value === "CUSTOM" ? "block" : "none";
     });
   });
 
@@ -50,10 +54,45 @@ document.addEventListener("DOMContentLoaded", () => {
   window.addEventListener("beforeunload", e => {
     if (S.allocations && S.allocations.length > 0 && S._hasUnsaved) {
       e.preventDefault();
-      e.returnValue = ""; // browser จะแสดง dialog ยืนยันเอง
+      e.returnValue = "";
     }
   });
+
+  // Server health polling — แสดงสถานะ server ที่หน้า Login แบบ real-time
+  _pollServerStatus();
 });
+
+async function _pollServerStatus() {
+  const dot  = document.getElementById("serverDot");
+  const text = document.getElementById("serverStatusText");
+  if (!dot || !text) return;
+
+  const check = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/health`, { signal: AbortSignal.timeout(2500) });
+      if (res.ok) {
+        dot.style.background  = "var(--green)";
+        text.textContent = "✓ Server พร้อมใช้งาน";
+        text.style.color = "var(--green)";
+        // enable login button ถ้าถูก disable จาก server offline
+        const btn = document.getElementById("loginBtn");
+        if (btn) btn.disabled = false;
+      } else {
+        throw new Error(`HTTP ${res.status}`);
+      }
+    } catch {
+      dot.style.background  = "var(--red)";
+      text.textContent = "✗ Server ยังไม่ได้รัน — เปิด start_server.bat ก่อน";
+      text.style.color = "var(--red)";
+    }
+  };
+
+  await check();
+  // poll ทุก 5 วินาที ขณะอยู่ที่ login page
+  setInterval(() => {
+    if (document.getElementById("loginView")?.style.display !== "none") check();
+  }, 5000);
+}
 
 function populateYearSelect() {
   const sel = document.getElementById("yearSelect");
@@ -205,7 +244,8 @@ async function handleLogin() {
     renderYellowTable();
     updateValidation();
     checkAndLoadDraft();
-    checkSnapshotChanges(); 
+    checkSnapshotChanges();
+    _showSkuWarnings();
   } catch (err) {
     console.error("RENDER ERROR:", err);
     alert("Render error: " + err.message);
@@ -230,8 +270,12 @@ function _doLogout() {
   S = {
     employees: [], skus: [], totalTarget: 0, yellow: {}, allocations: [],
     activeBrand: "ALL", targetMonth: null, targetYear: null, supId: null,
-    managers: keepManagers, yellowLocked: {}
+    managers: keepManagers, yellowLocked: {}, skuWarnings: [],
   };
+  // ลบ banners ทั้งหมดที่อาจค้างจาก session ก่อน
+  ["skuWarningBanner", "changeBanner", "logoutModal", "draftModal"].forEach(id => {
+    document.getElementById(id)?.remove();
+  });
   document.getElementById("dashboardView").style.display = "none";
   document.getElementById("loginView").style.display = "block";
   ["topbarTotalContainer", "topbarPeriodContainer", "logoutBtn"].forEach(id =>
@@ -313,10 +357,17 @@ async function loadData(supId, targetMonth, targetYear) {
     }
     S.yellow = {};
     S.employees.forEach(e => { S.yellow[e.emp_id] = Number(e.target_sun) || 0; });
+    S.skuWarnings = data.sku_warnings || [];
     document.getElementById("totalTargetDisplay").textContent = baht(S.totalTarget);
     return true;
   } catch (err) {
-    showLoginError(`❌ เชื่อมต่อ server ไม่ได้\nกรุณารัน: uvicorn main:app --reload\n(${err.message})`);
+    const isFetch = err instanceof TypeError && err.message.toLowerCase().includes("fetch");
+    const hint = isFetch
+      ? "❌ เชื่อมต่อ server ไม่ได้\n\n" +
+        "✅ แก้ไข: เปิด start_server.bat แล้วลองใหม่\n" +
+        "หรือรันด้วยมือ: uvicorn main:app --reload"
+      : `❌ ${err.message}`;
+    showLoginError(hint);
     return false;
   }
 }
@@ -331,6 +382,177 @@ function showLoginError(msg) {
    STEP 1 RENDER
 ══════════════════════════════════════════════ */
 let _skuSec1Sort = "code"; 
+
+/* ══════════════════════════════════════════════
+   CUSTOM STRATEGY — Claude API interpreter
+   ใช้ Anthropic API แปลง natural language → parameter set
+   ไม่มีการ exec() code ใดๆ — ปลอดภัย 100%
+══════════════════════════════════════════════ */
+
+// state สำหรับ custom strategy
+let S_customParams = null; // { base_strategy, cap_multiplier, description }
+
+function openCustomStrategyModal() {
+  const panel = qs("#customStrategyPanel");
+  if (panel) panel.style.display = "block";
+  // reset interpreted result ถ้ายังไม่ได้แปล
+  if (!S_customParams) {
+    qs("#interpretResult").style.display = "none";
+  }
+}
+
+async function interpretCustomStrategy() {
+  const text = qs("#customStrategyInput")?.value?.trim();
+  if (!text) {
+    toast("⚠️ กรุณาพิมพ์หลักการกระจายก่อน");
+    return;
+  }
+
+  const btn = qs("#interpretBtn");
+  const status = qs("#interpretStatus");
+  btn.disabled = true;
+  btn.textContent = "⏳ กำลังวิเคราะห์...";
+  status.textContent = "";
+  qs("#interpretResult").style.display = "none";
+
+  const empCount = S.employees.length || 10;
+  const skuCount = S.skus.length || 20;
+
+  const systemPrompt = `คุณเป็น OR expert ที่แปลง natural language เป็น allocation parameter
+ตอบเป็น JSON เท่านั้น ไม่มี markdown ไม่มีคำอธิบายนอก JSON
+
+Parameter ที่ใช้ได้:
+- base_strategy: "L3M" | "L6M" | "EVEN" | "PUSH" (เลือก 1 ที่ใกล้เคียงที่สุด)
+- cap_multiplier: number 1.5-5.0 (จำกัดสูงสุดเท่าค่าเฉลี่ย × cap — ป้องกัน outlier)
+  * 1.5 = เกลี่ยใกล้เคียงมาก  2.0 = ยืดหยุ่นพอดี  3.0 = ค่อนข้างอิสระ  5.0 = เกือบไม่ cap
+- description_th: อธิบายสั้นๆ ว่าจะทำอะไร (ภาษาไทย ≤ 40 ตัวอักษร)
+- confidence: "high" | "medium" | "low" (ความมั่นใจในการแปล)
+- note: คำเตือนหรือข้อสังเกตถ้ามี (optional)
+
+บริบท: ทีมมี ${empCount} คน, ${skuCount} SKU`;
+
+  try {
+    // เรียกผ่าน backend proxy — ไม่ยิง Anthropic โดยตรงจาก browser
+    // (browser ถูก block CORS + ไม่มี API key)
+    const res = await fetch(`${API_BASE_URL}/translate/strategy`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text,
+        emp_count: empCount,
+        sku_count: skuCount,
+      })
+    });
+
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(j.detail || `HTTP ${res.status}`);
+    }
+    const params = await res.json();
+
+    S_customParams = params;
+
+    // แสดงผล
+    const confColor = { high: "var(--green)", medium: "var(--amber)", low: "var(--red)" }[params.confidence] || "var(--text-2)";
+    const resultEl = qs("#interpretResult");
+    resultEl.style.display = "block";
+    resultEl.innerHTML = `
+      <div style="font-weight:600; margin-bottom:6px; color:var(--text-1);">${params.description_th}</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+        <span style="background:var(--accent-bg);color:var(--accent);padding:2px 8px;border-radius:4px;font-size:11px;">Base: ${params.base_strategy}</span>
+        <span style="background:var(--bg-main);color:var(--text-2);padding:2px 8px;border-radius:4px;font-size:11px;border:1px solid var(--border);">Cap: ${params.cap_multiplier}× ค่าเฉลี่ย</span>
+        <span style="color:${confColor};font-size:11px;font-weight:600;">ความมั่นใจ: ${params.confidence}</span>
+      </div>
+      ${params.note ? `<div style="font-size:11px;color:var(--text-3);border-top:1px solid var(--border);padding-top:6px;margin-top:4px;">⚠️ ${params.note}</div>` : ""}
+      <div style="margin-top:8px;font-size:11px;color:var(--text-3);">กดปุ่ม "เริ่มคำนวณ" เพื่อใช้ strategy นี้ — ระบบจะ preview ก่อนเสมอ</div>`;
+
+    // อัปเดต pill description
+    qs("#customPillDesc").textContent = params.description_th;
+    status.textContent = "✅ แปลงสำเร็จ";
+
+  } catch (err) {
+    // แยก case: server ไม่รัน vs API key ไม่มี vs error อื่น
+    let errMsg = err.message;
+    if (err instanceof TypeError && errMsg.toLowerCase().includes("fetch")) {
+      errMsg = "Server ไม่ได้รัน — เปิด start_server.bat ก่อนแล้วลองใหม่";
+    } else if (errMsg.includes("503") || errMsg.includes("API key")) {
+      errMsg = "ยังไม่ได้ตั้งค่า API key — ใส่ ANTHROPIC_API_KEY หรือ OPENROUTER_API_KEY ใน start_server.bat";
+    } else if (errMsg.includes("502") || errMsg.includes("504")) {
+      errMsg = "AI API ตอบช้าหรือไม่ได้รับสัญญาณ — ลองใหม่อีกครั้ง";
+    }
+    status.textContent = `❌ ${errMsg}`;
+    S_customParams = null;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "🧠 แปลงเป็น Strategy";
+  }
+}
+
+/* ══════════════════════════════════════════════
+   SKU RECONCILIATION WARNINGS
+══════════════════════════════════════════════ */
+function _showSkuWarnings() {
+  const warnings = S.skuWarnings || [];
+  if (warnings.length === 0) return;
+
+  const existing = document.getElementById("skuWarningBanner");
+  if (existing) existing.remove();
+
+  const noHistory   = warnings.filter(w => w.type === "no_history");
+  const noTarget    = warnings.filter(w => w.type === "no_target");
+  const empMismatch = warnings.filter(w => w.type === "emp_mismatch");
+  const escH = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
+  const banner = document.createElement("div");
+  banner.id = "skuWarningBanner";
+  banner.className = "change-banner";
+  banner.style.cssText = "margin-bottom:16px;";
+
+  let html = `<div class="change-banner-inner">
+    <div class="change-banner-icon">📋</div>
+    <div class="change-banner-body">
+      <div class="change-banner-title">ตรวจพบความไม่ตรงกันระหว่างเป้าหีบและข้อมูลทีม</div>
+      <ul class="change-banner-list">`;
+
+  if (empMismatch.length > 0) {
+    html += `<li><strong style="color:var(--amber)">⚠️ รหัสพนักงานใน target_sun ไม่ตรงกับทีม</strong><br>`;
+    html += empMismatch.map(w => escH(w.message)).join("<br>");
+    html += `</li>`;
+  }
+
+  if (noHistory.length > 0) {
+    // กรอง SKU ที่ไม่มี sku field (เช่น กรณี Fabric ล่ม)
+    const namedSkus = noHistory.filter(w => w.sku);
+    const genericMsg = noHistory.filter(w => !w.sku);
+    html += `<li><strong>มีเป้าแต่ไม่มีประวัติขายในทีมนี้</strong> — ระบบจะกระจายเท่ากัน (EVEN) สำหรับ SKU เหล่านี้:<br>`;
+    if (namedSkus.length > 0) {
+      html += namedSkus.map(w => {
+        const brand = w.brand ? ` <span style="color:var(--text-3)">(${escH(w.brand)})</span>` : "";
+        return `<code>${escH(w.sku)}</code>${brand}`;
+      }).join(" · ");
+    }
+    if (genericMsg.length > 0) html += " " + genericMsg.map(w => escH(w.message)).join(" ");
+    html += `</li>`;
+  }
+
+  if (noTarget.length > 0) {
+    html += `<li><strong>เคยขายแต่ไม่มีเป้าเดือนนี้</strong> — ถูกยกเว้นจากการกระจายหีบ:<br>`;
+    html += noTarget.map(w => `<code>${escH(w.sku)}</code>`).join(" · ");
+    html += `</li>`;
+  }
+
+  html += `</ul>
+      <div class="change-banner-note">💡 ถ้าต้องการแก้ไข ให้อัปโหลดไฟล์เป้าหีบใหม่ในหน้า Login</div>
+      <div class="change-banner-actions">
+        <button class="btn-banner-close" onclick="document.getElementById('skuWarningBanner').remove()">รับทราบ ปิด</button>
+      </div>
+    </div>
+  </div>`;
+
+  banner.innerHTML = html;
+  const dashboard = qs("#dashboardView");
+  if (dashboard) dashboard.prepend(banner);
+}
 
 function renderStep1() {
   const empCountEl = qs("#empCount");
@@ -584,8 +806,21 @@ async function _doOptimize(lockedEdits = []) {
     qs(`#${steps[i]}`).className = "prog-row active";
   }
 
-  const strategy = document.querySelector('[name="strategy"]:checked')?.value || "L3M";
+  let strategy = document.querySelector('[name="strategy"]:checked')?.value || "L3M";
   const forceMinOne = document.getElementById("forceMinOneBox")?.checked || false;
+
+  // Custom strategy: แปลง CUSTOM → base_strategy + cap_multiplier
+  let customCapMultiplier = null;
+  if (strategy === "CUSTOM") {
+    if (!S_customParams) {
+      toast("⚠️ กรุณากด 'แปลงเป็น Strategy' ก่อน");
+      qs("#runBtn").disabled = false;
+      qs("#runBtn").textContent = "เริ่มคำนวณ";
+      return null;
+    }
+    strategy = S_customParams.base_strategy || "L3M";
+    customCapMultiplier = S_customParams.cap_multiplier ?? 3.0;
+  }
 
   try {
     const payload = {
@@ -596,6 +831,7 @@ async function _doOptimize(lockedEdits = []) {
       strategy,
       force_min_one: forceMinOne,
       locked_edits: lockedEdits,
+      ...(customCapMultiplier !== null ? { cap_multiplier: customCapMultiplier } : {}),
     };
 
     const url = `${API_BASE_URL}/optimize?sup_id=${S.supId}&target_month=${S.targetMonth}&target_year=${S.targetYear}`;
@@ -758,6 +994,11 @@ function renderResult(allocs) {
     }
   }
 
+  // Pre-compute is_edited map กัน allocs.find() ใน inner loop
+  const _editedSet = new Set(
+    allocs.filter(a => a.is_edited).map(a => `${a.emp_id}::${a.sku}`)
+  );
+
   const skuTotals = skus.map(() => 0);
 
   qs("#resultBody").innerHTML = emps.map(emp => {
@@ -788,8 +1029,7 @@ function renderResult(allocs) {
       const b = boxes[i];
       const h = hists[i];
       const hText = h > 0 ? `<div class="hist-sub">เคยขาย: ${h.toFixed(1)}</div>` : "";
-      const isEdited = allocs.find(a => a.emp_id === emp && a.sku === s)?.is_edited;
-      const colorClass = isEdited ? "is-edited" : "";
+      const colorClass = _editedSet.has(`${emp}::${s}`) ? "is-edited" : "";
 
       rowHtml += `<td class="r result-cell" style="vertical-align:top;">
         <div class="result-box-num ${colorClass}" contenteditable="true"
@@ -939,8 +1179,26 @@ function autoRebalance(silent = false) {
 }
 
 /* ══════════════════════════════════════════════
-   HELPERS
+   HELPERS — pre-computed lookup map (O(n) แทน O(n²))
 ══════════════════════════════════════════════ */
+
+// เรียกครั้งเดียวก่อน render loop — สร้าง map {emp_id: {boxes, value}}
+function _buildEmpTotalsMap(allocs) {
+  const skuPriceMap = {};
+  S.skus.forEach(s => { skuPriceMap[s.sku] = Number(s.price_per_box) || 0; });
+
+  const map = {};
+  for (const a of allocs) {
+    if (!map[a.emp_id]) map[a.emp_id] = { boxes: 0, value: 0 };
+    const boxes = a.allocated_boxes || 0;
+    const price = skuPriceMap[a.sku] ?? Number(a.price_per_box) ?? 0;
+    map[a.emp_id].boxes += boxes;
+    map[a.emp_id].value += boxes * price;
+  }
+  return map;
+}
+
+// ยังคง expose ไว้สำหรับ _updateDeviationBar ที่เรียกแยก
 function _empAllBrandBoxes(empId) {
   return S.allocations.filter(a => a.emp_id === empId).reduce((s, a) => s + (a.allocated_boxes || 0), 0);
 }
@@ -1297,4 +1555,116 @@ async function runReAllocationKeepEdits() {
   qs("#resultBlock").style.display = "block";
   qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
   toast("✅ กระจายหีบใหม่สำเร็จ — manual edits ยังคงอยู่", "green");
+}
+/* ══════════════════════════════════════════════
+   EXCEL UPLOAD (target_boxes / target_sun)
+══════════════════════════════════════════════ */
+
+// ดาวน์โหลด Template
+function downloadTemplate(e) {
+  e.preventDefault();
+  window.location.href = `${API_BASE_URL}/upload/template`;
+}
+
+// เลือกไฟล์จาก input
+function handleFileSelect(input, fileType) {
+  if (input.files && input.files[0]) {
+    uploadTargetFile(input.files[0], fileType);
+  }
+}
+
+// ลากไฟล์วาง
+function handleDrop(event, fileType) {
+  event.preventDefault();
+  const zone = event.currentTarget;
+  zone.classList.remove("drag-over");
+  const file = event.dataTransfer.files[0];
+  if (!file) return;
+  if (!file.name.match(/\.(xlsx|xls)$/i)) {
+    _setUploadStatus(fileType, "err", "⚠️ รองรับเฉพาะ .xlsx หรือ .xls เท่านั้น");
+    return;
+  }
+  uploadTargetFile(file, fileType);
+}
+
+// อัปโหลดไฟล์ไปที่ backend
+async function uploadTargetFile(file, fileType) {
+  const zone    = document.getElementById(fileType === "boxes" ? "dropZoneBoxes" : "dropZoneSun");
+  const txtEl   = document.getElementById(fileType === "boxes" ? "dropTextBoxes" : "dropTextSun");
+
+  _setUploadStatus(fileType, "loading", "⏳ กำลังตรวจสอบการเชื่อมต่อ...");
+
+  // ── ตรวจ server ก่อนเสมอ — ป้องกัน "Failed to fetch" ที่ไม่มีคำอธิบาย ──
+  try {
+    const ping = await fetch(`${API_BASE_URL}/health`, { signal: AbortSignal.timeout(3000) });
+    if (!ping.ok) throw new Error(`server ตอบ HTTP ${ping.status}`);
+  } catch (pingErr) {
+    _setUploadStatus(fileType, "err",
+      "❌ Server ยังไม่ได้รัน
+✅ แก้ไข: เปิด start_server.bat ก่อน แล้วค่อยอัปโหลดไฟล์"
+    );
+    return;
+  }
+
+  _setUploadStatus(fileType, "loading", "⏳ กำลังอัปโหลด...");
+  txtEl.textContent = file.name;
+  zone.classList.remove("done");
+
+  // ตรวจว่าไฟล์มี 2 sheet ไหม — ถ้ามีให้ส่ง file_type=both อัตโนมัติ
+  let resolvedType = fileType;
+  try {
+    const buf  = await file.arrayBuffer();
+    const text = new TextDecoder("utf-8", { fatal: false }).decode(buf.slice(0, 8000));
+    if (text.includes("target_boxes") && text.includes("target_sun") && fileType === "boxes")
+      resolvedType = "both";
+  } catch (_) { /* ไม่ critical */ }
+
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const supId = document.getElementById("supSelect")?.value || "";
+  try {
+    const res  = await fetch(
+      `${API_BASE_URL}/upload/targets?file_type=${resolvedType}&sup_id=${encodeURIComponent(supId)}`,
+      { method: "POST", body: formData }
+    );
+    const json = await res.json();
+    if (!res.ok) {
+      _setUploadStatus(fileType, "err", `❌ ${json.detail || "อัปโหลดไม่สำเร็จ"}`);
+      return;
+    }
+
+    // แสดงผลสรุป
+    const parts = [];
+    if (json.boxes) parts.push(`SKU ${json.boxes.skus} รายการ · มูลค่ารวม ${Number(json.boxes.total_value).toLocaleString("th-TH", {maximumFractionDigits:0})} บาท`);
+    if (json.sun)   parts.push(`พนักงาน ${json.sun.employees} คน · เป้าเงินรวม ${Number(json.sun.total_sun).toLocaleString("th-TH", {maximumFractionDigits:0})} บาท`);
+    _setUploadStatus(fileType, "ok", "✅ " + parts.join(" | "));
+    zone.classList.add("done");
+
+    // ถ้าอัปโหลด both ให้อัปเดต status อีกฝั่งด้วย
+    if (resolvedType === "both") {
+      const otherZone = document.getElementById("dropZoneSun");
+      const otherTxt  = document.getElementById("dropTextSun");
+      otherTxt.textContent = file.name;
+      otherZone.classList.add("done");
+      if (json.sun) _setUploadStatus("sun", "ok",
+        `✅ พนักงาน ${json.sun.employees} คน · เป้าเงินรวม ${Number(json.sun.total_sun).toLocaleString("th-TH", {maximumFractionDigits:0})} บาท`);
+    }
+  } catch (err) {
+    const isFetch = err instanceof TypeError && err.message.toLowerCase().includes("fetch");
+    _setUploadStatus(fileType, "err",
+      isFetch ? "❌ Server ไม่ตอบสนอง — เปิด start_server.bat ก่อนแล้วลองใหม่" : `❌ ${err.message}`
+    );
+  }
+}
+
+function _setUploadStatus(fileType, level, msg) {
+  const el = document.getElementById(fileType === "boxes" ? "statusBoxes" : "statusSun");
+  if (!el) return;
+  el.className = `upload-status ${level}`;
+  // รองรับ multiline — แปลง \n เป็น <br> แต่ escape HTML ก่อน
+  el.innerHTML = msg
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/
+/g, "<br>");
 }

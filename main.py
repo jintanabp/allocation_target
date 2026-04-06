@@ -18,11 +18,17 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 import json
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 import pandas as pd
+try:
+    import httpx as _httpx
+    _HTTPX_OK = True
+except ImportError:
+    _HTTPX_OK = False
+import io
 
 from OR_engine import allocate_boxes
 from generate_excel import create_target_excel
@@ -62,18 +68,22 @@ async def lifespan(app_: FastAPI):
 # ── App ───────────────────────────────────────────────────
 app = FastAPI(title="Target Allocation API", version="3.0", lifespan=lifespan)
 
-# CORS — ใส่ origin จริงใน CORS_ORIGINS env เมื่อ deploy
-_cors_origins = os.environ.get("CORS_ORIGINS", "*").split(",")
+# CORS — allow_credentials=False เพราะไม่ได้ใช้ cookie/session
+# ⚠️ allow_credentials=True + allow_origins=["*"] ผิด HTTP spec
+#    Starlette จะ drop CORS headers เงียบๆ → browser block ทุก request จาก file://
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_cors_origins,
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # ── Known supervisors ─────────────────────────────────────
-KNOWN_MANAGERS = ["SL330", "SL374", "SL999"]
+# โหลดจาก env var ก่อน — fallback ไปค่า hardcoded เพื่อกัน startup crash
+# ตั้งค่า: set KNOWN_MANAGERS=SL330,SL374,SL999,SL001 ใน start_server.bat
+_km_env = os.environ.get("KNOWN_MANAGERS", "")
+KNOWN_MANAGERS = [m.strip() for m in _km_env.split(",") if m.strip()] or ["SL330", "SL374", "SL999"]
 
 # ── Fallback price per SKU ────────────────────────────────
 PRICE_FALLBACK = {
@@ -86,6 +96,119 @@ PRICE_FALLBACK = {
 }
 
 VALID_STRATEGIES = ("L3M", "L6M", "EVEN", "PUSH", "LP")
+
+# ── API key สำหรับ /translate/strategy ───────────────────
+# ใช้ OpenRouter (แนะนำ) หรือ Anthropic โดยตรง
+# OpenRouter:  set OPENROUTER_API_KEY=sk-or-...  ใน start_server.bat
+# Anthropic:   set ANTHROPIC_API_KEY=sk-ant-...  ใน start_server.bat
+_OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+_ANTHROPIC_API_KEY  = os.environ.get("ANTHROPIC_API_KEY", "")
+
+
+# ══════════════════════════════════════════════════════════
+#  POST /translate/strategy — proxy AI API สำหรับ Custom Strategy
+#  รองรับทั้ง OpenRouter (แนะนำ) และ Anthropic โดยตรง
+# ══════════════════════════════════════════════════════════
+class TranslateStrategyRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=500)
+    emp_count: int = Field(default=10, ge=1)
+    sku_count: int = Field(default=20, ge=1)
+
+@app.post("/translate/strategy")
+async def translate_strategy(req: TranslateStrategyRequest):
+    import json as _json
+    if not _HTTPX_OK:
+        raise HTTPException(503, detail="httpx ไม่ได้ติดตั้ง — รัน: pip install httpx แล้ว restart server")
+
+    system_prompt = f"""คุณเป็น OR expert ที่แปลง natural language เป็น allocation parameter
+ตอบเป็น JSON เท่านั้น ไม่มี markdown ไม่มีคำอธิบายนอก JSON
+
+Parameter ที่ใช้ได้:
+- base_strategy: "L3M" | "L6M" | "EVEN" | "PUSH" (เลือก 1 ที่ใกล้เคียงที่สุด)
+- cap_multiplier: number 1.5-5.0 (จำกัดสูงสุดเท่าค่าเฉลี่ย × cap)
+  * 1.5 = เกลี่ยใกล้เคียงมาก  2.0 = ยืดหยุ่นพอดี  3.0 = ค่อนข้างอิสระ  5.0 = เกือบไม่ cap
+- description_th: อธิบายสั้นๆ (ภาษาไทย ≤ 40 ตัวอักษร)
+- confidence: "high" | "medium" | "low"
+- note: คำเตือนถ้ามี (optional)
+
+บริบท: ทีมมี {req.emp_count} คน, {req.sku_count} SKU"""
+
+    try:
+        async with _httpx.AsyncClient(timeout=20) as client:
+
+            # ── OpenRouter (แนะนำ — ราคาถูก ใช้ได้หลาย model) ──
+            if _OPENROUTER_API_KEY:
+                resp = await client.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {_OPENROUTER_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": "anthropic/claude-haiku-4-5",  # เปลี่ยน model ได้เลย
+                        "max_tokens": 300,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user",   "content": req.text},
+                        ],
+                    },
+                )
+                if resp.status_code != 200:
+                    raise HTTPException(502, detail=f"OpenRouter error: {resp.status_code} — {resp.text[:200]}")
+                raw = resp.json()["choices"][0]["message"]["content"]
+
+            # ── Anthropic โดยตรง (fallback) ──
+            elif _ANTHROPIC_API_KEY:
+                resp = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": _ANTHROPIC_API_KEY,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": "claude-haiku-4-5-20251001",
+                        "max_tokens": 300,
+                        "system": system_prompt,
+                        "messages": [{"role": "user", "content": req.text}],
+                    },
+                )
+                if resp.status_code != 200:
+                    raise HTTPException(502, detail=f"Anthropic API error: {resp.status_code}")
+                raw = next(
+                    (c["text"] for c in resp.json().get("content", []) if c.get("type") == "text"), ""
+                )
+
+            else:
+                raise HTTPException(
+                    503,
+                    detail="ยังไม่ได้ตั้งค่า API key — ใส่ OPENROUTER_API_KEY หรือ ANTHROPIC_API_KEY ใน start_server.bat แล้ว restart"
+                )
+
+        clean = raw.replace("```json", "").replace("```", "").strip()
+        try:
+            params = _json.loads(clean)
+        except _json.JSONDecodeError as je:
+            logger.warning("translate_strategy: JSON parse error: %s | raw=%s", je, clean[:200])
+            raise HTTPException(500, detail="AI ตอบกลับไม่ถูกรูปแบบ JSON — ลองพิมพ์ใหม่อีกครั้ง")
+
+        valid_strats = ["L3M", "L6M", "EVEN", "PUSH"]
+        if params.get("base_strategy") not in valid_strats:
+            params["base_strategy"] = "L3M"
+        params["cap_multiplier"] = min(5.0, max(1.5, float(params.get("cap_multiplier", 3.0))))
+        # ตรวจ required fields — ป้องกัน frontend crash
+        params.setdefault("description_th", "Custom strategy")
+        params.setdefault("confidence", "medium")
+        params.setdefault("note", None)
+        return params
+
+    except _httpx.TimeoutException:
+        raise HTTPException(504, detail="AI API timeout — ลองใหม่อีกครั้ง")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("translate_strategy error: %s", e)
+        raise HTTPException(500, detail=str(e))
 
 
 # ══════════════════════════════════════════════════════════
@@ -104,7 +227,8 @@ class OptimizeRequest(BaseModel):
     yellowTargets: list[YellowTargetInput]
     strategy: str = "L3M"
     force_min_one: bool = False
-    locked_edits: list[LockedEditInput] = []  # ข้อ 11
+    locked_edits: list[LockedEditInput] = []
+    cap_multiplier: float | None = None  # Custom strategy override (1.5–5.0)
 
 class AllocationRow(BaseModel):
     emp_id: str
@@ -235,6 +359,144 @@ def generate_dummy_targets(
 #  GET /managers (ดึงรายชื่อ Super Code ทั้งหมดแบบอัตโนมัติ)
 # ══════════════════════════════════════════════════════════
 #  (moved to top — see _cleanup_old_caches and lifespan above app init)
+
+
+# ══════════════════════════════════════════════════════════
+#  POST /upload/targets — รับไฟล์ Excel จาก Supervisor
+# ══════════════════════════════════════════════════════════
+# รูปแบบ Excel ที่รองรับ (2 sheet หรือ 2 ไฟล์แยกกัน):
+#
+#  Sheet "target_boxes":
+#    sku | price_per_box | supervisor_target_boxes | brand_name_thai | brand_name_english | product_name_thai
+#
+#  Sheet "target_sun":
+#    emp_id | target_sun
+
+_BOXES_REQUIRED_COLS = {"sku", "price_per_box", "supervisor_target_boxes"}
+_SUN_REQUIRED_COLS   = {"emp_id", "target_sun"}
+
+
+def _validate_and_save_boxes(df: pd.DataFrame) -> dict:
+    df.columns = df.columns.str.strip().str.lower()
+    missing = _BOXES_REQUIRED_COLS - set(df.columns)
+    if missing:
+        raise HTTPException(422, detail=f"target_boxes ขาดคอลัมน์: {', '.join(sorted(missing))}")
+    df["sku"] = df["sku"].astype(str).str.strip()
+    df = df.dropna(subset=["sku"]).copy()
+    df["price_per_box"] = pd.to_numeric(df["price_per_box"], errors="coerce").fillna(0)
+    df["supervisor_target_boxes"] = pd.to_numeric(df["supervisor_target_boxes"], errors="coerce").fillna(0)
+    if (df["price_per_box"] <= 0).any():
+        bad = df.loc[df["price_per_box"] <= 0, "sku"].tolist()
+        raise HTTPException(422, detail=f"price_per_box ต้อง > 0 — SKU ที่มีปัญหา: {bad[:5]}")
+    if (df["supervisor_target_boxes"] < 0).any():
+        raise HTTPException(422, detail="supervisor_target_boxes ต้อง >= 0 ทุกแถว")
+    for col in ["brand_name_thai", "brand_name_english", "product_name_thai"]:
+        if col not in df.columns:
+            df[col] = ""
+    os.makedirs("data", exist_ok=True)
+    df.to_csv("data/target_boxes.csv", index=False)
+    total_value = (df["price_per_box"] * df["supervisor_target_boxes"]).sum()
+    logger.info("upload target_boxes: %d SKUs, total value=%.2f", len(df), total_value)
+    return {"skus": len(df), "total_value": round(total_value, 2)}
+
+
+def _validate_and_save_sun(df: pd.DataFrame) -> dict:
+    df.columns = df.columns.str.strip().str.lower()
+    missing = _SUN_REQUIRED_COLS - set(df.columns)
+    if missing:
+        raise HTTPException(422, detail=f"target_sun ขาดคอลัมน์: {', '.join(sorted(missing))}")
+    df["emp_id"] = df["emp_id"].astype(str).str.strip()
+    df = df.dropna(subset=["emp_id"]).copy()
+    df["target_sun"] = pd.to_numeric(df["target_sun"], errors="coerce").fillna(0)
+    if (df["target_sun"] < 0).any():
+        raise HTTPException(422, detail="target_sun ต้อง >= 0 ทุกแถว")
+    os.makedirs("data", exist_ok=True)
+    df.to_csv("data/target_sun.csv", index=False)
+    total_sun = df["target_sun"].sum()
+    logger.info("upload target_sun: %d employees, total=%.2f", len(df), total_sun)
+    return {"employees": len(df), "total_sun": round(total_sun, 2)}
+
+
+@app.post("/upload/targets")
+async def upload_targets(
+    file:      UploadFile = File(...),
+    file_type: str        = Query(..., description="'boxes' | 'sun' | 'both'"),
+    sup_id:    str        = Query(""),
+):
+    if not file.filename.lower().endswith((".xlsx", ".xls")):
+        raise HTTPException(400, detail="รองรับเฉพาะไฟล์ .xlsx หรือ .xls เท่านั้น")
+    if file_type not in ("boxes", "sun", "both"):
+        raise HTTPException(400, detail="file_type ต้องเป็น 'boxes', 'sun', หรือ 'both'")
+    try:
+        contents = await file.read()
+        xls = pd.ExcelFile(io.BytesIO(contents))
+    except Exception as e:
+        raise HTTPException(400, detail=f"อ่านไฟล์ Excel ไม่ได้: {e}")
+
+    result = {}
+    if file_type in ("boxes", "both"):
+        sheet = "target_boxes" if "target_boxes" in xls.sheet_names else xls.sheet_names[0]
+        try:
+            df_boxes = pd.read_excel(xls, sheet_name=sheet, dtype={"sku": str})
+        except Exception as e:
+            raise HTTPException(400, detail=f"อ่าน sheet '{sheet}' ไม่ได้: {e}")
+        result["boxes"] = _validate_and_save_boxes(df_boxes)
+
+    if file_type in ("sun", "both"):
+        sheet = "target_sun" if "target_sun" in xls.sheet_names else (
+            xls.sheet_names[1] if len(xls.sheet_names) > 1 else xls.sheet_names[0]
+        )
+        try:
+            df_sun = pd.read_excel(xls, sheet_name=sheet, dtype={"emp_id": str})
+        except Exception as e:
+            raise HTTPException(400, detail=f"อ่าน sheet '{sheet}' ไม่ได้: {e}")
+        result["sun"] = _validate_and_save_sun(df_sun)
+
+    logger.info("upload/targets: sup=%s type=%s result=%s", sup_id, file_type, result)
+    return {"status": "ok", "file_type": file_type, **result}
+
+
+# ══════════════════════════════════════════════════════════
+#  GET /upload/template — ดาวน์โหลด Excel template
+# ══════════════════════════════════════════════════════════
+@app.get("/upload/template")
+def download_template():
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    def _sheet(ws, headers, required, examples):
+        FILL_REQ = PatternFill("solid", fgColor="2E75B6")
+        FILL_OPT = PatternFill("solid", fgColor="1F4E79")
+        FILL_EX  = PatternFill("solid", fgColor="EBF3FB")
+        FNT      = Font(color="FFFFFF", bold=True, size=11)
+        for ci, h in enumerate(headers, 1):
+            c = ws.cell(row=1, column=ci, value=h)
+            c.font = FNT; c.fill = FILL_REQ if h in required else FILL_OPT
+            c.alignment = Alignment(horizontal="center", vertical="center")
+            ws.column_dimensions[get_column_letter(ci)].width = max(20, len(h) + 4)
+        ws.row_dimensions[1].height = 28
+        for ri, row in enumerate(examples, 2):
+            for ci, v in enumerate(row, 1):
+                ws.cell(row=ri, column=ci, value=v).fill = FILL_EX
+
+    wb = openpyxl.Workbook()
+    ws1 = wb.active; ws1.title = "target_boxes"
+    _sheet(ws1,
+           ["sku","price_per_box","supervisor_target_boxes","brand_name_thai","brand_name_english","product_name_thai"],
+           {"sku","price_per_box","supervisor_target_boxes"},
+           [["624007", 240.00, 150, "แบรนด์ A", "Brand A", "สินค้า A"],
+            ["624015", 212.00, 80,  "แบรนด์ B", "Brand B", "สินค้า B"]])
+
+    ws2 = wb.create_sheet("target_sun")
+    _sheet(ws2, ["emp_id","target_sun"], {"emp_id","target_sun"},
+           [["EMP001", 125000.00], ["EMP002", 98000.00]])
+
+    os.makedirs("data", exist_ok=True)
+    tpl_path = "data/upload_template.xlsx"
+    wb.save(tpl_path)
+    return FileResponse(tpl_path, filename="Target_Upload_Template.xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 # ══════════════════════════════════════════════════════════
@@ -420,13 +682,80 @@ def get_employees(
 
     logger.info("Response: %d emp, %d sku", len(df_emp), len(df_sku))
 
+    # ── Fix 3: เช็ค emp_id ใน target_sun.csv ที่ไม่ตรงกับพนักงานจริง ──
+    sku_warnings = []
+    if df_sun_csv is not None and not df_sun_csv.empty:
+        sun_emp_ids  = set(df_sun_csv["emp_id"].astype(str).str.strip())
+        fabric_emp_ids = set(str(e) for e in emp_list)
+        unmatched = sun_emp_ids - fabric_emp_ids
+        if unmatched:
+            logger.warning("target_sun emp_id ไม่ตรงกับ Fabric: %s", unmatched)
+            sku_warnings.append({
+                "type": "emp_mismatch",
+                "sku": "",
+                "brand": "",
+                "message": (
+                    f"⚠️ target_sun.csv มีรหัสพนักงานที่ไม่มีในทีม {sup_id}: "
+                    f"{', '.join(sorted(unmatched)[:5])} "
+                    f"— เป้าเงินของพนักงานเหล่านี้จะถูกตั้งเป็น 0"
+                )
+            })
+
+    # ── Fix 4: SKU Reconciliation — รันทุกครั้งที่มี target_boxes.csv ──
+    # (ไม่รอให้ hist ไม่ว่าง เพราะถ้า Fabric ล่มก็ยังควรเตือนได้)
+    target_skus = set(str(s) for s in df_sku["sku"].tolist())
+
+    if not df_hist.empty:
+        # ประวัติจาก Fabric — เช็คทีมทั้งหมด (ไม่ใช่รายคน)
+        hist_skus = set(df_hist["sku"].dropna().astype(str).unique())
+
+        # SKU มีเป้าแต่ไม่มีประวัติขายในทีมนี้เลย
+        new_skus = sorted(target_skus - hist_skus)
+        for sku in new_skus:
+            info = df_sku[df_sku["sku"] == sku]
+            brand = ""
+            if not info.empty:
+                brand = str(info.iloc[0].get("brand_name_thai") or info.iloc[0].get("brand_name_english") or "")
+            sku_warnings.append({
+                "type": "no_history",
+                "sku": sku,
+                "brand": brand,
+                "message": f"SKU {sku}{' (' + brand + ')' if brand else ''} มีเป้าหีบ แต่ไม่มีพนักงานในทีมนี้เคยขายมาก่อนเลย"
+            })
+
+        # SKU เคยขายในทีมแต่ไม่มีในเป้าเดือนนี้
+        missing_skus = sorted(hist_skus - target_skus)
+        for sku in missing_skus:
+            hist_rows = df_hist[df_hist["sku"] == sku]
+            total_hist = float(hist_rows["hist_boxes"].sum()) if "hist_boxes" in hist_rows.columns else 0
+            sku_warnings.append({
+                "type": "no_target",
+                "sku": sku,
+                "brand": "",
+                "message": f"SKU {sku} เคยขายได้ {total_hist:.0f} หีบ (3M) แต่ไม่ถูกรวมในเป้าเดือนนี้"
+            })
+    else:
+        # Fabric ดึงประวัติไม่ได้ — เตือนเฉพาะกรณีไม่มี hist cache เลย
+        cache_file = hist_cache_path(sup_id, target_month, target_year)
+        if not os.path.exists(cache_file) and target_skus:
+            sku_warnings.append({
+                "type": "no_history",
+                "sku": "",
+                "brand": "",
+                "message": "⚠️ ไม่สามารถดึงประวัติขายจาก Fabric ได้ — การกระจายหีบจะใช้ EVEN แทนประวัติ"
+            })
+
+    if sku_warnings:
+        logger.info("reconciliation warnings: %d รายการ", len(sku_warnings))
+
     def _clean(df: pd.DataFrame) -> list:
         """แปลง NaN → None ก่อน serialize เพื่อกัน JSON invalid"""
         return df.where(pd.notna(df), None).to_dict(orient="records")
 
     return {
-        "employees": _clean(df_emp),
-        "skus":      _clean(df_sku),
+        "employees":    _clean(df_emp),
+        "skus":         _clean(df_sku),
+        "sku_warnings": sku_warnings,
     }
 
 
@@ -474,6 +803,7 @@ def run_optimization(
         strategy=req.strategy,
         force_min_one=req.force_min_one,
         locked_edits=locked_edits_data if locked_edits_data else None,
+        cap_multiplier=req.cap_multiplier,
     )
 
     # คำนวณ hist_avg 3M รายพนักงาน×SKU

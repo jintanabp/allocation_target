@@ -21,6 +21,7 @@ def allocate_boxes(
     strategy: str = "L3M",
     force_min_one: bool = False,
     locked_edits: list = None,
+    cap_multiplier: float = None,  # override _CAP_MULTIPLIER (Custom strategy)
 ) -> pd.DataFrame:
     strategy = strategy.upper()
     valid = ("L3M", "L6M", "EVEN", "PUSH", "LP")
@@ -35,10 +36,13 @@ def allocate_boxes(
     logger.info("allocate_boxes: strategy=%s emp=%d sku=%d force_min_one=%s locked=%d",
                 strategy, len(df_emp_targets), len(df_sku), force_min_one, len(locked_map))
 
+    # ถ้า custom strategy ส่ง cap_multiplier มา ให้ใช้ค่านั้นแทน default
+    effective_cap = cap_multiplier if cap_multiplier is not None else _CAP_MULTIPLIER
+
     if strategy == "LP":
         df_out = _lp_optimize(df_emp_targets, df_sku, df_hist, force_min_one, locked_map)
     else:
-        df_out = _proportional(df_emp_targets, df_sku, df_hist, strategy, force_min_one, locked_map)
+        df_out = _proportional(df_emp_targets, df_sku, df_hist, strategy, force_min_one, locked_map, effective_cap)
         df_out = _greedy_revenue_balancer(df_out, df_emp_targets, df_sku, locked_map)
 
     return df_out
@@ -48,11 +52,13 @@ def allocate_boxes(
 # ป้องกัน outlier กองหีบใส่คนเดียวจนผิดสัดส่วนอย่างในรูปตัวอย่าง
 _CAP_MULTIPLIER = 3.0
 
-def _cap_and_redistribute(raw: dict, total: int) -> dict:
+def _cap_and_redistribute(raw: dict, total: int, cap_multiplier: float = None) -> dict:
     """
     จำกัด weight outlier: ถ้าใครได้ > mean * CAP ให้ cap แล้วกระจายส่วนเกินให้คนที่เหลือ
     ทำซ้ำจนไม่มีคนเกิน cap (max 10 รอบ)
+    cap_multiplier: override _CAP_MULTIPLIER ถ้า Custom strategy ส่งมา
     """
+    effective_cap_mult = cap_multiplier if cap_multiplier is not None else _CAP_MULTIPLIER
     emps = list(raw.keys())
     if not emps or total <= 0:
         return {e: 0 for e in emps}
@@ -60,7 +66,7 @@ def _cap_and_redistribute(raw: dict, total: int) -> dict:
     allocated = dict(raw)
     for _ in range(10):
         mean_alloc = total / len(emps)
-        cap = mean_alloc * _CAP_MULTIPLIER
+        cap = mean_alloc * effective_cap_mult
         overflow = 0.0
         uncapped = []
         for e in emps:
@@ -90,13 +96,10 @@ def _cap_and_redistribute(raw: dict, total: int) -> dict:
     return floored
 
 
-def _proportional(df_emp_targets, df_sku, df_hist, strategy, force_min_one=False, locked_map=None):
+def _proportional(df_emp_targets, df_sku, df_hist, strategy, force_min_one=False, locked_map=None, cap_multiplier=None):
     locked_map = locked_map or {}
     employees = df_emp_targets["emp_id"].tolist()
     target_boxes = dict(zip(df_sku["sku"], df_sku["supervisor_target_boxes"]))
-
-    # Pre-compute brand map สำหรับ intra-brand fairness
-    brand_of = dict(zip(df_sku["sku"], df_sku.get("brand_name_thai", df_sku.get("brand_name_english", ""))))
 
     results = []
 
@@ -150,7 +153,7 @@ def _proportional(df_emp_targets, df_sku, df_hist, strategy, force_min_one=False
         if total_w > 0 and total > 0:
             raw = {e: total * weights[e] / total_w for e in active_employees}
             # ใช้ capped distribution แทน plain floor เพื่อป้องกัน outlier กองหีบ
-            floored = _cap_and_redistribute(raw, total)
+            floored = _cap_and_redistribute(raw, total, cap_multiplier=cap_multiplier)
         else:
             floored = {e: 0 for e in active_employees}
 

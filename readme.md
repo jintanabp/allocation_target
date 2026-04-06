@@ -8,7 +8,7 @@
 ## โครงสร้างไฟล์
 
 ```
-allocation_target/
+allocation/
 ├── index.html              # หน้า Dashboard (เปิดใน browser)
 ├── app.js                  # Logic ฝั่ง frontend ทั้งหมด
 ├── style.css               # สไตล์ UI
@@ -17,15 +17,16 @@ allocation_target/
 ├── generate_excel.py       # สร้างไฟล์ Excel สรุปผล
 ├── fabric_dax_connector.py # เชื่อมต่อ Microsoft Fabric ผ่าน DAX
 │
-├── data/                   # โฟลเดอร์ข้อมูล (สร้างอัตโนมัติ)
-│   ├── target_boxes.csv    # เป้าหีบรายแบรนด์ (แก้ได้เอง หรือ generate อัตโนมัติ)
+├── data/                   # โฟลเดอร์ข้อมูล (สร้างอัตโนมัติ — ไม่ขึ้น GitHub)
+│   ├── target_boxes.csv    # เป้าหีบรายแบรนด์ (อัปโหลดจาก Dashboard หรือวางไฟล์เอง)
 │   ├── target_sun.csv      # เป้าเงินรายพนักงานตั้งต้น
 │   ├── app.log             # log การทำงาน
 │   └── ...                 # cache files (ลบอัตโนมัติทุก 7 วัน)
 │
 ├── requirements.txt        # Python packages ที่ต้องใช้
 ├── setup.bat               # ติดตั้ง environment (รันครั้งแรกครั้งเดียว)
-└── start_server.bat        # เริ่ม server (รันทุกครั้งที่จะใช้งาน)
+├── start_server.bat        # เริ่ม server (รันทุกครั้งที่จะใช้งาน)
+└── .gitignore              # ไม่ให้ data/ และ cache ขึ้น GitHub
 ```
 
 ---
@@ -48,8 +49,6 @@ allocation_target/
 
 **1. ดึงโค้ดจาก GitHub**
 
-เปิด Command Prompt หรือ Terminal แล้วรัน:
-
 ```bash
 git clone https://github.com/<username>/<repo-name>.git
 cd <repo-name>
@@ -57,9 +56,7 @@ cd <repo-name>
 
 **2. รัน setup.bat (ครั้งเดียว)**
 
-ดับเบิลคลิกไฟล์ `setup.bat` — ระบบจะ:
-- สร้าง conda environment ชื่อ `allocation_env`
-- ติดตั้ง Python packages ทั้งหมดจาก `requirements.txt` อัตโนมัติ
+ดับเบิลคลิกไฟล์ `setup.bat` — ระบบจะสร้าง conda environment และติดตั้ง packages ให้อัตโนมัติ
 
 > ถ้า setup.bat แจ้งว่าหา Miniconda ไม่เจอ → ให้รันด้วยมือใน Anaconda Prompt แทน:
 > ```bash
@@ -74,9 +71,8 @@ cd <repo-name>
 
 ### เริ่ม Server
 
-ดับเบิลคลิก `start_server.bat` ทุกครั้งที่จะใช้งาน
+ดับเบิลคลิก `start_server.bat` — หรือรันด้วยมือ:
 
-หรือรันด้วยมือ:
 ```bash
 conda activate allocation_env
 uvicorn main:app --host 127.0.0.1 --port 8000
@@ -84,24 +80,69 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 
 ### เปิด Dashboard
 
-เปิดไฟล์ `index.html` ในเบราว์เซอร์โดยตรง (Chrome แนะนำ)
+เปิดไฟล์ `index.html` ใน browser (แนะนำ Chrome)
 
-> Server ต้องรันอยู่ก่อนเสมอ ถ้าเปิด Dashboard แล้วขึ้น error ให้เช็คว่า `start_server.bat` ทำงานอยู่
+> Server ต้องรันอยู่ก่อนเสมอ — ถ้าเปิด Dashboard แล้วขึ้น error ให้เช็คว่า `start_server.bat` ทำงานอยู่
 
 ---
 
-## วิธีใช้งาน Dashboard
+## การอัปโหลดข้อมูลเป้าหมาย (Excel Upload)
+
+**ก่อนเข้า Dashboard ทุกเดือน** supervisor ต้องอัปโหลดข้อมูลเป้าหมายผ่านหน้า Login
+
+### ดาวน์โหลด Template
+
+กดลิงก์ **"⬇ ดาวน์โหลด Template"** ในหน้า Login — จะได้ไฟล์ `Target_Upload_Template.xlsx`  
+ที่มี **2 sheet** พร้อม header ถูกต้องและตัวอย่างข้อมูล
+
+### รูปแบบข้อมูล
+
+**Sheet `target_boxes`** — เป้าหีบรายแบรนด์ (คอลัมน์ที่ต้องมี: สีน้ำเงินเข้ม)
+
+| คอลัมน์ | จำเป็น | คำอธิบาย |
+|---------|--------|----------|
+| `sku` | ✅ | รหัสสินค้า |
+| `price_per_box` | ✅ | ราคาต่อหีบ (บาท) ต้อง > 0 |
+| `supervisor_target_boxes` | ✅ | เป้าหีบรวมทั้งทีม |
+| `brand_name_thai` | - | ชื่อแบรนด์ภาษาไทย |
+| `brand_name_english` | - | ชื่อแบรนด์ภาษาอังกฤษ |
+| `product_name_thai` | - | ชื่อสินค้าภาษาไทย |
+
+**Sheet `target_sun`** — เป้าเงินรายพนักงาน
+
+| คอลัมน์ | จำเป็น | คำอธิบาย |
+|---------|--------|----------|
+| `emp_id` | ✅ | รหัสพนักงาน |
+| `target_sun` | ✅ | เป้าเงินตั้งต้น (บาท) |
+
+> ⚠️ ยอดรวม `target_sun` ทุกคนควรเท่ากับ `price_per_box × supervisor_target_boxes` รวมทุก SKU
+
+### วิธีอัปโหลด
+
+| วิธี | ขั้นตอน |
+|-----|---------|
+| **ไฟล์เดียว 2 sheet** | อัปโหลดที่ช่อง "เป้าหีบ SKU" — ระบบอ่านทั้งคู่อัตโนมัติ |
+| **แยก 2 ไฟล์** | อัปโหลดคนละช่อง |
+| **Drag & Drop** | ลากไฟล์มาวางบนกล่องอัปโหลดได้เลย |
+
+หลังอัปโหลดสำเร็จ ระบบจะแสดงสรุป เช่น `SKU 6 รายการ · มูลค่ารวม 1,250,000 บาท`
+
+---
+
+## ขั้นตอนการใช้งาน Dashboard
 
 ```
-[1] เลือก Supervisor + เดือน/ปี → เข้าสู่ระบบ
+[Login] เลือก Supervisor + เดือน/ปี + อัปโหลด Excel เป้าหมาย
         ↓
-[2] ตั้งเป้าเงินรายพนักงาน (ปรับได้ — ยอดรวมต้องตรงกับเป้ารวม)
+[Step 1] ตรวจสอบข้อมูลพนักงาน + SKU ที่ดึงจาก Fabric
         ↓
-[3] เลือก Strategy แล้วกด "กระจายหีบ"
+[Step 2] ปรับเป้าเงินรายพนักงาน (ยอดรวมต้องตรงกับเป้ารวม)
         ↓
-[4] ตรวจสอบผล / แก้หีบด้วยมือ (ระบบเกลี่ยส่วนต่างให้อัตโนมัติ)
+[Step 3] เลือก Strategy แล้วกด "กระจายหีบ"
         ↓
-[5] Export Excel
+[Step 4] ตรวจสอบผล / แก้หีบด้วยมือ (ระบบเกลี่ยส่วนต่างให้อัตโนมัติ)
+        ↓
+[Export] ดาวน์โหลด Excel สรุปผล
 ```
 
 ### Strategy ที่มีให้เลือก
@@ -112,31 +153,7 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 | **L6M** | กระจายตามยอดขายเฉลี่ย 6 เดือน (เรียบกว่า) |
 | **EVEN** | เกลี่ยเท่ากันทุกคน |
 | **PUSH** | ผลักดันคนขายน้อย (ให้หีบมากกว่าปกติ) |
-| **LP** | Linear Programming ตามเป้าเงิน (แม่นยำสุด แต่ช้า) |
-
----
-
-## ไฟล์ข้อมูลที่ต้องเตรียม
-
-### `data/target_boxes.csv` — เป้าหีบรายแบรนด์
-
-```csv
-sku,price_per_box,supervisor_target_boxes,brand_name_thai,brand_name_english,product_name_thai
-624007,240.00,150,แบรนด์ A,Brand A,สินค้า A
-624015,212.00,80,แบรนด์ B,Brand B,สินค้า B
-```
-
-> ถ้าไม่มีไฟล์นี้ ระบบจะ generate ค่าตัวอย่างจากประวัติ Fabric ให้อัตโนมัติ
-
-### `data/target_sun.csv` — เป้าเงินตั้งต้นรายพนักงาน
-
-```csv
-emp_id,target_sun
-EMP001,125000.00
-EMP002,98000.00
-```
-
-> ยอดรวม `target_sun` ทุกคนต้องเท่ากับ `price_per_box × supervisor_target_boxes` รวมทุก SKU
+| **LP** | Linear Programming ตามเป้าเงิน (แม่นยำสุด แต่ช้ากว่า) |
 
 ---
 
@@ -146,7 +163,9 @@ EMP002,98000.00
 |--------|------|---------|
 | `GET` | `/data/employees` | ดึงพนักงาน + SKU + ประวัติจาก Fabric |
 | `POST` | `/optimize` | คำนวณกระจายหีบตาม strategy |
-| `POST` | `/export/excel` | สร้างไฟล์ Excel |
+| `POST` | `/upload/targets` | อัปโหลด Excel เป้าหมาย (boxes/sun/both) |
+| `GET` | `/upload/template` | ดาวน์โหลด Excel template |
+| `POST` | `/export/excel` | สร้างไฟล์ Excel สรุปผล |
 | `GET` | `/download/excel` | ดาวน์โหลด Excel ที่สร้างแล้ว |
 | `GET` | `/managers` | ดึงรายชื่อ Supervisor ทั้งหมด |
 | `GET` | `/health` | ตรวจสอบสถานะ server |
@@ -172,6 +191,7 @@ git pull
 |-------|--------|---------|
 | `conda is not recognized` | ยังไม่ได้ลง Miniconda หรือไม่ได้ติ๊ก Add to PATH | ติดตั้ง Miniconda ใหม่ ติ๊ก Add to PATH |
 | Dashboard ขึ้น error เชื่อมต่อ | Server ไม่ได้รัน | เปิด `start_server.bat` ก่อน |
+| อัปโหลด Excel แล้วขึ้น error คอลัมน์ | ชื่อ header ไม่ตรง | ดาวน์โหลด Template แล้วกรอกข้อมูลตาม |
 | หน้าเว็บแสดงผลไม่ครบ | ข้อมูลจาก Fabric ดึงไม่ได้ | เช็ค log ที่ `data/app.log` |
 | ติดตั้งช้ามาก | conda กำลัง solve dependencies | รอได้เลย อาจใช้เวลา 5-10 นาที |
 

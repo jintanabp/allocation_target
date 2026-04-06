@@ -10,6 +10,25 @@
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Instrument+Serif:ital@0;1&display=swap"
     rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
+  <style>
+    .upload-section{margin:20px 0 16px;padding:16px;background:var(--bg-alt,#f8f8f6);border:1px solid var(--border,#e5e3dc);border-radius:10px}
+    .upload-section-title{font-size:13px;font-weight:600;color:var(--text-1,#1a1a18);margin-bottom:12px;display:flex;justify-content:space-between;align-items:center}
+    .tpl-link{font-size:12px;font-weight:400;color:var(--accent,#e06b2a);text-decoration:none}
+    .tpl-link:hover{text-decoration:underline}
+    .upload-row{margin-bottom:10px}
+    .upload-label{font-size:12px;color:var(--text-2,#5a5a56);margin-bottom:4px;display:block}
+    .upload-drop-zone{display:flex;align-items:center;gap:8px;padding:8px 12px;border:1.5px dashed var(--border,#ccc);border-radius:8px;background:#fff;transition:border-color .15s,background .15s;cursor:pointer}
+    .upload-drop-zone.drag-over{border-color:var(--accent,#e06b2a);background:#fff8f5}
+    .upload-drop-zone.done{border-color:#2e7d32;border-style:solid;background:#f1f8f1}
+    .upload-drop-text{flex:1;font-size:12px;color:var(--text-3,#999);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .upload-browse-btn{padding:4px 12px;font-size:12px;border:1px solid var(--border,#ccc);border-radius:6px;background:#fff;cursor:pointer;white-space:nowrap}
+    .upload-browse-btn:hover{background:var(--bg-alt,#f5f5f3)}
+    .upload-status{font-size:12px;margin-top:4px;min-height:16px;padding-left:2px}
+    .upload-status.ok{color:#2e7d32}
+    .upload-status.err{color:#c62828}
+    .upload-status.loading{color:var(--text-3,#999)}
+    .upload-note{font-size:11px;color:var(--text-3,#999);margin-top:8px;line-height:1.5}
+  </style>
 </head>
 
 <body>
@@ -81,6 +100,50 @@
             <span class="preview-label">📅 LY เดือนเดียวกัน</span>
             <span class="preview-val" id="prevLYMonth">—</span>
           </div>
+        </div>
+
+        <!-- ── อัปโหลดข้อมูลเป้า ─────────────────────── -->
+        <div class="upload-section">
+          <div class="upload-section-title">
+            📂 อัปโหลดข้อมูลเป้าหมาย
+            <a id="downloadTemplateLink" href="#" onclick="downloadTemplate(event)" class="tpl-link">⬇ ดาวน์โหลด Template</a>
+          </div>
+
+          <div class="upload-row">
+            <label class="upload-label">เป้าหีบ SKU</label>
+            <div class="upload-drop-zone" id="dropZoneBoxes"
+              ondragover="event.preventDefault();this.classList.add('drag-over')"
+              ondragleave="this.classList.remove('drag-over')"
+              ondrop="handleDrop(event,'boxes')">
+              <input type="file" id="fileBoxes" accept=".xlsx,.xls" style="display:none"
+                onchange="handleFileSelect(this,'boxes')">
+              <span class="upload-drop-text" id="dropTextBoxes">คลิกหรือลากไฟล์มาวาง (.xlsx)</span>
+              <button class="upload-browse-btn" onclick="document.getElementById('fileBoxes').click()">เลือกไฟล์</button>
+            </div>
+            <div class="upload-status" id="statusBoxes"></div>
+          </div>
+
+          <div class="upload-row">
+            <label class="upload-label">เป้าเงิน (Target Sun)</label>
+            <div class="upload-drop-zone" id="dropZoneSun"
+              ondragover="event.preventDefault();this.classList.add('drag-over')"
+              ondragleave="this.classList.remove('drag-over')"
+              ondrop="handleDrop(event,'sun')">
+              <input type="file" id="fileSun" accept=".xlsx,.xls" style="display:none"
+                onchange="handleFileSelect(this,'sun')">
+              <span class="upload-drop-text" id="dropTextSun">คลิกหรือลากไฟล์มาวาง (.xlsx)</span>
+              <button class="upload-browse-btn" onclick="document.getElementById('fileSun').click()">เลือกไฟล์</button>
+            </div>
+            <div class="upload-status" id="statusSun"></div>
+          </div>
+
+          <p class="upload-note">💡 ถ้ามีไฟล์เดียวที่มีทั้ง 2 sheet ให้อัปโหลดที่ "เป้าหีบ SKU" แล้วระบบจะอ่านทั้งคู่ให้อัตโนมัติ</p>
+        </div>
+
+        <!-- Server status indicator -->
+        <div id="serverStatus" style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-3);margin-bottom:12px;padding:8px 12px;background:var(--bg-main);border-radius:6px;border:1px solid var(--border);">
+          <span id="serverDot" style="width:8px;height:8px;border-radius:50%;background:var(--border-md);flex-shrink:0;"></span>
+          <span id="serverStatusText">กำลังตรวจสอบ server...</span>
         </div>
 
         <button class="btn-run login-btn" id="loginBtn" onclick="handleLogin()">
@@ -293,6 +356,31 @@
                 <div class="s-pill-desc">ปรับยอดเงินให้ตรงเป้า</div>
               </div>
             </label>
+            <label class="s-pill" id="pillCustom">
+              <input type="radio" name="strategy" value="CUSTOM" onclick="openCustomStrategyModal()">
+              <span class="s-pill-icon">✏️</span>
+              <div>
+                <div class="s-pill-name">กำหนดเอง</div>
+                <div class="s-pill-desc" id="customPillDesc">อธิบายหลักการกระจายเอง</div>
+              </div>
+            </label>
+          </div>
+
+          <!-- Custom Strategy Modal (hidden by default) -->
+          <div id="customStrategyPanel" style="display:none; margin-top:12px; padding:14px 16px; background:var(--accent-bg); border:1px solid var(--accent-brd); border-radius:var(--r-lg);">
+            <div style="font-size:13px; font-weight:600; color:var(--accent); margin-bottom:8px;">✏️ อธิบายหลักการกระจายหีบด้วยตัวเอง</div>
+            <textarea id="customStrategyInput"
+              placeholder="เช่น: ให้คนที่ขายได้เยอะใน 3 เดือนล่าสุดได้หีบมากกว่า แต่คนที่ขายน้อยสุดต้องได้อย่างน้อยครึ่งหนึ่งของค่าเฉลี่ย"
+              style="width:100%; height:80px; resize:vertical; font-size:12px; padding:8px; border:1px solid var(--border-md); border-radius:6px; font-family:var(--font); background:var(--white);"
+            ></textarea>
+            <div style="display:flex; gap:8px; margin-top:8px; align-items:center;">
+              <button class="btn-dl" onclick="interpretCustomStrategy()" id="interpretBtn"
+                style="background:var(--accent); color:white; border-color:var(--accent);">
+                🧠 แปลงเป็น Strategy
+              </button>
+              <span id="interpretStatus" style="font-size:12px; color:var(--text-3);"></span>
+            </div>
+            <div id="interpretResult" style="display:none; margin-top:10px; padding:10px; background:var(--white); border-radius:6px; border:1px solid var(--border); font-size:12px;"></div>
           </div>
 
           <div style="margin-top: 16px; padding-top: 16px; border-top: 1px dashed var(--border);">
