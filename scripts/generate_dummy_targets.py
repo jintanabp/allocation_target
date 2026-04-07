@@ -68,7 +68,7 @@ def generate_offline(manager_code: str, month: int, year: int, seed: int = 42):
 
 def generate_from_fabric(manager_code: str, month: int, year: int, seed: int = 42):
     """Mode: online — ดึงข้อมูลจาก Fabric แล้วสร้าง dummy target"""
-    from fabric_dax_connector import FabricDAXConnector
+    from backend.fabric_dax_connector import FabricDAXConnector
     random.seed(seed)
     fabric = FabricDAXConnector()
 

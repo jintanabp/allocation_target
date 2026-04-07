@@ -1,10 +1,7 @@
 @echo off
-REM Wrapper (kept for convenience) — calls scripts/start_server.bat
-call "%~dp0scripts\start_server.bat"
-
-@echo off
 chcp 65001 >nul
 setlocal
+cd /d "%~dp0\.."
 echo ============================================
 echo  Target Allocation - เริ่ม Server
 echo ============================================
@@ -35,10 +32,10 @@ call "%CONDA_BAT%" activate allocation_env
 if errorlevel 1 goto :ERR_ACTIVATE
 
 echo Server กำลังเริ่มต้น...
-echo เปิดเบราว์เซอร์แล้วเปิดไฟล์ index.html
+echo เปิดเบราว์เซอร์แล้วเปิดไฟล์ frontend\index.html
 echo กด Ctrl+C เพื่อหยุด server
 echo.
-uvicorn main:app --host 127.0.0.1 --port 8000
+uvicorn backend.main:app --host 127.0.0.1 --port 8000
 pause
 exit /b 0
 

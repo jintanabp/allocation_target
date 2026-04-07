@@ -25,9 +25,9 @@ from pydantic import BaseModel, Field
 import pandas as pd
 import io
 
-from OR_engine import allocate_boxes
-from generate_excel import create_target_excel
-from fabric_dax_connector import FabricDAXConnector
+from .OR_engine import allocate_boxes
+from .generate_excel import create_target_excel
+from .fabric_dax_connector import FabricDAXConnector
 
 # ── Logging ──────────────────────────────────────────────
 os.makedirs("data", exist_ok=True) 

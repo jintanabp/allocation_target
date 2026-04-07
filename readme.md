@@ -5,28 +5,37 @@
 
 ---
 
-## โครงสร้างไฟล์
+## โครงสร้างโฟลเดอร์ (v3)
 
 ```
-allocation/
-├── index.html              # หน้า Dashboard (เปิดใน browser)
-├── app.js                  # Logic ฝั่ง frontend ทั้งหมด
-├── style.css               # สไตล์ UI
-├── main.py                 # FastAPI backend — API endpoints
-├── OR_engine.py            # เครื่องมือกระจายหีบ (L3M / L6M / EVEN / PUSH / LP)
-├── generate_excel.py       # สร้างไฟล์ Excel สรุปผล
-├── fabric_dax_connector.py # เชื่อมต่อ Microsoft Fabric ผ่าน DAX
+allocation_target/
+├── frontend/
+│   ├── index.html          # หน้า Dashboard (เปิดใน browser)
+│   ├── app.js              # Logic ฝั่ง frontend ทั้งหมด
+│   └── style.css           # สไตล์ UI
 │
-├── data/                   # โฟลเดอร์ข้อมูล (สร้างอัตโนมัติ — ไม่ขึ้น GitHub)
-│   ├── target_boxes.csv    # เป้าหีบรายแบรนด์ (อัปโหลดจาก Dashboard หรือวางไฟล์เอง)
-│   ├── target_sun.csv      # เป้าเงินรายพนักงานตั้งต้น
-│   ├── app.log             # log การทำงาน
+├── backend/
+│   ├── main.py             # FastAPI backend — API endpoints
+│   ├── OR_engine.py        # เครื่องมือกระจายหีบ (L3M / L6M / EVEN / PUSH / LP)
+│   ├── generate_excel.py   # สร้างไฟล์ Excel สรุปผล
+│   └── fabric_dax_connector.py # เชื่อมต่อ Microsoft Fabric ผ่าน DAX
+│
+├── scripts/
+│   ├── setup.bat           # ติดตั้ง environment (รันครั้งแรกครั้งเดียว)
+│   ├── start_server.bat    # เริ่ม server (รันทุกครั้งที่จะใช้งาน)
+│   └── generate_dummy_targets.py # เครื่องมือสร้าง dummy targets (optional)
+│
+├── data/                   # โฟลเดอร์ข้อมูล (สร้างอัตโนมัติ — ไม่ขึ้น Git)
+│   ├── target_boxes.csv
+│   ├── target_sun.csv
+│   ├── app.log
 │   └── ...                 # cache files (ลบอัตโนมัติทุก 7 วัน)
 │
-├── requirements.txt        # Python packages ที่ต้องใช้
-├── setup.bat               # ติดตั้ง environment (รันครั้งแรกครั้งเดียว)
-├── start_server.bat        # เริ่ม server (รันทุกครั้งที่จะใช้งาน)
-└── .gitignore              # ไม่ให้ data/ และ cache ขึ้น GitHub
+├── requirements.txt
+├── requirements-dev.txt
+├── setup.bat               # wrapper → scripts/setup.bat
+├── start_server.bat        # wrapper → scripts/start_server.bat
+└── readme.md
 ```
 
 ---
@@ -54,9 +63,10 @@ git clone https://github.com/<username>/<repo-name>.git
 cd <repo-name>
 ```
 
-**2. รัน setup.bat (ครั้งเดียว)**
+**2. รัน setup (ครั้งเดียว)**
 
-ดับเบิลคลิกไฟล์ `setup.bat` — ระบบจะสร้าง conda environment และติดตั้ง packages ให้อัตโนมัติ
+ดับเบิลคลิก `setup.bat` (ตัว wrapper) หรือ `scripts/setup.bat`  
+ระบบจะสร้าง conda environment `allocation_env` และติดตั้ง packages ให้อัตโนมัติ
 
 > ถ้า setup.bat แจ้งว่าหา Miniconda ไม่เจอ → ให้รันด้วยมือใน Anaconda Prompt แทน:
 > ```bash
@@ -71,16 +81,16 @@ cd <repo-name>
 
 ### เริ่ม Server
 
-ดับเบิลคลิก `start_server.bat` — หรือรันด้วยมือ:
+ดับเบิลคลิก `start_server.bat` (ตัว wrapper) หรือ `scripts/start_server.bat` — หรือรันด้วยมือ:
 
 ```bash
 conda activate allocation_env
-uvicorn main:app --host 127.0.0.1 --port 8000
+uvicorn backend.main:app --host 127.0.0.1 --port 8000
 ```
 
 ### เปิด Dashboard
 
-เปิดไฟล์ `index.html` ใน browser (แนะนำ Chrome)
+เปิดไฟล์ `frontend/index.html` ใน browser (แนะนำ Chrome)
 
 > Server ต้องรันอยู่ก่อนเสมอ — ถ้าเปิด Dashboard แล้วขึ้น error ให้เช็คว่า `start_server.bat` ทำงานอยู่
 
