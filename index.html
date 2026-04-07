@@ -356,31 +356,6 @@
                 <div class="s-pill-desc">ปรับยอดเงินให้ตรงเป้า</div>
               </div>
             </label>
-            <label class="s-pill" id="pillCustom">
-              <input type="radio" name="strategy" value="CUSTOM" onclick="openCustomStrategyModal()">
-              <span class="s-pill-icon">✏️</span>
-              <div>
-                <div class="s-pill-name">กำหนดเอง</div>
-                <div class="s-pill-desc" id="customPillDesc">อธิบายหลักการกระจายเอง</div>
-              </div>
-            </label>
-          </div>
-
-          <!-- Custom Strategy Modal (hidden by default) -->
-          <div id="customStrategyPanel" style="display:none; margin-top:12px; padding:14px 16px; background:var(--accent-bg); border:1px solid var(--accent-brd); border-radius:var(--r-lg);">
-            <div style="font-size:13px; font-weight:600; color:var(--accent); margin-bottom:8px;">✏️ อธิบายหลักการกระจายหีบด้วยตัวเอง</div>
-            <textarea id="customStrategyInput"
-              placeholder="เช่น: ให้คนที่ขายได้เยอะใน 3 เดือนล่าสุดได้หีบมากกว่า แต่คนที่ขายน้อยสุดต้องได้อย่างน้อยครึ่งหนึ่งของค่าเฉลี่ย"
-              style="width:100%; height:80px; resize:vertical; font-size:12px; padding:8px; border:1px solid var(--border-md); border-radius:6px; font-family:var(--font); background:var(--white);"
-            ></textarea>
-            <div style="display:flex; gap:8px; margin-top:8px; align-items:center;">
-              <button class="btn-dl" onclick="interpretCustomStrategy()" id="interpretBtn"
-                style="background:var(--accent); color:white; border-color:var(--accent);">
-                🧠 แปลงเป็น Strategy
-              </button>
-              <span id="interpretStatus" style="font-size:12px; color:var(--text-3);"></span>
-            </div>
-            <div id="interpretResult" style="display:none; margin-top:10px; padding:10px; background:var(--white); border-radius:6px; border:1px solid var(--border); font-size:12px;"></div>
           </div>
 
           <div style="margin-top: 16px; padding-top: 16px; border-top: 1px dashed var(--border);">

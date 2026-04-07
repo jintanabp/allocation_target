@@ -23,11 +23,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 import pandas as pd
-try:
-    import httpx as _httpx
-    _HTTPX_OK = True
-except ImportError:
-    _HTTPX_OK = False
 import io
 
 from OR_engine import allocate_boxes
@@ -99,120 +94,6 @@ VALID_STRATEGIES = ("L3M", "L6M", "EVEN", "PUSH", "LP")
 
 # Production: ตั้ง ENABLE_DEBUG_ENDPOINTS=1 เท่านั้นเมื่อต้องการเปิด GET /debug/fabric
 _ENABLE_DEBUG = os.environ.get("ENABLE_DEBUG_ENDPOINTS", "").strip().lower() in ("1", "true", "yes")
-
-# ── API key สำหรับ /translate/strategy ───────────────────
-# ใช้ OpenRouter (แนะนำ) หรือ Anthropic โดยตรง
-# OpenRouter:  set OPENROUTER_API_KEY=sk-or-...  ใน start_server.bat
-# Anthropic:   set ANTHROPIC_API_KEY=sk-ant-...  ใน start_server.bat
-_OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
-_ANTHROPIC_API_KEY  = os.environ.get("ANTHROPIC_API_KEY", "")
-
-
-# ══════════════════════════════════════════════════════════
-#  POST /translate/strategy — proxy AI API สำหรับ Custom Strategy
-#  รองรับทั้ง OpenRouter (แนะนำ) และ Anthropic โดยตรง
-# ══════════════════════════════════════════════════════════
-class TranslateStrategyRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=500)
-    emp_count: int = Field(default=10, ge=1)
-    sku_count: int = Field(default=20, ge=1)
-
-@app.post("/translate/strategy")
-async def translate_strategy(req: TranslateStrategyRequest):
-    import json as _json
-    if not _HTTPX_OK:
-        raise HTTPException(503, detail="httpx ไม่ได้ติดตั้ง — รัน: pip install httpx แล้ว restart server")
-
-    system_prompt = f"""คุณเป็น OR expert ที่แปลง natural language เป็น allocation parameter
-ตอบเป็น JSON เท่านั้น ไม่มี markdown ไม่มีคำอธิบายนอก JSON
-
-Parameter ที่ใช้ได้:
-- base_strategy: "L3M" | "L6M" | "EVEN" | "PUSH" (เลือก 1 ที่ใกล้เคียงที่สุด)
-- cap_multiplier: number 1.5-5.0 (จำกัดสูงสุดเท่าค่าเฉลี่ย × cap)
-  * 1.5 = เกลี่ยใกล้เคียงมาก  2.0 = ยืดหยุ่นพอดี  3.0 = ค่อนข้างอิสระ  5.0 = เกือบไม่ cap
-- description_th: อธิบายสั้นๆ (ภาษาไทย ≤ 40 ตัวอักษร)
-- confidence: "high" | "medium" | "low"
-- note: คำเตือนถ้ามี (optional)
-
-บริบท: ทีมมี {req.emp_count} คน, {req.sku_count} SKU"""
-
-    try:
-        async with _httpx.AsyncClient(timeout=20) as client:
-
-            # ── OpenRouter (แนะนำ — ราคาถูก ใช้ได้หลาย model) ──
-            if _OPENROUTER_API_KEY:
-                resp = await client.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {_OPENROUTER_API_KEY}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": "anthropic/claude-haiku-4-5",  # เปลี่ยน model ได้เลย
-                        "max_tokens": 300,
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user",   "content": req.text},
-                        ],
-                    },
-                )
-                if resp.status_code != 200:
-                    raise HTTPException(502, detail=f"OpenRouter error: {resp.status_code} — {resp.text[:200]}")
-                raw = resp.json()["choices"][0]["message"]["content"]
-
-            # ── Anthropic โดยตรง (fallback) ──
-            elif _ANTHROPIC_API_KEY:
-                resp = await client.post(
-                    "https://api.anthropic.com/v1/messages",
-                    headers={
-                        "x-api-key": _ANTHROPIC_API_KEY,
-                        "anthropic-version": "2023-06-01",
-                        "content-type": "application/json",
-                    },
-                    json={
-                        "model": "claude-haiku-4-5-20251001",
-                        "max_tokens": 300,
-                        "system": system_prompt,
-                        "messages": [{"role": "user", "content": req.text}],
-                    },
-                )
-                if resp.status_code != 200:
-                    raise HTTPException(502, detail=f"Anthropic API error: {resp.status_code}")
-                raw = next(
-                    (c["text"] for c in resp.json().get("content", []) if c.get("type") == "text"), ""
-                )
-
-            else:
-                raise HTTPException(
-                    503,
-                    detail="ยังไม่ได้ตั้งค่า API key — ใส่ OPENROUTER_API_KEY หรือ ANTHROPIC_API_KEY ใน start_server.bat แล้ว restart"
-                )
-
-        clean = raw.replace("```json", "").replace("```", "").strip()
-        try:
-            params = _json.loads(clean)
-        except _json.JSONDecodeError as je:
-            logger.warning("translate_strategy: JSON parse error: %s | raw=%s", je, clean[:200])
-            raise HTTPException(500, detail="AI ตอบกลับไม่ถูกรูปแบบ JSON — ลองพิมพ์ใหม่อีกครั้ง")
-
-        valid_strats = ["L3M", "L6M", "EVEN", "PUSH"]
-        if params.get("base_strategy") not in valid_strats:
-            params["base_strategy"] = "L3M"
-        params["cap_multiplier"] = min(5.0, max(1.5, float(params.get("cap_multiplier", 3.0))))
-        # ตรวจ required fields — ป้องกัน frontend crash
-        params.setdefault("description_th", "Custom strategy")
-        params.setdefault("confidence", "medium")
-        params.setdefault("note", None)
-        return params
-
-    except _httpx.TimeoutException:
-        raise HTTPException(504, detail="AI API timeout — ลองใหม่อีกครั้ง")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("translate_strategy error: %s", e)
-        raise HTTPException(500, detail=str(e))
-
 
 # ══════════════════════════════════════════════════════════
 #  Pydantic models
@@ -753,11 +634,12 @@ def get_employees(
 
     # ── Fix 4: SKU Reconciliation — รันทุกครั้งที่มี target_boxes.csv ──
     # (ไม่รอให้ hist ไม่ว่าง เพราะถ้า Fabric ล่มก็ยังควรเตือนได้)
-    target_skus = set(str(s) for s in df_sku["sku"].tolist())
+    # normalize SKU keys (กันเคสช่องว่าง/ชนิดข้อมูล ทำให้เทียบกันผิด)
+    target_skus = set(str(s).strip() for s in df_sku["sku"].tolist() if str(s).strip())
 
     if not df_hist.empty:
         # ประวัติจาก Fabric — เช็คทีมทั้งหมด (ไม่ใช่รายคน)
-        hist_skus = set(df_hist["sku"].dropna().astype(str).unique())
+        hist_skus = set(str(s).strip() for s in df_hist["sku"].dropna().astype(str).unique() if str(s).strip())
 
         # SKU มีเป้าแต่ไม่มีประวัติขายในทีมนี้เลย
         new_skus = sorted(target_skus - hist_skus)
@@ -839,8 +721,8 @@ def run_optimization(
     want_6m = strategy_u == "L6M"
     cache_6 = hist_cache_path(sup_id, target_month, target_year, n_months=6)
     cache_3 = hist_cache_path(sup_id, target_month, target_year, n_months=3)
-    cache_file = cache_6 if want_6 and os.path.exists(cache_6) else cache_3
-    if want_6 and not os.path.exists(cache_6) and os.path.exists(cache_3):
+    cache_file = cache_6 if want_6m and os.path.exists(cache_6) else cache_3
+    if want_6m and not os.path.exists(cache_6) and os.path.exists(cache_3):
         logger.warning("ไม่พบ hist 6M cache — ใช้ cache 3M แทนสำหรับ L6M (โหลดหน้า Dashboard ใหม่เพื่อสร้าง 6M cache)")
     if os.path.exists(cache_file):
         df_hist = pd.read_csv(cache_file, dtype={"sku": str, "emp_id": str})
@@ -851,7 +733,7 @@ def run_optimization(
 
     df_hist = df_hist[df_hist["emp_id"].isin(emp_list)]
 
-    hist_months = 6 if (want_6 and os.path.exists(cache_6)) else 3
+    hist_months = 6 if (want_6m and os.path.exists(cache_6)) else 3
 
     # รัน allocation ตาม strategy ที่เลือก
     logger.info("Running strategy=%s for sup=%s", req.strategy, sup_id)

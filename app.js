@@ -44,9 +44,6 @@ document.addEventListener("DOMContentLoaded", () => {
     r.addEventListener("change", () => {
       document.querySelectorAll(".s-pill").forEach(p => p.classList.remove("active"));
       r.closest(".s-pill").classList.add("active");
-      // ซ่อน custom panel ถ้าเลือก strategy อื่น
-      const panel = document.getElementById("customStrategyPanel");
-      if (panel) panel.style.display = r.value === "CUSTOM" ? "block" : "none";
     });
   });
 
@@ -393,111 +390,6 @@ function showLoginError(msg) {
 let _skuSec1Sort = "code"; 
 
 /* ══════════════════════════════════════════════
-   CUSTOM STRATEGY — Claude API interpreter
-   ใช้ Anthropic API แปลง natural language → parameter set
-   ไม่มีการ exec() code ใดๆ — ปลอดภัย 100%
-══════════════════════════════════════════════ */
-
-// state สำหรับ custom strategy
-let S_customParams = null; // { base_strategy, cap_multiplier, description }
-
-function openCustomStrategyModal() {
-  const panel = qs("#customStrategyPanel");
-  if (panel) panel.style.display = "block";
-  // reset interpreted result ถ้ายังไม่ได้แปล
-  if (!S_customParams) {
-    qs("#interpretResult").style.display = "none";
-  }
-}
-
-async function interpretCustomStrategy() {
-  const text = qs("#customStrategyInput")?.value?.trim();
-  if (!text) {
-    toast("⚠️ กรุณาพิมพ์หลักการกระจายก่อน");
-    return;
-  }
-
-  const btn = qs("#interpretBtn");
-  const status = qs("#interpretStatus");
-  btn.disabled = true;
-  btn.textContent = "⏳ กำลังวิเคราะห์...";
-  status.textContent = "";
-  qs("#interpretResult").style.display = "none";
-
-  const empCount = S.employees.length || 10;
-  const skuCount = S.skus.length || 20;
-
-  const systemPrompt = `คุณเป็น OR expert ที่แปลง natural language เป็น allocation parameter
-ตอบเป็น JSON เท่านั้น ไม่มี markdown ไม่มีคำอธิบายนอก JSON
-
-Parameter ที่ใช้ได้:
-- base_strategy: "L3M" | "L6M" | "EVEN" | "PUSH" (เลือก 1 ที่ใกล้เคียงที่สุด)
-- cap_multiplier: number 1.5-5.0 (จำกัดสูงสุดเท่าค่าเฉลี่ย × cap — ป้องกัน outlier)
-  * 1.5 = เกลี่ยใกล้เคียงมาก  2.0 = ยืดหยุ่นพอดี  3.0 = ค่อนข้างอิสระ  5.0 = เกือบไม่ cap
-- description_th: อธิบายสั้นๆ ว่าจะทำอะไร (ภาษาไทย ≤ 40 ตัวอักษร)
-- confidence: "high" | "medium" | "low" (ความมั่นใจในการแปล)
-- note: คำเตือนหรือข้อสังเกตถ้ามี (optional)
-
-บริบท: ทีมมี ${empCount} คน, ${skuCount} SKU`;
-
-  try {
-    // เรียกผ่าน backend proxy — ไม่ยิง Anthropic โดยตรงจาก browser
-    // (browser ถูก block CORS + ไม่มี API key)
-    const res = await fetch(`${API_BASE_URL}/translate/strategy`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        text,
-        emp_count: empCount,
-        sku_count: skuCount,
-      })
-    });
-
-    if (!res.ok) {
-      const j = await res.json().catch(() => ({}));
-      throw new Error(j.detail || `HTTP ${res.status}`);
-    }
-    const params = await res.json();
-
-    S_customParams = params;
-
-    // แสดงผล
-    const confColor = { high: "var(--green)", medium: "var(--amber)", low: "var(--red)" }[params.confidence] || "var(--text-2)";
-    const resultEl = qs("#interpretResult");
-    resultEl.style.display = "block";
-    resultEl.innerHTML = `
-      <div style="font-weight:600; margin-bottom:6px; color:var(--text-1);">${params.description_th}</div>
-      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
-        <span style="background:var(--accent-bg);color:var(--accent);padding:2px 8px;border-radius:4px;font-size:11px;">Base: ${params.base_strategy}</span>
-        <span style="background:var(--bg-main);color:var(--text-2);padding:2px 8px;border-radius:4px;font-size:11px;border:1px solid var(--border);">Cap: ${params.cap_multiplier}× ค่าเฉลี่ย</span>
-        <span style="color:${confColor};font-size:11px;font-weight:600;">ความมั่นใจ: ${params.confidence}</span>
-      </div>
-      ${params.note ? `<div style="font-size:11px;color:var(--text-3);border-top:1px solid var(--border);padding-top:6px;margin-top:4px;">⚠️ ${params.note}</div>` : ""}
-      <div style="margin-top:8px;font-size:11px;color:var(--text-3);">กดปุ่ม "เริ่มคำนวณ" เพื่อใช้ strategy นี้ — ระบบจะ preview ก่อนเสมอ</div>`;
-
-    // อัปเดต pill description
-    qs("#customPillDesc").textContent = params.description_th;
-    status.textContent = "✅ แปลงสำเร็จ";
-
-  } catch (err) {
-    // แยก case: server ไม่รัน vs API key ไม่มี vs error อื่น
-    let errMsg = err.message;
-    if (err instanceof TypeError && errMsg.toLowerCase().includes("fetch")) {
-      errMsg = "Server ไม่ได้รัน — เปิด start_server.bat ก่อนแล้วลองใหม่";
-    } else if (errMsg.includes("503") || errMsg.includes("API key")) {
-      errMsg = "ยังไม่ได้ตั้งค่า API key — ใส่ ANTHROPIC_API_KEY หรือ OPENROUTER_API_KEY ใน start_server.bat";
-    } else if (errMsg.includes("502") || errMsg.includes("504")) {
-      errMsg = "AI API ตอบช้าหรือไม่ได้รับสัญญาณ — ลองใหม่อีกครั้ง";
-    }
-    status.textContent = `❌ ${errMsg}`;
-    S_customParams = null;
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "🧠 แปลงเป็น Strategy";
-  }
-}
-
-/* ══════════════════════════════════════════════
    SKU RECONCILIATION WARNINGS
 ══════════════════════════════════════════════ */
 function _showSkuWarnings() {
@@ -533,14 +425,37 @@ function _showSkuWarnings() {
     // กรอง SKU ที่ไม่มี sku field (เช่น กรณี Fabric ล่ม)
     const namedSkus = noHistory.filter(w => w.sku);
     const genericMsg = noHistory.filter(w => !w.sku);
-    html += `<li><strong>มีเป้าแต่ไม่มีประวัติขายในทีมนี้</strong> — ระบบจะกระจายเท่ากัน (EVEN) สำหรับ SKU เหล่านี้:<br>`;
+    const MAX_SHOW = 24;
+    html += `<li><strong>มีเป้าแต่ไม่มีประวัติขายในทีมนี้</strong> — ระบบจะกระจายเท่ากัน (EVEN)<br>`;
     if (namedSkus.length > 0) {
-      html += namedSkus.map(w => {
+      const preview = namedSkus.slice(0, MAX_SHOW);
+      const rest = namedSkus.slice(MAX_SHOW);
+      const previewHtml = preview.map(w => {
         const brand = w.brand ? ` <span style="color:var(--text-3)">(${escH(w.brand)})</span>` : "";
         return `<code>${escH(w.sku)}</code>${brand}`;
       }).join(" · ");
+      html += `<div style="margin-top:6px; line-height:1.9;">${previewHtml}</div>`;
+      if (rest.length > 0) {
+        const allHtml = namedSkus.map(w => {
+          const brand = w.brand ? ` <span style="color:var(--text-3)">(${escH(w.brand)})</span>` : "";
+          return `<span style="display:inline-block;margin:2px 6px 2px 0;"><code>${escH(w.sku)}</code>${brand}</span>`;
+        }).join("");
+        html += `
+          <details style="margin-top:8px;">
+            <summary style="cursor:pointer; color:var(--accent); font-weight:600;">
+              ดูทั้งหมด (${namedSkus.length.toLocaleString()} SKU)
+            </summary>
+            <div style="margin-top:8px; max-height:160px; overflow:auto; padding:8px 10px; background:var(--bg-main); border:1px solid var(--border); border-radius:8px;">
+              ${allHtml}
+            </div>
+          </details>`;
+      } else {
+        html += `<div style="margin-top:6px;color:var(--text-3);font-size:11px;">รวม ${namedSkus.length} SKU</div>`;
+      }
     }
-    if (genericMsg.length > 0) html += " " + genericMsg.map(w => escH(w.message)).join(" ");
+    if (genericMsg.length > 0) {
+      html += `<div style="margin-top:6px;color:var(--text-3);font-size:11px;">${genericMsg.map(w => escH(w.message)).join(" ")}</div>`;
+    }
     html += `</li>`;
   }
 
@@ -818,19 +733,6 @@ async function _doOptimize(lockedEdits = []) {
   let strategy = document.querySelector('[name="strategy"]:checked')?.value || "L3M";
   const forceMinOne = document.getElementById("forceMinOneBox")?.checked || false;
 
-  // Custom strategy: แปลง CUSTOM → base_strategy + cap_multiplier
-  let customCapMultiplier = null;
-  if (strategy === "CUSTOM") {
-    if (!S_customParams) {
-      toast("⚠️ กรุณากด 'แปลงเป็น Strategy' ก่อน");
-      qs("#runBtn").disabled = false;
-      qs("#runBtn").textContent = "เริ่มคำนวณ";
-      return null;
-    }
-    strategy = S_customParams.base_strategy || "L3M";
-    customCapMultiplier = S_customParams.cap_multiplier ?? 3.0;
-  }
-
   try {
     const payload = {
       yellowTargets: S.employees.map(e => ({
@@ -840,7 +742,6 @@ async function _doOptimize(lockedEdits = []) {
       strategy,
       force_min_one: forceMinOne,
       locked_edits: lockedEdits,
-      ...(customCapMultiplier !== null ? { cap_multiplier: customCapMultiplier } : {}),
     };
 
     const url = `${API_BASE_URL}/optimize?sup_id=${S.supId}&target_month=${S.targetMonth}&target_year=${S.targetYear}`;
