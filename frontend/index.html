@@ -9,26 +9,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Instrument+Serif:ital@0;1&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css" />
-  <style>
-    .upload-section{margin:20px 0 16px;padding:16px;background:var(--bg-alt,#f8f8f6);border:1px solid var(--border,#e5e3dc);border-radius:10px}
-    .upload-section-title{font-size:13px;font-weight:600;color:var(--text-1,#1a1a18);margin-bottom:12px;display:flex;justify-content:space-between;align-items:center}
-    .tpl-link{font-size:12px;font-weight:400;color:var(--accent,#e06b2a);text-decoration:none}
-    .tpl-link:hover{text-decoration:underline}
-    .upload-row{margin-bottom:10px}
-    .upload-label{font-size:12px;color:var(--text-2,#5a5a56);margin-bottom:4px;display:block}
-    .upload-drop-zone{display:flex;align-items:center;gap:8px;padding:8px 12px;border:1.5px dashed var(--border,#ccc);border-radius:8px;background:#fff;transition:border-color .15s,background .15s;cursor:pointer}
-    .upload-drop-zone.drag-over{border-color:var(--accent,#e06b2a);background:#fff8f5}
-    .upload-drop-zone.done{border-color:#2e7d32;border-style:solid;background:#f1f8f1}
-    .upload-drop-text{flex:1;font-size:12px;color:var(--text-3,#999);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .upload-browse-btn{padding:4px 12px;font-size:12px;border:1px solid var(--border,#ccc);border-radius:6px;background:#fff;cursor:pointer;white-space:nowrap}
-    .upload-browse-btn:hover{background:var(--bg-alt,#f5f5f3)}
-    .upload-status{font-size:12px;margin-top:4px;min-height:16px;padding-left:2px}
-    .upload-status.ok{color:#2e7d32}
-    .upload-status.err{color:#c62828}
-    .upload-status.loading{color:var(--text-3,#999)}
-    .upload-note{font-size:11px;color:var(--text-3,#999);margin-top:8px;line-height:1.5}
-  </style>
+  <link rel="stylesheet" href="style.css?v=20260408" />
 </head>
 
 <body>
@@ -57,99 +38,94 @@
 
     <!-- ─── LOGIN VIEW ─── -->
     <div id="loginView" class="login-wrap">
-      <div class="login-card">
-        <div class="login-icon-badge">🎯</div>
-        <h2 class="login-title">Target Allocation</h2>
-        <p class="login-sub">ลงชื่อเข้าสู่ระบบเพื่อจัดการกระจายเป้าหมาย</p>
-
-        <div class="field-group">
-          <label class="field-label">Supervisor (Super Code)</label>
-          <div style="position: relative;">
-            <input type="text" id="supSelect" class="field-input" placeholder="⏳ กำลังดึงข้อมูล..." autocomplete="off">
-            <div id="customDropdown" class="custom-dropdown" style="display:none;"></div>
-          </div>
-        </div>
-
-        <div class="field-group">
-          <label class="field-label">เดือนที่จะกระจายเป้า</label>
-          <div class="month-year-row">
-            <select id="monthSelect" class="field-select">
-              <option value="1">มกราคม</option>
-              <option value="2">กุมภาพันธ์</option>
-              <option value="3">มีนาคม</option>
-              <option value="4" selected>เมษายน</option>
-              <option value="5">พฤษภาคม</option>
-              <option value="6">มิถุนายน</option>
-              <option value="7">กรกฎาคม</option>
-              <option value="8">สิงหาคม</option>
-              <option value="9">กันยายน</option>
-              <option value="10">ตุลาคม</option>
-              <option value="11">พฤศจิกายน</option>
-              <option value="12">ธันวาคม</option>
-            </select>
-            <select id="yearSelect" class="field-select year-select"></select>
-          </div>
-        </div>
-
-        <div class="date-preview">
-          <div class="preview-row">
-            <span class="preview-label">📊 ประวัติ 3 เดือน (L3M)</span>
-            <span class="preview-val" id="prevHistRange">—</span>
-          </div>
-          <div class="preview-row">
-            <span class="preview-label">📅 LY เดือนเดียวกัน</span>
-            <span class="preview-val" id="prevLYMonth">—</span>
-          </div>
-        </div>
-
-        <!-- ── อัปโหลดข้อมูลเป้า ─────────────────────── -->
-        <div class="upload-section">
-          <div class="upload-section-title">
-            📂 อัปโหลดข้อมูลเป้าหมาย
-            <a id="downloadTemplateLink" href="#" onclick="downloadTemplate(event)" class="tpl-link">⬇ ดาวน์โหลด Template</a>
-          </div>
-
-          <div class="upload-row">
-            <label class="upload-label">เป้าหีบ SKU</label>
-            <div class="upload-drop-zone" id="dropZoneBoxes"
-              ondragover="event.preventDefault();this.classList.add('drag-over')"
-              ondragleave="this.classList.remove('drag-over')"
-              ondrop="handleDrop(event,'boxes')">
-              <input type="file" id="fileBoxes" accept=".xlsx,.xls" style="display:none"
-                onchange="handleFileSelect(this,'boxes')">
-              <span class="upload-drop-text" id="dropTextBoxes">คลิกหรือลากไฟล์มาวาง (.xlsx)</span>
-              <button class="upload-browse-btn" onclick="document.getElementById('fileBoxes').click()">เลือกไฟล์</button>
+      <div class="login-shell">
+        <aside class="login-hero" aria-hidden="true">
+          <div class="login-hero-card">
+            <div class="login-hero-badge">🎯</div>
+            <div class="login-hero-title">Target Allocation</div>
+            <div class="login-hero-sub">ระบบกระจายเป้าหมายยอดขายสำหรับใช้งานในองค์กร</div>
+            <div class="login-hero-points">
+              <div class="pt"><span class="dot"></span>ดึงเป้าจาก Fabric อัตโนมัติ</div>
+              <div class="pt"><span class="dot"></span>รองรับ L3M / L6M / LY</div>
+              <div class="pt"><span class="dot"></span>บันทึกแบบร่างและรักษา manual edits</div>
             </div>
-            <div class="upload-status" id="statusBoxes"></div>
           </div>
+        </aside>
 
-          <div class="upload-row">
-            <label class="upload-label">เป้าเงิน (Target Sun)</label>
-            <div class="upload-drop-zone" id="dropZoneSun"
-              ondragover="event.preventDefault();this.classList.add('drag-over')"
-              ondragleave="this.classList.remove('drag-over')"
-              ondrop="handleDrop(event,'sun')">
-              <input type="file" id="fileSun" accept=".xlsx,.xls" style="display:none"
-                onchange="handleFileSelect(this,'sun')">
-              <span class="upload-drop-text" id="dropTextSun">คลิกหรือลากไฟล์มาวาง (.xlsx)</span>
-              <button class="upload-browse-btn" onclick="document.getElementById('fileSun').click()">เลือกไฟล์</button>
+        <main class="login-panel">
+          <div class="login-card2">
+            <div class="login-head">
+              <div class="login-mark">🎯</div>
+              <div>
+                <div class="login-title2">เข้าสู่ระบบ</div>
+                <div class="login-sub2">เลือกหัวหน้าทีม (Supervisor) และงวดเดือนที่จะกระจายเป้าหมาย</div>
+              </div>
             </div>
-            <div class="upload-status" id="statusSun"></div>
+
+            <div class="field-group">
+              <label class="field-label">Supervisor (Super Code)</label>
+              <div style="position: relative;">
+                <input type="text" id="supSelect" class="field-input" placeholder="⏳ กำลังดึงข้อมูล..." autocomplete="off">
+                <div id="customDropdown" class="custom-dropdown" style="display:none;"></div>
+              </div>
+              <div class="field-help">ตัวอย่าง: <code>SL330</code> · พิมพ์ค้นหา หรือคลิกเพื่อเลือกจากรายการ</div>
+              <div class="login-row">
+                <div id="recentSupWrap" class="recent-sup" style="display:none;"></div>
+                <button id="managersRetryBtn" class="btn-mini" type="button" onclick="loadManagers(true)" style="display:none;">
+                  ↻ รีเฟรชรายการ
+                </button>
+              </div>
+            </div>
+
+            <div class="field-group">
+              <label class="field-label">งวดเดือนที่จะกระจายเป้า</label>
+              <div class="month-year-row">
+                <select id="monthSelect" class="field-select">
+                  <option value="1">มกราคม</option>
+                  <option value="2">กุมภาพันธ์</option>
+                  <option value="3">มีนาคม</option>
+                  <option value="4" selected>เมษายน</option>
+                  <option value="5">พฤษภาคม</option>
+                  <option value="6">มิถุนายน</option>
+                  <option value="7">กรกฎาคม</option>
+                  <option value="8">สิงหาคม</option>
+                  <option value="9">กันยายน</option>
+                  <option value="10">ตุลาคม</option>
+                  <option value="11">พฤศจิกายน</option>
+                  <option value="12">ธันวาคม</option>
+                </select>
+                <select id="yearSelect" class="field-select year-select"></select>
+              </div>
+              <div class="field-help">แสดงปี พ.ศ. และ (ค.ศ.) เพื่อกันเลือกผิดงวด</div>
+            </div>
+
+            <div class="login-mini">
+              <div class="mini-row">
+                <span class="k">📊 ประวัติ 3 เดือน (L3M)</span>
+                <span class="v" id="prevHistRange">—</span>
+              </div>
+              <div class="mini-row">
+                <span class="k">📅 LY เดือนเดียวกัน</span>
+                <span class="v" id="prevLYMonth">—</span>
+              </div>
+            </div>
+
+            <div id="serverStatus" class="server-status">
+              <span id="serverDot" style="width:8px;height:8px;border-radius:50%;background:var(--border-md);flex-shrink:0;"></span>
+              <span id="serverStatusText">กำลังตรวจสอบ server...</span>
+            </div>
+
+            <button class="btn-run login-btn" id="loginBtn" onclick="handleLogin()">
+              เข้าสู่ระบบ Dashboard
+            </button>
+            <div class="login-error" id="loginError" style="display:none;"></div>
+
+            <div class="login-foot2">
+              <span>จำค่า Supervisor และงวดล่าสุดอัตโนมัติบนเครื่องนี้</span>
+              <button class="link-btn" type="button" onclick="clearLoginMemory()">ล้างค่าที่จำไว้</button>
+            </div>
           </div>
-
-          <p class="upload-note">💡 ถ้ามีไฟล์เดียวที่มีทั้ง 2 sheet ให้อัปโหลดที่ "เป้าหีบ SKU" แล้วระบบจะอ่านทั้งคู่ให้อัตโนมัติ</p>
-        </div>
-
-        <!-- Server status indicator -->
-        <div id="serverStatus" style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-3);margin-bottom:12px;padding:8px 12px;background:var(--bg-main);border-radius:6px;border:1px solid var(--border);">
-          <span id="serverDot" style="width:8px;height:8px;border-radius:50%;background:var(--border-md);flex-shrink:0;"></span>
-          <span id="serverStatusText">กำลังตรวจสอบ server...</span>
-        </div>
-
-        <button class="btn-run login-btn" id="loginBtn" onclick="handleLogin()">
-          เข้าสู่ระบบ Dashboard
-        </button>
-        <div class="login-error" id="loginError" style="display:none;"></div>
+        </main>
       </div>
     </div>
 
@@ -368,6 +344,8 @@
           </div>
         </div>
 
+        <div id="fabricChangeStep3Notice" class="fabric-change-inline" style="display:none;" aria-live="polite"></div>
+
         <div class="run-card">
           <div class="run-left">
             <div class="run-emoji" id="runEmoji">🤖</div>
@@ -398,6 +376,7 @@
                 <option value="code">เรียงตาม รหัสสินค้า</option>
                 <option value="brand">เรียงตาม ชื่อแบรนด์</option>
                 <option value="qty">เรียงตาม จำนวนหีบ (มากไปน้อย)</option>
+                <option value="price_desc">เรียงตาม ราคา/หีบ (มากไปน้อย)</option>
               </select>
 
               <select id="brandSelect" class="field-select"
@@ -407,11 +386,16 @@
               <button class="btn-dl"
                 style="color:var(--text-2); border-color:var(--border-md); background:var(--bg-main);"
                 onclick="saveDraft()">💾 บันทึกร่าง</button>
+              <button class="btn-dl" id="undoBtn"
+                style="color:var(--text-2); border-color:var(--border-md); background:var(--bg-main);"
+                onclick="undoLastEdit()" disabled>↩️ Undo</button>
               <button class="btn-dl" style="color:var(--amber); border-color:var(--amber-brd);"
                 onclick="autoRebalance()">⚖️ เกลี่ยอัตโนมัติ</button>
               <button class="btn-dl" onclick="showExportModal()">↓ ดาวน์โหลด Excel</button>
             </div>
           </div>
+
+          <div id="step3ResultTargetNote" class="fabric-change-inline" style="display:none;margin-bottom:12px;" aria-live="polite"></div>
 
           <!-- brand summary bar (แสดงเมื่อ filter) -->
           <div class="brand-summary" id="brandSummary"></div>
@@ -456,7 +440,7 @@
     · ตั้งค่า <code>API_BASE_URL</code> ใน <code>app.js</code>
   </div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=20260408"></script>
 </body>
 
 </html>

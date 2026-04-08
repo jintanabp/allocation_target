@@ -25,20 +25,89 @@ let S = {
   skuWarnings: [],    // SKU reconciliation warnings จาก backend
 };
 
+/* ══════════════════════════════════════════════
+   UNDO STACK (Step 3 edits)
+══════════════════════════════════════════════ */
+const _UNDO_MAX = 25;
+let _undoStack = [];
+
+function _setUndoEnabled() {
+  const btn = document.getElementById("undoBtn");
+  if (!btn) return;
+  btn.disabled = _undoStack.length === 0;
+  btn.title = btn.disabled ? "ยังไม่มีการแก้ไขให้ Undo" : "ย้อนกลับการแก้ไขล่าสุด";
+}
+
+function _pushUndoState(reason = "") {
+  if (!S.allocations || S.allocations.length === 0) return;
+  const snap = {
+    ts: Date.now(),
+    reason,
+    allocations: S.allocations.map(a => ({
+      emp_id: a.emp_id,
+      sku: a.sku,
+      allocated_boxes: Number(a.allocated_boxes) || 0,
+      is_edited: !!a.is_edited,
+      // เก็บ metadata ที่ใช้ render (กัน header/brand หายเมื่อ restore)
+      price_per_box: Number(a.price_per_box) || 0,
+      brand_name_thai: a.brand_name_thai || "",
+      brand_name_english: a.brand_name_english || "",
+      product_name_thai: a.product_name_thai || "",
+      hist_avg: Number(a.hist_avg) || 0,
+    })),
+  };
+  _undoStack.push(snap);
+  if (_undoStack.length > _UNDO_MAX) _undoStack.shift();
+  _setUndoEnabled();
+}
+
+function undoLastEdit() {
+  if (_undoStack.length === 0) return;
+  const last = _undoStack.pop();
+  S.allocations = last.allocations || [];
+  S._hasUnsaved = true;
+  buildBrandTabs(S.allocations);
+  renderResult(S.allocations);
+  updateValidation();
+  _setUndoEnabled();
+  toast("↩️ Undo สำเร็จ", "green");
+}
+
 const MONTH_TH = ["", "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
   "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
 const MONTH_FULL_TH = ["", "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
   "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
 
 /* ══════════════════════════════════════════════
+   FETCH HELPERS (compat)
+══════════════════════════════════════════════ */
+async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
+  const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const t = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
+  try {
+    const opts = ctrl ? { ...options, signal: ctrl.signal } : options;
+    return await fetch(url, opts);
+  } finally {
+    if (t) clearTimeout(t);
+  }
+}
+
+/* ══════════════════════════════════════════════
    INIT
 ══════════════════════════════════════════════ */
 document.addEventListener("DOMContentLoaded", () => {
+  document.body.classList.add("is-login");
+  _enableLoginScrollLock();
   populateYearSelect();
   updateDatePreview();
   document.getElementById("monthSelect").addEventListener("change", updateDatePreview);
   document.getElementById("yearSelect").addEventListener("change", updateDatePreview);
   loadManagers();
+  restoreLoginMemory();
+  document.getElementById("supSelect")?.addEventListener("change", persistLoginMemory);
+  document.getElementById("supSelect")?.addEventListener("blur", persistLoginMemory);
+  document.getElementById("monthSelect")?.addEventListener("change", persistLoginMemory);
+  document.getElementById("yearSelect")?.addEventListener("change", persistLoginMemory);
 
   document.querySelectorAll('[name="strategy"]').forEach(r => {
     r.addEventListener("change", () => {
@@ -59,14 +128,119 @@ document.addEventListener("DOMContentLoaded", () => {
   _pollServerStatus();
 });
 
+/* ══════════════════════════════════════════════
+   HARD SCROLL LOCK (Login only)
+══════════════════════════════════════════════ */
+let _loginScrollLockOn = false;
+function _enableLoginScrollLock() {
+  if (_loginScrollLockOn) return;
+  _loginScrollLockOn = true;
+
+  // ล็อก scroll ที่ระดับ html element (ที่ scroll จริง)
+  document.documentElement.style.overflow = 'hidden';
+  document.documentElement.style.height = '100dvh';
+
+  const prevent = (e) => {
+    if (!document.body.classList.contains("is-login")) return;
+    e.preventDefault();
+  };
+  const preventKeys = (e) => {
+    if (!document.body.classList.contains("is-login")) return;
+    const k = e.key;
+    const blocked = ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "];
+    if (blocked.includes(k)) e.preventDefault();
+  };
+
+  window.addEventListener("wheel", prevent, { passive: false, capture: true });
+  window.addEventListener("touchmove", prevent, { passive: false, capture: true });
+  window.addEventListener("keydown", preventKeys, { passive: false, capture: true });
+}
+
+function _disableLoginScrollLock() {
+  document.body.classList.remove("is-login");
+  // คืนค่า scroll ให้ html element เมื่อเข้า dashboard
+  document.documentElement.style.overflow = '';
+  document.documentElement.style.height = '';
+}
+
+/* ══════════════════════════════════════════════
+   LOGIN MEMORY (Supervisor + Period)
+══════════════════════════════════════════════ */
+const _LOGIN_MEM_KEY = "LoginMem_v1";
+
+function persistLoginMemory() {
+  const sup = document.getElementById("supSelect")?.value?.trim() || "";
+  const m = parseInt(document.getElementById("monthSelect")?.value || "", 10);
+  const y = parseInt(document.getElementById("yearSelect")?.value || "", 10);
+  if (!sup && (!m || !y)) return;
+
+  let mem = {};
+  try { mem = JSON.parse(localStorage.getItem(_LOGIN_MEM_KEY) || "{}"); } catch { mem = {}; }
+  mem.last = { sup, m, y, ts: Date.now() };
+  mem.recent = Array.isArray(mem.recent) ? mem.recent : [];
+  if (sup) {
+    mem.recent = [sup, ...mem.recent.filter(x => x !== sup)].slice(0, 6);
+  }
+  localStorage.setItem(_LOGIN_MEM_KEY, JSON.stringify(mem));
+  renderRecentSupChips();
+}
+
+function restoreLoginMemory() {
+  let mem;
+  try { mem = JSON.parse(localStorage.getItem(_LOGIN_MEM_KEY) || "null"); } catch { mem = null; }
+  if (mem?.last) {
+    const { sup, m, y } = mem.last;
+    if (sup) {
+      const inp = document.getElementById("supSelect");
+      if (inp && !inp.value) inp.value = sup;
+    }
+    if (m) {
+      const ms = document.getElementById("monthSelect");
+      if (ms) ms.value = String(m);
+    }
+    if (y) {
+      const ys = document.getElementById("yearSelect");
+      if (ys) ys.value = String(y);
+    }
+    updateDatePreview();
+  }
+  renderRecentSupChips();
+}
+
+function renderRecentSupChips() {
+  const wrap = document.getElementById("recentSupWrap");
+  if (!wrap) return;
+  let mem;
+  try { mem = JSON.parse(localStorage.getItem(_LOGIN_MEM_KEY) || "null"); } catch { mem = null; }
+  const recent = Array.isArray(mem?.recent) ? mem.recent.filter(Boolean) : [];
+  if (recent.length === 0) { wrap.style.display = "none"; wrap.innerHTML = ""; return; }
+  wrap.style.display = "flex";
+  wrap.innerHTML = recent.map(s => `<span class="chip" onclick="setSupFromChip('${String(s).replace(/'/g, "\\\\'")}')">🕘 ${s}</span>`).join("");
+}
+
+function setSupFromChip(sup) {
+  const inp = document.getElementById("supSelect");
+  if (!inp) return;
+  inp.value = sup;
+  persistLoginMemory();
+}
+
+function clearLoginMemory() {
+  localStorage.removeItem(_LOGIN_MEM_KEY);
+  const wrap = document.getElementById("recentSupWrap");
+  if (wrap) { wrap.style.display = "none"; wrap.innerHTML = ""; }
+  toast("ล้างค่าที่จำไว้เรียบร้อย", "green");
+}
+
 async function _pollServerStatus() {
   const dot  = document.getElementById("serverDot");
   const text = document.getElementById("serverStatusText");
   if (!dot || !text) return;
 
+  let _managersLoadedOnce = false;
   const check = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/health`, { signal: AbortSignal.timeout(2500) });
+      const res = await fetchWithTimeout(`${API_BASE_URL}/health`, {}, 2500);
       if (res.ok) {
         dot.style.background  = "var(--green)";
         text.textContent = "✓ Server พร้อมใช้งาน";
@@ -74,6 +248,11 @@ async function _pollServerStatus() {
         // enable login button ถ้าถูก disable จาก server offline
         const btn = document.getElementById("loginBtn");
         if (btn) btn.disabled = false;
+        // โหลดรายชื่อ Supervisor อัตโนมัติเมื่อ server พร้อม (กันกรณีเปิดเว็บมาก่อนรัน server)
+        if (!_managersLoadedOnce) {
+          _managersLoadedOnce = true;
+          loadManagers();
+        }
       } else {
         throw new Error(`HTTP ${res.status}`);
       }
@@ -81,6 +260,7 @@ async function _pollServerStatus() {
       dot.style.background  = "var(--red)";
       text.textContent = "✗ Server ยังไม่ได้รัน — เปิด start_server.bat ก่อน";
       text.style.color = "var(--red)";
+      _managersLoadedOnce = false;
     }
   };
 
@@ -125,23 +305,25 @@ function getPrevThreeMonths(m, y) {
 
 async function loadManagers() {
   const supInput = document.getElementById("supSelect");
+  const retryBtn = document.getElementById("managersRetryBtn");
+  if (retryBtn) retryBtn.style.display = "none";
   try {
-    const res = await fetch(`${API_BASE_URL}/managers`, {
-      signal: AbortSignal.timeout(15000),
-    });
+    const res = await fetchWithTimeout(`${API_BASE_URL}/managers`, {}, 15000);
     if (res.ok) {
       const data = await res.json();
       if (data.managers && data.managers.length > 0) {
         S.managers = data.managers;
         supInput.placeholder = "พิมพ์ค้นหา หรือคลิกเพื่อเลือก...";
         setupAutocomplete(supInput, S.managers);
+        if (retryBtn) retryBtn.style.display = "none";
         return;
       }
     }
   } catch (err) {
     console.error("loadManagers error:", err);
   }
-  supInput.placeholder = "โหลดไม่สำเร็จ (พิมพ์รหัสเองได้เลย)";
+  supInput.placeholder = "ดึงรายการ Supervisor ไม่สำเร็จ (พิมพ์รหัสเองได้เลย)";
+  if (retryBtn) retryBtn.style.display = "inline-flex";
 }
 
 function setupAutocomplete(input, list) {
@@ -224,6 +406,7 @@ async function handleLogin() {
   S.supId = rawSupId;
   S.targetMonth = tm;
   S.targetYear = ty;
+  persistLoginMemory();
 
   const ok = await loadData(S.supId, S.targetMonth, S.targetYear);
 
@@ -233,6 +416,7 @@ async function handleLogin() {
     return;
   }
 
+  _disableLoginScrollLock();
   document.getElementById("loginView").style.display = "none";
   document.getElementById("dashboardView").style.display = "block";
   document.getElementById("topbarTotalContainer").style.display = "block";
@@ -252,6 +436,7 @@ async function handleLogin() {
     checkAndLoadDraft();
     checkSnapshotChanges();
     _showSkuWarnings();
+    _setUndoEnabled();
   } catch (err) {
     console.error("RENDER ERROR:", err);
     alert("Render error: " + err.message);
@@ -284,12 +469,16 @@ function _doLogout() {
   });
   document.getElementById("dashboardView").style.display = "none";
   document.getElementById("loginView").style.display = "block";
+  document.body.classList.add("is-login");
+  _enableLoginScrollLock();
   ["topbarTotalContainer", "topbarPeriodContainer", "logoutBtn"].forEach(id =>
     document.getElementById(id).style.display = "none"
   );
   document.getElementById("totalTargetDisplay").textContent = "—";
   document.getElementById("resultBlock").style.display = "none";
   document.getElementById("progList").style.display = "none";
+  _undoStack = [];
+  _setUndoEnabled();
 }
 
 function _showLogoutModal() {
@@ -357,13 +546,17 @@ async function loadData(supId, targetMonth, targetYear) {
     S.totalTarget = S.skus.reduce(
       (a, s) => a + (Number(s.price_per_box) || 0) * (Number(s.supervisor_target_boxes) || 0), 0
     );
+    S.skuWarnings = data.sku_warnings || [];
     if (S.totalTarget === 0) {
-      showLoginError("⚠️ คำนวณเป้ารวมได้ 0 บาท ตรวจสอบไฟล์ target_boxes.csv");
-      return false;
+      S.skuWarnings = [{
+        type: "zero_total",
+        sku: "",
+        brand: "",
+        message: "เป้ารวมมูลค่า 0 บาท — ตรวจสอบ tga_target_salesman (SALESMANCODE, PRODUCTCODE, QUANTITYCASE) และราคาต่อหีบใน dim_product — ถ้าเปิดกรองงวดด้วยวันที่ ให้ตั้ง TGA_FILTER_BY_EFFECTIVE=1",
+      }, ...S.skuWarnings];
     }
     S.yellow = {};
     S.employees.forEach(e => { S.yellow[e.emp_id] = Number(e.target_sun) || 0; });
-    S.skuWarnings = data.sku_warnings || [];
     document.getElementById("totalTargetDisplay").textContent = baht(S.totalTarget);
     return true;
   } catch (err) {
@@ -402,6 +595,9 @@ function _showSkuWarnings() {
   const noHistory   = warnings.filter(w => w.type === "no_history");
   const noTarget    = warnings.filter(w => w.type === "no_target");
   const empMismatch = warnings.filter(w => w.type === "emp_mismatch");
+  const noTgaEmp    = warnings.filter(w => w.type === "no_tga_employee");
+  const noTgaSku    = warnings.filter(w => w.type === "no_tga_sku");
+  const zeroTotal   = warnings.filter(w => w.type === "zero_total");
   const escH = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 
   const banner = document.createElement("div");
@@ -415,9 +611,27 @@ function _showSkuWarnings() {
       <div class="change-banner-title">ตรวจพบความไม่ตรงกันระหว่างเป้าหีบและข้อมูลทีม</div>
       <ul class="change-banner-list">`;
 
+  if (zeroTotal.length > 0) {
+    html += `<li><strong style="color:var(--amber)">⚠️ เป้ารวม 0 บาท</strong><br>`;
+    html += zeroTotal.map(w => escH(w.message)).join("<br>");
+    html += `</li>`;
+  }
+
   if (empMismatch.length > 0) {
     html += `<li><strong style="color:var(--amber)">⚠️ รหัสพนักงานใน target_sun ไม่ตรงกับทีม</strong><br>`;
     html += empMismatch.map(w => escH(w.message)).join("<br>");
+    html += `</li>`;
+  }
+
+  if (noTgaEmp.length > 0) {
+    html += `<li><strong>ไม่มีแถวเป้าใน TGA สำหรับพนักงานในงวดนี้</strong> (target_sun = 0)<br>`;
+    html += noTgaEmp.map(w => escH(w.message)).join("<br>");
+    html += `</li>`;
+  }
+
+  if (noTgaSku.length > 0) {
+    html += `<li><strong>SKU ที่ทีมเคยขายแต่ไม่มีเป้าหีบใน TGA</strong><br>`;
+    html += noTgaSku.map(w => escH(w.message)).join("<br>");
     html += `</li>`;
   }
 
@@ -466,7 +680,7 @@ function _showSkuWarnings() {
   }
 
   html += `</ul>
-      <div class="change-banner-note">💡 ถ้าต้องการแก้ไข ให้อัปโหลดไฟล์เป้าหีบใหม่ในหน้า Login</div>
+      <div class="change-banner-note">💡 แก้ข้อมูลใน Fabric (tga_target_salesman) หรือใช้โหมด USE_LEGACY_TARGET_CSV=1 ชั่วคราว</div>
       <div class="change-banner-actions">
         <button class="btn-banner-close" onclick="document.getElementById('skuWarningBanner').remove()">รับทราบ ปิด</button>
       </div>
@@ -489,6 +703,7 @@ function renderStep1() {
       <td>
         <span class="emp-tag">${e.emp_id}</span>
         ${e.emp_name ? `<div class="emp-name-sub">${e.emp_name}</div>` : ""}
+        ${e.has_tga_rows === false ? `<div class="emp-name-sub" style="color:var(--amber);font-size:11px;">ไม่มีแถว TGA ในงวดนี้</div>` : ""}
       </td>
       <td class="r mono">${baht(e.ly_sales)}</td>
       <td class="r mono" style="color:var(--text-3);">${baht(e.hist_avg_3m)}</td>
@@ -782,6 +997,7 @@ async function _doOptimize(lockedEdits = []) {
 
     qs(`#${steps[steps.length - 1]}`).className = "prog-row done";
     _saveAllocationSnapshot();
+    checkSnapshotChanges();
     return allocs;
 
   } catch (err) {
@@ -832,6 +1048,7 @@ function renderResult(allocs) {
   let filtered = isFiltered ? allocs.filter(a => (a.brand_name_thai || a.brand_name_english || "") === S.activeBrand) : allocs;
 
   const sortMode = qs("#skuSortSelect")?.value || "code";
+  const _skuPriceMap = Object.fromEntries(S.skus.map(x => [x.sku, Number(x.price_per_box) || 0]));
   let uniqueSkusObj = {};
   filtered.forEach(a => {
     if (!uniqueSkusObj[a.sku]) {
@@ -848,6 +1065,7 @@ function renderResult(allocs) {
   if (sortMode === "code") skusObjArr.sort((a, b) => a.sku.localeCompare(b.sku));
   else if (sortMode === "brand") skusObjArr.sort((a, b) => a.brand.localeCompare(b.brand));
   else if (sortMode === "qty") skusObjArr.sort((a, b) => b.totalQty - a.totalQty);
+  else if (sortMode === "price_desc") skusObjArr.sort((a, b) => (_skuPriceMap[b.sku] ?? 0) - (_skuPriceMap[a.sku] ?? 0));
 
   const skus = skusObjArr.map(o => o.sku);
   const emps = [...new Set(allocs.map(a => a.emp_id))];
@@ -878,7 +1096,12 @@ function renderResult(allocs) {
   let headerHtml = `<tr><th>S/M</th><th>W/H</th>`;
   skus.forEach(s => {
     const info = S.skus.find(x => x.sku === s) || {};
-    headerHtml += `<th class="r sku-th"><div class="sku-th-code">${s}</div><div class="sku-th-brand">${info.brand_name_thai || ""}</div></th>`;
+    const price = _skuPriceMap[s] ?? 0;
+    headerHtml += `<th class="r sku-th">` +
+      `<div class="sku-th-code">${s}</div>` +
+      `<div class="sku-th-brand">${info.brand_name_thai || info.brand_name_english || ""}</div>` +
+      `<div class="sku-th-price">${fmt(price)} <span class="muted">บาท/หีบ</span></div>` +
+      `</th>`;
   });
   if (isFiltered) {
     headerHtml += `<th class="r sticky-brand-box">รวมหีบ<div style="font-size:9px;color:var(--accent)">${S.activeBrand}</div></th>`;
@@ -889,7 +1112,6 @@ function renderResult(allocs) {
   qs("#resultHead").innerHTML = headerHtml;
 
   // Pre-compute per-emp grand/brand totals — single O(n) pass แทน O(n²) filter loop
-  const _skuPriceMap = Object.fromEntries(S.skus.map(x => [x.sku, Number(x.price_per_box) || 0]));
   const _empTotals = {};
   for (const a of allocs) {
     if (!_empTotals[a.emp_id]) _empTotals[a.emp_id] = { grandBoxes: 0, grandValue: 0, brandBoxes: 0, brandValue: 0 };
@@ -961,6 +1183,21 @@ function renderResult(allocs) {
 
   renderResultFooter(skus, skuTotals, emps);
   _updateDeviationBar(emps);
+  syncStep3ResultFabricNote();
+}
+
+/** คัดลอกแจ้งเตือนเป้า Fabric ไปไว้เหนือตารางผลลัพธ์เมื่อมี */
+function syncStep3ResultFabricNote() {
+  const src = document.getElementById("fabricChangeStep3Notice");
+  const dst = document.getElementById("step3ResultTargetNote");
+  if (!src || !dst) return;
+  if (src.style.display === "block" && src.innerHTML.trim()) {
+    dst.innerHTML = src.innerHTML;
+    dst.style.display = "block";
+  } else {
+    dst.innerHTML = "";
+    dst.style.display = "none";
+  }
 }
 
 // 🔴 ตรึงคอลัมน์ S/M กับ W/H ไว้ด้วยกัน ไม่ให้ตารางเบี้ยว 
@@ -1015,6 +1252,8 @@ function onResultEdit(el) {
   const emp = el.dataset.emp;
   const sku = el.dataset.sku;
 
+  _pushUndoState(`edit:${emp}:${sku}`);
+
   const raw = parseInt(el.textContent.replace(/[^0-9]/g, "")) || 0;
   const val = Math.max(0, raw);
   el.textContent = val;
@@ -1062,25 +1301,49 @@ function autoRebalance(silent = false) {
 
     if (unedited.length === 0) return; // ล็อคทุกคนแล้ว เกลี่ยไม่ได้
 
-    const editedSum = edited.reduce((s, a) => s + (a.allocated_boxes || 0), 0);
-    let remainingTarget = target - editedSum;
-    if (remainingTarget < 0) remainingTarget = 0;
+    // เกลี่ยแบบ incremental: ปรับเฉพาะส่วนต่าง (delta) แทนการคำนวณใหม่ทั้ง SKU
+    // เพื่อให้เวลาแก้ 1 ช่อง ตัวเลขอื่นนิ่งขึ้นมาก
+    const delta = Math.round(target - currentSum);
+    if (delta === 0) return;
 
-    const histSum = unedited.reduce((s, a) => s + (a.hist_avg || 0.1), 0);
-    let raw = {}; let floored = {}; let flooredSum = 0;
+    const weights = unedited.map(a => Math.max(Number(a.hist_avg) || 0, 0) + 0.1);
+    const wSum = weights.reduce((a, v) => a + v, 0) || unedited.length;
 
-    unedited.forEach(a => {
-      const w = (a.hist_avg || 0.1) / histSum;
-      raw[a.emp_id] = remainingTarget * w;
-      floored[a.emp_id] = Math.floor(raw[a.emp_id]);
-      flooredSum += floored[a.emp_id];
-    });
-
-    let remain = remainingTarget - flooredSum;
-    unedited.sort((a, b) => (raw[b.emp_id] - floored[b.emp_id]) - (raw[a.emp_id] - floored[a.emp_id]));
-    for (let i = 0; i < remain; i++) { floored[unedited[i % unedited.length].emp_id] += 1; }
-    unedited.forEach(a => { a.allocated_boxes = floored[a.emp_id]; });
-    changed = true;
+    if (delta > 0) {
+      // เติมส่วนที่ขาด: แจกเพิ่มให้ unedited ตามสัดส่วน hist
+      const raw = unedited.map((a, i) => delta * (weights[i] / wSum));
+      const add = raw.map(v => Math.floor(v));
+      let rem = delta - add.reduce((s, v) => s + v, 0);
+      const order = raw
+        .map((v, i) => ({ i, frac: v - add[i] }))
+        .sort((a, b) => b.frac - a.frac)
+        .map(o => o.i);
+      for (let k = 0; k < rem; k++) add[order[k % order.length]] += 1;
+      unedited.forEach((a, i) => { a.allocated_boxes = (Number(a.allocated_boxes) || 0) + add[i]; });
+      changed = true;
+    } else {
+      // ลดส่วนที่เกิน: ดึงออกจาก unedited โดยไม่ให้ติดลบ
+      let need = Math.abs(delta);
+      // เรียงคนที่มีหีบเยอะก่อน และประวัติน้อยก่อน (กันดึงจากคนขายเยอะจนผิดธรรมชาติ)
+      const idx = unedited
+        .map((a, i) => ({ i, boxes: Number(a.allocated_boxes) || 0, w: weights[i] }))
+        .sort((a, b) => (b.boxes - a.boxes) || (a.w - b.w))
+        .map(o => o.i);
+      for (const i of idx) {
+        if (need <= 0) break;
+        const a = unedited[i];
+        const have = Math.max(0, Number(a.allocated_boxes) || 0);
+        if (have <= 0) continue;
+        const take = Math.min(have, need);
+        a.allocated_boxes = have - take;
+        need -= take;
+      }
+      if (need > 0) {
+        // กันกรณี target ต่ำกว่า editedSum จนเหลือดึงไม่พอ: clamp แล้วจบ
+        // (อย่าไปยุ่ง edited)
+      }
+      changed = true;
+    }
   });
 
   renderResult(S.allocations); // วาดตารางใหม่เสมอ ให้ยอดอัปเดต
@@ -1260,6 +1523,9 @@ function saveDraft(silent = false) {
   try {
     localStorage.setItem(draftKey, JSON.stringify(draftData));
     S._hasUnsaved = false;
+    // ยึด baseline เป้าจาก Fabric ณ ตอนบันทึก — login รอบหน้าจะไม่เตือนเกินจริงถ้าข้อมูลไม่เปลี่ยนแปลง
+    _saveAllocationSnapshot();
+    checkSnapshotChanges();
     if (!silent) toast("💾 บันทึกแบบร่างลงในเครื่องเรียบร้อยแล้ว\n(สามารถปิดเว็บแล้วกลับมาทำต่อได้)", "green");
   } catch (err) {
     // QuotaExceededError — พื้นที่ browser เต็ม (~5MB)
@@ -1284,6 +1550,10 @@ function checkAndLoadDraft() {
       S.yellowLocked = draftData.yellowLocked || {};
       S.allocations = draftData.allocations || [];
 
+      const mergeMsgs = mergeDraftIncreasedOfficialTargets();
+      _saveAllocationSnapshot();
+      checkSnapshotChanges();
+
       renderStep1();
       renderYellowTable();
       updateValidation();
@@ -1292,13 +1562,18 @@ function checkAndLoadDraft() {
         qs("#resultBlock").style.display = "block";
         buildBrandTabs(S.allocations);
         renderResult(S.allocations);
+        syncStep3ResultFabricNote();
         qs("#runEmoji").textContent = "✅";
         qs("#runTitle").textContent = "โหลดแบบร่างสำเร็จ";
         qs("#runSub").textContent = "กรองแบรนด์ · แก้ตัวเลข · Export";
         qs("#runBtn").textContent = "คำนวณใหม่";
         qs("#runBtn").disabled = false;
       }
-      toast("📥 โหลดแบบร่างสำเร็จ!", "green");
+      let draftToast = "📥 โหลดแบบร่างสำเร็จ";
+      if (mergeMsgs.length) {
+        draftToast += "\n\n" + mergeMsgs.map(m => m.text).join("\n");
+      }
+      toast(draftToast, mergeMsgs.some(m => m.type === "warn") ? "red" : "green");
     },
     () => {
       // ผู้ใช้กด "เริ่มใหม่"
@@ -1341,6 +1616,156 @@ function _showDraftModal(onLoad, onDiscard) {
 /* ══════════════════════════════════════════════
    ข้อ 11: SNAPSHOT & CHANGE DETECTION SYSTEM
 ══════════════════════════════════════════════ */
+function _snapshotEsc(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function _distributeIntEven(total, n) {
+  if (n <= 0 || total <= 0) return [];
+  const base = Math.floor(total / n);
+  let rem = total - base * n;
+  const out = new Array(n).fill(base);
+  for (let i = 0; i < rem; i++) out[i]++;
+  return out;
+}
+
+/** เทียบ snapshot กับ S ปัจจุบัน — คืนรายการข้อความ HTML */
+function _buildSnapshotChangeList(snap) {
+  if (!snap) return [];
+  const changes = [];
+  const esc = _snapshotEsc;
+  S.skus.forEach(s => {
+    const old = snap.skus?.find(x => x.sku === s.sku);
+    if (!old) {
+      changes.push(`🆕 SKU ใหม่: <strong>${esc(s.sku)}</strong>`);
+    } else {
+      const boxDiff = (Number(s.supervisor_target_boxes) || 0) - (old.supervisor_target_boxes || 0);
+      const priceDiff = (Number(s.price_per_box) || 0) - (old.price_per_box || 0);
+      if (boxDiff !== 0) {
+        const label = boxDiff > 0 ? `เพิ่ม +${boxDiff}` : `ลด ${Math.abs(boxDiff)}`;
+        changes.push(`📦 <strong>${esc(s.sku)}</strong>: เป้าหีบทีม ${label} หีบ`);
+      }
+      if (Math.abs(priceDiff) > 0.01) {
+        changes.push(`💰 <strong>${esc(s.sku)}</strong>: ราคา/หีบเปลี่ยน ${priceDiff > 0 ? "+" : ""}${baht(priceDiff)} บาท`);
+      }
+    }
+  });
+  snap.skus?.forEach(old => {
+    if (!S.skus.find(s => s.sku === old.sku)) {
+      changes.push(`❌ SKU หายไป: <strong>${esc(old.sku)}</strong>`);
+    }
+  });
+  S.employees.forEach(e => {
+    const oldE = snap.targets?.find(x => x.emp_id === e.emp_id);
+    if (oldE && Math.abs((Number(e.target_sun) || 0) - oldE.target_sun) > 100) {
+      const diff = (Number(e.target_sun) || 0) - oldE.target_sun;
+      changes.push(`👤 <strong>${esc(e.emp_id)}</strong>: เป้าเงินเริ่มต้นเปลี่ยน ${diff > 0 ? "+" : ""}${baht(diff)} บาท`);
+    }
+  });
+  return changes;
+}
+
+function _clearFabricStep3Notices() {
+  const a = document.getElementById("fabricChangeStep3Notice");
+  const b = document.getElementById("step3ResultTargetNote");
+  if (a) { a.style.display = "none"; a.innerHTML = ""; }
+  if (b) { b.style.display = "none"; b.innerHTML = ""; }
+}
+
+function _renderFabricStep3Notices(changes) {
+  if (!changes || changes.length === 0) {
+    _clearFabricStep3Notices();
+    return;
+  }
+  const inner = `
+    <div class="fabric-change-title">📡 เป้าจาก Fabric เปลี่ยนเมื่อเทียบกับครั้งล่าสุดที่บันทึก snapshot</div>
+    <ul>${changes.map(c => `<li>${c}</li>`).join("")}</ul>
+    <div style="font-size:12px;color:var(--text-2);margin-top:8px;">ช่องหีบที่แก้มือและล็อกไว้ (สีเหลือง) จะไม่ถูกเขียนทับ — หีบที่เพิ่มจากเป้าทีมจะเกลี่ยไปช่องที่ยังไม่ล็อกเมื่อโหลดแบบร่าง</div>`;
+  const top = document.getElementById("fabricChangeStep3Notice");
+  if (top) {
+    top.innerHTML = inner;
+    top.style.display = "block";
+  }
+  const inResult = document.getElementById("step3ResultTargetNote");
+  const rb = document.getElementById("resultBlock");
+  if (inResult && rb && rb.style.display !== "none") {
+    inResult.innerHTML = inner;
+    inResult.style.display = "block";
+  } else if (inResult) {
+    inResult.innerHTML = "";
+    inResult.style.display = "none";
+  }
+}
+
+/**
+ * หลังโหลด draft: ถ้าเป้าหีบทีม (Fabric) มากกว่าผลรวมในแบบร่าง — เกลี่ยส่วนเพิ่มให้ช่องที่ไม่ is_edited
+ */
+function mergeDraftIncreasedOfficialTargets() {
+  const msgs = [];
+  for (const skuRow of S.skus) {
+    const sku = skuRow.sku;
+    const official = Math.max(0, Math.round(Number(skuRow.supervisor_target_boxes) || 0));
+    const rows = S.allocations.filter(a => a.sku === sku);
+    if (!rows.length) continue;
+    const sum = rows.reduce((s, a) => s + (Number(a.allocated_boxes) || 0), 0);
+    if (official <= sum) {
+      if (official < sum) {
+        msgs.push({
+          type: "warn",
+          text: `⚠️ ${sku}: เป้าทีมลดเหลือ ${official} หีบ แต่ในแบบร่างรวม ${sum} หีบ — กรุณาตรวจหรือคำนวณใหม่`,
+        });
+      }
+      continue;
+    }
+    const delta = official - sum;
+    const unlocked = rows.filter(a => !a.is_edited);
+    if (unlocked.length > 0) {
+      const portions = _distributeIntEven(delta, unlocked.length);
+      unlocked.forEach((a, i) => {
+        a.allocated_boxes = (Number(a.allocated_boxes) || 0) + portions[i];
+      });
+      msgs.push({
+        type: "ok",
+        text: `📦 ${sku}: เป้าทีมเพิ่ม +${delta} หีบ — เกลี่ยเพิ่มให้ ${unlocked.length} ช่องที่ไม่ได้ล็อก`,
+      });
+    } else {
+      const empsWithRow = new Set(rows.map(a => a.emp_id));
+      const others = S.employees.filter(e => !empsWithRow.has(e.emp_id));
+      if (others.length > 0) {
+        const portions = _distributeIntEven(delta, others.length);
+        const skuInfo = S.skus.find(x => x.sku === sku) || {};
+        others.forEach((e, i) => {
+          S.allocations.push({
+            emp_id: e.emp_id,
+            sku,
+            allocated_boxes: portions[i],
+            is_edited: false,
+            price_per_box: Number(skuInfo.price_per_box) || 0,
+            brand_name_thai: skuInfo.brand_name_thai || "",
+            brand_name_english: skuInfo.brand_name_english || "",
+            product_name_thai: skuInfo.product_name_thai || "",
+            hist_avg: 0,
+          });
+        });
+        msgs.push({
+          type: "ok",
+          text: `📦 ${sku}: เป้าเพิ่ม +${delta} หีบ — สร้างแถวให้พนักงานที่ยังไม่มี (${others.length} คน)`,
+        });
+      } else {
+        msgs.push({
+          type: "warn",
+          text: `⚠️ ${sku}: เป้าเพิ่ม +${delta} หีบ แต่ทุกช่องล็อก — ปลดล็อกหรือคำนวณใหม่`,
+        });
+      }
+    }
+  }
+  if (msgs.some(m => m.type === "ok")) {
+    renderResult(S.allocations);
+    updateValidation();
+  }
+  return msgs;
+}
+
 function _saveAllocationSnapshot() {
   const snapKey = `Snap_${S.supId}_${S.targetMonth}_${S.targetYear}`;
   const snap = {
@@ -1360,54 +1785,38 @@ function _saveAllocationSnapshot() {
 }
 
 function checkSnapshotChanges() {
-  if (S.allocations.length === 0) return; 
-
   const snapKey = `Snap_${S.supId}_${S.targetMonth}_${S.targetYear}`;
   let snap;
   try {
     const raw = localStorage.getItem(snapKey);
-    if (!raw) return;
+    if (!raw) {
+      _clearFabricStep3Notices();
+      return;
+    }
     snap = JSON.parse(raw);
-  } catch { return; }
+  } catch {
+    _clearFabricStep3Notices();
+    return;
+  }
 
-  const changes = [];
-  // helper: escape HTML entities ก่อน insert ใน innerHTML
-  const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  const changes = _buildSnapshotChangeList(snap);
+  if (changes.length === 0) {
+    document.getElementById("changeBanner")?.remove();
+    _clearFabricStep3Notices();
+    return;
+  }
 
-  // เช็คเป้าหีบ SKU
-  S.skus.forEach(s => {
-    const old = snap.skus?.find(x => x.sku === s.sku);
-    if (!old) {
-      changes.push(`🆕 SKU ใหม่: <strong>${esc(s.sku)}</strong>`);
-    } else {
-      const boxDiff = (Number(s.supervisor_target_boxes) || 0) - (old.supervisor_target_boxes || 0);
-      const priceDiff = (Number(s.price_per_box) || 0) - (old.price_per_box || 0);
-      if (boxDiff !== 0)
-        changes.push(`📦 <strong>${esc(s.sku)}</strong>: เป้าหีบเปลี่ยน ${boxDiff > 0 ? "+" : ""}${boxDiff} หีบ`);
-      if (Math.abs(priceDiff) > 0.01)
-        changes.push(`💰 <strong>${esc(s.sku)}</strong>: ราคา/หีบเปลี่ยน ${priceDiff > 0 ? "+" : ""}${baht(priceDiff)} บาท`);
-    }
-  });
-  snap.skus?.forEach(old => {
-    if (!S.skus.find(s => s.sku === old.sku))
-      changes.push(`❌ SKU หายไป: <strong>${esc(old.sku)}</strong>`);
-  });
-
-  // เช็คเป้าเงินตั้งต้นจากระบบ
-  S.employees.forEach(e => {
-    const oldE = snap.targets?.find(x => x.emp_id === e.emp_id);
-    if (oldE && Math.abs((Number(e.target_sun) || 0) - oldE.target_sun) > 100) {
-      const diff = (Number(e.target_sun) || 0) - oldE.target_sun;
-      changes.push(`👤 <strong>${esc(e.emp_id)}</strong>: เป้าเงินเริ่มต้นเปลี่ยน ${diff > 0 ? "+" : ""}${baht(diff)} บาท`);
-    }
-  });
-
-  if (changes.length === 0) return;
+  _renderFabricStep3Notices(changes);
 
   const existing = document.getElementById("changeBanner");
   if (existing) existing.remove();
 
   const timeStr = new Date(snap.ts).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" });
+  const hasAlloc = S.allocations && S.allocations.length > 0;
+  const reallocBtn = hasAlloc
+    ? `<button class="btn-realloc" onclick="runReAllocationKeepEdits()">🔄 กระจายหีบใหม่ (รักษา manual edits)</button>`
+    : `<span style="font-size:12px;color:var(--text-2);">ยังไม่มีผลการกระจาย — โหลดแบบร่างหรือกดเริ่มคำนวณเพื่อกระจายตามเป้าใหม่</span>`;
+
   const banner = document.createElement("div");
   banner.id = "changeBanner";
   banner.className = "change-banner";
@@ -1415,13 +1824,13 @@ function checkSnapshotChanges() {
     <div class="change-banner-inner">
       <div class="change-banner-icon">⚠️</div>
       <div class="change-banner-body">
-        <div class="change-banner-title">พบการเปลี่ยนแปลงเป้าหมาย ตั้งแต่กระจายหีบครั้งล่าสุด (${timeStr})</div>
+        <div class="change-banner-title">พบการเปลี่ยนแปลงเป้าจาก Fabric เทียบกับ snapshot ล่าสุด (${timeStr})</div>
         <ul class="change-banner-list">
           ${changes.map(c => `<li>${c}</li>`).join("")}
         </ul>
-        <div class="change-banner-note">⚡ ระบบจะ <u>ไม่แตะ</u> ช่องหีบที่คุณแก้ด้วยมือไว้แล้ว (ไฮไลต์สีเหลือง)</div>
+        <div class="change-banner-note">⚡ ช่องหีบที่แก้มือและล็อกไว้ (สีเหลือง) จะไม่ถูกเขียนทับ — หีบที่เพิ่มจากเป้าทีมจะเกลี่ยไปช่องที่ยังไม่ล็อกเมื่อโหลดแบบร่างที่บันทึกไว้</div>
         <div class="change-banner-actions">
-          <button class="btn-realloc" onclick="runReAllocationKeepEdits()">🔄 กระจายหีบใหม่ (รักษา manual edits)</button>
+          ${reallocBtn}
           <button class="btn-banner-close" onclick="document.getElementById('changeBanner').remove()">ปิด</button>
         </div>
       </div>
@@ -1430,7 +1839,6 @@ function checkSnapshotChanges() {
   const dashboard = qs("#dashboardView");
   if (dashboard) {
     dashboard.prepend(banner);
-    // เด้งขึ้นไปหา banner ทันที ผู้ใช้ไม่ต้องเลื่อนเองหาการแจ้งเตือน
     setTimeout(() => banner.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
   }
 }
@@ -1465,116 +1873,4 @@ async function runReAllocationKeepEdits() {
   qs("#resultBlock").style.display = "block";
   qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
   toast("✅ กระจายหีบใหม่สำเร็จ — manual edits ยังคงอยู่", "green");
-}
-/* ══════════════════════════════════════════════
-   EXCEL UPLOAD (target_boxes / target_sun)
-══════════════════════════════════════════════ */
-
-// ดาวน์โหลด Template
-function downloadTemplate(e) {
-  e.preventDefault();
-  window.location.href = `${API_BASE_URL}/upload/template`;
-}
-
-// เลือกไฟล์จาก input
-function handleFileSelect(input, fileType) {
-  if (input.files && input.files[0]) {
-    uploadTargetFile(input.files[0], fileType);
-  }
-}
-
-// ลากไฟล์วาง
-function handleDrop(event, fileType) {
-  event.preventDefault();
-  const zone = event.currentTarget;
-  zone.classList.remove("drag-over");
-  const file = event.dataTransfer.files[0];
-  if (!file) return;
-  if (!file.name.match(/\.(xlsx|xls)$/i)) {
-    _setUploadStatus(fileType, "err", "⚠️ รองรับเฉพาะ .xlsx หรือ .xls เท่านั้น");
-    return;
-  }
-  uploadTargetFile(file, fileType);
-}
-
-// อัปโหลดไฟล์ไปที่ backend
-async function uploadTargetFile(file, fileType) {
-  const zone    = document.getElementById(fileType === "boxes" ? "dropZoneBoxes" : "dropZoneSun");
-  const txtEl   = document.getElementById(fileType === "boxes" ? "dropTextBoxes" : "dropTextSun");
-
-  _setUploadStatus(fileType, "loading", "⏳ กำลังตรวจสอบการเชื่อมต่อ...");
-
-  // ── ตรวจ server ก่อนเสมอ — ป้องกัน "Failed to fetch" ที่ไม่มีคำอธิบาย ──
-  try {
-    const ping = await fetch(`${API_BASE_URL}/health`, { signal: AbortSignal.timeout(3000) });
-    if (!ping.ok) throw new Error(`server ตอบ HTTP ${ping.status}`);
-  } catch (pingErr) {
-    _setUploadStatus(
-      fileType,
-      "err",
-      "❌ Server ยังไม่ได้รัน\n✅ แก้ไข: เปิด start_server.bat ก่อน แล้วค่อยอัปโหลดไฟล์"
-    );
-    return;
-  }
-
-  _setUploadStatus(fileType, "loading", "⏳ กำลังอัปโหลด...");
-  txtEl.textContent = file.name;
-  zone.classList.remove("done");
-
-  // ตรวจว่าไฟล์มี 2 sheet ไหม — ถ้ามีให้ส่ง file_type=both อัตโนมัติ
-  let resolvedType = fileType;
-  try {
-    const buf  = await file.arrayBuffer();
-    const text = new TextDecoder("utf-8", { fatal: false }).decode(buf.slice(0, 8000));
-    if (text.includes("target_boxes") && text.includes("target_sun") && fileType === "boxes")
-      resolvedType = "both";
-  } catch (_) { /* ไม่ critical */ }
-
-  const formData = new FormData();
-  formData.append("file", file);
-
-  const supId = document.getElementById("supSelect")?.value || "";
-  try {
-    const res  = await fetch(
-      `${API_BASE_URL}/upload/targets?file_type=${resolvedType}&sup_id=${encodeURIComponent(supId)}`,
-      { method: "POST", body: formData }
-    );
-    const json = await res.json();
-    if (!res.ok) {
-      _setUploadStatus(fileType, "err", `❌ ${json.detail || "อัปโหลดไม่สำเร็จ"}`);
-      return;
-    }
-
-    // แสดงผลสรุป
-    const parts = [];
-    if (json.boxes) parts.push(`SKU ${json.boxes.skus} รายการ · มูลค่ารวม ${Number(json.boxes.total_value).toLocaleString("th-TH", {maximumFractionDigits:0})} บาท`);
-    if (json.sun)   parts.push(`พนักงาน ${json.sun.employees} คน · เป้าเงินรวม ${Number(json.sun.total_sun).toLocaleString("th-TH", {maximumFractionDigits:0})} บาท`);
-    _setUploadStatus(fileType, "ok", "✅ " + parts.join(" | "));
-    zone.classList.add("done");
-
-    // ถ้าอัปโหลด both ให้อัปเดต status อีกฝั่งด้วย
-    if (resolvedType === "both") {
-      const otherZone = document.getElementById("dropZoneSun");
-      const otherTxt  = document.getElementById("dropTextSun");
-      otherTxt.textContent = file.name;
-      otherZone.classList.add("done");
-      if (json.sun) _setUploadStatus("sun", "ok",
-        `✅ พนักงาน ${json.sun.employees} คน · เป้าเงินรวม ${Number(json.sun.total_sun).toLocaleString("th-TH", {maximumFractionDigits:0})} บาท`);
-    }
-  } catch (err) {
-    const isFetch = err instanceof TypeError && err.message.toLowerCase().includes("fetch");
-    _setUploadStatus(fileType, "err",
-      isFetch ? "❌ Server ไม่ตอบสนอง — เปิด start_server.bat ก่อนแล้วลองใหม่" : `❌ ${err.message}`
-    );
-  }
-}
-
-function _setUploadStatus(fileType, level, msg) {
-  const el = document.getElementById(fileType === "boxes" ? "statusBoxes" : "statusSun");
-  if (!el) return;
-  el.className = `upload-status ${level}`;
-  // รองรับ multiline — แปลง \n เป็น <br> แต่ escape HTML ก่อน
-  el.innerHTML = msg
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-    .replace(/\n/g, "<br>");
 }

@@ -505,3 +505,97 @@ ORDER BY 'cross_sold_history_2y_qu'[SalesmanCode], [cnt] DESC
         df = pd.DataFrame(records) if records else pd.DataFrame(
             columns=["emp_id", "warehouse_code"])
         return df.drop_duplicates(subset="emp_id", keep="first")
+
+    # ── 7. เป้าหมายจาก tga_target_salesman (semantic model) ─────────────
+    def get_tga_target_salesman(
+        self,
+        emp_list: list,
+        target_month: int,
+        target_year: int,
+    ) -> pd.DataFrame:
+        """
+        ดึงเป้าหีบรายคู่พนักงาน×สินค้าจาก tga_target_salesman (semantic model เดียวกับยอดขายย้อนหลัง)
+
+        ใช้เฉพาะ: SALESMANCODE, PRODUCTCODE, QUANTITYCASE (เป้าหีบ) — นำไปคูณราคาต่อหีบจาก dim_product ใน main
+        ตารางเป้าถูกเคลียร์รายเดือนฝั่งข้อมูล → ค่าเริ่มต้น **ไม่** กรองตาม EFFECTIVEDATE
+
+        ไม่กรองด้วยรายการ SKU จากประวัติขาย (L6M)
+        env: TGA_TABLE_NAME, TGA_COL_SALESMAN, TGA_COL_PRODUCT, TGA_COL_QUANTITY,
+        TGA_FILTER_BY_EFFECTIVE=1 เท่านั้นจึงกรอง YEAR/MONTH ที่ TGA_COL_EFFECTIVE (ค่าเริ่มต้น EFFECTIVEDATE)
+        """
+        t = os.environ.get("TGA_TABLE_NAME", "tga_target_salesman").strip()
+        c_emp = os.environ.get("TGA_COL_SALESMAN", "SALESMANCODE").strip()
+        c_prod = os.environ.get("TGA_COL_PRODUCT", "PRODUCTCODE").strip()
+        c_qty = os.environ.get("TGA_COL_QUANTITY", "QUANTITYCASE").strip()
+        c_eff = os.environ.get("TGA_COL_EFFECTIVE", "EFFECTIVEDATE").strip()
+        filter_period = os.environ.get("TGA_FILTER_BY_EFFECTIVE", "0").strip().lower() in (
+            "1", "true", "yes", "y",
+        )
+
+        if not emp_list:
+            return pd.DataFrame(columns=["emp_id", "sku", "qty"])
+
+        emp_str = ", ".join(f'"{str(e)}"' for e in emp_list)
+
+        eff_filters = ""
+        if filter_period and c_eff:
+            y_ce = int(target_year)
+            tm = int(target_month)
+            eff_filters = (
+                f", YEAR('{t}'[{c_eff}]) = {y_ce}, "
+                f"MONTH('{t}'[{c_eff}]) = {tm}"
+            )
+
+        _tga_log_suffix = (
+            f", กรองงวดจาก {c_eff}"
+            if filter_period
+            else " — ไม่กรองวันที่ (ตารางเป็น snapshot เดือนปัจจุบัน)"
+        )
+        print(
+            f"📡 [{t}] ดึงเป้า TGA (emp={len(emp_list)}, "
+            f"QUANTITYCASE ต่อ SALESMANCODE×PRODUCTCODE{_tga_log_suffix})..."
+        )
+
+        dax = f"""
+EVALUATE
+CALCULATETABLE(
+    SUMMARIZECOLUMNS(
+        '{t}'[{c_emp}],
+        '{t}'[{c_prod}],
+        "target_qty", SUM('{t}'[{c_qty}])
+    ),
+    TREATAS({{{emp_str}}}, '{t}'[{c_emp}]){eff_filters}
+)
+"""
+        rows = self._execute_dax(dax, debug=True)
+        records = []
+        for r in rows:
+            emp = str(
+                self._get(
+                    r,
+                    f"{t}[{c_emp}]",
+                    f"[{c_emp}]",
+                    "tga_target_salesman[SALESMANCODE]",
+                    "[SALESMANCODE]",
+                    default="",
+                )
+            ).strip()
+            sku = str(
+                self._get(
+                    r,
+                    f"{t}[{c_prod}]",
+                    f"[{c_prod}]",
+                    "tga_target_salesman[PRODUCTCODE]",
+                    "[PRODUCTCODE]",
+                    default="",
+                )
+            ).strip()
+            qty = float(self._get(r, "[target_qty]", default=0) or 0)
+            if emp and sku and qty != 0:
+                records.append({"emp_id": emp, "sku": sku, "qty": qty})
+
+        df = pd.DataFrame(records) if records else pd.DataFrame(
+            columns=["emp_id", "sku", "qty"]
+        )
+        print(f"✅ TGA targets: {len(df)} แถว (emp×sku)")
+        return df

@@ -18,13 +18,11 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 import json
 
-from fastapi import FastAPI, HTTPException, Query, UploadFile, File
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 import pandas as pd
-import io
-
 from .OR_engine import allocate_boxes
 from .generate_excel import create_target_excel
 from .fabric_dax_connector import FabricDAXConnector
@@ -212,6 +210,76 @@ def load_target_csv() -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
     return df_sku, df_sun
 
 
+def _build_sku_and_sun_from_tga(
+    df_tga: pd.DataFrame,
+    df_product: pd.DataFrame,
+    emp_list: list,
+    sku_list: list,
+) -> tuple[pd.DataFrame, pd.DataFrame, set[str]]:
+    """
+    จาก TGA (จำนวนหีบ = QUANTITYCASE ต่อคู่ emp×sku):
+    - supervisor_target_boxes ต่อ SKU = SUM หีบของทีมต่อ SKU
+    - target_sun ต่อคน = SUM(หีบ × ราคา/หีบจาก dim_product) รายพนักงาน
+    """
+    sku_list = [str(s).strip() for s in sku_list]
+    team_set = set(str(e).strip() for e in emp_list)
+
+    df_p = df_product.copy() if df_product is not None and not df_product.empty else pd.DataFrame()
+    if not df_p.empty:
+        df_p["sku"] = df_p["sku"].astype(str).str.strip()
+
+    sum_dict: dict[str, float] = {}
+    emp_with_tga: set[str] = set()
+    if df_tga is not None and not df_tga.empty:
+        d = df_tga.copy()
+        d["emp_id"] = d["emp_id"].astype(str).str.strip()
+        d["sku"] = d["sku"].astype(str).str.strip()
+        sub = d[d["emp_id"].isin(team_set)]
+        emp_with_tga = set(sub["emp_id"].unique())
+        sum_dict = sub.groupby("sku")["qty"].sum().to_dict()
+
+    rows_sku: list[dict] = []
+    for sku in sku_list:
+        row_p = df_p[df_p["sku"] == sku] if not df_p.empty else pd.DataFrame()
+        price = 0.0
+        brand_th = brand_en = pname = ""
+        if not row_p.empty:
+            r0 = row_p.iloc[0]
+            price = float(r0.get("unit_cost") or r0.get("price_per_box") or 0)
+            brand_th = str(r0.get("brand_name_thai", "") or "")
+            brand_en = str(r0.get("brand_name_english", "") or "")
+            pname = str(r0.get("product_name_thai", "") or "")
+        if price <= 0:
+            price = float(PRICE_FALLBACK.get(sku, 0.0) or 0.0)
+        sup_boxes = int(round(float(sum_dict.get(sku, 0))))
+        rows_sku.append({
+            "sku": sku,
+            "price_per_box": price,
+            "supervisor_target_boxes": max(0, sup_boxes),
+            "brand_name_thai": brand_th,
+            "brand_name_english": brand_en,
+            "product_name_thai": pname,
+        })
+
+    df_sku = pd.DataFrame(rows_sku)
+    price_by_sku = dict(zip(df_sku["sku"].astype(str), df_sku["price_per_box"]))
+
+    sun_map: dict[str, float] = {str(e).strip(): 0.0 for e in emp_list}
+    if df_tga is not None and not df_tga.empty:
+        d = df_tga.copy()
+        d["emp_id"] = d["emp_id"].astype(str).str.strip()
+        d["sku"] = d["sku"].astype(str).str.strip()
+        d["price"] = d["sku"].map(lambda s: float(price_by_sku.get(str(s).strip(), 0.0)))
+        d["line_value"] = d["qty"] * d["price"]
+        g = d.groupby("emp_id", as_index=True)["line_value"].sum()
+        for emp in sun_map:
+            if emp in g.index:
+                sun_map[emp] = round(float(g[emp]), 2)
+
+    df_sun = pd.DataFrame([{"emp_id": k, "target_sun": v} for k, v in sun_map.items()])
+    return df_sku, df_sun, emp_with_tga
+
+
 def generate_dummy_targets(
     emp_list: list,
     df_sku_base: pd.DataFrame,
@@ -269,150 +337,6 @@ def generate_dummy_targets(
     df_sun.to_csv("data/target_sun.csv", index=False)
     logger.info("Dummy targets: %d SKUs, %d employees, total %.2f", len(df_sku_out), len(df_sun), total_box_value)
     return df_sku_out, df_sun
-
-
-# ══════════════════════════════════════════════════════════
-#  GET /managers (ดึงรายชื่อ Super Code ทั้งหมดแบบอัตโนมัติ)
-# ══════════════════════════════════════════════════════════
-#  (moved to top — see _cleanup_old_caches and lifespan above app init)
-
-
-# ══════════════════════════════════════════════════════════
-#  POST /upload/targets — รับไฟล์ Excel จาก Supervisor
-# ══════════════════════════════════════════════════════════
-# รูปแบบ Excel ที่รองรับ (2 sheet หรือ 2 ไฟล์แยกกัน):
-#
-#  Sheet "target_boxes":
-#    sku | price_per_box | supervisor_target_boxes | brand_name_thai | brand_name_english | product_name_thai
-#
-#  Sheet "target_sun":
-#    emp_id | target_sun
-
-_BOXES_REQUIRED_COLS = {"sku", "price_per_box", "supervisor_target_boxes"}
-_SUN_REQUIRED_COLS   = {"emp_id", "target_sun"}
-
-
-def _validate_and_save_boxes(df: pd.DataFrame) -> dict:
-    df.columns = df.columns.str.strip().str.lower()
-    missing = _BOXES_REQUIRED_COLS - set(df.columns)
-    if missing:
-        raise HTTPException(422, detail=f"target_boxes ขาดคอลัมน์: {', '.join(sorted(missing))}")
-    df["sku"] = df["sku"].astype(str).str.strip()
-    df = df.dropna(subset=["sku"]).copy()
-    df["price_per_box"] = pd.to_numeric(df["price_per_box"], errors="coerce").fillna(0)
-    df["supervisor_target_boxes"] = pd.to_numeric(df["supervisor_target_boxes"], errors="coerce").fillna(0)
-    if (df["price_per_box"] <= 0).any():
-        bad = df.loc[df["price_per_box"] <= 0, "sku"].tolist()
-        raise HTTPException(422, detail=f"price_per_box ต้อง > 0 — SKU ที่มีปัญหา: {bad[:5]}")
-    if (df["supervisor_target_boxes"] < 0).any():
-        raise HTTPException(422, detail="supervisor_target_boxes ต้อง >= 0 ทุกแถว")
-    for col in ["brand_name_thai", "brand_name_english", "product_name_thai"]:
-        if col not in df.columns:
-            df[col] = ""
-    os.makedirs("data", exist_ok=True)
-    df.to_csv("data/target_boxes.csv", index=False)
-    total_value = (df["price_per_box"] * df["supervisor_target_boxes"]).sum()
-    logger.info("upload target_boxes: %d SKUs, total value=%.2f", len(df), total_value)
-    return {"skus": len(df), "total_value": round(total_value, 2)}
-
-
-def _validate_and_save_sun(df: pd.DataFrame) -> dict:
-    df.columns = df.columns.str.strip().str.lower()
-    missing = _SUN_REQUIRED_COLS - set(df.columns)
-    if missing:
-        raise HTTPException(422, detail=f"target_sun ขาดคอลัมน์: {', '.join(sorted(missing))}")
-    df["emp_id"] = df["emp_id"].astype(str).str.strip()
-    df = df.dropna(subset=["emp_id"]).copy()
-    df["target_sun"] = pd.to_numeric(df["target_sun"], errors="coerce").fillna(0)
-    if (df["target_sun"] < 0).any():
-        raise HTTPException(422, detail="target_sun ต้อง >= 0 ทุกแถว")
-    os.makedirs("data", exist_ok=True)
-    df.to_csv("data/target_sun.csv", index=False)
-    total_sun = df["target_sun"].sum()
-    logger.info("upload target_sun: %d employees, total=%.2f", len(df), total_sun)
-    return {"employees": len(df), "total_sun": round(total_sun, 2)}
-
-
-@app.post("/upload/targets")
-async def upload_targets(
-    file:      UploadFile = File(...),
-    file_type: str        = Query(..., description="'boxes' | 'sun' | 'both'"),
-    sup_id:    str        = Query(""),
-):
-    if not file.filename.lower().endswith((".xlsx", ".xls")):
-        raise HTTPException(400, detail="รองรับเฉพาะไฟล์ .xlsx หรือ .xls เท่านั้น")
-    if file_type not in ("boxes", "sun", "both"):
-        raise HTTPException(400, detail="file_type ต้องเป็น 'boxes', 'sun', หรือ 'both'")
-    try:
-        contents = await file.read()
-        xls = pd.ExcelFile(io.BytesIO(contents))
-    except Exception as e:
-        raise HTTPException(400, detail=f"อ่านไฟล์ Excel ไม่ได้: {e}")
-
-    result = {}
-    if file_type in ("boxes", "both"):
-        sheet = "target_boxes" if "target_boxes" in xls.sheet_names else xls.sheet_names[0]
-        try:
-            df_boxes = pd.read_excel(xls, sheet_name=sheet, dtype={"sku": str})
-        except Exception as e:
-            raise HTTPException(400, detail=f"อ่าน sheet '{sheet}' ไม่ได้: {e}")
-        result["boxes"] = _validate_and_save_boxes(df_boxes)
-
-    if file_type in ("sun", "both"):
-        sheet = "target_sun" if "target_sun" in xls.sheet_names else (
-            xls.sheet_names[1] if len(xls.sheet_names) > 1 else xls.sheet_names[0]
-        )
-        try:
-            df_sun = pd.read_excel(xls, sheet_name=sheet, dtype={"emp_id": str})
-        except Exception as e:
-            raise HTTPException(400, detail=f"อ่าน sheet '{sheet}' ไม่ได้: {e}")
-        result["sun"] = _validate_and_save_sun(df_sun)
-
-    logger.info("upload/targets: sup=%s type=%s result=%s", sup_id, file_type, result)
-    return {"status": "ok", "file_type": file_type, **result}
-
-
-# ══════════════════════════════════════════════════════════
-#  GET /upload/template — ดาวน์โหลด Excel template
-# ══════════════════════════════════════════════════════════
-@app.get("/upload/template")
-def download_template():
-    import openpyxl
-    from openpyxl.styles import Font, PatternFill, Alignment
-    from openpyxl.utils import get_column_letter
-
-    def _sheet(ws, headers, required, examples):
-        FILL_REQ = PatternFill("solid", fgColor="2E75B6")
-        FILL_OPT = PatternFill("solid", fgColor="1F4E79")
-        FILL_EX  = PatternFill("solid", fgColor="EBF3FB")
-        FNT      = Font(color="FFFFFF", bold=True, size=11)
-        for ci, h in enumerate(headers, 1):
-            c = ws.cell(row=1, column=ci, value=h)
-            c.font = FNT; c.fill = FILL_REQ if h in required else FILL_OPT
-            c.alignment = Alignment(horizontal="center", vertical="center")
-            ws.column_dimensions[get_column_letter(ci)].width = max(20, len(h) + 4)
-        ws.row_dimensions[1].height = 28
-        for ri, row in enumerate(examples, 2):
-            for ci, v in enumerate(row, 1):
-                ws.cell(row=ri, column=ci, value=v).fill = FILL_EX
-
-    wb = openpyxl.Workbook()
-    ws1 = wb.active; ws1.title = "target_boxes"
-    _sheet(ws1,
-           ["sku","price_per_box","supervisor_target_boxes","brand_name_thai","brand_name_english","product_name_thai"],
-           {"sku","price_per_box","supervisor_target_boxes"},
-           [["624007", 240.00, 150, "แบรนด์ A", "Brand A", "สินค้า A"],
-            ["624015", 212.00, 80,  "แบรนด์ B", "Brand B", "สินค้า B"]])
-
-    ws2 = wb.create_sheet("target_sun")
-    _sheet(ws2, ["emp_id","target_sun"], {"emp_id","target_sun"},
-           [["EMP001", 125000.00], ["EMP002", 98000.00]])
-
-    os.makedirs("data", exist_ok=True)
-    tpl_path = "data/upload_template.xlsx"
-    wb.save(tpl_path)
-    return FileResponse(tpl_path, filename="Target_Upload_Template.xlsx",
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 # ══════════════════════════════════════════════════════════
@@ -487,15 +411,21 @@ def get_employees(
     df_emp_fabric.to_csv(emp_cache_path(sup_id, target_month, target_year), index=False)
     logger.info("Employees: %d คน %s", len(emp_list), emp_list)
 
-    # ── Step 2: โหลด/สร้าง SKU targets ──────────────────
-    df_sku_csv, df_sun_csv = load_target_csv()
+    # ── Step 2: เป้าหมาย — ค่าเริ่มต้นจาก Fabric (tga_target_salesman) ─────
+    # ตั้ง USE_LEGACY_TARGET_CSV=1 เพื่อใช้ target_boxes.csv / target_sun.csv แทน (ทดสอบ/ย้อนหลัง)
+    use_legacy = os.environ.get("USE_LEGACY_TARGET_CSV", "").strip().lower() in ("1", "true", "yes")
+    df_sku_csv, _df_sun_loaded = load_target_csv()
+    emp_with_tga_set: set[str] | None = None
 
-    if df_sku_csv is not None and not regen_target:
-        logger.info("ใช้ target_boxes.csv ที่มีอยู่")
-        df_sku  = df_sku_csv
+    if use_legacy and df_sku_csv is not None and not regen_target:
+        logger.info("ใช้ target_boxes.csv / target_sun.csv (USE_LEGACY_TARGET_CSV)")
+        df_sku = df_sku_csv
         sku_list = df_sku["sku"].tolist()
+        df_sun_csv = _df_sun_loaded
+        if df_sun_csv is None and os.path.exists("data/target_sun.csv"):
+            df_sun_csv = pd.read_csv("data/target_sun.csv", dtype={"emp_id": str}).fillna(0)
+            df_sun_csv["emp_id"] = df_sun_csv["emp_id"].astype(str).str.strip()
     else:
-        # ดึง SKU จาก Fabric
         try:
             sku_list = fabric.get_skus_sold_by_team(emp_list, target_month, target_year, n_months=6)
         except Exception as e:
@@ -505,29 +435,48 @@ def get_employees(
         if not sku_list:
             sku_list = list(PRICE_FALLBACK.keys())
 
-        # ดึง product info
+        df_tga = pd.DataFrame()
+        try:
+            df_tga = fabric.get_tga_target_salesman(emp_list, target_month, target_year)
+        except Exception as e:
+            logger.warning("get_tga_target_salesman error: %s — เป้าจะเป็น 0 ทั้งหมด", e)
+
+        tga_skus: list[str] = []
+        if df_tga is not None and not df_tga.empty:
+            tga_skus = (
+                df_tga["sku"].dropna().astype(str).str.strip().unique().tolist()
+            )
+        seen_sku: set[str] = set()
+        sku_union: list[str] = []
+        for s in sku_list + tga_skus:
+            s = str(s).strip()
+            if s and s not in seen_sku:
+                seen_sku.add(s)
+                sku_union.append(s)
+
         df_sku_base = pd.DataFrame()
         try:
-            df_sku_base = fabric.get_product_info(sku_list=sku_list)
+            df_sku_base = fabric.get_product_info(sku_list=sku_union)
         except Exception as e:
             logger.warning("get_product_info error: %s", e)
-            df_sku_base = pd.DataFrame({"sku": sku_list})
+            df_sku_base = pd.DataFrame({"sku": sku_union})
 
         if df_sku_base.empty:
-            df_sku_base = pd.DataFrame({"sku": sku_list})
+            df_sku_base = pd.DataFrame({"sku": sku_union})
 
-        # ดึงประวัติก่อน generate dummy targets
-        df_hist_pre = pd.DataFrame()
-        try:
-            df_hist_pre = fabric.get_historical_sales(
-                target_month, target_year, sku_list=sku_list, emp_list=emp_list, n_months=3
-            )
-        except Exception as e:
-            logger.warning("historical (pre-gen): %s", e)
+        df_sku, df_sun_csv, emp_with_tga = _build_sku_and_sun_from_tga(
+            df_tga, df_sku_base, emp_list, sku_union
+        )
+        emp_with_tga_set = emp_with_tga
 
-        df_sku, df_sun_csv = generate_dummy_targets(emp_list, df_sku_base, df_hist_pre)
+        os.makedirs("data", exist_ok=True)
+        df_sku.to_csv("data/target_boxes.csv", index=False)
+        df_sun_csv.to_csv("data/target_sun.csv", index=False)
+        logger.info(
+            "บันทึกเป้าจาก Fabric (TGA): %d SKU, พนักงาน %d คน, มีแถว TGA %d คน",
+            len(df_sku), len(df_sun_csv), len(emp_with_tga_set),
+        )
 
-    # refresh sun CSV
     if df_sun_csv is None and os.path.exists("data/target_sun.csv"):
         df_sun_csv = pd.read_csv("data/target_sun.csv", dtype={"emp_id": str}).fillna(0)
         df_sun_csv["emp_id"] = df_sun_csv["emp_id"].astype(str).str.strip()
@@ -541,6 +490,11 @@ def get_employees(
     if "target_sun" not in df_emp.columns:
         df_emp["target_sun"] = 0.0
     df_emp["target_sun"] = df_emp["target_sun"].fillna(0.0)
+
+    if emp_with_tga_set is not None:
+        df_emp["has_tga_rows"] = df_emp["emp_id"].astype(str).str.strip().isin(emp_with_tga_set)
+    else:
+        df_emp["has_tga_rows"] = True
 
     # ── Step 4: LY sales ──────────────────────────────────
     # get_ly_sales แล้ว fill 0 ให้ครบทุก emp (handled ใน connector)
@@ -613,9 +567,41 @@ def get_employees(
 
     logger.info("Response: %d emp, %d sku", len(df_emp), len(df_sku))
 
-    # ── Fix 3: เช็ค emp_id ใน target_sun.csv ที่ไม่ตรงกับพนักงานจริง ──
+    # ── Fix 3: เช็ค emp_id ใน target_sun.csv ที่ไม่ตรงกับพนักงานจริง (โหมด legacy เท่านั้น) ──
     sku_warnings = []
-    if df_sun_csv is not None and not df_sun_csv.empty:
+
+    if not use_legacy and emp_with_tga_set is not None:
+        for e in emp_list:
+            se = str(e).strip()
+            if se not in emp_with_tga_set:
+                sku_warnings.append({
+                    "type": "no_tga_employee",
+                    "sku": "",
+                    "brand": "",
+                    "message": (
+                        f"พนักงาน {se} ไม่มีแถวเป้าใน tga_target_salesman สำหรับงวดนี้ "
+                        f"— target_sun = 0 (ตรวจสอบข้อมูลใน Fabric)"
+                    ),
+                })
+        zero_skus = [
+            str(r["sku"]).strip()
+            for _, r in df_sku.iterrows()
+            if int(r.get("supervisor_target_boxes", 0) or 0) == 0
+        ]
+        if zero_skus:
+            preview = ", ".join(zero_skus[:20])
+            more = f" และอีก {len(zero_skus) - 20} SKU" if len(zero_skus) > 20 else ""
+            sku_warnings.append({
+                "type": "no_tga_sku",
+                "sku": "",
+                "brand": "",
+                "message": (
+                    f"มี {len(zero_skus)} SKU ที่ทีมเคยขายแต่ไม่มีเป้าหีบใน TGA งวดนี้ "
+                    f"(supervisor_target_boxes = 0): {preview}{more}"
+                ),
+            })
+
+    if use_legacy and df_sun_csv is not None and not df_sun_csv.empty:
         sun_emp_ids  = set(df_sun_csv["emp_id"].astype(str).str.strip())
         fabric_emp_ids = set(str(e) for e in emp_list)
         unmatched = sun_emp_ids - fabric_emp_ids

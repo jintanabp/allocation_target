@@ -11,6 +11,7 @@ Strategies:
 
 import pandas as pd
 import logging
+import os
 
 logger = logging.getLogger("target_allocation.OR")
 
@@ -239,7 +240,18 @@ def _lp_optimize(df_emp_targets, df_sku, df_hist, force_min_one=False, locked_ma
 
     prob = pulp.LpProblem("BoxAllocation_LP", pulp.LpMinimize)
 
+    # ── Anchor ให้ LP ใกล้ baseline จากประวัติขาย (ลดการกระจายแปลกๆ) ──
+    # ค่า 0.0 = ปิด anchor (LP แบบเดิม), ค่า ~0.05–0.30 แนะนำ
+    lp_anchor = float(os.environ.get("LP_HIST_ANCHOR", "0.15") or 0.15)
+    df_base = _proportional(df_emp_targets, df_sku, df_hist, "L3M", force_min_one, locked_map)
+    base_map = {}
+    if df_base is not None and not df_base.empty:
+        for _, r in df_base.iterrows():
+            base_map[(str(r["emp_id"]), str(r["sku"]))] = int(r["allocated_boxes"])
+
     x = {}
+    dpos = {}
+    dneg = {}
     for emp in employees:
         for sku in skus:
             # 🔴 ถ้าช่องนี้โดนล็อกไว้ ให้ Fix ค่าไปเลย
@@ -249,17 +261,36 @@ def _lp_optimize(df_emp_targets, df_sku, df_hist, force_min_one=False, locked_ma
             else:
                 min_box = 1 if force_min_one and int(target_boxes[sku]) >= len(employees) else 0
                 x[(emp, sku)] = pulp.LpVariable(f"x_{emp}_{sku}", lowBound=min_box, cat="Integer")
+                # |x - base| linearization (ใช้เฉพาะที่ไม่ล็อก)
+                dpos[(emp, sku)] = pulp.LpVariable(f"dp_{emp}_{sku}", lowBound=0, cat="Continuous")
+                dneg[(emp, sku)] = pulp.LpVariable(f"dn_{emp}_{sku}", lowBound=0, cat="Continuous")
 
     shortfall = pulp.LpVariable.dicts("sf", employees, lowBound=0, cat="Continuous")
     excess    = pulp.LpVariable.dicts("ex", employees, lowBound=0, cat="Continuous")
 
-    prob += pulp.lpSum(shortfall[e] * 2 + excess[e] * 1.5 for e in employees)
+    # Objective: เข้าเป้าเงิน + ไม่แกว่งจาก baseline
+    anchor_term = 0
+    if lp_anchor > 0 and dpos:
+        anchor_term = pulp.lpSum(
+            (dpos[(e, s)] + dneg[(e, s)]) * float(sku_prices.get(s, 0) or 0) * lp_anchor
+            for (e, s) in dpos.keys()
+        )
+    prob += pulp.lpSum(shortfall[e] * 2 + excess[e] * 1.5 for e in employees) + anchor_term
 
     for sku in skus:
         prob += pulp.lpSum(x[(e, sku)] for e in employees) == int(target_boxes[sku])
 
     for emp in employees:
         prob += pulp.lpSum(x[(emp, s)] * sku_prices[s] for s in skus) + shortfall[emp] - excess[emp] == target_rev[emp]
+
+    # Anchor constraints: x - base = dpos - dneg
+    if lp_anchor > 0 and dpos:
+        for emp in employees:
+            for sku in skus:
+                if (emp, sku) in locked_map:
+                    continue
+                base = int(base_map.get((str(emp), str(sku)), 0))
+                prob += x[(emp, sku)] - base == dpos[(emp, sku)] - dneg[(emp, sku)]
 
     time_limit = min(60, max(15, (len(employees) * len(skus)) // 8))
     try:

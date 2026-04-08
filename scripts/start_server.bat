@@ -6,18 +6,29 @@ echo ============================================
 echo  Target Allocation - เริ่ม Server
 echo ============================================
 
-REM
-set CONDA_PATH=
-if exist "%USERPROFILE%\miniconda3\Scripts\conda.exe" set CONDA_PATH=%USERPROFILE%\miniconda3
-if exist "%USERPROFILE%\Miniconda3\Scripts\conda.exe" set CONDA_PATH=%USERPROFILE%\Miniconda3
-if exist "%USERPROFILE%\anaconda3\Scripts\conda.exe" set CONDA_PATH=%USERPROFILE%\anaconda3
-if exist "%USERPROFILE%\Anaconda3\Scripts\conda.exe" set CONDA_PATH=%USERPROFILE%\Anaconda3
-if exist "C:\ProgramData\miniconda3\Scripts\conda.exe" set CONDA_PATH=C:\ProgramData\miniconda3
-if exist "C:\ProgramData\Miniconda3\Scripts\conda.exe" set CONDA_PATH=C:\ProgramData\Miniconda3
-if exist "C:\ProgramData\anaconda3\Scripts\conda.exe" set CONDA_PATH=C:\ProgramData\anaconda3
+REM การหา conda — ให้ตรงกับ scripts\setup.bat (รองรับ LocalAppData, miniforge, conda ใน PATH)
+if "%CONDA_PATH%"=="" if exist "%USERPROFILE%\miniconda3\Scripts\conda.exe" set CONDA_PATH=%USERPROFILE%\miniconda3
+if "%CONDA_PATH%"=="" if exist "%USERPROFILE%\Miniconda3\Scripts\conda.exe" set CONDA_PATH=%USERPROFILE%\Miniconda3
+if "%CONDA_PATH%"=="" if exist "%LOCALAPPDATA%\miniconda3\Scripts\conda.exe" set CONDA_PATH=%LOCALAPPDATA%\miniconda3
+if "%CONDA_PATH%"=="" if exist "%LOCALAPPDATA%\Miniconda3\Scripts\conda.exe" set CONDA_PATH=%LOCALAPPDATA%\Miniconda3
+if "%CONDA_PATH%"=="" if exist "%USERPROFILE%\anaconda3\Scripts\conda.exe" set CONDA_PATH=%USERPROFILE%\anaconda3
+if "%CONDA_PATH%"=="" if exist "%USERPROFILE%\Anaconda3\Scripts\conda.exe" set CONDA_PATH=%USERPROFILE%\Anaconda3
+if "%CONDA_PATH%"=="" if exist "C:\ProgramData\miniconda3\Scripts\conda.exe" set CONDA_PATH=C:\ProgramData\miniconda3
+if "%CONDA_PATH%"=="" if exist "C:\ProgramData\Miniconda3\Scripts\conda.exe" set CONDA_PATH=C:\ProgramData\Miniconda3
+if "%CONDA_PATH%"=="" if exist "C:\ProgramData\anaconda3\Scripts\conda.exe" set CONDA_PATH=C:\ProgramData\anaconda3
+if "%CONDA_PATH%"=="" if exist "%USERPROFILE%\miniforge3\Scripts\conda.exe" set CONDA_PATH=%USERPROFILE%\miniforge3
+if "%CONDA_PATH%"=="" if exist "%USERPROFILE%\mambaforge\Scripts\conda.exe" set CONDA_PATH=%USERPROFILE%\mambaforge
+
+if "%CONDA_PATH%"=="" (
+    where conda >nul 2>&1
+    if not errorlevel 1 (
+        for /f "delims=" %%i in ('conda info --base 2^>nul') do set "CONDA_PATH=%%i"
+    )
+)
 
 if "%CONDA_PATH%"=="" goto :ERR_NO_CONDA
 
+echo พบ conda ที่: %CONDA_PATH%
 call "%CONDA_PATH%\Scripts\activate.bat" "%CONDA_PATH%"
 
 REM ใช้ conda.bat แบบระบุ path ให้แน่นอน (ไม่พึ่ง PATH)
@@ -40,7 +51,15 @@ pause
 exit /b 0
 
 :ERR_NO_CONDA
-echo [ERROR] ไม่พบ Miniconda/Anaconda — กรุณารัน setup.bat ก่อน
+echo.
+echo [ERROR] ไม่พบ Miniconda/Anaconda ใน path ที่สคริปต์รู้จัก
+echo.
+echo ถ้า setup.bat รันผ่านแล้ว ลองตั้งค่าแล้วรันใหม่:
+echo   set CONDA_PATH=C:\เส้นทาง\ไป\โฟลเดอร์ miniconda3
+echo   start_server.bat
+echo.
+echo หรือเปิด Miniconda Prompt แล้ว cd มาที่โฟลเดอร์โปรเจกต์ แล้วรัน start_server.bat
+echo.
 pause
 exit /b 1
 
