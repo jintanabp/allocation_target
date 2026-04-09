@@ -7,7 +7,13 @@
  * - Sorting & Sticky Columns
  */
 
-const API_BASE_URL = "http://localhost:8000";
+/** เมื่อเปิดจาก http://127.0.0.1:8000/ ใช้ origin เดียวกับหน้าเว็บ; เปิด index.html แบบ file:// ยังชี้ไปที่พอร์ต 8000 */
+const API_BASE_URL =
+  typeof window !== "undefined" &&
+  window.location.protocol !== "file:" &&
+  window.location.port === "8000"
+    ? window.location.origin
+    : "http://127.0.0.1:8000";
 
 /* ── STATE ──────────────────────────────────────────────── */
 let S = {
@@ -258,7 +264,7 @@ async function _pollServerStatus() {
       }
     } catch {
       dot.style.background  = "var(--red)";
-      text.textContent = "✗ Server ยังไม่ได้รัน — เปิด start_server.bat ก่อน";
+      text.textContent = "✗ Server ยังไม่ได้รัน — เปิด Run_Local.bat หรือ scripts\\start_server.bat";
       text.style.color = "var(--red)";
       _managersLoadedOnce = false;
     }
@@ -563,7 +569,7 @@ async function loadData(supId, targetMonth, targetYear) {
     const isFetch = err instanceof TypeError && err.message.toLowerCase().includes("fetch");
     const hint = isFetch
       ? "❌ เชื่อมต่อ server ไม่ได้\n\n" +
-        "✅ แก้ไข: เปิด start_server.bat แล้วลองใหม่\n" +
+        "✅ แก้ไข: เปิด Run_Local.bat หรือ scripts\\start_server.bat แล้วลองใหม่\n" +
         "หรือรันด้วยมือ: uvicorn main:app --reload"
       : `❌ ${err.message}`;
     showLoginError(hint);

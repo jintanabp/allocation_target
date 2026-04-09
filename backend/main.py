@@ -12,15 +12,16 @@ uvicorn main:app --reload
 
 import os
 import re
-import random
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 import json
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import pandas as pd
 from .OR_engine import allocate_boxes
@@ -74,7 +75,7 @@ app.add_middleware(
 
 # ── Known supervisors ─────────────────────────────────────
 # โหลดจาก env var ก่อน — fallback ไปค่า hardcoded เพื่อกัน startup crash
-# ตั้งค่า: set KNOWN_MANAGERS=SL330,SL374,SL999,SL001 ใน start_server.bat
+# ตั้งค่า: set KNOWN_MANAGERS=SL330,SL374,SL999,SL001 ใน Run_Local.bat / scripts\start_server.bat
 _km_env = os.environ.get("KNOWN_MANAGERS", "")
 KNOWN_MANAGERS = [m.strip() for m in _km_env.split(",") if m.strip()] or ["SL330", "SL374", "SL999"]
 
@@ -278,65 +279,6 @@ def _build_sku_and_sun_from_tga(
 
     df_sun = pd.DataFrame([{"emp_id": k, "target_sun": v} for k, v in sun_map.items()])
     return df_sku, df_sun, emp_with_tga
-
-
-def generate_dummy_targets(
-    emp_list: list,
-    df_sku_base: pd.DataFrame,
-    df_hist: pd.DataFrame,
-    seed: int = 42,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """สร้าง dummy CSV อัตโนมัติ อิงประวัติจริง ถ้ามี"""
-    random.seed(seed)
-
-    records_sku = []
-    for _, row in df_sku_base.iterrows():
-        sku   = str(row["sku"])
-        price = float(row.get("price_per_box") or row.get("unit_cost") or 0)
-        if price == 0:
-            price = PRICE_FALLBACK.get(sku, round(random.uniform(200, 400), 2))
-
-        hist_total = df_hist[df_hist["sku"] == sku]["hist_boxes"].sum() if not df_hist.empty else 0
-        avg_3m     = hist_total / 3.0 if hist_total > 0 else random.randint(10, 100)
-        target_boxes = max(5, int(avg_3m * random.uniform(1.05, 1.20)))
-
-        records_sku.append({
-            "sku":                     sku,
-            "price_per_box":           price,
-            "supervisor_target_boxes": target_boxes,
-            "brand_name_thai":         str(row.get("brand_name_thai", "")),
-            "brand_name_english":      str(row.get("brand_name_english", "")),
-            "product_name_thai":       str(row.get("product_name_thai", "")),
-        })
-
-    df_sku_out     = pd.DataFrame(records_sku)
-    total_box_value = (df_sku_out["price_per_box"] * df_sku_out["supervisor_target_boxes"]).sum()
-
-    # กระจาย target_sun ตามสัดส่วนสุ่ม (supervisor จะปรับเองใน step 2)
-    weights = [max(0.5, random.uniform(0.5, 1.5)) for _ in emp_list]
-    total_w = sum(weights)
-    records_sun, acc = [], 0.0
-    for i, (emp, w) in enumerate(zip(emp_list, weights)):
-        if i == len(emp_list) - 1:
-            ts = round(total_box_value - acc, 2)
-        else:
-            ts = round(total_box_value * w / total_w, 2)
-            acc += ts
-        records_sun.append({"emp_id": emp, "target_sun": ts})
-
-    df_sun = pd.DataFrame(records_sun)
-
-    # ตรวจสอบ sum ตรงกัน
-    sun_total = df_sun["target_sun"].sum()
-    deviation = abs(sun_total - total_box_value)
-    if deviation > 1.0:
-        logger.warning("target_sun sum deviation: %.2f (expected %.2f)", sun_total, total_box_value)
-
-    os.makedirs("data", exist_ok=True)
-    df_sku_out.to_csv("data/target_boxes.csv", index=False)
-    df_sun.to_csv("data/target_sun.csv", index=False)
-    logger.info("Dummy targets: %d SKUs, %d employees, total %.2f", len(df_sku_out), len(df_sun), total_box_value)
-    return df_sku_out, df_sun
 
 
 # ══════════════════════════════════════════════════════════
@@ -918,6 +860,11 @@ ORDER BY 'dim_salesman'[SuperCode]
         logger.error("debug_fabric error: %s", e)
         raise HTTPException(500, detail=str(e))
 
+
+# เสิร์ฟ frontend จาก http://127.0.0.1:8000/ (ลงท้าย — ให้ API routes ถูกจับก่อน)
+_FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+if _FRONTEND_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=str(_FRONTEND_DIR), html=True), name="frontend")
 
 # ══════════════════════════════════════════════════════════
 #  สำหรับรันเป็นไฟล์ .exe โดยไม่ต้องใช้คำสั่งผ่าน Terminal

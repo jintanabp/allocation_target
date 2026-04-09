@@ -43,9 +43,10 @@ call "%CONDA_BAT%" activate allocation_env
 if errorlevel 1 goto :ERR_ACTIVATE
 
 echo Server กำลังเริ่มต้น...
-echo เปิดเบราว์เซอร์แล้วเปิดไฟล์ frontend\index.html
+echo เปิดเบราว์เซอร์ที่: http://127.0.0.1:8000/
 echo กด Ctrl+C เพื่อหยุด server
 echo.
+start "" cmd /c "timeout /t 2 /nobreak >nul && start http://127.0.0.1:8000/"
 uvicorn backend.main:app --host 127.0.0.1 --port 8000
 pause
 exit /b 0
@@ -54,11 +55,11 @@ exit /b 0
 echo.
 echo [ERROR] ไม่พบ Miniconda/Anaconda ใน path ที่สคริปต์รู้จัก
 echo.
-echo ถ้า setup.bat รันผ่านแล้ว ลองตั้งค่าแล้วรันใหม่:
+echo ถ้า scripts\setup.bat รันผ่านแล้ว ลองตั้งค่าแล้วรันใหม่:
 echo   set CONDA_PATH=C:\เส้นทาง\ไป\โฟลเดอร์ miniconda3
-echo   start_server.bat
+echo   scripts\start_server.bat
 echo.
-echo หรือเปิด Miniconda Prompt แล้ว cd มาที่โฟลเดอร์โปรเจกต์ แล้วรัน start_server.bat
+echo หรือเปิด Miniconda Prompt แล้ว cd มาที่โฟลเดอร์โปรเจกต์ แล้วรัน scripts\start_server.bat
 echo.
 pause
 exit /b 1
@@ -66,7 +67,7 @@ exit /b 1
 :ERR_NO_CONDA_BAT
 echo.
 echo [ERROR] ไม่พบ conda.bat ใน %CONDA_PATH%
-echo กรุณารัน setup.bat ใหม่ หรือ reinstall Miniconda/Anaconda
+echo กรุณารัน scripts\setup.bat ใหม่ หรือ reinstall Miniconda/Anaconda
 echo.
 pause
 exit /b 1
@@ -74,7 +75,7 @@ exit /b 1
 :ERR_NO_ENV
 echo.
 echo [ERROR] ไม่พบ environment: allocation_env
-echo กรุณารัน setup.bat (ครั้งแรก) ก่อน
+echo กรุณารัน scripts\setup.bat (ครั้งแรก) ก่อน
 echo.
 pause
 exit /b 1
@@ -82,7 +83,7 @@ exit /b 1
 :ERR_ACTIVATE
 echo.
 echo [ERROR] activate allocation_env ไม่สำเร็จ
-echo ลองปิดหน้าต่างแล้วเปิดใหม่ จากนั้นรัน start_server.bat อีกครั้ง
+echo ลองปิดหน้าต่างแล้วเปิดใหม่ จากนั้นรัน scripts\start_server.bat อีกครั้ง
 echo.
 pause
 exit /b 1

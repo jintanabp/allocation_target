@@ -36,8 +36,8 @@ if "%CONDA_PATH%"=="" (
     echo   1. เปิด File Explorer หาโฟลเดอร์ที่มีไฟล์ conda.exe ^(มักชื่อ miniconda3 หรือ miniforge3^)
     echo   2. ตั้งค่าตัวแปรแล้วรัน setup อีกครั้ง ใน cmd:
     echo      set CONDA_PATH=C:\เส้นทาง\ไป\miniconda3
-    echo      setup.bat
-    echo   หรือเพิ่ม Miniconda ใน PATH แล้วรัน setup.bat ใหม่
+    echo      scripts\setup.bat
+    echo   หรือเพิ่ม Miniconda ใน PATH แล้วรัน scripts\setup.bat ใหม่
     echo.
     echo ดาวน์โหลด Miniconda: https://docs.conda.io/en/latest/miniconda.html
     echo.
@@ -85,7 +85,7 @@ call "%CONDA_BAT%" activate allocation_env
 if errorlevel 1 (
     echo.
     echo [ERROR] activate environment ไม่สำเร็จ
-    echo ลองปิดหน้าต่างแล้วเปิดใหม่ จากนั้นรัน setup.bat อีกครั้ง
+    echo ลองปิดหน้าต่างแล้วเปิดใหม่ จากนั้นรัน scripts\setup.bat อีกครั้ง
     pause
     exit /b 1
 )
@@ -102,6 +102,6 @@ if errorlevel 1 (
 
 echo.
 echo ============================================
-echo  ติดตั้งเสร็จแล้ว! กด start_server.bat เพื่อเริ่มใช้งาน
+echo  ติดตั้งเสร็จแล้ว! รัน scripts\start_server.bat หรือ Run_Local.bat
 echo ============================================
 pause

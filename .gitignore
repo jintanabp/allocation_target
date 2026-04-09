@@ -1,4 +1,7 @@
-/__pycache__
+__pycache__/
+*.py[cod]
+/.venv
+/runtime
 /data
 /build/main
 /build

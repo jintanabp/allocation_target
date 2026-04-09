@@ -21,9 +21,10 @@ allocation_target/
 │   └── fabric_dax_connector.py # เชื่อมต่อ Microsoft Fabric ผ่าน DAX
 │
 ├── scripts/
-│   ├── setup.bat           # ติดตั้ง environment (รันครั้งแรกครั้งเดียว)
-│   ├── start_server.bat    # เริ่ม server (รันทุกครั้งที่จะใช้งาน)
-│   └── generate_dummy_targets.py # เครื่องมือสร้าง dummy targets (optional)
+│   ├── setup.bat                    # ติดตั้ง environment conda (รันครั้งแรกครั้งเดียว)
+│   ├── start_server.bat             # เริ่ม server (แบบ conda)
+│   ├── build_portable_runtime.bat   # สร้าง Python ใน runtime\ สำหรับแจกจ่าย (ไม่ต้องลง Python)
+│   └── build_portable_runtime.ps1   # เรียกโดย build_portable_runtime.bat
 │
 ├── data/                   # โฟลเดอร์ข้อมูล (สร้างอัตโนมัติ — ไม่ขึ้น Git)
 │   ├── target_boxes.csv
@@ -33,8 +34,7 @@ allocation_target/
 │
 ├── requirements.txt
 ├── requirements-dev.txt
-├── setup.bat               # wrapper → scripts/setup.bat
-├── start_server.bat        # wrapper → scripts/start_server.bat
+├── Run_Local.bat           # รัน server + เปิดเบราว์เซอร์ (ใช้ runtime\ หรือ .venv)
 └── readme.md
 ```
 
@@ -65,10 +65,10 @@ cd <repo-name>
 
 **2. รัน setup (ครั้งเดียว)**
 
-ดับเบิลคลิก `setup.bat` (ตัว wrapper) หรือ `scripts/setup.bat`  
+ดับเบิลคลิก **`scripts\setup.bat`**  
 ระบบจะสร้าง conda environment `allocation_env` และติดตั้ง packages ให้อัตโนมัติ
 
-> ถ้า setup.bat แจ้งว่าหา Miniconda ไม่เจอ → ให้รันด้วยมือใน Anaconda Prompt แทน:
+> ถ้า `scripts\setup.bat` แจ้งว่าหา Miniconda ไม่เจอ → ให้รันด้วยมือใน Anaconda Prompt แทน:
 > ```bash
 > conda create -n allocation_env python=3.11 -y
 > conda activate allocation_env
@@ -81,18 +81,27 @@ cd <repo-name>
 
 ### เริ่ม Server
 
-ดับเบิลคลิก `start_server.bat` (ตัว wrapper) หรือ `scripts/start_server.bat` — หรือรันด้วยมือ:
+ดับเบิลคลิก **`scripts\start_server.bat`** — หรือรันด้วยมือ:
 
 ```bash
 conda activate allocation_env
 uvicorn backend.main:app --host 127.0.0.1 --port 8000
 ```
 
+### แบบ portable (แจกให้คนอื่นโดยไม่ต้องลง Python)
+
+1. บนเครื่องผู้ดูแล (มีอินเทอร์เน็ต, Windows 64-bit): รัน **`scripts\build_portable_runtime.bat`** ครั้งหนึ่ง  
+2. Zip ทั้งโฟลเดอร์โปรเจกต์ **รวมโฟลเดอร์ `runtime\`** แล้วส่งให้ผู้ใช้  
+3. ผู้ใช้แตก zip แล้วดับเบิลคลิก **`Run_Local.bat`** — เปิด **http://127.0.0.1:8000/**
+
+โฟลเดอร์ **`runtime\`** ไม่ขึ้น Git; ถ้า clone ใหม่ต้องสร้าง portable ใหม่หรือใช้ conda / `.venv` ตามด้านบน
+
 ### เปิด Dashboard
 
-เปิดไฟล์ `frontend/index.html` ใน browser (แนะนำ Chrome)
+หลังรัน server แล้ว เปิด **http://127.0.0.1:8000/** ใน browser (แนะนำ Chrome)  
+หรือใช้ `Run_Local.bat` จะเปิด URL นี้ให้อัตโนมัติ
 
-> Server ต้องรันอยู่ก่อนเสมอ — ถ้าเปิด Dashboard แล้วขึ้น error ให้เช็คว่า `start_server.bat` ทำงานอยู่
+> Server ต้องรันอยู่ก่อนเสมอ — ถ้าเปิด Dashboard แล้วขึ้น error ให้เช็คว่า `Run_Local.bat` หรือ `scripts\start_server.bat` ทำงานอยู่
 
 ---
 
@@ -191,7 +200,7 @@ Swagger UI: http://localhost:8000/docs
 git pull
 ```
 
-ไม่ต้องรัน `setup.bat` ใหม่ — รัน `start_server.bat` ได้เลย
+ไม่ต้องรัน `scripts\setup.bat` ใหม่ — รัน `Run_Local.bat` หรือ `scripts\start_server.bat` ได้เลย
 
 ---
 
@@ -200,7 +209,7 @@ git pull
 | อาการ | สาเหตุ | วิธีแก้ |
 |-------|--------|---------|
 | `conda is not recognized` | ยังไม่ได้ลง Miniconda หรือไม่ได้ติ๊ก Add to PATH | ติดตั้ง Miniconda ใหม่ ติ๊ก Add to PATH |
-| Dashboard ขึ้น error เชื่อมต่อ | Server ไม่ได้รัน | เปิด `start_server.bat` ก่อน |
+| Dashboard ขึ้น error เชื่อมต่อ | Server ไม่ได้รัน | เปิด `Run_Local.bat` หรือ `scripts\start_server.bat` ก่อน |
 | อัปโหลด Excel แล้วขึ้น error คอลัมน์ | ชื่อ header ไม่ตรง | ดาวน์โหลด Template แล้วกรอกข้อมูลตาม |
 | หน้าเว็บแสดงผลไม่ครบ | ข้อมูลจาก Fabric ดึงไม่ได้ | เช็ค log ที่ `data/app.log` |
 | ติดตั้งช้ามาก | conda กำลัง solve dependencies | รอได้เลย อาจใช้เวลา 5-10 นาที |
@@ -211,7 +220,7 @@ Log file อยู่ที่ `data/app.log` — เปิดดูได้ท
 
 ## เพิ่ม Supervisor ใหม่
 
-เปิดไฟล์ `main.py` หา `KNOWN_MANAGERS` แล้วเพิ่มรหัสเข้าไป:
+เปิดไฟล์ `backend/main.py` หา `KNOWN_MANAGERS` (หรือตั้ง env `KNOWN_MANAGERS`) แล้วเพิ่มรหัสเข้าไป:
 
 ```python
 KNOWN_MANAGERS = ["SL330", "SL374", "SL999", "SL001"]  # เพิ่มตรงนี้
