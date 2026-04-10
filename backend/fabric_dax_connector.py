@@ -16,52 +16,159 @@ import os
 import atexit
 import json
 
+# โหลด .env เมื่อ import โมดูลโดยตรง (เช่นเทส) — main.py ก็โหลดก่อน import อยู่แล้ว
+from .load_env import load_project_dotenv
+
+load_project_dotenv()
+
 
 class FabricDAXConnector:
     def __init__(self):
-        # Production: ตั้งค่า FABRIC_CLIENT_ID, FABRIC_TENANT_ID, FABRIC_DATASET_ID ใน environment
+        # ค่า default ใช้สำหรับ dev — production ตั้งใน .env หรือ environment
         self.client_id  = os.environ.get("FABRIC_CLIENT_ID", "d0d1f812-d677-490e-a9df-25c00baea1ab")
         self.tenant_id  = os.environ.get("FABRIC_TENANT_ID", "e442d6a7-a8dc-4ac8-880b-d272b11642e9")
         self.dataset_id = os.environ.get("FABRIC_DATASET_ID", "fac4dff8-9c2f-45fe-8971-ab2c429bea80")
+        # ถ้าใส่จะยิง executeQueries แบบ group/workspace — บางทีสะดวกตอนเช็คสิทธิ์ใน workspace
+        self.workspace_id = (os.environ.get("FABRIC_WORKSPACE_ID") or "").strip()
         self.authority  = f"https://login.microsoftonline.com/{self.tenant_id}"
         self.scope      = ["https://analysis.windows.net/powerbi/api/.default"]
 
         os.makedirs("data", exist_ok=True)
         self.cache_file = "data/token_cache.bin"
-        self.cache      = msal.SerializableTokenCache()
+        self.cache: msal.SerializableTokenCache | None = None
+        self._pca: msal.PublicClientApplication | None = None
+        self._cca: msal.ConfidentialClientApplication | None = None
 
-        if os.path.exists(self.cache_file):
-            with open(self.cache_file, "r") as f:
-                self.cache.deserialize(f.read())
+        secret = (os.environ.get("FABRIC_CLIENT_SECRET") or "").strip()
+        self._use_service_principal = bool(secret)
 
-        atexit.register(self._save_cache)
-
-        self.app = msal.PublicClientApplication(
-            self.client_id,
-            authority=self.authority,
-            token_cache=self.cache,
-        )
+        if self._use_service_principal:
+            self._cca = msal.ConfidentialClientApplication(
+                self.client_id,
+                client_credential=secret,
+                authority=self.authority,
+            )
+            print(
+                "📡 Fabric auth: Service Principal (FABRIC_CLIENT_SECRET) — "
+                "ไม่เปิดเบราว์เซอร์ล็อกอิน"
+            )
+            cid = self.client_id[:8] + "…" if len(self.client_id) > 8 else self.client_id
+            if self.workspace_id:
+                print(
+                    f"📡 DAX REST: …/groups/{self.workspace_id}/datasets/"
+                    f"{self.dataset_id}/executeQueries  (FABRIC_CLIENT_ID={cid})"
+                )
+            else:
+                print(
+                    f"📡 DAX REST: …/myorg/datasets/{self.dataset_id}/executeQueries  "
+                    f"(FABRIC_CLIENT_ID={cid}; แนะนำใส่ FABRIC_WORKSPACE_ID)"
+                )
+        else:
+            self.cache = msal.SerializableTokenCache()
+            if os.path.exists(self.cache_file):
+                with open(self.cache_file, "r") as f:
+                    self.cache.deserialize(f.read())
+            atexit.register(self._save_cache)
+            self._pca = msal.PublicClientApplication(
+                self.client_id,
+                authority=self.authority,
+                token_cache=self.cache,
+            )
+            print("📡 Fabric auth: ล็อกอินผู้ใช้ (interactive / token cache)")
 
     # ──────────────────────────────────────────────
     # Auth / cache
     # ──────────────────────────────────────────────
-    def _save_cache(self):
+    def _save_cache(self) -> None:
+        if self._use_service_principal or self.cache is None:
+            return
         if self.cache.has_state_changed:
             with open(self.cache_file, "w") as f:
                 f.write(self.cache.serialize())
 
     def _get_access_token(self) -> str:
-        accounts = self.app.get_accounts()
+        if self._cca is not None:
+            result = self._cca.acquire_token_for_client(scopes=self.scope)
+            if "access_token" in result:
+                return result["access_token"]
+            err = result.get("error_description") or result.get("error") or str(result)
+            raise Exception(f"❌ Service Principal token ไม่สำเร็จ: {err}")
+
+        assert self._pca is not None
+        accounts = self._pca.get_accounts()
         if accounts:
-            result = self.app.acquire_token_silent(self.scope, account=accounts[0])
+            result = self._pca.acquire_token_silent(self.scope, account=accounts[0])
         else:
             print("⏳ ไม่พบ token กำลังเปิดเบราว์เซอร์ให้ Login...")
-            result = self.app.acquire_token_interactive(scopes=self.scope)
+            result = self._pca.acquire_token_interactive(scopes=self.scope)
 
         if "access_token" in result:
             self._save_cache()
             return result["access_token"]
         raise Exception(f"❌ Login ไม่สำเร็จ: {result.get('error_description')}")
+
+    def diagnose_powerbi_rest_access(self) -> None:
+        """
+        เรียก Power BI REST แบบ GET (ไม่รัน DAX) เพื่อแยกว่า 404 มาจาก
+        \"ไม่เห็น workspace/dataset\" หรือเฉพาะ executeQueries
+        รันจาก project root: python scripts/test_powerbi_access.py
+        """
+        token = self._get_access_token()
+        headers = {"Authorization": f"Bearer {token}"}
+        base = "https://api.powerbi.com/v1.0/myorg"
+
+        print("── Power BI REST diagnose (Service Principal) ──")
+        if self.workspace_id:
+            url_list = f"{base}/groups/{self.workspace_id}/datasets"
+            r = requests.get(url_list, headers=headers, timeout=60)
+            print(f"GET .../groups/<workspace>/datasets → HTTP {r.status_code}")
+            if r.status_code == 200:
+                ids = [d.get("id") for d in r.json().get("value", [])]
+                print(f"   dataset ใน workspace นี้: {len(ids)} รายการ")
+                for i in ids[:30]:
+                    mark = " ← FABRIC_DATASET_ID" if i == self.dataset_id else ""
+                    print(f"   · {i}{mark}")
+                if self.dataset_id not in ids:
+                    print(
+                        "   ⚠️  FABRIC_DATASET_ID ไม่อยู่ในรายการนี้ "
+                        "(ID ผิด workspace หรือชื่อ dataset ไม่ตรง)"
+                    )
+            else:
+                print(r.text[:800])
+
+            url_ds = (
+                f"{base}/groups/{self.workspace_id}/datasets/{self.dataset_id}"
+            )
+            r2 = requests.get(url_ds, headers=headers, timeout=60)
+            print(f"GET .../groups/<workspace>/datasets/<datasetId> → HTTP {r2.status_code}")
+            if r2.status_code == 200:
+                self._print_dataset_mode_hints(r2.json())
+            else:
+                print(r2.text[:800])
+        else:
+            print("(ไม่มี FABRIC_WORKSPACE_ID — ข้ามการ list ใน group)")
+
+        r3 = requests.get(f"{base}/datasets/{self.dataset_id}", headers=headers, timeout=60)
+        print(f"GET .../myorg/datasets/<datasetId> → HTTP {r3.status_code}")
+        if r3.status_code == 200:
+            self._print_dataset_mode_hints(r3.json())
+        else:
+            print(r3.text[:800])
+        print("── จบ diagnose ──")
+
+    @staticmethod
+    def _print_dataset_mode_hints(meta: dict) -> None:
+        """ช่วยอธิบายว่าทำไม executeQueries อาจ 404 ทั้งที่ GET สำเร็จ"""
+        cpt = meta.get("contentProviderType")
+        up = meta.get("upstreamDatasets") or []
+        print(f"   contentProviderType: {cpt}")
+        print(f"   upstreamDatasets: {len(up)} รายการ" + (f" {up}" if up else ""))
+        if up or (cpt and "Composite" in str(cpt)):
+            print(
+                "   ⚠️  โมเดลแบบ composite / มี upstream semantic model — "
+                "Power BI REST executeQueries มักไม่รองรับ (ได้ 404) แม้มีสิทธิ์; "
+                "ลองชี้ FABRIC_DATASET_ID ไปที่ upstream ที่เป็น import หรือใช้ XMLA"
+            )
 
     # ──────────────────────────────────────────────
     # Core DAX executor
@@ -72,10 +179,14 @@ class FabricDAXConnector:
         debug=True → print first row เพื่อดู key format จริงๆ
         """
         token = self._get_access_token()
-        url = (
-            f"https://api.powerbi.com/v1.0/myorg/datasets/"
+        base = "https://api.powerbi.com/v1.0/myorg"
+        group_url = (
+            f"{base}/groups/{self.workspace_id}/datasets/"
             f"{self.dataset_id}/executeQueries"
+            if self.workspace_id
+            else None
         )
+        myorg_url = f"{base}/datasets/{self.dataset_id}/executeQueries"
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
@@ -84,12 +195,32 @@ class FabricDAXConnector:
             "queries": [{"query": dax_query}],
             "serializerSettings": {"includeNulls": False},
         }
-        response = requests.post(url, headers=headers, json=payload, timeout=60)
+
+        response = requests.post(
+            group_url or myorg_url, headers=headers, json=payload, timeout=60
+        )
+        if (
+            response.status_code == 404
+            and group_url
+            and "PowerBIEntityNotFound" in response.text
+        ):
+            print("📡 executeQueries 404 แบบ group — ลองสำรองแบบ myorg/datasets/…")
+            response = requests.post(
+                myorg_url, headers=headers, json=payload, timeout=60
+            )
 
         if response.status_code != 200:
-            raise Exception(
-                f"❌ DAX query failed (HTTP {response.status_code}): {response.text[:600]}"
+            msg = (
+                f"❌ DAX query failed (HTTP {response.status_code}): "
+                f"{response.text[:600]}"
             )
+            if response.status_code == 404 and "PowerBIEntityNotFound" in response.text:
+                msg += (
+                    " | ถ้า GET dataset สำเร็จแต่ executeQueries 404: อาจเป็นโมเดล composite/"
+                    "มี upstream semantic model — REST ไม่รองรับ (รัน "
+                    "python scripts/test_powerbi_access.py เพื่อดู contentProviderType)"
+                )
+            raise Exception(msg)
 
         data = response.json()
         rows = data["results"][0]["tables"][0].get("rows", [])

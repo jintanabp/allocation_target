@@ -43,10 +43,10 @@ call "%CONDA_BAT%" activate allocation_env
 if errorlevel 1 goto :ERR_ACTIVATE
 
 echo Server กำลังเริ่มต้น...
-echo เปิดเบราว์เซอร์ที่: http://127.0.0.1:8000/
+echo เปิดเบราว์เซอร์ที่: http://localhost:8000/
 echo กด Ctrl+C เพื่อหยุด server
 echo.
-start "" cmd /c "timeout /t 2 /nobreak >nul && start http://127.0.0.1:8000/"
+start "" cmd /c "timeout /t 2 /nobreak >nul && start http://localhost:8000/"
 uvicorn backend.main:app --host 127.0.0.1 --port 8000
 pause
 exit /b 0

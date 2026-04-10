@@ -9,7 +9,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Instrument+Serif:ital@0;1&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=20260409" />
+  <link rel="stylesheet" href="style.css?v=20260418" />
 </head>
 
 <body>
@@ -62,6 +62,13 @@
               </div>
             </div>
 
+            <div id="msAuthBlock" class="ms-auth-block" style="display: none;" aria-live="polite">
+              <button type="button" id="msLoginBtn" class="btn-ms">ล็อกอินด้วย Microsoft</button>
+              <p id="msUserLine" class="ms-user-line" style="display: none;"></p>
+              <p class="ms-auth-hint">เฉพาะบัญชีองค์กรที่อยู่ในกลุ่มที่ได้รับอนุญาต</p>
+            </div>
+
+            <div id="loginFormBlock">
             <div class="field-group">
               <label class="field-label">Supervisor (Super Code)</label>
               <div style="position: relative;">
@@ -124,6 +131,7 @@
               <span>จำค่า Supervisor และงวดล่าสุดอัตโนมัติบนเครื่องนี้</span>
               <button class="link-btn" type="button" onclick="clearLoginMemory()">ล้างค่าที่จำไว้</button>
             </div>
+            </div><!-- /loginFormBlock -->
           </div>
         </main>
       </div>
@@ -339,7 +347,7 @@
               style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: var(--text-2);">
               <input type="checkbox" id="forceMinOneBox"
                 style="accent-color: var(--accent); width: 16px; height: 16px;">
-              <b>บังคับ AI กระจายอย่างน้อย 1 หีบ/คน</b> (เฉพาะสินค้าที่เป้าหีบมีจำนวนมากกว่าจำนวนพนักงาน)
+              <b>บังคับ AI กระจายอย่างน้อย 1 หีบ/คน</b> (เฉพาะ SKU ที่เป้าหีบ ≥ จำนวนพนักงาน — เช่น 6 หีบ / 6 คน)
             </label>
           </div>
         </div>
@@ -400,9 +408,6 @@
           <!-- brand summary bar (แสดงเมื่อ filter) -->
           <div class="brand-summary" id="brandSummary"></div>
 
-          <!-- deviation warning bar (แสดงเมื่อมีคนที่ยอดห่างเกิน 1000 บาท) -->
-          <div class="deviation-bar" id="deviationBar" style="display:none"></div>
-
           <div class="tbl-scroll">
             <table class="tbl result-tbl">
               <thead id="resultHead"></thead>
@@ -414,8 +419,7 @@
           <div class="edit-note">
             💡 คลิกตัวเลข <span style="color:var(--accent);font-weight:700;">สีส้ม</span> เพื่อแก้ไขจำนวนหีบ
             · ยอดรวมอัปเดตอัตโนมัติ
-            · <span style="color:var(--green);font-weight:600;">สีเขียว</span> = ±1,000 บาทจากเป้า
-            · <span style="color:var(--amber);font-weight:600;">สีเหลือง</span> = เกิน ±1,000 บาท
+            · คอลัมน์ขวาสุด: มูลค่ารวม + บรรทัดเล็ก <strong>ขาด/เกิน</strong> เทียบเป้าเหลือง (เกณฑ์ ±1,000 บาท)
           </div>
         </div>
       </section>
@@ -437,10 +441,12 @@
 
   <div class="footer">
     รัน local: <code>Run_Local.bat</code> หรือ <code>uvicorn backend.main:app</code>
-    · เปิด <code>http://127.0.0.1:8000/</code>
+    · เปิด <code>http://localhost:8000/</code>
   </div>
 
-  <script src="app.js?v=20260410"></script>
+  <!-- ใช้ไฟล์ในโปรเจกต์ — เครือข่ายองค์กรมักบล็อก alcdn.msauth.net ทำให้ msal ไม่โหลด -->
+  <script src="vendor/msal-browser.min.js"></script>
+  <script src="app.js?v=20260423"></script>
 </body>
 
 </html>

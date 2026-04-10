@@ -7,13 +7,203 @@
  * - Sorting & Sticky Columns
  */
 
-/** เมื่อเปิดจาก http://127.0.0.1:8000/ ใช้ origin เดียวกับหน้าเว็บ; เปิด index.html แบบ file:// ยังชี้ไปที่พอร์ต 8000 */
+/**
+ * API ชี้ไปที่ origin เดียวกับหน้าเว็บเสมอ (ยกเว้นเปิดไฟล์ file://)
+ * เดิมจำกัดแค่ port 8000 ทำให้รันคนละพอร์ตแล้ว /auth/config ไม่โหลด → ไม่เห็นปุ่มล็อกอิน MS
+ */
 const API_BASE_URL =
-  typeof window !== "undefined" &&
-  window.location.protocol !== "file:" &&
-  window.location.port === "8000"
+  typeof window !== "undefined" && window.location.protocol !== "file:"
     ? window.location.origin
-    : "http://127.0.0.1:8000";
+    : "http://localhost:8000";
+
+/**
+ * Entra ไม่อนุญาต redirect แบบ http://127.0.0.1/... ต้องเป็น https หรือ http://localhost
+ * ถ้าผู้ใช้เปิดแอปที่ 127.0.0.1 ให้ส่ง redirect_uri เป็น localhost (พอร์ตเดียวกัน)
+ */
+function msalRedirectUri() {
+  if (typeof window === "undefined" || window.location.protocol === "file:")
+    return "http://localhost:8000/";
+  const { protocol, hostname, port } = window.location;
+  if (protocol === "http:" && hostname === "127.0.0.1") {
+    const p = port ? `:${port}` : "";
+    return `http://localhost${p}/`;
+  }
+  return `${window.location.origin}/`;
+}
+
+/** Scope แบบเต็ม — ให้ได้ access token ของ Microsoft Graph (ไม่สับสนกับ ID token) */
+const GRAPH_USER_READ_SCOPE = "https://graph.microsoft.com/User.Read";
+
+/** Entra ID — เปิดเมื่อ backend ตั้ง AZURE_AUTH_CLIENT_ID */
+let AUTH_CONFIG = { authRequired: false, tenantId: null, clientId: null };
+let msalInstance = null;
+
+function _uiError(msg) {
+  const el = document.getElementById("loginError");
+  if (!el) return;
+  el.style.display = "block";
+  el.innerHTML = String(msg).replace(/\n/g, "<br>");
+}
+
+// แสดง error บนหน้า (กันกรณีผู้ใช้ไม่เปิด Console แล้วดูเหมือน “กดแล้วไม่เกิดอะไร”)
+window.addEventListener("error", (e) => {
+  const m = e?.error?.message || e?.message || "JavaScript error";
+  _uiError(`❌ ${m}`);
+});
+window.addEventListener("unhandledrejection", (e) => {
+  const r = e?.reason;
+  const m = r?.message || String(r || "Unhandled promise rejection");
+  _uiError(`❌ ${m}`);
+});
+
+function entraMsalReady() {
+  if (!AUTH_CONFIG.authRequired) return true;
+  if (!msalInstance) return false;
+  return !!(msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0]);
+}
+
+async function initEntraAuth() {
+  const block = document.getElementById("msAuthBlock");
+  const msBtn = document.getElementById("msLoginBtn");
+  const hintEl = block?.querySelector(".ms-auth-hint");
+  const formBlock = document.getElementById("loginFormBlock");
+
+  try {
+    const r = await fetch(`${API_BASE_URL}/auth/config`);
+    if (r.ok) AUTH_CONFIG = await r.json();
+    else AUTH_CONFIG = { authRequired: false, _fetchStatus: r.status };
+  } catch (e) {
+    console.warn("auth/config:", e);
+    AUTH_CONFIG = { authRequired: false, _fetchError: true };
+  }
+
+  /* แสดงบล็อกเสมอ — ให้รู้ว่ามีโหมด MS หรือทำไมถึงปิด */
+  if (block) block.style.display = "flex";
+
+  if (!AUTH_CONFIG.authRequired) {
+    if (hintEl) {
+      if (AUTH_CONFIG._fetchError) {
+        hintEl.textContent =
+          `เชื่อมต่อ ${API_BASE_URL}/auth/config ไม่ได้ — ตรวจว่าเปิด URL นี้ผ่าน server เดียวกัน (ไม่ใช้ไฟล์เปล่า) และรีเฟรช`;
+      } else {
+        hintEl.textContent =
+          "ล็อกอิน Microsoft ปิดอยู่ — ใส่ AZURE_AUTH_CLIENT_ID + FABRIC_TENANT_ID (หรือ AZURE_AUTH_TENANT_ID) ใน config/.env หรือ .env ที่ราก แล้วรีสตาร์ท Run_Local / uvicorn";
+      }
+    }
+    if (msBtn) msBtn.style.display = "none";
+    if (formBlock) formBlock.classList.remove("login-form-disabled");
+    return;
+  }
+
+  const Msal = typeof msal !== "undefined" ? msal : window.msal;
+  if (!Msal?.PublicClientApplication) {
+    if (hintEl) {
+      hintEl.textContent =
+        "โหลดสคริปต์ MSAL ไม่สำเร็จ — รีเฟรชแบบ hard refresh (Ctrl+F5) หรือตรวจ index.html";
+    }
+    console.warn("MSAL ไม่โหลด");
+    if (formBlock) formBlock.classList.add("login-form-disabled");
+    return;
+  }
+  if (hintEl) {
+    hintEl.textContent =
+      window.location.hostname === "127.0.0.1"
+        ? `ล็อกอิน Microsoft จะพากลับมาที่ ${msalRedirectUri().replace(/\/$/, "")} (Entra ไม่รับ 127.0.0.1)`
+        : "เฉพาะบัญชีองค์กรที่อยู่ในกลุ่มที่ได้รับอนุญาต";
+  }
+  msalInstance = new Msal.PublicClientApplication({
+    auth: {
+      clientId: AUTH_CONFIG.clientId,
+      authority: `https://login.microsoftonline.com/${AUTH_CONFIG.tenantId}`,
+      redirectUri: msalRedirectUri(),
+    },
+    cache: { cacheLocation: "sessionStorage", storeAuthStateInCookie: false },
+  });
+  await msalInstance.initialize();
+  try {
+    const rr = await msalInstance.handleRedirectPromise();
+    if (rr?.account) msalInstance.setActiveAccount(rr.account);
+    // ถ้ามีการเด้งกลับมา แต่ไม่ได้ account ให้โชว์ hint ช่วยวินิจฉัย
+    if (hintEl && window.location.hash && /code=|error=/.test(window.location.hash) && !rr?.account) {
+      hintEl.textContent =
+        "เด้งกลับมาจาก Microsoft แล้ว แต่ยังไม่ได้ account ใน MSAL — ลอง Ctrl+F5, ล้าง Site data, หรือเช็คว่า Redirect URI ถูกเพิ่มใน Entra (SPA) เป็น " +
+        msalRedirectUri();
+    }
+  } catch (e) {
+    console.error("MSAL redirect:", e);
+    if (hintEl) {
+      hintEl.textContent =
+        "MSAL handleRedirectPromise error: " +
+        (e?.message || String(e)) +
+        " — มักเกิดจาก redirect URI ไม่ตรง หรือ browser บล็อก storage/cookies";
+    }
+  }
+  let acc = msalInstance.getActiveAccount();
+  if (!acc && msalInstance.getAllAccounts().length > 0) {
+    acc = msalInstance.getAllAccounts()[0];
+    msalInstance.setActiveAccount(acc);
+  }
+  if (acc) {
+    if (msBtn) msBtn.style.display = "none";
+    const line = document.getElementById("msUserLine");
+    if (line) {
+      line.style.display = "block";
+      line.textContent = acc.username || acc.name || "";
+    }
+    if (formBlock) formBlock.classList.remove("login-form-disabled");
+  } else {
+    if (msBtn) {
+      msBtn.style.display = "inline-flex";
+      msBtn.onclick = () => {
+        try {
+          const p = msalInstance.loginRedirect({
+            scopes: [GRAPH_USER_READ_SCOPE],
+          });
+          Promise.resolve(p).catch((e) => {
+            console.error("MS loginRedirect:", e);
+            if (hintEl) {
+              hintEl.textContent =
+                "เปิดหน้าล็อกอิน Microsoft ไม่สำเร็จ: " +
+                (e?.message || String(e)) +
+                " — ลองรีเฟรช (F5) หรือปิดแท็บ login.microsoftonline.com ที่ค้าง";
+            }
+          });
+        } catch (e) {
+          console.error("MS loginRedirect:", e);
+          if (hintEl) {
+            hintEl.textContent =
+              "เปิดหน้าล็อกอิน Microsoft ไม่สำเร็จ: " +
+              (e?.message || String(e));
+          }
+        }
+      };
+    }
+    if (formBlock) formBlock.classList.add("login-form-disabled");
+  }
+}
+
+async function ensureGraphToken() {
+  if (!AUTH_CONFIG.authRequired || !msalInstance) return null;
+  const acc = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
+  if (!acc) return null;
+  try {
+    const r = await msalInstance.acquireTokenSilent({
+      account: acc,
+      scopes: [GRAPH_USER_READ_SCOPE],
+    });
+    if (!r?.accessToken) {
+      console.warn("MSAL: acquireTokenSilent ไม่มี accessToken");
+      return null;
+    }
+    return r.accessToken;
+  } catch {
+    await msalInstance.acquireTokenRedirect({
+      account: acc,
+      scopes: [GRAPH_USER_READ_SCOPE],
+    });
+    return null;
+  }
+}
 
 /* ── STATE ──────────────────────────────────────────────── */
 let S = {
@@ -91,7 +281,19 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
   const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
   const t = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
   try {
-    const opts = ctrl ? { ...options, signal: ctrl.signal } : options;
+    const opts = { ...options, headers: { ...(options.headers || {}) } };
+    const tok = await ensureGraphToken();
+    const isPublic =
+      /\/health(\?|$)/.test(url) ||
+      /\/auth\/config(\?|$)/.test(url) ||
+      /\/favicon\.ico(\?|$)/.test(url);
+
+    // ถ้าเปิด auth แล้ว แต่ยังไม่มี token อย่ายิง request แบบไม่มี Authorization (จะได้ไม่งงว่า 401 มาจากไหน)
+    if (AUTH_CONFIG?.authRequired && !isPublic && !tok) {
+      throw new Error("ยังไม่มี Microsoft access token — กรุณากด “ล็อกอินด้วย Microsoft” อีกครั้ง");
+    }
+    if (tok) opts.headers.Authorization = `Bearer ${tok}`;
+    if (ctrl) opts.signal = ctrl.signal;
     return await fetch(url, opts);
   } finally {
     if (t) clearTimeout(t);
@@ -101,14 +303,30 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
 /* ══════════════════════════════════════════════
    INIT
 ══════════════════════════════════════════════ */
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
+  await initEntraAuth();
+
+  // ผูก event แบบ JS ตรงๆ (กัน inline onclick หา function ไม่เจอ / โดน error ทำงานค้าง)
+  const loginBtn = document.getElementById("loginBtn");
+  if (loginBtn) {
+    loginBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      try {
+        handleLogin();
+      } catch (err) {
+        console.error("handleLogin:", err);
+        _uiError(`❌ ${err?.message || String(err)}`);
+      }
+    });
+  }
+
   document.body.classList.add("is-login");
   _enableLoginScrollLock();
   populateYearSelect();
   updateDatePreview();
   document.getElementById("monthSelect").addEventListener("change", updateDatePreview);
   document.getElementById("yearSelect").addEventListener("change", updateDatePreview);
-  loadManagers();
+  if (entraMsalReady()) loadManagers();
   restoreLoginMemory();
   document.getElementById("supSelect")?.addEventListener("change", persistLoginMemory);
   document.getElementById("supSelect")?.addEventListener("blur", persistLoginMemory);
@@ -255,7 +473,7 @@ async function _pollServerStatus() {
         const btn = document.getElementById("loginBtn");
         if (btn) btn.disabled = false;
         // โหลดรายชื่อ Supervisor อัตโนมัติเมื่อ server พร้อม (กันกรณีเปิดเว็บมาก่อนรัน server)
-        if (!_managersLoadedOnce) {
+        if (!_managersLoadedOnce && entraMsalReady()) {
           _managersLoadedOnce = true;
           loadManagers();
         }
@@ -315,18 +533,42 @@ async function loadManagers() {
   if (retryBtn) retryBtn.style.display = "none";
   try {
     const res = await fetchWithTimeout(`${API_BASE_URL}/managers`, {}, 15000);
+    if (res.status === 401) {
+      let d = "กรุณาล็อกอินด้วย Microsoft ก่อน (ด้านบน)";
+      try {
+        const j = await res.json();
+        if (j.detail) d = j.detail;
+      } catch (_) { /* ignore */ }
+      supInput.placeholder = d;
+      showLoginError(`❌ ${d}`);
+      return;
+    }
+    if (res.status === 403) {
+      let d = "บัญชีไม่อยู่ในกลุ่มที่อนุญาต";
+      try {
+        const j = await res.json();
+        if (j.detail) d = j.detail;
+      } catch (_) { /* ignore */ }
+      supInput.placeholder = d;
+      showLoginError(`❌ ${d}`);
+      return;
+    }
     if (res.ok) {
       const data = await res.json();
-      if (data.managers && data.managers.length > 0) {
+      if (Array.isArray(data.managers)) {
         S.managers = data.managers;
-        supInput.placeholder = "พิมพ์ค้นหา หรือคลิกเพื่อเลือก...";
+        supInput.placeholder =
+          data.managers.length > 0
+            ? "พิมพ์ค้นหา หรือคลิกเพื่อเลือก..."
+            : "ไม่พบ Supervisor จาก Fabric — พิมพ์รหัส SuperCode เอง";
         setupAutocomplete(supInput, S.managers);
-        if (retryBtn) retryBtn.style.display = "none";
+        if (retryBtn) retryBtn.style.display = data.managers.length > 0 ? "none" : "inline-flex";
         return;
       }
     }
   } catch (err) {
     console.error("loadManagers error:", err);
+    showLoginError(`❌ ${err?.message || String(err)}`);
   }
   supInput.placeholder = "ดึงรายการ Supervisor ไม่สำเร็จ (พิมพ์รหัสเองได้เลย)";
   if (retryBtn) retryBtn.style.display = "inline-flex";
@@ -391,6 +633,11 @@ async function handleLogin() {
   const loginBtn = document.getElementById("loginBtn");
   const errorDiv = document.getElementById("loginError");
   errorDiv.style.display = "none";
+
+  if (AUTH_CONFIG.authRequired && !entraMsalReady()) {
+    showLoginError("❌ กรุณาล็อกอินด้วย Microsoft ก่อน (ปุ่มด้านบน)");
+    return;
+  }
 
   // ตรวจ sup_id ก่อน fetch — ป้องกัน API call ด้วยค่าว่าง
   const rawSupId = document.getElementById("supSelect").value.trim();
@@ -462,6 +709,16 @@ function handleLogout() {
 }
 
 function _doLogout() {
+  if (AUTH_CONFIG.authRequired && msalInstance) {
+    const acc = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
+    if (acc) {
+      msalInstance.logoutRedirect({
+        account: acc,
+        postLogoutRedirectUri: msalRedirectUri(),
+      });
+      return;
+    }
+  }
   const keepManagers = S.managers || [];
   S._hasUnsaved = false;
   S = {
@@ -531,7 +788,7 @@ function _showLogoutModal() {
 async function loadData(supId, targetMonth, targetYear) {
   try {
     const url = `${API_BASE_URL}/data/employees?sup_id=${supId}&target_month=${targetMonth}&target_year=${targetYear}`;
-    const res = await fetch(url);
+    const res = await fetchWithTimeout(url, {}, 120000);
     if (!res.ok) {
       let detail = "ดึงข้อมูลไม่สำเร็จ";
       try { const j = await res.json(); detail = j.detail || detail; } catch (_) { }
@@ -570,7 +827,7 @@ async function loadData(supId, targetMonth, targetYear) {
     const hint = isFetch
       ? "❌ เชื่อมต่อ server ไม่ได้\n\n" +
         "✅ แก้ไข: เปิด Run_Local.bat หรือ scripts\\start_server.bat แล้วลองใหม่\n" +
-        "หรือรันด้วยมือ: uvicorn main:app --reload"
+        "หรือรันด้วยมือ: uvicorn backend.main:app --host 127.0.0.1 --port 8000 แล้วเปิด http://localhost:8000/"
       : `❌ ${err.message}`;
     showLoginError(hint);
     return false;
@@ -646,7 +903,8 @@ function _showSkuWarnings() {
     const namedSkus = noHistory.filter(w => w.sku);
     const genericMsg = noHistory.filter(w => !w.sku);
     const MAX_SHOW = 24;
-    html += `<li><strong>มีเป้าแต่ไม่มีประวัติขายในทีมนี้</strong> — ระบบจะกระจายเท่ากัน (EVEN)<br>`;
+    html += `<li><strong>มีเป้าหีบรวมทีม แต่ไม่มียอดขาย 3 เดือนในทีมนี้</strong> — กระจายตามน้ำหนักจะใช้ EVEN<br>`;
+    html += `<div style="margin:6px 0 4px;font-size:11px;color:var(--text-3);line-height:1.45;">หมายถึง <strong>ระดับ SKU ทั้งทีม</strong> (เป้ารวมจาก TGA) ไม่ใช่ว่าทุกคนต้องมีเป้ารายคนในตาราง — ช่องหีบรายคนอาจยังว่างก่อนคำนวณ</div>`;
     if (namedSkus.length > 0) {
       const preview = namedSkus.slice(0, MAX_SHOW);
       const rest = namedSkus.slice(MAX_SHOW);
@@ -928,6 +1186,7 @@ async function runOptimization() {
   renderResult(allocs);
   qs("#resultBlock").style.display = "block";
   qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
+  saveDraft(true); // บันทึกแบบร่างอัตโนมัติหลัง AI + เกลี่ยเศษ
 }
 
 /* ══════════════════════════════════════════════
@@ -966,11 +1225,15 @@ async function _doOptimize(lockedEdits = []) {
     };
 
     const url = `${API_BASE_URL}/optimize?sup_id=${S.supId}&target_month=${S.targetMonth}&target_year=${S.targetYear}`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+      180000
+    );
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
       throw new Error(j.detail || `HTTP ${res.status}`);
@@ -1114,7 +1377,8 @@ function renderResult(allocs) {
     headerHtml += `<th class="r sticky-brand-val">มูลค่ารวม<div style="font-size:9px;color:var(--accent)">${S.activeBrand}</div></th>`;
   }
   headerHtml += `<th class="r sticky-grand-box">รวมหีบ<div style="font-size:9px;color:var(--text-3)">ทุกแบรนด์</div></th>`;
-  headerHtml += `<th class="r sticky-grand-val">มูลค่ารวม<div style="font-size:9px;color:var(--text-3)">ทุกแบรนด์</div></th></tr>`;
+  headerHtml += `<th class="r sticky-grand-val">มูลค่ารวม<div style="font-size:9px;color:var(--text-3)">ทุกแบรนด์</div>` +
+    `<div class="sku-th-dev-hint">ขาด / เกิน เป้าเหลือง<br><span style="font-weight:500">(เกณฑ์ ±1,000 บ.)</span></div></th></tr>`;
   qs("#resultHead").innerHTML = headerHtml;
 
   // Pre-compute per-emp grand/brand totals — single O(n) pass แทน O(n²) filter loop
@@ -1182,13 +1446,20 @@ function renderResult(allocs) {
       rowHtml += `<td class="r num-total sticky-brand-val">${baht(brandValue)}</td>`;
     }
     rowHtml += `<td class="r num-total sticky-grand-box" id="rowtotal-${emp}">${grandBoxes.toLocaleString()}</td>`;
-    rowHtml += `<td class="r num-total sticky-grand-val ${valClass}" id="rowval-${emp}" title="${valTitle}">${baht(grandValue)}</td></tr>`;
+    const devSub =
+      yellowTarget > 0
+        ? deviationOk
+          ? `<div class="emp-dev-line dev-ok" title="${valTitle}">✓ ใกล้เป้า (ห่าง ${baht(devAbs)} บ.)</div>`
+          : `<div class="emp-dev-line dev-bad" title="${valTitle}"><strong>${word}</strong> ${baht(devAbs)} บาท</div>`
+        : `<div class="emp-dev-line dev-muted">—</div>`;
+    rowHtml += `<td class="r num-total sticky-grand-val grand-val-cell ${valClass}" id="rowval-${emp}" title="${valTitle}">` +
+      `<div class="grand-val-cell-inner">` +
+      `<div class="grand-val-amount">${baht(grandValue)}</div>${devSub}</div></td></tr>`;
 
     return rowHtml;
   }).join("");
 
   renderResultFooter(skus, skuTotals, emps);
-  _updateDeviationBar(emps);
   syncStep3ResultFabricNote();
 }
 
@@ -1353,8 +1624,8 @@ function autoRebalance(silent = false) {
   });
 
   renderResult(S.allocations); // วาดตารางใหม่เสมอ ให้ยอดอัปเดต
-  if (changed) S._hasUnsaved = true;
   if (changed && !silent) toast("⚖️ เกลี่ยส่วนต่างหีบสำเร็จ (แจกจ่ายให้พนักงานอื่นแล้ว)", "green");
+  if (changed) saveDraft(true); // บันทึกแบบร่างหลังเกลี่ยอัตโนมัติ
 }
 
 /* ══════════════════════════════════════════════
@@ -1375,46 +1646,6 @@ function _buildEmpTotalsMap(allocs) {
     map[a.emp_id].value += boxes * price;
   }
   return map;
-}
-
-// ยังคง expose ไว้สำหรับ _updateDeviationBar ที่เรียกแยก
-function _empAllBrandBoxes(empId) {
-  return S.allocations.filter(a => a.emp_id === empId).reduce((s, a) => s + (a.allocated_boxes || 0), 0);
-}
-
-function _empAllBrandValue(empId) {
-  return S.allocations.filter(a => a.emp_id === empId).reduce((s, a) => {
-    const price = Number(S.skus.find(x => x.sku === a.sku)?.price_per_box) || Number(a.price_per_box) || 0;
-    return s + (a.allocated_boxes || 0) * price;
-  }, 0);
-}
-
-// 🔴 ข้อ 2: แสดงจำนวนเงินที่ ขาด/เกิน รายคนให้ชัดเจน
-function _updateDeviationBar(emps) {
-  const warnings = emps.map(emp => {
-    const yt = S.yellow[emp] || 0;
-    if (!yt) return null;
-    const actualValue = _empAllBrandValue(emp);
-    const diff = actualValue - yt;
-    if (Math.abs(diff) > 1000) {
-      return { emp, diff };
-    }
-    return null;
-  }).filter(Boolean);
-
-  const bar = qs("#deviationBar");
-  if (!bar) return;
-  if (warnings.length === 0) {
-    bar.style.display = "none";
-    bar.innerHTML = "";
-  } else {
-    bar.style.display = "block";
-    bar.innerHTML = `
-      <div class="dev-bar-inner">
-        <span>⚠️ พนักงาน ${warnings.length} คนที่ยอดรวมห่างจากเป้าเหลืองเกิน ±1,000 บาท:</span>
-        <span>${warnings.map(w => `<span class="emp-tag" style="background: white; border-color: ${w.diff > 0 ? 'var(--amber)' : 'var(--red)'}; color: ${w.diff > 0 ? 'var(--amber)' : 'var(--red)'}">${w.emp} (${w.diff > 0 ? 'เกิน' : 'ขาด'} ${baht(Math.abs(w.diff))})</span>`).join(" ")}</span>
-      </div>`;
-  }
 }
 
 /* ══════════════════════════════════════════════
@@ -1457,14 +1688,22 @@ async function doExport() {
       yellow_targets: Object.entries(S.yellow).map(([emp_id, v]) => ({ emp_id, yellow_target: v })),
     };
 
-    const res = await fetch(`${API_BASE_URL}/export/excel?sup_id=${S.supId}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    const res = await fetchWithTimeout(
+      `${API_BASE_URL}/export/excel?sup_id=${S.supId}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+      120000
+    );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-    const dlRes = await fetch(`${API_BASE_URL}/download/excel?sup_id=${S.supId}`);
+    const dlRes = await fetchWithTimeout(
+      `${API_BASE_URL}/download/excel?sup_id=${S.supId}`,
+      {},
+      60000
+    );
     if (!dlRes.ok) throw new Error(`Download failed: HTTP ${dlRes.status}`);
     const blob = await dlRes.blob();
 
@@ -1866,6 +2105,7 @@ async function runReAllocationKeepEdits() {
 
   const strategy = document.querySelector('[name="strategy"]:checked')?.value || "L3M";
   S.allocations = allocs;
+  autoRebalance(true);
   buildBrandTabs(allocs);
   renderResult(allocs);
   document.getElementById("changeBanner")?.remove();
@@ -1879,4 +2119,5 @@ async function runReAllocationKeepEdits() {
   qs("#resultBlock").style.display = "block";
   qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
   toast("✅ กระจายหีบใหม่สำเร็จ — manual edits ยังคงอยู่", "green");
+  saveDraft(true);
 }

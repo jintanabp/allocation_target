@@ -7,3 +7,5 @@ pulp==2.9.0
 python-multipart>=0.0.9
 msal>=1.28.0
 requests>=2.31.0
+python-dotenv>=1.0.0
+PyJWT[cryptography]>=2.8.0

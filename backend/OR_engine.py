@@ -44,7 +44,9 @@ def allocate_boxes(
         df_out = _lp_optimize(df_emp_targets, df_sku, df_hist, force_min_one, locked_map)
     else:
         df_out = _proportional(df_emp_targets, df_sku, df_hist, strategy, force_min_one, locked_map, effective_cap)
-        df_out = _greedy_revenue_balancer(df_out, df_emp_targets, df_sku, locked_map)
+        df_out = _greedy_revenue_balancer(
+            df_out, df_emp_targets, df_sku, locked_map, force_min_one=force_min_one
+        )
 
     return df_out
 
@@ -165,12 +167,31 @@ def _proportional(df_emp_targets, df_sku, df_hist, strategy, force_min_one=False
 
     return pd.DataFrame(results) if results else pd.DataFrame(columns=["emp_id", "sku", "allocated_boxes"])
 
-def _greedy_revenue_balancer(df_out: pd.DataFrame, df_emp_targets: pd.DataFrame, df_sku: pd.DataFrame, locked_map=None) -> pd.DataFrame:
-    if df_out.empty: return df_out
+def _greedy_revenue_balancer(
+    df_out: pd.DataFrame,
+    df_emp_targets: pd.DataFrame,
+    df_sku: pd.DataFrame,
+    locked_map=None,
+    force_min_one: bool = False,
+) -> pd.DataFrame:
+    if df_out.empty:
+        return df_out
     locked_map = locked_map or {}
     target_rev = dict(zip(df_emp_targets["emp_id"], df_emp_targets["yellow_target"]))
     sku_prices = dict(zip(df_sku["sku"], df_sku["price_per_box"]))
+    target_boxes = dict(zip(df_sku["sku"], df_sku["supervisor_target_boxes"]))
     emps = df_emp_targets["emp_id"].tolist()
+    n_emps = len(emps)
+
+    def _min_floor_boxes(sku: str) -> int:
+        """สอดคล้อง _proportional / LP: อย่างน้อย 1 หีบ/คนเมื่อเป้าหีบ SKU นั้น >= จำนวนพนักงาน"""
+        if not force_min_one or n_emps <= 0:
+            return 0
+        try:
+            t = int(round(float(target_boxes.get(sku, 0) or 0)))
+        except (TypeError, ValueError):
+            t = 0
+        return 1 if t >= n_emps else 0
     
     alloc = {}
     for emp in emps: alloc[emp] = {s: 0 for s in sku_prices.keys()}
@@ -208,7 +229,9 @@ def _greedy_revenue_balancer(df_out: pd.DataFrame, df_emp_targets: pd.DataFrame,
             if (rich_emp, sku) in locked_map or (poor_emp, sku) in locked_map:
                 continue
 
-            if alloc[rich_emp][sku] > 0:
+            floor = _min_floor_boxes(sku)
+            # ห้ามดึงหีบจนเหลือต่ำกว่า floor (กัน force_min_one ถูกทำลายหลัง _proportional)
+            if alloc[rich_emp][sku] > floor:
                 current_error = abs(diffs[rich_emp]) + abs(diffs[poor_emp])
                 new_rich_diff = diffs[rich_emp] - price
                 new_poor_diff = diffs[poor_emp] + price
@@ -219,9 +242,13 @@ def _greedy_revenue_balancer(df_out: pd.DataFrame, df_emp_targets: pd.DataFrame,
                     best_improvement = improvement
                     best_sku_to_move = sku
                     
-        if best_sku_to_move is None: break
-            
-        alloc[rich_emp][best_sku_to_move] = max(0, alloc[rich_emp][best_sku_to_move] - 1)
+        if best_sku_to_move is None:
+            break
+
+        fl = _min_floor_boxes(best_sku_to_move)
+        alloc[rich_emp][best_sku_to_move] = max(
+            fl, alloc[rich_emp][best_sku_to_move] - 1
+        )
         alloc[poor_emp][best_sku_to_move] += 1
 
     final_results = [{"emp_id": emp, "sku": sku, "allocated_boxes": boxes} for emp in emps for sku, boxes in alloc[emp].items() if boxes > 0]

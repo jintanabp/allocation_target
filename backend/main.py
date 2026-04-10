@@ -1,7 +1,7 @@
 """
 main.py — Target Allocation API (v3 — Production)
 ────────────────────────────────────────────────────────────────────
-uvicorn main:app --reload
+uvicorn backend.main:app --reload  (จากรากโปรเจกต์)
 
 การไหลของข้อมูล:
   1. GET  /data/employees  → ดึงพนักงาน + SKU + LY + 3M hist จาก Fabric
@@ -18,14 +18,21 @@ from datetime import datetime, timedelta
 import json
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from .load_env import load_project_dotenv
+
+load_project_dotenv()
+
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import pandas as pd
 from .OR_engine import allocate_boxes
 from .generate_excel import create_target_excel
+from . import auth_entra
 from .fabric_dax_connector import FabricDAXConnector
 
 # ── Logging ──────────────────────────────────────────────
@@ -39,6 +46,30 @@ logging.basicConfig(
     ],
 )
 logger = logging.getLogger("target_allocation")
+
+
+def require_entra_member(
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict:
+    """ถ้าเปิด Entra auth — ต้องส่ง Bearer token และอยู่ในกลุ่ม AZURE_AUTH_ALLOWED_GROUP_ID"""
+    if not auth_entra.auth_enabled():
+        return {}
+    if not authorization or not authorization.lower().startswith("bearer "):
+        logger.info("Entra auth: missing bearer token")
+        raise HTTPException(
+            status_code=401,
+            detail="กรุณาล็อกอินด้วย Microsoft (กดปุ่มล็อกอินก่อน)",
+        )
+    token = authorization[7:].strip()
+    try:
+        return auth_entra.verify_bearer_and_group(token)
+    except PermissionError as e:
+        logger.info("Entra auth: forbidden: %s", str(e))
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        logger.info("Entra auth: invalid token: %s", str(e))
+        raise HTTPException(status_code=401, detail=str(e))
+
 
 # ── Startup helpers (ต้อง define ก่อน app เพราะ FastAPI ต้องการ lifespan ตอน init) ──
 def _cleanup_old_caches(max_age_days: int = 7):
@@ -62,6 +93,16 @@ async def lifespan(app_: FastAPI):
 # ── App ───────────────────────────────────────────────────
 app = FastAPI(title="Target Allocation API", version="3.0", lifespan=lifespan)
 
+if auth_entra.auth_enabled():
+    gid = (
+        os.environ.get("AZURE_AUTH_ALLOWED_GROUP_ID")
+        or "06043b2d-153b-4f88-965a-8b0500ca951e"
+    ).strip()
+    logger.info(
+        "Entra login เปิดใช้งาน — กลุ่มที่อนุญาต object id: %s…",
+        gid[:8],
+    )
+
 # CORS — allow_credentials=False เพราะไม่ได้ใช้ cookie/session
 # ⚠️ allow_credentials=True + allow_origins=["*"] ผิด HTTP spec
 #    Starlette จะ drop CORS headers เงียบๆ → browser block ทุก request จาก file://
@@ -72,12 +113,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ── Known supervisors ─────────────────────────────────────
-# โหลดจาก env var ก่อน — fallback ไปค่า hardcoded เพื่อกัน startup crash
-# ตั้งค่า: set KNOWN_MANAGERS=SL330,SL374,SL999,SL001 ใน Run_Local.bat / scripts\start_server.bat
-_km_env = os.environ.get("KNOWN_MANAGERS", "")
-KNOWN_MANAGERS = [m.strip() for m in _km_env.split(",") if m.strip()] or ["SL330", "SL374", "SL999"]
 
 # ── Fallback price per SKU ────────────────────────────────
 PRICE_FALLBACK = {
@@ -282,11 +317,34 @@ def _build_sku_and_sun_from_tga(
 
 
 # ══════════════════════════════════════════════════════════
+#  GET /auth/config — ค่าสาธารณะสำหรับ MSAL (ไม่มี secret)
+# ══════════════════════════════════════════════════════════
+
+
+@app.get("/auth/config")
+def auth_public_config():
+    return auth_entra.spa_config_payload()
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon_placeholder():
+    """ลด 404 ใน log — เบราว์เซอร์ขอ /favicon.ico อัตโนมัติ"""
+    return Response(status_code=204)
+
+
+# ══════════════════════════════════════════════════════════
 #  GET /managers (ดึงรายชื่อ Super Code ทั้งหมดแบบอัตโนมัติ)
 # ══════════════════════════════════════════════════════════
 
+
+@app.api_route("/manegers", methods=["GET", "HEAD"], include_in_schema=False)
+def managers_common_typo():
+    """พิมพ์ผิดบ่อย (manegers) — redirect ไป /managers"""
+    return RedirectResponse(url="/managers", status_code=307)
+
+
 @app.get("/managers")
-def get_managers():
+def get_managers(_user: dict = Depends(require_entra_member)):
     os.makedirs("data", exist_ok=True)
     cache_path = "data/managers_cache.json"
     
@@ -311,8 +369,9 @@ def get_managers():
         except Exception as cache_err:
             logger.warning("managers cache corrupt: %s", cache_err)
             
-    # ถ้าพังหมดเลย ให้คืนค่า Default กันหน้าเว็บพัง
-    return {"managers": KNOWN_MANAGERS}
+    # ไม่มีรายชื่อจาก Fabric และไม่มี cache — คืน [] ให้ผู้ใช้พิมพ์ SuperCode เอง
+    logger.warning("ไม่มีรายชื่อ Supervisor — ตรวจสอบการล็อกอิน Fabric และสิทธิ์ dataset")
+    return {"managers": []}
 
 
 # ══════════════════════════════════════════════════════════
@@ -320,16 +379,12 @@ def get_managers():
 # ══════════════════════════════════════════════════════════
 @app.get("/data/employees")
 def get_employees(
+    _user: dict = Depends(require_entra_member),
     sup_id:       str  = Query(..., description="SuperCode เช่น SL330"),
     target_month: int  = Query(..., ge=1, le=12),
     target_year:  int  = Query(..., ge=2020, le=2100),
     regen_target: bool = Query(False, description="บังคับ regenerate dummy targets"),
 ):
-    # ── Validate supervisor ───────────────────────────────
-    # ใช้ warning แทน error เพราะ SuperCode อาจถูกเพิ่มในภายหลัง
-    if sup_id not in KNOWN_MANAGERS:
-        logger.warning("sup_id '%s' ไม่อยู่ใน KNOWN_MANAGERS %s → อนุญาตให้ดำเนินการต่อ", sup_id, KNOWN_MANAGERS)
-
     os.makedirs("data", exist_ok=True)
 
     # ── Step 1: ดึงพนักงาน ───────────────────────────────
@@ -569,10 +624,19 @@ def get_employees(
         # ประวัติจาก Fabric — เช็คทีมทั้งหมด (ไม่ใช่รายคน)
         hist_skus = set(str(s).strip() for s in df_hist["sku"].dropna().astype(str).unique() if str(s).strip())
 
-        # SKU มีเป้าแต่ไม่มีประวัติขายในทีมนี้เลย
-        new_skus = sorted(target_skus - hist_skus)
+        # เป้าหีบรวมทีมต่อ SKU (จาก TGA) — เตือนเฉพาะ SKU ที่เป้าทีม > 0 จริง (กันคลายกับ SKU ที่อยู่ในรายการเพราะเคยขาย 6 เดือนแต่เป้า 0)
+        team_boxes_by_sku: dict[str, int] = {}
+        for _, row in df_sku.iterrows():
+            sk = str(row.get("sku", "")).strip()
+            if sk:
+                team_boxes_by_sku[sk] = int(row.get("supervisor_target_boxes", 0) or 0)
+
+        # SKU มีเป้าหีบรวมทีม แต่ไม่มียอดในประวัติ 3 เดือน (ทั้งทีม)
+        new_skus = sorted(
+            s for s in (target_skus - hist_skus) if team_boxes_by_sku.get(s, 0) > 0
+        )
         for sku in new_skus:
-            info = df_sku[df_sku["sku"] == sku]
+            info = df_sku[df_sku["sku"].astype(str).str.strip() == sku]
             brand = ""
             if not info.empty:
                 brand = str(info.iloc[0].get("brand_name_thai") or info.iloc[0].get("brand_name_english") or "")
@@ -580,7 +644,11 @@ def get_employees(
                 "type": "no_history",
                 "sku": sku,
                 "brand": brand,
-                "message": f"SKU {sku}{' (' + brand + ')' if brand else ''} มีเป้าหีบ แต่ไม่มีพนักงานในทีมนี้เคยขายมาก่อนเลย"
+                "message": (
+                    f"SKU {sku}{' (' + brand + ')' if brand else ''} "
+                    f"มีเป้าหีบรวมทีมในงวดนี้ แต่ไม่มียอดขายย้อนหลัง 3 เดือนในทีมนี้ "
+                    f"(ช่องรายคนอาจว่าง/น้อยจนกว่าจะกระจาย) — กลยุทธ์ L3M/L6M/PUSH จะใช้ EVEN แทนประวัติ"
+                ),
             })
 
         # SKU เคยขายในทีมแต่ไม่มีในเป้าเดือนนี้
@@ -625,13 +693,11 @@ def get_employees(
 @app.post("/optimize")
 def run_optimization(
     req:          OptimizeRequest,
+    _user: dict = Depends(require_entra_member),
     sup_id:       str = Query("SL330"),
     target_month: int = Query(..., ge=1, le=12),
     target_year:  int = Query(..., ge=2020, le=2100),
 ):
-    # Validate
-    if sup_id not in KNOWN_MANAGERS:
-        logger.warning("sup_id '%s' ไม่อยู่ใน KNOWN_MANAGERS → อนุญาตให้ดำเนินการต่อ", sup_id)
     if req.strategy.upper() not in VALID_STRATEGIES:
         raise HTTPException(400, detail=f"strategy ไม่ถูกต้อง ต้องเป็น {VALID_STRATEGIES}")
 
@@ -727,11 +793,9 @@ def run_optimization(
 @app.post("/export/excel")
 def export_excel(
     req:    ExportRequest,
+    _user: dict = Depends(require_entra_member),
     sup_id: str = Query("SL330"),
 ):
-    if sup_id not in KNOWN_MANAGERS:
-        logger.warning("export: sup_id '%s' ไม่อยู่ใน KNOWN_MANAGERS → อนุญาตให้ดำเนินการต่อ", sup_id)
-
     os.makedirs("data", exist_ok=True)
 
     # Build DataFrame จาก validated Pydantic models
@@ -780,10 +844,10 @@ def export_excel(
 #  GET /download/excel
 # ══════════════════════════════════════════════════════════
 @app.get("/download/excel")
-def download_excel(sup_id: str = Query("SL330")):
-    if sup_id not in KNOWN_MANAGERS:
-        logger.warning("download: sup_id '%s' ไม่อยู่ใน KNOWN_MANAGERS → อนุญาตให้ดำเนินการต่อ", sup_id)
-
+def download_excel(
+    _user: dict = Depends(require_entra_member),
+    sup_id: str = Query("SL330"),
+):
     fpath = excel_path(sup_id)
     if not os.path.exists(fpath):
         raise HTTPException(404, detail="ไม่พบไฟล์ Excel กรุณา Optimize ก่อน")
@@ -802,7 +866,8 @@ def download_excel(sup_id: str = Query("SL330")):
 def health():
     return {
         "status": "ok",
-        "known_managers": KNOWN_MANAGERS,
+        "entra_auth_required": auth_entra.auth_enabled(),
+        "managers_source": "GET /managers (ดึง SuperCode จาก dim_salesman ใน Fabric)",
         "valid_strategies": list(VALID_STRATEGIES),
         "debug_endpoints_enabled": _ENABLE_DEBUG,
         "files": {
@@ -817,7 +882,10 @@ def health():
 #  ใช้สำหรับ debug เมื่อหาพนักงานไม่เจอ
 # ══════════════════════════════════════════════════════════
 @app.get("/debug/fabric")
-def debug_fabric(sup_id: str = Query("SL330")):
+def debug_fabric(
+    _user: dict = Depends(require_entra_member),
+    sup_id: str = Query("SL330"),
+):
     """
     ดึงข้อมูล debug จาก Fabric:
     - SuperCode ทั้งหมดที่มีใน dim_salesman
