@@ -42,6 +42,14 @@
   /* Layout */
   --topbar-h: 56px;
 
+  /* Result sticky right columns (ปรับได้จากที่เดียว) */
+  --sticky-grand-val-w: 170px; /* มูลค่ารวมทุกแบรนด์ */
+  --sticky-grand-box-w: 110px;  /* รวมหีบทุกแบรนด์ */
+  --sticky-brand-val-w: 150px; /* มูลค่ารวมแบรนด์ที่เลือก */
+  --sticky-brand-box-w: 110px; /* รวมหีบแบรนด์ที่เลือก */
+  --sticky-right-grand: calc(var(--sticky-grand-val-w) + var(--sticky-grand-box-w));
+  --sticky-right-all: calc(var(--sticky-right-grand) + var(--sticky-brand-val-w) + var(--sticky-brand-box-w));
+
   /* Structure */
   --r-sm: 8px;
   --r-md: 10px;
@@ -1510,10 +1518,11 @@ body.is-login {
 }
 
 .emp-dev-line {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
-  line-height: 1.2;
-  white-space: nowrap;
+  line-height: 1.3;
+  white-space: normal;
+  word-break: break-word;
   letter-spacing: -0.01em;
 }
 
@@ -1538,9 +1547,33 @@ body.is-login {
 }
 
 /* Result table specifics */
-.tbl-scroll {
+.result-block .tbl-scroll {
   overflow-x: auto;
 }
+
+/* Result table: ให้คอลัมน์ SKU ขยายตามเนื้อหา (กันตารางพังจาก fixed layout) */
+.result-tbl {
+  table-layout: auto;
+  width: max-content;
+  min-width: 100%;
+}
+
+/* Gap column: เว้นพื้นที่ "ก่อน" คอลัมน์รวมยอด เพื่อไม่ให้ sticky ทับข้อมูล และยังให้รวมยอดอยู่ขวาสุดจริง */
+.result-tbl .sticky-gap {
+  width: var(--sticky-right-grand);
+  min-width: var(--sticky-right-grand);
+  max-width: var(--sticky-right-grand);
+  padding: 0 !important;
+  border: none !important;
+  background: transparent !important;
+}
+
+.result-block.brand-filtered .result-tbl .sticky-gap {
+  width: var(--sticky-right-all);
+  min-width: var(--sticky-right-all);
+  max-width: var(--sticky-right-all);
+}
+
 
 .tbl-scroll::-webkit-scrollbar {
   height: 8px;
@@ -1661,58 +1694,114 @@ body.is-login {
   min-width: 80px;
 }
 
-/* 🔴 ตรึงคอลัมน์ฝั่งซ้าย สำหรับ Footer (ที่รวม 2 คอลัมน์ไว้ด้วยกัน) */
+/* 🔴 ตรึงคอลัมน์ฝั่งซ้าย สำหรับ Footer (แยก 2 คอลัมน์ ไม่ใช้ colspan กันทับซ้อน) */
 .result-tbl tfoot td:nth-child(1) {
   position: sticky;
   left: 0;
-  z-index: 15;
+  z-index: 16;
   background: var(--bg-main) !important;
+  box-shadow: 2px 0 5px rgba(0, 0, 0, 0.05);
+  min-width: 110px;
+}
+
+.result-tbl tfoot td:nth-child(2) {
+  position: sticky;
+  left: 110px;
+  z-index: 16;
+  background: var(--bg-main) !important;
+  box-shadow: 2px 0 5px rgba(0, 0, 0, 0.05);
   border-right: 2px solid var(--border);
+  min-width: 80px;
 }
 
 /* 🔴 ตรึงคอลัมน์ฝั่งขวา (ยอดรวมต่างๆ) */
+/* ══ Sticky right columns — ใช้ตัวแปรกันทับซ้อนเมื่อซูม/ตัวเลขยาว ══ */
 .result-tbl .sticky-grand-val {
   position: sticky;
   right: 0;
-  min-width: 130px;
-  background: var(--white);
-  z-index: 10;
+  width: var(--sticky-grand-val-w);
+  min-width: var(--sticky-grand-val-w);
+  max-width: var(--sticky-grand-val-w);
+  background: var(--white) !important;
+  z-index: 30;
   box-shadow: -4px 0 10px rgba(0, 0, 0, 0.03);
+  overflow: hidden;
 }
 
 .result-tbl .sticky-grand-box {
   position: sticky;
-  right: 130px;
-  min-width: 90px;
-  background: var(--white);
-  z-index: 10;
+  right: var(--sticky-grand-val-w);
+  width: var(--sticky-grand-box-w);
+  min-width: var(--sticky-grand-box-w);
+  max-width: var(--sticky-grand-box-w);
+  background: var(--white) !important;
+  z-index: 30;
   box-shadow: -2px 0 5px rgba(0, 0, 0, 0.02);
 }
 
 .result-tbl .sticky-brand-val {
   position: sticky;
-  right: 220px;
-  min-width: 120px;
-  background: var(--accent-bg);
-  z-index: 10;
+  right: calc(var(--sticky-grand-val-w) + var(--sticky-grand-box-w));
+  width: var(--sticky-brand-val-w);
+  min-width: var(--sticky-brand-val-w);
+  max-width: var(--sticky-brand-val-w);
+  background: var(--accent-bg) !important;
+  z-index: 30;
   border-left: 2px solid var(--accent-brd);
+  overflow: hidden;
 }
 
 .result-tbl .sticky-brand-box {
   position: sticky;
-  right: 340px;
-  min-width: 90px;
-  background: var(--accent-bg);
-  z-index: 10;
+  right: calc(var(--sticky-grand-val-w) + var(--sticky-grand-box-w) + var(--sticky-brand-val-w));
+  width: var(--sticky-brand-box-w);
+  min-width: var(--sticky-brand-box-w);
+  max-width: var(--sticky-brand-box-w);
+  background: var(--accent-bg) !important;
+  z-index: 30;
+}
+
+/* บังคับให้ header/footer sticky ใช้ width เดียวกับ body (กันตารางคำนวณกว้างไม่ตรงกัน) */
+.result-tbl thead th.sticky-grand-val,
+.result-tbl tfoot td.sticky-grand-val {
+  width: var(--sticky-grand-val-w);
+  min-width: var(--sticky-grand-val-w);
+  max-width: var(--sticky-grand-val-w);
+}
+.result-tbl thead th.sticky-grand-box,
+.result-tbl tfoot td.sticky-grand-box {
+  width: var(--sticky-grand-box-w);
+  min-width: var(--sticky-grand-box-w);
+  max-width: var(--sticky-grand-box-w);
+}
+.result-tbl thead th.sticky-brand-val,
+.result-tbl tfoot td.sticky-brand-val {
+  width: var(--sticky-brand-val-w);
+  min-width: var(--sticky-brand-val-w);
+  max-width: var(--sticky-brand-val-w);
+}
+.result-tbl thead th.sticky-brand-box,
+.result-tbl tfoot td.sticky-brand-box {
+  width: var(--sticky-brand-box-w);
+  min-width: var(--sticky-brand-box-w);
+  max-width: var(--sticky-brand-box-w);
 }
 
 .result-tbl thead th[class*="sticky-"] {
-  z-index: 15;
+  z-index: 35;
   background: var(--bg-main) !important;
 }
 
 .result-tbl tfoot td[class*="sticky-"] {
-  z-index: 15;
+  z-index: 35;
+  background: var(--bg-main) !important;
+}
+
+/* ตอน hover แถว ให้ sticky ขวาเปลี่ยนพื้นหลังเหมือนช่องอื่น และอยู่เหนือเสมอ */
+.tbl tbody tr:hover .sticky-grand-box,
+.tbl tbody tr:hover .sticky-grand-val,
+.tbl tbody tr:hover .sticky-brand-box,
+.tbl tbody tr:hover .sticky-brand-val {
   background: var(--bg-main) !important;
 }
 

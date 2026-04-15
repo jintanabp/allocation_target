@@ -1314,6 +1314,8 @@ function switchBrand(brand) {
 ══════════════════════════════════════════════ */
 function renderResult(allocs) {
   const isFiltered = S.activeBrand !== "ALL";
+  // ใช้สำหรับ CSS เว้นพื้นที่ด้านขวา กันคอลัมน์ sticky ทับคอลัมน์อื่น
+  document.getElementById("resultBlock")?.classList.toggle("brand-filtered", isFiltered);
   let filtered = isFiltered ? allocs.filter(a => (a.brand_name_thai || a.brand_name_english || "") === S.activeBrand) : allocs;
 
   const sortMode = qs("#skuSortSelect")?.value || "code";
@@ -1372,13 +1374,16 @@ function renderResult(allocs) {
       `<div class="sku-th-price">${fmt(price)} <span class="muted">บาท/หีบ</span></div>` +
       `</th>`;
   });
+  // gap เพื่อกันคอลัมน์ sticky ทับข้อมูล (อยู่ก่อนคอลัมน์รวมยอด)
+  headerHtml += `<th class="sticky-gap"></th>`;
   if (isFiltered) {
     headerHtml += `<th class="r sticky-brand-box">รวมหีบ<div style="font-size:9px;color:var(--accent)">${S.activeBrand}</div></th>`;
     headerHtml += `<th class="r sticky-brand-val">มูลค่ารวม<div style="font-size:9px;color:var(--accent)">${S.activeBrand}</div></th>`;
   }
   headerHtml += `<th class="r sticky-grand-box">รวมหีบ<div style="font-size:9px;color:var(--text-3)">ทุกแบรนด์</div></th>`;
   headerHtml += `<th class="r sticky-grand-val">มูลค่ารวม<div style="font-size:9px;color:var(--text-3)">ทุกแบรนด์</div>` +
-    `<div class="sku-th-dev-hint">ขาด / เกิน เป้าเหลือง<br><span style="font-weight:500">(เกณฑ์ ±1,000 บ.)</span></div></th></tr>`;
+    `<div class="sku-th-dev-hint">ขาด / เกิน เป้าเหลือง<br><span style="font-weight:500">(เกณฑ์ ±1,000 บ.)</span></div></th>`;
+  headerHtml += `</tr>`;
   qs("#resultHead").innerHTML = headerHtml;
 
   // Pre-compute per-emp grand/brand totals — single O(n) pass แทน O(n²) filter loop
@@ -1441,6 +1446,9 @@ function renderResult(allocs) {
         >${b}</div>${hText}</td>`;
     });
 
+    // gap ก่อนคอลัมน์รวมยอด เพื่อไม่ให้ sticky ไปทับข้อมูล SKU
+    rowHtml += `<td class="sticky-gap"></td>`;
+
     if (isFiltered) {
       rowHtml += `<td class="r num-total sticky-brand-box">${brandBoxes.toLocaleString()}</td>`;
       rowHtml += `<td class="r num-total sticky-brand-val">${baht(brandValue)}</td>`;
@@ -1494,23 +1502,26 @@ function renderResultFooter(skus, skuTotals, emps) {
     }
   }
 
-  let topRow = `<tr><td class="tfoot-label" colspan="2" style="position:sticky;left:0;z-index:15;background:var(--bg-main);border-right:2px solid var(--border);">เป้ารวม (หีบ)</td>`;
+  // อย่าใช้ colspan=2 + sticky เพราะเวลาสกอลล์แนวนอนจะทับกับคอลัมน์ SKU
+  let topRow = `<tr><td class="tfoot-label">เป้ารวม (หีบ)</td><td></td>`;
   skus.forEach(s => {
     const t = Number(S.skus.find(x => x.sku === s)?.supervisor_target_boxes) || 0;
     topRow += `<td class="r tfoot-val" style="color:var(--text-3);font-size:12px;">${t}</td>`;
   });
+  topRow += `<td class="sticky-gap"></td>`;
   if (isFiltered) {
     topRow += `<td class="r tfoot-val sticky-brand-box"></td><td class="r tfoot-val sticky-brand-val"></td>`;
   }
   topRow += `<td class="r tfoot-val sticky-grand-box"></td><td class="r tfoot-val sticky-grand-val"></td></tr>`;
 
-  let botRow = `<tr><td class="tfoot-label" colspan="2" style="position:sticky;left:0;z-index:15;background:var(--bg-main);border-right:2px solid var(--border);">รวมหีบที่จัดสรร</td>`;
+  let botRow = `<tr><td class="tfoot-label">รวมหีบที่จัดสรร</td><td></td>`;
   skuTotals.forEach((tot, i) => {
     const t = Number(S.skus.find(x => x.sku === skus[i])?.supervisor_target_boxes) || 0;
     const isMatch = tot === t;
     const color = isMatch ? "var(--green)" : "var(--red)";
     botRow += `<td class="r tfoot-val" style="color:${color};">${tot} <span style="font-size:10px;">${isMatch ? "✓" : "⚠️"}</span></td>`;
   });
+  botRow += `<td class="sticky-gap"></td>`;
   if (isFiltered) {
     botRow += `<td class="r tfoot-val sticky-brand-box">${brandBoxesTotal.toLocaleString()}</td>`;
     botRow += `<td class="r tfoot-val sticky-brand-val">${baht(brandValueTotal)}</td>`;
@@ -1529,15 +1540,32 @@ function onResultEdit(el) {
   const emp = el.dataset.emp;
   const sku = el.dataset.sku;
 
-  _pushUndoState(`edit:${emp}:${sku}`);
-
   const raw = parseInt(el.textContent.replace(/[^0-9]/g, "")) || 0;
   const val = Math.max(0, raw);
   el.textContent = val;
+
+  const alloc = S.allocations.find(a => a.emp_id === emp && a.sku === sku);
+  const prev = alloc ? (Number(alloc.allocated_boxes) || 0) : null;
+  const wasEdited = Boolean(alloc?.is_edited);
+
+  // แค่คลิก/แตะแล้ว blur แต่เลขไม่เปลี่ยน: ไม่ถือว่าแก้มือ
+  if (prev === null) {
+    // ไม่ควรสร้างแถวใหม่จากการแตะเฉย ๆ
+    if (val === 0) return;
+  } else if (val === prev && !wasEdited) {
+    // ถ้ายังไม่เคยแก้ และค่าเดิมเท่าเดิม: ไม่ mark is_edited
+    el.classList.remove("is-edited");
+    return;
+  } else if (val === prev && wasEdited) {
+    // เคยแก้แล้วแต่ครั้งนี้ไม่ได้เปลี่ยน: ไม่สร้าง undo/ไม่ถือเป็นแก้อีกครั้ง
+    el.classList.add("is-edited");
+    return;
+  }
+
+  _pushUndoState(`edit:${emp}:${sku}`);
   el.classList.add("is-edited");
   S._hasUnsaved = true;
 
-  let alloc = S.allocations.find(a => a.emp_id === emp && a.sku === sku);
   if (alloc) {
     alloc.allocated_boxes = val;
     alloc.is_edited = true;
@@ -1784,6 +1812,29 @@ function checkAndLoadDraft() {
   const savedStr = localStorage.getItem(draftKey);
   if (!savedStr) return;
 
+  // กัน modal เด้งซ้ำ (เช่นถูกเรียกซ้อนจากหลาย flow / render)
+  window.__draftPromptedKey = window.__draftPromptedKey || null;
+  if (window.__draftPromptedKey === draftKey && document.getElementById("draftModal")) return;
+  window.__draftPromptedKey = draftKey;
+  // กันเด้งซ้ำข้ามการ re-render ภายใน session เดียวกัน
+  try {
+    const onceKey = `DraftPrompted_${draftKey}`;
+    if (sessionStorage.getItem(onceKey) === "1") return;
+    sessionStorage.setItem(onceKey, "1");
+  } catch {
+    // ignore (privacy mode / blocked)
+  }
+
+  // Draft ที่ว่าง/เสียหาย: อย่าเด้ง modal ให้รำคาญ — ลบทิ้งเลย
+  let peek;
+  try { peek = JSON.parse(savedStr); } catch { localStorage.removeItem(draftKey); return; }
+  const allocs = Array.isArray(peek?.allocations) ? peek.allocations : [];
+  const hasAllocations = allocs.some(a => (Number(a?.allocated_boxes) || 0) > 0);
+  if (!hasAllocations) {
+    localStorage.removeItem(draftKey);
+    return;
+  }
+
   // แสดง custom modal แทน confirm() ที่ block UI thread
   _showDraftModal(
     () => {
@@ -1843,17 +1894,22 @@ function _showDraftModal(onLoad, onDiscard) {
         ต้องการโหลดข้อมูลกลับมาทำต่อ หรือเริ่มใหม่?
       </div>
       <div class="modal-foot">
-        <button class="btn-run" id="draftLoadBtn">โหลดทำต่อ</button>
-        <button class="btn-logout" id="draftDiscardBtn">เริ่มใหม่</button>
+        <button type="button" class="btn-run" id="draftLoadBtn">โหลดทำต่อ</button>
+        <button type="button" class="btn-logout" id="draftDiscardBtn">เริ่มใหม่</button>
       </div>
     </div>`;
   document.body.appendChild(modal);
 
   document.getElementById("draftLoadBtn").addEventListener("click", () => {
+    // กัน click ซ้ำ / กันกรณีอยู่ใน <form> แล้ว submit ทำให้ reload
+    document.getElementById("draftLoadBtn").disabled = true;
+    document.getElementById("draftDiscardBtn").disabled = true;
     modal.remove();
     onLoad();
   });
   document.getElementById("draftDiscardBtn").addEventListener("click", () => {
+    document.getElementById("draftLoadBtn").disabled = true;
+    document.getElementById("draftDiscardBtn").disabled = true;
     modal.remove();
     onDiscard();
   });
