@@ -1555,23 +1555,18 @@ body.is-login {
 .result-tbl {
   table-layout: auto;
   width: max-content;
-  min-width: 100%;
+  /* กันโตเกินเนื้อหา (เดิม min-width:100% ทำให้มีพื้นที่ว่างเลื่อนแนวนอนได้แม้คอลัมน์สั้น) */
+  min-width: min(100%, max-content);
 }
 
-/* Gap column: เว้นพื้นที่ "ก่อน" คอลัมน์รวมยอด เพื่อไม่ให้ sticky ทับข้อมูล และยังให้รวมยอดอยู่ขวาสุดจริง */
+/* Gap column: ความกว้างตั้งโดย JS — ถ้าไม่ต้อง scroll แนวนอน จะเป็น 0 เพื่อไม่มีช่องขาวเลื่อนเกิน */
 .result-tbl .sticky-gap {
-  width: var(--sticky-right-grand);
-  min-width: var(--sticky-right-grand);
-  max-width: var(--sticky-right-grand);
+  width: 0;
+  min-width: 0;
+  max-width: none;
   padding: 0 !important;
   border: none !important;
   background: transparent !important;
-}
-
-.result-block.brand-filtered .result-tbl .sticky-gap {
-  width: var(--sticky-right-all);
-  min-width: var(--sticky-right-all);
-  max-width: var(--sticky-right-all);
 }
 
 

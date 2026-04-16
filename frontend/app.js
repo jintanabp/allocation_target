@@ -1183,8 +1183,8 @@ async function runOptimization() {
 
   S.activeBrand = "ALL";
   buildBrandTabs(allocs);
-  renderResult(allocs);
   qs("#resultBlock").style.display = "block";
+  renderResult(allocs);
   qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
   saveDraft(true); // บันทึกแบบร่างอัตโนมัติหลัง AI + เกลี่ยเศษ
 }
@@ -1469,6 +1469,74 @@ function renderResult(allocs) {
 
   renderResultFooter(skus, skuTotals, emps);
   syncStep3ResultFabricNote();
+  requestAnimationFrame(() => adjustResultStickyGap());
+}
+
+function _sumCellWidths(row, startIdx, endIdxExclusive) {
+  if (!row || !row.cells) return 0;
+  let s = 0;
+  for (let i = startIdx; i < endIdxExclusive; i++) {
+    const c = row.cells[i];
+    if (c) s += c.offsetWidth || 0;
+  }
+  return s;
+}
+
+/**
+ * ลดช่องขาวเลื่อนเกิน: คำนวณ gap จากความกว้างจริงของคอลัมน์ (ไม่ใช้ scrollWidth ตอน gap=0 เพราะจะค้าง)
+ * เป้าหมาย: พื้นที่มองเห็น ≈ ซ้ายคงที่ + แถบ SKU + gap + คอลัมน์รวม sticky
+ */
+function adjustResultStickyGap() {
+  const scroller = document.querySelector("#resultBlock .tbl-scroll");
+  const tbl = document.querySelector("#resultBlock .result-tbl");
+  if (!scroller || !tbl) return;
+
+  const headRow = tbl.tHead?.rows?.[0];
+  if (!headRow || !headRow.cells?.length) return;
+
+  let gapIdx = -1;
+  for (let i = 0; i < headRow.cells.length; i++) {
+    if (headRow.cells[i].classList.contains("sticky-gap")) {
+      gapIdx = i;
+      break;
+    }
+  }
+  if (gapIdx < 3) return;
+
+  const leftW = _sumCellWidths(headRow, 0, 2);
+  const skuStripeW = _sumCellWidths(headRow, 2, gapIdx);
+  let stickyRightW = _sumCellWidths(headRow, gapIdx + 1, headRow.cells.length);
+  const foot = tbl.tFoot;
+  if (foot && foot.rows.length) {
+    for (let r = 0; r < foot.rows.length; r++) {
+      const fr = foot.rows[r];
+      if (fr.cells.length > gapIdx + 1) {
+        stickyRightW = Math.max(stickyRightW, _sumCellWidths(fr, gapIdx + 1, fr.cells.length));
+      }
+    }
+  }
+
+  const viewW = scroller.clientWidth;
+  if (viewW <= 0) return;
+  const rawGap = viewW - leftW - skuStripeW - stickyRightW;
+  const gapPx = Math.max(0, Math.round(rawGap));
+
+  tbl.querySelectorAll(".sticky-gap").forEach(td => {
+    td.style.width = `${gapPx}px`;
+    td.style.minWidth = `${gapPx}px`;
+    td.style.maxWidth = `${gapPx}px`;
+  });
+
+  // ResizeObserver: ปรับ gap เมื่อขนาดหน้าต่างเปลี่ยน
+  if (!scroller.__stickyGapObs) {
+    try {
+      const ro = new ResizeObserver(() => adjustResultStickyGap());
+      ro.observe(scroller);
+      scroller.__stickyGapObs = ro;
+    } catch {
+      // ignore
+    }
+  }
 }
 
 /** คัดลอกแจ้งเตือนเป้า Fabric ไปไว้เหนือตารางผลลัพธ์เมื่อมี */
@@ -1812,18 +1880,8 @@ function checkAndLoadDraft() {
   const savedStr = localStorage.getItem(draftKey);
   if (!savedStr) return;
 
-  // กัน modal เด้งซ้ำ (เช่นถูกเรียกซ้อนจากหลาย flow / render)
-  window.__draftPromptedKey = window.__draftPromptedKey || null;
-  if (window.__draftPromptedKey === draftKey && document.getElementById("draftModal")) return;
-  window.__draftPromptedKey = draftKey;
-  // กันเด้งซ้ำข้ามการ re-render ภายใน session เดียวกัน
-  try {
-    const onceKey = `DraftPrompted_${draftKey}`;
-    if (sessionStorage.getItem(onceKey) === "1") return;
-    sessionStorage.setItem(onceKey, "1");
-  } catch {
-    // ignore (privacy mode / blocked)
-  }
+  // กัน modal ซ้ำถ้าถูกเรียกซ้อนในรอบเดียวกัน (ไม่ใช้ sessionStorage — ค่านั้นค้างข้าม F5 ทำให้รีเฟรชแล้วไม่โหลดดราฟ)
+  if (document.getElementById("draftModal")) return;
 
   // Draft ที่ว่าง/เสียหาย: อย่าเด้ง modal ให้รำคาญ — ลบทิ้งเลย
   let peek;
@@ -2163,7 +2221,6 @@ async function runReAllocationKeepEdits() {
   S.allocations = allocs;
   autoRebalance(true);
   buildBrandTabs(allocs);
-  renderResult(allocs);
   document.getElementById("changeBanner")?.remove();
 
   await wait(200);
@@ -2173,6 +2230,8 @@ async function runReAllocationKeepEdits() {
   qs("#runBtn").textContent = "คำนวณใหม่";
   qs("#runBtn").disabled = false;
   qs("#resultBlock").style.display = "block";
+  renderResult(allocs);
+  requestAnimationFrame(() => adjustResultStickyGap());
   qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
   toast("✅ กระจายหีบใหม่สำเร็จ — manual edits ยังคงอยู่", "green");
   saveDraft(true);
