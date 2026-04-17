@@ -50,6 +50,9 @@
   --sticky-right-grand: calc(var(--sticky-grand-val-w) + var(--sticky-grand-box-w));
   --sticky-right-all: calc(var(--sticky-right-grand) + var(--sticky-brand-val-w) + var(--sticky-brand-box-w));
 
+  /* ความกว้างคอนเทนต์หลัก — ใช้พื้นที่จอมากขึ้น ลดขอบว่างซ้ายขวา */
+  --page-max-width: min(1720px, calc(100vw - 32px));
+
   /* Structure */
   --r-sm: 8px;
   --r-md: 10px;
@@ -221,9 +224,9 @@ body.is-login .footer {
    PAGE LAYOUT
 ══════════════════════════════════════════════ */
 .page {
-  max-width: 1200px;
+  max-width: var(--page-max-width);
   margin: 0 auto;
-  padding: 40px 32px 80px;
+  padding: 40px clamp(14px, 2.2vw, 32px) 80px;
 }
 
 /* ══════════════════════════════════════════════
@@ -835,6 +838,89 @@ body.is-login {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 20px;
+}
+
+/* Step 1: ตาราง SKU กว้างกว่า — ลดการเลื่อนซ้ายขวา; โน้มพื้นที่ไปทางขวา */
+.two-col--step1 {
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.22fr);
+  gap: clamp(14px, 2vw, 26px);
+  align-items: start;
+}
+
+.two-col--step1 > .panel {
+  min-width: 0;
+}
+
+.two-col--step1 .panel-scroll {
+  max-height: min(480px, 62vh);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.two-col--step1 .panel:nth-child(2) .panel-head {
+  flex-wrap: wrap;
+  row-gap: 10px;
+}
+
+.two-col--step1 .tbl {
+  table-layout: fixed;
+  width: 100%;
+}
+
+/* ตารางพนักงาน — แบ่งคอลัมน์ให้พอดีตัวเลขยาว */
+.two-col--step1 .panel:nth-child(1) .tbl thead th:nth-child(1),
+.two-col--step1 .panel:nth-child(1) .tbl tbody td:nth-child(1) {
+  width: 36%;
+}
+
+.two-col--step1 .panel:nth-child(1) .tbl thead th:nth-child(n + 2),
+.two-col--step1 .panel:nth-child(1) .tbl tbody td:nth-child(n + 2) {
+  width: 21.3%;
+}
+
+.two-col--step1 .panel:nth-child(1) .tbl th,
+.two-col--step1 .panel:nth-child(1) .tbl td {
+  padding: 10px 12px;
+  font-size: 12.5px;
+}
+
+/* ตาราง SKU — คอลัมน์ราคา/มูลค่า (ตัวเลข + badge) กว้างขึ้น */
+.two-col--step1 .panel:nth-child(2) .tbl thead th:nth-child(1),
+.two-col--step1 .panel:nth-child(2) .tbl tbody td:nth-child(1) {
+  width: 12%;
+}
+
+.two-col--step1 .panel:nth-child(2) .tbl thead th:nth-child(2),
+.two-col--step1 .panel:nth-child(2) .tbl tbody td:nth-child(2) {
+  width: 18%;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.two-col--step1 .panel:nth-child(2) .tbl thead th:nth-child(3),
+.two-col--step1 .panel:nth-child(2) .tbl tbody td:nth-child(3) {
+  width: 30%;
+  white-space: normal;
+}
+
+.two-col--step1 .panel:nth-child(2) .tbl thead th:nth-child(4),
+.two-col--step1 .panel:nth-child(2) .tbl tbody td:nth-child(4) {
+  width: 11%;
+}
+
+.two-col--step1 .panel:nth-child(2) .tbl thead th:nth-child(5),
+.two-col--step1 .panel:nth-child(2) .tbl tbody td:nth-child(5) {
+  width: 29%;
+}
+
+.two-col--step1 .panel:nth-child(2) .tbl th,
+.two-col--step1 .panel:nth-child(2) .tbl td {
+  padding: 9px 11px;
+  font-size: 12.5px;
+}
+
+.two-col--step1 .panel:nth-child(2) .tbl td.mono {
+  letter-spacing: -0.02em;
 }
 
 /* ══════════════════════════════════════════════
@@ -1965,6 +2051,102 @@ code {
   margin-left: auto;
 }
 
+.sec1-view-wrap {
+  display: flex;
+  gap: 4px;
+  margin-left: 8px;
+}
+
+.sec1-view-btn {
+  padding: 2px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--border-md);
+  border-radius: 100px;
+  background: var(--white);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: all .15s;
+  font-family: var(--font);
+  white-space: nowrap;
+}
+
+.sec1-view-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.sec1-view-active {
+  background: var(--accent) !important;
+  color: var(--white) !important;
+  border-color: var(--accent) !important;
+}
+
+.brand-header {
+  background: var(--bg-main) !important;
+  cursor: pointer;
+}
+
+.brand-header:hover td {
+  filter: brightness(0.99);
+}
+
+.brand-icon {
+  color: var(--accent);
+  margin-right: 6px;
+  font-weight: 900;
+  display: inline-block;
+  width: 18px;
+  text-align: center;
+}
+
+.price-missing {
+  background: var(--amber-bg) !important;
+  color: var(--amber) !important;
+  border-color: var(--amber-brd) !important;
+}
+
+.price-missing-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  font-size: 10px;
+  font-weight: 800;
+  border-radius: 999px;
+  background: var(--amber-bg);
+  border: 1px solid var(--amber-brd);
+  color: var(--amber);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+/*
+ * Step1 ราคา/หีบ:
+ * - ปกติ: cfm_product_characteristic[CREDITUNITPRICE] (PRODUCTSIZE=0)
+ * - สีฟ้า: สำรองจากประวัติ Amount÷Qty
+ * - สีเหลือง: ไม่มีทั้ง CREDIT และประวัติ
+ */
+.price-from-history,
+.price-fallback-cfm {
+  background: rgba(14, 165, 233, 0.14) !important;
+  color: #0369a1 !important;
+  border-color: rgba(14, 165, 233, 0.38) !important;
+}
+
+.price-history-badge,
+.price-cfm-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  margin-left: 4px;
+  font-size: 10px;
+  font-weight: 800;
+  border-radius: 999px;
+  background: rgba(14, 165, 233, 0.18);
+  border: 1px solid rgba(14, 165, 233, 0.45);
+  color: #0369a1;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
 .sec1-sort-btn {
   padding: 2px 10px;
   font-size: 11px;
@@ -2054,6 +2236,11 @@ code {
   line-height: 1.9;
   padding-left: 18px;
   margin-bottom: 10px;
+  max-height: min(360px, 50vh);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 8px;
+  scrollbar-gutter: stable;
 }
 
 .change-banner-note {
@@ -2206,6 +2393,11 @@ code {
 .fabric-change-inline ul {
   margin: 0;
   padding-left: 1.2em;
+  max-height: min(360px, 50vh);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 8px;
+  scrollbar-gutter: stable;
 }
 
 .fabric-change-inline li {

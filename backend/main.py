@@ -190,6 +190,14 @@ def result_path(sup_id: str) -> str:
 def excel_path(sup_id: str) -> str:
     return f"data/Final_Dashboard_{_safe_id(sup_id)}.xlsx"
 
+def excel_export_path(sup_id: str, brand: str) -> str:
+    """
+    ไฟล์ Excel สำหรับ download/export ตามแบรนด์
+    - ใช้แยกไฟล์เพื่อกันความสับสน/แคช เมื่อ export หลายแบรนด์สลับกัน
+    """
+    brand_safe = _safe_id(brand) if brand and brand != "ALL" else "ALL"
+    return f"data/Target_{_safe_id(sup_id)}_{brand_safe}.xlsx"
+
 # ══════════════════════════════════════════════════════════
 #  Helpers: Export
 # ══════════════════════════════════════════════════════════
@@ -251,11 +259,14 @@ def _build_sku_and_sun_from_tga(
     df_product: pd.DataFrame,
     emp_list: list,
     sku_list: list,
+    price_latest_by_sku: dict[str, float] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, set[str]]:
     """
     จาก TGA (จำนวนหีบ = QUANTITYCASE ต่อคู่ emp×sku):
     - supervisor_target_boxes ต่อ SKU = SUM หีบของทีมต่อ SKU
-    - target_sun ต่อคน = SUM(หีบ × ราคา/หีบจาก dim_product) รายพนักงาน
+    - target_sun ต่อคน = SUM(หีบ × ราคา/หีบ) รายพนักงาน
+      ราคา: หลัก cfm_product_characteristic[CREDITUNITPRICE] (PRODUCTSIZE=0, PRODUCTCODE);
+      ไม่มี → Amount÷Qty ประวัติ (ไฮไลต์ฟ้า); ไม่มีเลย → 0 + เหลือง
     """
     sku_list = [str(s).strip() for s in sku_list]
     team_set = set(str(e).strip() for e in emp_list)
@@ -278,23 +289,45 @@ def _build_sku_and_sun_from_tga(
     for sku in sku_list:
         row_p = df_p[df_p["sku"] == sku] if not df_p.empty else pd.DataFrame()
         price = 0.0
-        brand_th = brand_en = pname = ""
+        price_missing = True
+        price_from_sales_history = False
+        brand_th = brand_en = pname_th = pname_en = ""
+        credit_unit_price = 0.0
         if not row_p.empty:
             r0 = row_p.iloc[0]
-            price = float(r0.get("unit_cost") or r0.get("price_per_box") or 0)
             brand_th = str(r0.get("brand_name_thai", "") or "")
             brand_en = str(r0.get("brand_name_english", "") or "")
-            pname = str(r0.get("product_name_thai", "") or "")
-        if price <= 0:
-            price = float(PRICE_FALLBACK.get(sku, 0.0) or 0.0)
+            pname_th = str(r0.get("product_name_thai", "") or "")
+            pname_en = str(r0.get("product_name_english", "") or "")
+            credit_unit_price = float(r0.get("credit_unit_price", 0) or 0)
+        sk = str(sku).strip()
+        sales_price: float | None = None
+        if price_latest_by_sku is not None and sk in price_latest_by_sku:
+            sales_price = float(price_latest_by_sku.get(sk) or 0.0)
+        # หลัก: CREDITUNITPRICE (PRODUCTSIZE=0); สำรอง: Amount÷Qty ประวัติ (ฟ้า); ไม่มีเลย: เหลือง
+        if credit_unit_price > 0:
+            price = credit_unit_price
+            price_missing = False
+            price_from_sales_history = False
+        elif sales_price is not None and sales_price > 0:
+            price = sales_price
+            price_missing = False
+            price_from_sales_history = True
+        else:
+            price = 0.0
+            price_missing = True
+            price_from_sales_history = False
         sup_boxes = int(round(float(sum_dict.get(sku, 0))))
         rows_sku.append({
             "sku": sku,
             "price_per_box": price,
+            "price_missing": bool(price_missing),
+            "price_from_sales_history": bool(price_from_sales_history),
             "supervisor_target_boxes": max(0, sup_boxes),
             "brand_name_thai": brand_th,
             "brand_name_english": brand_en,
-            "product_name_thai": pname,
+            "product_name_thai": pname_th,
+            "product_name_english": pname_en,
         })
 
     df_sku = pd.DataFrame(rows_sku)
@@ -390,9 +423,14 @@ def get_employees(
     # ── Step 1: ดึงพนักงาน ───────────────────────────────
     fabric = None
     df_emp_fabric = pd.DataFrame()
+    sup_name = ""
     try:
         fabric = FabricDAXConnector()
         df_emp_fabric = fabric.get_employees_by_manager(sup_id)
+        try:
+            sup_name = fabric.get_supervisor_name(sup_id)
+        except Exception:
+            sup_name = ""
     except Exception as e:
         cp = emp_cache_path(sup_id, target_month, target_year)
         if os.path.exists(cp):
@@ -408,7 +446,7 @@ def get_employees(
     df_emp_fabric.to_csv(emp_cache_path(sup_id, target_month, target_year), index=False)
     logger.info("Employees: %d คน %s", len(emp_list), emp_list)
 
-    # ── Step 2: เป้าหมาย — ค่าเริ่มต้นจาก Fabric (tga_target_salesman) ─────
+    # ── Step 2: เป้าหมาย — ค่าเริ่มต้นจาก Fabric (tga_target_salesman_next) ─────
     # ตั้ง USE_LEGACY_TARGET_CSV=1 เพื่อใช้ target_boxes.csv / target_sun.csv แทน (ทดสอบ/ย้อนหลัง)
     use_legacy = os.environ.get("USE_LEGACY_TARGET_CSV", "").strip().lower() in ("1", "true", "yes")
     df_sku_csv, _df_sun_loaded = load_target_csv()
@@ -461,8 +499,17 @@ def get_employees(
         if df_sku_base.empty:
             df_sku_base = pd.DataFrame({"sku": sku_union})
 
+        # ราคา/หีบ: CREDITUNITPRICE (PRODUCTSIZE=0) → สำรอง Amount÷Qty ประวัติ
+        price_latest = {}
+        try:
+            df_price = fabric.get_latest_price_per_box_by_sku(target_month, target_year, sku_union)
+            if df_price is not None and not df_price.empty:
+                price_latest = dict(zip(df_price["sku"].astype(str), df_price["price_per_box"].astype(float)))
+        except Exception as e:
+            logger.warning("get_latest_price_per_box_by_sku error: %s (price จะเป็น 0 + flag missing)", e)
+
         df_sku, df_sun_csv, emp_with_tga = _build_sku_and_sun_from_tga(
-            df_tga, df_sku_base, emp_list, sku_union
+            df_tga, df_sku_base, emp_list, sku_union, price_latest_by_sku=price_latest
         )
         emp_with_tga_set = emp_with_tga
 
@@ -576,7 +623,7 @@ def get_employees(
                     "sku": "",
                     "brand": "",
                     "message": (
-                        f"พนักงาน {se} ไม่มีแถวเป้าใน tga_target_salesman สำหรับงวดนี้ "
+                        f"พนักงาน {se} ไม่มีแถวเป้าใน tga_target_salesman_next สำหรับงวดนี้ "
                         f"— target_sun = 0 (ตรวจสอบข้อมูลใน Fabric)"
                     ),
                 })
@@ -676,6 +723,21 @@ def get_employees(
     if sku_warnings:
         logger.info("reconciliation warnings: %d รายการ", len(sku_warnings))
 
+    # CSV เดิมอาจไม่มี flag ราคา — เติมให้ครบก่อนส่ง JSON
+    df_sku = df_sku.copy()
+    if "price_from_sales_history" not in df_sku.columns:
+        df_sku["price_from_sales_history"] = (
+            df_sku["price_from_cfm_cost"].astype(bool)
+            if "price_from_cfm_cost" in df_sku.columns
+            else False
+        )
+    if "price_from_cfm_cost" in df_sku.columns:
+        df_sku.drop(columns=["price_from_cfm_cost"], inplace=True, errors="ignore")
+    if "price_missing" not in df_sku.columns:
+        df_sku["price_missing"] = (
+            pd.to_numeric(df_sku.get("price_per_box", 0), errors="coerce").fillna(0.0) <= 0
+        )
+
     def _clean(df: pd.DataFrame) -> list:
         """แปลง NaN → None ก่อน serialize เพื่อกัน JSON invalid"""
         return df.where(pd.notna(df), None).to_dict(orient="records")
@@ -684,6 +746,7 @@ def get_employees(
         "employees":    _clean(df_emp),
         "skus":         _clean(df_sku),
         "sku_warnings": sku_warnings,
+        "supervisor_name": sup_name,
     }
 
 
@@ -754,8 +817,8 @@ def run_optimization(
     )
     df_final["hist_avg"] = df_final["hist_avg"].fillna(0)
 
-    # merge brand + price_per_box
-    brand_cols = [c for c in ["brand_name_thai", "brand_name_english", "product_name_thai", "price_per_box"]
+    # merge brand + product names + price_per_box
+    brand_cols = [c for c in ["brand_name_thai", "brand_name_english", "product_name_thai", "product_name_english", "price_per_box"]
                   if c in df_sku.columns]
     if brand_cols:
         df_final = pd.merge(df_final, df_sku[["sku"] + brand_cols], on="sku", how="left")
@@ -804,14 +867,37 @@ def export_excel(
     # เติม price_per_box ถ้าไม่ครบ
     df_sku_tmp, _ = load_target_csv()
     if df_sku_tmp is not None:
-        missing_cols = [c for c in ["price_per_box", "brand_name_thai", "brand_name_english", "product_name_thai"]
-                        if c not in df_final.columns or (df_final[c] == 0).all()]
+        want_cols = ["price_per_box", "brand_name_thai", "brand_name_english", "product_name_thai", "product_name_english"]
+        missing_cols = []
+        for c in want_cols:
+            if c not in df_final.columns:
+                missing_cols.append(c)
+                continue
+            # numeric columns: 0 = missing
+            if c in ("price_per_box",):
+                try:
+                    if pd.to_numeric(df_final[c], errors="coerce").fillna(0).eq(0).all():
+                        missing_cols.append(c)
+                except Exception:
+                    missing_cols.append(c)
+                continue
+            # string columns: empty/whitespace = missing
+            try:
+                if df_final[c].fillna("").astype(str).str.strip().eq("").all():
+                    missing_cols.append(c)
+            except Exception:
+                missing_cols.append(c)
         if missing_cols:
             merge_cols = ["sku"] + [c for c in missing_cols if c in df_sku_tmp.columns]
             df_final = pd.merge(df_final, df_sku_tmp[merge_cols], on="sku", how="left", suffixes=("", "_csv"))
             for c in missing_cols:
                 if f"{c}_csv" in df_final.columns:
-                    df_final[c] = df_final[c].where(df_final[c] != 0, df_final[f"{c}_csv"])
+                    if c in ("price_per_box",):
+                        df_final[c] = pd.to_numeric(df_final[c], errors="coerce").fillna(0)
+                        df_final[c] = df_final[c].where(df_final[c] != 0, df_final[f"{c}_csv"])
+                    else:
+                        df_final[c] = df_final[c].fillna("").astype(str)
+                        df_final[c] = df_final[c].where(df_final[c].str.strip() != "", df_final[f"{c}_csv"])
                     df_final.drop(columns=[f"{c}_csv"], inplace=True)
 
     # filter by brand
@@ -829,7 +915,7 @@ def export_excel(
 
     create_target_excel(
         result_csv=ep,
-        output_path=excel_path(sup_id),
+        output_path=excel_export_path(sup_id, brand_filter),
         brand_filter=brand_filter,
         yellow_map=yellow_map,
         sup_id=sup_id,
@@ -847,15 +933,25 @@ def export_excel(
 def download_excel(
     _user: dict = Depends(require_entra_member),
     sup_id: str = Query("SL330"),
+    brand: str = Query("ALL"),
 ):
-    fpath = excel_path(sup_id)
+    fpath = excel_export_path(sup_id, brand)
     if not os.path.exists(fpath):
-        raise HTTPException(404, detail="ไม่พบไฟล์ Excel กรุณา Optimize ก่อน")
+        # backward compat: ถ้ายังไม่ได้ export ตามแบรนด์ ให้ลองไฟล์เดิม
+        fpath = excel_path(sup_id)
+        if not os.path.exists(fpath):
+            raise HTTPException(404, detail="ไม่พบไฟล์ Excel กรุณา Optimize หรือ Export ก่อน")
 
     return FileResponse(
         fpath,
         filename=f"Target_{_safe_id(sup_id)}.xlsx",
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            # กัน browser/proxy cache ทำให้ได้ไฟล์เก่า (เช่น ALL ค้างอยู่)
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
     )
 
 
@@ -867,7 +963,7 @@ def health():
     return {
         "status": "ok",
         "entra_auth_required": auth_entra.auth_enabled(),
-        "managers_source": "GET /managers (ดึง SuperCode จาก dim_salesman ใน Fabric)",
+        "managers_source": "GET /managers (ดึง SuperCode จาก Dim_Salesman ใน Fabric)",
         "valid_strategies": list(VALID_STRATEGIES),
         "debug_endpoints_enabled": _ENABLE_DEBUG,
         "files": {
@@ -878,7 +974,7 @@ def health():
 
 
 # ══════════════════════════════════════════════════════════
-#  GET /debug/fabric  — ดู SuperCode ทั้งหมดที่มีใน dim_salesman
+#  GET /debug/fabric  — ดู SuperCode ทั้งหมดที่มีใน Dim_Salesman
 #  ใช้สำหรับ debug เมื่อหาพนักงานไม่เจอ
 # ══════════════════════════════════════════════════════════
 @app.get("/debug/fabric")
@@ -888,7 +984,7 @@ def debug_fabric(
 ):
     """
     ดึงข้อมูล debug จาก Fabric:
-    - SuperCode ทั้งหมดที่มีใน dim_salesman
+    - SuperCode ทั้งหมดที่มีใน Dim_Salesman
     - พนักงานที่ SuperCode นี้ดูแล (ถ้าเจอ)
     เปิด: http://localhost:8000/debug/fabric?sup_id=SL330
     Production: ตั้ง ENABLE_DEBUG_ENDPOINTS=1 เท่านั้น
@@ -902,15 +998,15 @@ def debug_fabric(
         dax_all = """
 EVALUATE
 SUMMARIZECOLUMNS(
-    'dim_salesman'[SuperCode],
-    "cnt", COUNTROWS('dim_salesman')
+    'Dim_Salesman'[SuperCode],
+    "cnt", COUNTROWS('Dim_Salesman')
 )
-ORDER BY 'dim_salesman'[SuperCode]
+ORDER BY 'Dim_Salesman'[SuperCode]
 """
         rows_all = fabric._execute_dax(dax_all, debug=True)
         all_super_codes = []
         for r in rows_all:
-            sc = fabric._get(r, "[SuperCode]", "dim_salesman[SuperCode]", default="")
+            sc = fabric._get(r, "[SuperCode]", "Dim_Salesman[SuperCode]", default="")
             cnt = fabric._get(r, "[cnt]", default=0)
             all_super_codes.append({"super_code": repr(str(sc)), "count": cnt})
 

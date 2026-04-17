@@ -173,6 +173,8 @@ def _greedy_revenue_balancer(
     df_sku: pd.DataFrame,
     locked_map=None,
     force_min_one: bool = False,
+    tolerance_baht: float = 1000.0,
+    max_iters: int = 50000,
 ) -> pd.DataFrame:
     if df_out.empty:
         return df_out
@@ -182,6 +184,21 @@ def _greedy_revenue_balancer(
     target_boxes = dict(zip(df_sku["sku"], df_sku["supervisor_target_boxes"]))
     emps = df_emp_targets["emp_id"].tolist()
     n_emps = len(emps)
+
+    # ทำให้ "เป้าเงิน" อยู่ในสเกลที่เป็นไปได้จริง:
+    # รายได้รวมที่จัดสรรได้ ถูกล็อคด้วยจำนวนหีบต่อ SKU (target_boxes × price)
+    # ถ้า sum(yellow_target) ไม่เท่ากับรายได้รวมที่เป็นไปได้ จะไม่มีทางปรับให้ตรงเป๊ะได้
+    # จึง normalize เป้าเงินต่อคนตามสัดส่วนเดิม ให้ sum(target_rev_scaled) == total_possible_rev
+    try:
+        total_possible_rev = float(
+            sum(float(sku_prices.get(s, 0) or 0) * float(target_boxes.get(s, 0) or 0) for s in sku_prices)
+        )
+    except Exception:
+        total_possible_rev = 0.0
+    total_target_rev = float(sum(float(target_rev.get(e, 0) or 0) for e in emps))
+    if total_possible_rev > 0 and total_target_rev > 0:
+        scale = total_possible_rev / total_target_rev
+        target_rev = {e: float(target_rev.get(e, 0) or 0) * scale for e in emps}
 
     def _min_floor_boxes(sku: str) -> int:
         """สอดคล้อง _proportional / LP: อย่างน้อย 1 หีบ/คนเมื่อเป้าหีบ SKU นั้น >= จำนวนพนักงาน"""
@@ -203,19 +220,30 @@ def _greedy_revenue_balancer(
 
     prev_total_error = float("inf")
     stall_count = 0
-    for _ in range(5000):
+    for _ in range(int(max_iters)):
         diffs = {e: get_current_rev(e) - target_rev.get(e, 0) for e in emps}
-        rich_emp = max(diffs, key=diffs.get)
-        poor_emp = min(diffs, key=diffs.get)
+        # เป้าหมาย: ให้ทุกคนคลาดไม่เกิน tolerance
+        max_abs = max((abs(v) for v in diffs.values()), default=0.0)
+        if max_abs <= float(tolerance_baht or 0):
+            break
+
+        over = [e for e in emps if diffs[e] > 0]
+        under = [e for e in emps if diffs[e] < 0]
+        if not over or not under:
+            break
+        rich_emp = max(over, key=lambda e: diffs[e])
+        poor_emp = min(under, key=lambda e: diffs[e])
 
         # หยุดเมื่อไม่มีใคร over และไม่มีใคร under พร้อมกัน
+        # (หลัง normalize แล้วโดยทั่วไปควรมีทั้ง over/under แต่กันเคสขอบ)
         if diffs[rich_emp] <= 0 or diffs[poor_emp] >= 0:
             break
 
         total_error = abs(diffs[rich_emp]) + abs(diffs[poor_emp])
-        if total_error >= prev_total_error:
+        # กันติด: ถ้าไม่ดีขึ้นต่อเนื่องให้หยุด แต่ให้โอกาสมากขึ้น
+        if total_error >= prev_total_error - 1e-6:
             stall_count += 1
-            if stall_count >= 3:
+            if stall_count >= 20:
                 break
         else:
             stall_count = 0

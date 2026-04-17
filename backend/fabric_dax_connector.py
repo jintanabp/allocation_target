@@ -27,7 +27,8 @@ class FabricDAXConnector:
         # ค่า default ใช้สำหรับ dev — production ตั้งใน .env หรือ environment
         self.client_id  = os.environ.get("FABRIC_CLIENT_ID", "d0d1f812-d677-490e-a9df-25c00baea1ab")
         self.tenant_id  = os.environ.get("FABRIC_TENANT_ID", "e442d6a7-a8dc-4ac8-880b-d272b11642e9")
-        self.dataset_id = os.environ.get("FABRIC_DATASET_ID", "fac4dff8-9c2f-45fe-8971-ab2c429bea80")
+        # Semantic model ใหม่ (มี Dim_Product / Dim_Salesman / tga_target_salesman_next)
+        self.dataset_id = os.environ.get("FABRIC_DATASET_ID", "dcff7153-5257-45ea-84f5-9b9b6387920b")
         # ถ้าใส่จะยิง executeQueries แบบ group/workspace — บางทีสะดวกตอนเช็คสิทธิ์ใน workspace
         self.workspace_id = (os.environ.get("FABRIC_WORKSPACE_ID") or "").strip()
         self.authority  = f"https://login.microsoftonline.com/{self.tenant_id}"
@@ -303,18 +304,18 @@ class FabricDAXConnector:
 
     # ── 0. ดึง SuperCode ทั้งหมด (สำหรับ Dropdown) ───────────────────
     def get_all_super_codes(self) -> list[str]:
-        """ดึงรายการ SuperCode ที่ไม่ซ้ำกันทั้งหมดจาก dim_salesman"""
-        print("📡 [dim_salesman] กำลังดึงรายชื่อ SuperCode ทั้งหมด...")
+        """ดึงรายการ SuperCode ที่ไม่ซ้ำกันทั้งหมดจาก Dim_Salesman"""
+        print("📡 [Dim_Salesman] กำลังดึงรายชื่อ SuperCode ทั้งหมด...")
         dax = """
 EVALUATE
 SUMMARIZECOLUMNS(
-    'dim_salesman'[SuperCode]
+    'Dim_Salesman'[SuperCode]
 )
 """
         rows = self._execute_dax(dax)
         codes = set()
         for r in rows:
-            sc = str(self._get(r, "[SuperCode]", "dim_salesman[SuperCode]", default="")).strip()
+            sc = str(self._get(r, "[SuperCode]", "Dim_Salesman[SuperCode]", default="")).strip()
             # กรองค่าว่าง หรือค่าที่ไม่ถูกต้องทิ้ง
             if sc and sc.upper() != "NONE" and sc != "0":
                 codes.add(sc.upper())
@@ -326,45 +327,99 @@ SUMMARIZECOLUMNS(
     # ── 1. พนักงานจาก SuperCode ─────────────────────────────────────
     def get_employees_by_manager(self, manager_code: str) -> pd.DataFrame:
         """
-        ดึงรายชื่อพนักงานจาก dim_salesman โดย SuperCode 
+        ดึงรายชื่อพนักงานจาก Dim_Salesman โดย SuperCode 
         (เพิ่ม TRIM และ UPPER เพื่อป้องกันปัญหาเคาะวรรคซ่อนอยู่ในฐานข้อมูล)
         """
-        print(f"📡 [dim_salesman] กำลังดึงพนักงานสำหรับรหัส: {manager_code}")
+        print(f"📡 [Dim_Salesman] กำลังดึงพนักงานสำหรับรหัส: {manager_code}")
         
         # 🔴 ค้นหาเฉพาะ SuperCode อย่างเดียว เพื่อไม่ให้ DAX Error
         dax = f"""
 EVALUATE
 SELECTCOLUMNS(
     FILTER(
-        'dim_salesman', 
-        TRIM(UPPER('dim_salesman'[SuperCode])) = "{manager_code.upper()}"
+        'Dim_Salesman', 
+        TRIM(UPPER('Dim_Salesman'[SuperCode])) = "{manager_code.upper()}"
     ),
-    "SalesmanCode", 'dim_salesman'[SalesmanCode],
-    "SalesmanName", 'dim_salesman'[Salesman_NameThai],
-    "SuperCode",    'dim_salesman'[SuperCode]
+    "SalesmanCode", 'Dim_Salesman'[SalesmanCode],
+    "SalesmanName", 'Dim_Salesman'[Salesman_NameThai],
+    "SuperCode",    'Dim_Salesman'[SuperCode]
 )
 """
         rows = self._execute_dax(dax, debug=True)
         records = []
         for r in rows:
             emp_id = str(self._get(r,
-                "[SalesmanCode]", "dim_salesman[SalesmanCode]",
+                "[SalesmanCode]", "Dim_Salesman[SalesmanCode]",
                 default="")).strip()
             if not emp_id:
                 continue
             records.append({
                 "emp_id":      emp_id,
                 "emp_name":    str(self._get(r,
-                                   "[SalesmanName]", "dim_salesman[Salesman_NameThai]",
+                                   "[SalesmanName]", "Dim_Salesman[Salesman_NameThai]",
                                    default="")).strip(),
                 "super_code":  str(self._get(r,
-                                   "[SuperCode]", "dim_salesman[SuperCode]",
+                                   "[SuperCode]", "Dim_Salesman[SuperCode]",
                                    default="")).strip(),
             })
         df = pd.DataFrame(records) if records else pd.DataFrame(
             columns=["emp_id", "emp_name", "super_code"])
         print(f"✅ พบพนักงาน {len(df)} คน ใต้ SuperCode {manager_code}")
         return df
+
+    # ── 1.1 ชื่อ Supervisor จากรหัส SuperCode ─────────────────────────
+    def get_supervisor_name(self, super_code: str) -> str:
+        """
+        ดึงชื่อ Supervisor สำหรับแสดงบนหน้า
+        1) ดึงจาก Dim_Super[Namethai] โดย match Dim_Super[Code]
+        2) fallback: Dim_Salesman (SalesmanCode == super_code) กรณี supervisor ก็เป็นพนักงานขายใน dim
+        ถ้าไม่เจอจะคืน "" (ให้ frontend แสดงแค่ code)
+        """
+        sc = str(super_code or "").strip()
+        if not sc:
+            return ""
+
+        # (1) Dim_Super (clean: fix table/columns)
+        dax_super = f"""
+EVALUATE
+SELECTCOLUMNS(
+    FILTER(
+        'Dim_Super',
+        TRIM(UPPER('Dim_Super'[Code])) = "{sc.upper()}"
+    ),
+    "SuperNameThai", 'Dim_Super'[Namethai]
+)
+"""
+        try:
+            rows = self._execute_dax(dax_super, debug=False)
+            for r in rows or []:
+                name = str(self._get(r, "[SuperNameThai]", "Dim_Super[Namethai]", default="")).strip()
+                if name:
+                    return name
+        except Exception:
+            pass
+
+        # (2) fallback Dim_Salesman
+        dax_salesman = f"""
+EVALUATE
+SELECTCOLUMNS(
+    FILTER(
+        'Dim_Salesman',
+        TRIM(UPPER('Dim_Salesman'[SalesmanCode])) = "{sc.upper()}"
+    ),
+    "SalesmanName", 'Dim_Salesman'[Salesman_NameThai]
+)
+"""
+        try:
+            rows = self._execute_dax(dax_salesman, debug=False)
+            for r in rows or []:
+                name = str(self._get(r, "[SalesmanName]", "Dim_Salesman[Salesman_NameThai]", default="")).strip()
+                if name:
+                    return name
+        except Exception:
+            pass
+
+        return ""
 
     # ── 2. SKU ที่ทีมเคยขาย (ดึงจาก Fabric โดยตรง) ──
     def get_skus_sold_by_team(self, emp_list: list,
@@ -407,51 +462,97 @@ SUMMARIZECOLUMNS(
 
     # ── 3. ข้อมูลสินค้า (brand, ชื่อ, ราคา) ──────────
     def get_product_info(self, sku_list: list = None) -> pd.DataFrame:
-        """ดึงชื่อสินค้า + แบรนด์ + UnitCost จาก dim_product"""
-        print("📡 [dim_product] ดึงข้อมูลสินค้า...")
+        """ดึงข้อมูลสินค้า + แบรนด์จาก Dim_Product"""
+        print("📡 [Dim_Product] ดึงข้อมูลสินค้า...")
         if sku_list:
             s = ", ".join(f'"{x}"' for x in sku_list)
-            table_expr = f"FILTER('dim_product', 'dim_product'[ProductCode] IN {{{s}}})"
+            table_expr = f"FILTER('Dim_Product', 'Dim_Product'[ProductCode] IN {{{s}}})"
         else:
-            table_expr = "'dim_product'"
+            table_expr = "'Dim_Product'"
 
         dax = f"""
 EVALUATE
 SELECTCOLUMNS(
     {table_expr},
-    "ProductCode",       'dim_product'[ProductCode],
-    "Brand_NameThai",    'dim_product'[Brand_NameThai],
-    "Brand_NameEnglish", 'dim_product'[Brand_NameEnglish],
-    "Product_NameThai",  'dim_product'[Product_NameThai],
-    "UnitCost",          'dim_product'[UnitCost]
+    "ProductCode",         'Dim_Product'[ProductCode],
+    "Brand",               'Dim_Product'[Brand],
+    "Brand_NameThai",      'Dim_Product'[Brand_NameThai],
+    "Product_NameThai",    'Dim_Product'[Product_NameThai],
+    "Product_NameEnglish", 'Dim_Product'[Product_NameEnglish],
+    "UnitCost",            COALESCE(
+                             RELATED('cfm_produc_master'[ACTUALCOSTPERUNIT]),
+                             LOOKUPVALUE(
+                               'cfm_produc_master'[ACTUALCOSTPERUNIT],
+                               'cfm_produc_master'[PRODUCTCODE],
+                               'Dim_Product'[ProductCode]
+                             )
+                           ),
+    "CostPerUnit",         COALESCE(
+                             RELATED('cfm_produc_master'[COSTPERUNIT]),
+                             LOOKUPVALUE(
+                               'cfm_produc_master'[COSTPERUNIT],
+                               'cfm_produc_master'[PRODUCTCODE],
+                               'Dim_Product'[ProductCode]
+                             )
+                           ),
+    "CreditUnitPrice",     VAR pc = 'Dim_Product'[ProductCode]
+                           VAR t = TODAY()
+                           VAR cr =
+                             CALCULATE(
+                               MAX('cfm_product_characteristic'[CREDITUNITPRICE]),
+                               FILTER(
+                                 ALL('cfm_product_characteristic'),
+                                 TRIM(FORMAT('cfm_product_characteristic'[PRODUCTCODE], "0"))
+                                   = TRIM(FORMAT(pc, "0"))
+                                   && IFERROR(
+                                     VALUE(TRIM(FORMAT('cfm_product_characteristic'[PRODUCTSIZE], "0"))),
+                                     -1
+                                   ) = 0
+                                   && 'cfm_product_characteristic'[FROMDATE] <= t
+                                   && 'cfm_product_characteristic'[TODATE] >= t
+                               )
+                             )
+                           RETURN COALESCE(cr, 0)
 )
 """
         rows = self._execute_dax(dax, debug=True)
         records = []
         for r in rows:
             sku = str(self._get(r,
-                "[ProductCode]", "dim_product[ProductCode]",
+                "[ProductCode]", "Dim_Product[ProductCode]",
                 default="")).strip()
             if not sku:
                 continue
             records.append({
                 "sku":                sku,
+                "brand":              str(self._get(r, "[Brand]", "Dim_Product[Brand]", default="")).strip(),
                 "brand_name_thai":    str(self._get(r,
-                                          "[Brand_NameThai]", "dim_product[Brand_NameThai]",
+                                          "[Brand_NameThai]", "Dim_Product[Brand_NameThai]",
                                           default="")).strip(),
-                "brand_name_english": str(self._get(r,
-                                          "[Brand_NameEnglish]", "dim_product[Brand_NameEnglish]",
-                                          default="")).strip(),
+                # semantic model ใหม่นี้ไม่มี Brand_NameEnglish ตาม requirement → ใส่ไว้เพื่อ backward-compat
+                "brand_name_english": "",
                 "product_name_thai":  str(self._get(r,
-                                          "[Product_NameThai]", "dim_product[Product_NameThai]",
+                                          "[Product_NameThai]", "Dim_Product[Product_NameThai]",
                                           default="")).strip(),
+                "product_name_english": str(self._get(r,
+                                          "[Product_NameEnglish]", "Dim_Product[Product_NameEnglish]",
+                                          default="")).strip(),
+                # unit cost จาก cfm (ข้อมูลอ้างอิง — ราคา/หีบหลักใช้จากยอดขายเดือนล่าสุด)
                 "unit_cost":          float(self._get(r,
-                                          "[UnitCost]", "dim_product[UnitCost]",
+                                          "[UnitCost]", "cfm_produc_master[ACTUALCOSTPERUNIT]",
+                                          default=0) or 0),
+                "cost_per_unit":      float(self._get(r,
+                                          "[CostPerUnit]", "cfm_produc_master[COSTPERUNIT]",
+                                          default=0) or 0),
+                "credit_unit_price":  float(self._get(r,
+                                          "[CreditUnitPrice]",
+                                          "cfm_product_characteristic[CREDITUNITPRICE]",
                                           default=0) or 0),
             })
         df = pd.DataFrame(records) if records else pd.DataFrame(
-            columns=["sku", "brand_name_thai", "brand_name_english",
-                     "product_name_thai", "unit_cost"])
+            columns=["sku", "brand", "brand_name_thai", "brand_name_english",
+                     "product_name_thai", "product_name_english", "unit_cost", "cost_per_unit",
+                     "credit_unit_price"])
         print(f"✅ ดึงข้อมูลสินค้า {len(df)} รายการ")
         return df
 
@@ -527,6 +628,64 @@ SUMMARIZECOLUMNS(
             if missing_emps:
                 print(f"  ℹ️ ไม่มีประวัติ {n_months}M: {missing_emps} (จะได้ hist_avg=0)")
 
+        return df
+
+    # ── Price per box จากยอดขายเดือนล่าสุด (Amount / TotalQuantity) ──────────
+    def get_latest_price_per_box_by_sku(
+        self,
+        target_month: int,
+        target_year: int,
+        sku_list: list[str],
+    ) -> pd.DataFrame:
+        """
+        คืนราคา/หีบราย SKU จากเดือนล่าสุด (เดือนก่อนงวดที่เลือก):
+          price_per_box = SUM(Amount) / SUM(TotalQuantity)
+
+        ใช้ cross_sold_history_2y_qu + DimDate
+        ถ้า SKU ไม่มีข้อมูลเดือนนั้น จะไม่ถูกส่งกลับ (ให้ caller ถือว่า missing)
+        """
+        if not sku_list:
+            return pd.DataFrame(columns=["sku", "price_per_box"])
+
+        prev = self._prev_months(target_month, target_year, n=1)
+        date_filter = self._dax_date_filter(prev)
+        sku_filter = self._sku_treatas(sku_list)
+        m, y = prev[0]
+        print(f"📡 [price] ราคา/หีบจากยอดขายเดือน {m}/{y} (Amount÷Qty, sku={len(sku_list)})...")
+
+        dax = f"""
+EVALUATE
+SUMMARIZECOLUMNS(
+    'cross_sold_history_2y_qu'[ProductCode],
+    CALCULATETABLE(
+        FILTER('DimDate', {date_filter})
+    ),
+    {sku_filter}
+    "qty", SUM('cross_sold_history_2y_qu'[TotalQuantity]),
+    "amt", SUM('cross_sold_history_2y_qu'[Amount])
+)
+"""
+        rows = self._execute_dax(dax, debug=True)
+        records = []
+        for r in rows:
+            sku = str(
+                self._get(
+                    r,
+                    "cross_sold_history_2y_qu[ProductCode]",
+                    "[ProductCode]",
+                    default="",
+                )
+            ).strip()
+            qty = float(self._get(r, "[qty]", default=0) or 0)
+            amt = float(self._get(r, "[amt]", default=0) or 0)
+            if not sku or qty <= 0:
+                continue
+            records.append({"sku": sku, "price_per_box": amt / qty})
+        df = pd.DataFrame(records) if records else pd.DataFrame(columns=["sku", "price_per_box"])
+        if not df.empty:
+            df["sku"] = df["sku"].astype(str).str.strip()
+            df["price_per_box"] = pd.to_numeric(df["price_per_box"], errors="coerce").fillna(0.0)
+        print(f"✅ price: {len(df)} SKU")
         return df
 
     # ── 5. LY Sales รายพนักงาน ────────────────────────
@@ -637,7 +796,7 @@ ORDER BY 'cross_sold_history_2y_qu'[SalesmanCode], [cnt] DESC
             columns=["emp_id", "warehouse_code"])
         return df.drop_duplicates(subset="emp_id", keep="first")
 
-    # ── 7. เป้าหมายจาก tga_target_salesman (semantic model) ─────────────
+        # ── 7. เป้าหมายจาก tga_target_salesman_next (semantic model) ─────────────
     def get_tga_target_salesman(
         self,
         emp_list: list,
@@ -645,7 +804,7 @@ ORDER BY 'cross_sold_history_2y_qu'[SalesmanCode], [cnt] DESC
         target_year: int,
     ) -> pd.DataFrame:
         """
-        ดึงเป้าหีบรายคู่พนักงาน×สินค้าจาก tga_target_salesman (semantic model เดียวกับยอดขายย้อนหลัง)
+        ดึงเป้าหีบรายคู่พนักงาน×สินค้าจาก tga_target_salesman_next (semantic model เดียวกับยอดขายย้อนหลัง)
 
         ใช้เฉพาะ: SALESMANCODE, PRODUCTCODE, QUANTITYCASE (เป้าหีบ) — นำไปคูณราคาต่อหีบจาก dim_product ใน main
         ตารางเป้าถูกเคลียร์รายเดือนฝั่งข้อมูล → ค่าเริ่มต้น **ไม่** กรองตาม EFFECTIVEDATE
@@ -654,7 +813,7 @@ ORDER BY 'cross_sold_history_2y_qu'[SalesmanCode], [cnt] DESC
         env: TGA_TABLE_NAME, TGA_COL_SALESMAN, TGA_COL_PRODUCT, TGA_COL_QUANTITY,
         TGA_FILTER_BY_EFFECTIVE=1 เท่านั้นจึงกรอง YEAR/MONTH ที่ TGA_COL_EFFECTIVE (ค่าเริ่มต้น EFFECTIVEDATE)
         """
-        t = os.environ.get("TGA_TABLE_NAME", "tga_target_salesman").strip()
+        t = os.environ.get("TGA_TABLE_NAME", "tga_target_salesman_next").strip()
         c_emp = os.environ.get("TGA_COL_SALESMAN", "SALESMANCODE").strip()
         c_prod = os.environ.get("TGA_COL_PRODUCT", "PRODUCTCODE").strip()
         c_qty = os.environ.get("TGA_COL_QUANTITY", "QUANTITYCASE").strip()
@@ -706,7 +865,7 @@ CALCULATETABLE(
                     r,
                     f"{t}[{c_emp}]",
                     f"[{c_emp}]",
-                    "tga_target_salesman[SALESMANCODE]",
+                    "tga_target_salesman_next[SALESMANCODE]",
                     "[SALESMANCODE]",
                     default="",
                 )
@@ -716,7 +875,7 @@ CALCULATETABLE(
                     r,
                     f"{t}[{c_prod}]",
                     f"[{c_prod}]",
-                    "tga_target_salesman[PRODUCTCODE]",
+                    "tga_target_salesman_next[PRODUCTCODE]",
                     "[PRODUCTCODE]",
                     default="",
                 )

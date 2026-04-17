@@ -9,7 +9,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Instrument+Serif:ital@0;1&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=20260418" />
+  <link rel="stylesheet" href="style.css?v=202604173" />
 </head>
 
 <body>
@@ -91,7 +91,7 @@
                   <option value="1">มกราคม</option>
                   <option value="2">กุมภาพันธ์</option>
                   <option value="3">มีนาคม</option>
-                  <option value="4" selected>เมษายน</option>
+                  <option value="4">เมษายน</option>
                   <option value="5">พฤษภาคม</option>
                   <option value="6">มิถุนายน</option>
                   <option value="7">กรกฎาคม</option>
@@ -103,7 +103,7 @@
                 </select>
                 <select id="yearSelect" class="field-select year-select"></select>
               </div>
-              <div class="field-help">แสดงปี พ.ศ. และ (ค.ศ.) เพื่อกันเลือกผิดงวด</div>
+              <div class="field-help">ค่าเริ่มต้น = เดือนถัดจากวันนี้ (เกลี่ยเป้าเดือนหน้า) ถ้ายังไม่เคยจำงวดไว้ · แสดงปี พ.ศ. และ (ค.ศ.)</div>
             </div>
 
             <div class="login-mini">
@@ -158,7 +158,7 @@
           </div>
         </div>
 
-        <div class="two-col">
+        <div class="two-col two-col--step1">
           <div class="panel">
             <div class="panel-head">
               <span class="panel-icon">👤</span>
@@ -185,11 +185,17 @@
               <span class="panel-icon">📦</span>
               <span class="panel-title">เป้าหีบรวม (SKU Master)</span>
               <span class="panel-count" id="skuCount"></span>
-              <div class="sec1-sort-wrap">
+                <div class="sec1-sort-wrap">
                 <button id="sec1SortCode" class="sec1-sort-btn sec1-sort-active"
                   onclick="sec1SetSort('code')">รหัสสินค้า</button>
                 <button id="sec1SortBrand" class="sec1-sort-btn" onclick="sec1SetSort('brand')">แบรนด์</button>
               </div>
+                <div class="sec1-view-wrap">
+                  <button id="sec1ViewSku" class="sec1-view-btn sec1-view-active" type="button"
+                    onclick="sec1SetView('sku')">ราย SKU</button>
+                  <button id="sec1ViewBrand" class="sec1-view-btn" type="button"
+                    onclick="sec1SetView('brand')">รวมรายแบรนด์</button>
+                </div>
             </div>
             <div class="panel-scroll">
               <table class="tbl">
@@ -207,6 +213,11 @@
                   <tr>
                     <td colspan="4" class="tfoot-label">มูลค่าหีบทั้งหมด</td>
                     <td class="r tfoot-val" id="totalBoxValue">—</td>
+                  </tr>
+                  <tr>
+                    <td colspan="3" class="tfoot-label">รวมเป้าหีบทั้งหมด</td>
+                    <td class="r tfoot-val" id="totalBoxesAll">—</td>
+                    <td></td>
                   </tr>
                 </tfoot>
               </table>

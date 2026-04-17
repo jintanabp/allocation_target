@@ -216,6 +216,7 @@ let S = {
   targetMonth: null,
   targetYear: null,
   supId: null,
+  supervisorName: "",
   managers: [],
   yellowLocked: {},
   skuWarnings: [],    // SKU reconciliation warnings จาก backend
@@ -323,11 +324,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.body.classList.add("is-login");
   _enableLoginScrollLock();
   populateYearSelect();
+  restoreLoginMemory();
+  ensureLoginPeriodDefault();
   updateDatePreview();
   document.getElementById("monthSelect").addEventListener("change", updateDatePreview);
   document.getElementById("yearSelect").addEventListener("change", updateDatePreview);
   if (entraMsalReady()) loadManagers();
-  restoreLoginMemory();
   document.getElementById("supSelect")?.addEventListener("change", persistLoginMemory);
   document.getElementById("supSelect")?.addEventListener("blur", persistLoginMemory);
   document.getElementById("monthSelect")?.addEventListener("change", persistLoginMemory);
@@ -507,6 +509,32 @@ function populateYearSelect() {
   }
 }
 
+/** งวดเป้าเริ่มต้น = เดือนถัดจากวันนี้ (ใช้เกลี่ยเป้าเดือนหน้า) — ธ.ค. → ม.ค. ปีถัดไป */
+function getNextMonthPeriod() {
+  const d = new Date();
+  let m = d.getMonth() + 1;
+  let y = d.getFullYear();
+  m += 1;
+  if (m > 12) {
+    m = 1;
+    y += 1;
+  }
+  return { month: m, year: y };
+}
+
+/** ถ้ายังไม่มีงวดที่จำจาก localStorage — ตั้งเป็นเดือนถัดไปอัตโนมัติ */
+function ensureLoginPeriodDefault() {
+  let mem = null;
+  try { mem = JSON.parse(localStorage.getItem(_LOGIN_MEM_KEY) || "null"); } catch { mem = null; }
+  const last = mem?.last;
+  if (last && last.m && last.y) return;
+  const { month, year } = getNextMonthPeriod();
+  const ms = document.getElementById("monthSelect");
+  const ys = document.getElementById("yearSelect");
+  if (ms) ms.value = String(month);
+  if (ys) ys.value = String(year);
+}
+
 function updateDatePreview() {
   const m = parseInt(document.getElementById("monthSelect").value);
   const y = parseInt(document.getElementById("yearSelect").value);
@@ -678,7 +706,9 @@ async function handleLogin() {
 
   const periodStr = MONTH_FULL_TH[S.targetMonth] + " " + (S.targetYear + 543);
   document.getElementById("topbarPeriodText").textContent = periodStr;
-  document.getElementById("currentSupName").textContent = `(${S.supId})`;
+  const supName = (S.supervisorName || "").trim();
+  document.getElementById("currentSupName").textContent =
+    supName ? `(${S.supId}) ${supName}` : `(${S.supId})`;
   document.getElementById("pagePeriodDesc").textContent =
     `กระจายเป้า ${periodStr} · ประวัติ 3 เดือน + LY ดึงจาก Fabric`;
 
@@ -724,6 +754,7 @@ function _doLogout() {
   S = {
     employees: [], skus: [], totalTarget: 0, yellow: {}, allocations: [],
     activeBrand: "ALL", targetMonth: null, targetYear: null, supId: null,
+    supervisorName: "",
     managers: keepManagers, yellowLocked: {}, skuWarnings: [],
   };
   // ลบ banners ทั้งหมดที่อาจค้างจาก session ก่อน
@@ -806,6 +837,7 @@ async function loadData(supId, targetMonth, targetYear) {
     S.yellowLocked = {};
     S.skus = data.skus;
     S.employees = data.employees;
+    S.supervisorName = (data.supervisor_name || "").trim();
     S.totalTarget = S.skus.reduce(
       (a, s) => a + (Number(s.price_per_box) || 0) * (Number(s.supervisor_target_boxes) || 0), 0
     );
@@ -815,7 +847,7 @@ async function loadData(supId, targetMonth, targetYear) {
         type: "zero_total",
         sku: "",
         brand: "",
-        message: "เป้ารวมมูลค่า 0 บาท — ตรวจสอบ tga_target_salesman (SALESMANCODE, PRODUCTCODE, QUANTITYCASE) และราคาต่อหีบใน dim_product — ถ้าเปิดกรองงวดด้วยวันที่ ให้ตั้ง TGA_FILTER_BY_EFFECTIVE=1",
+        message: "เป้ารวมมูลค่า 0 บาท — ตรวจสอบ tga_target_salesman_next (SALESMANCODE, PRODUCTCODE, QUANTITYCASE) และราคาต่อหีบใน Dim_Product — ถ้าเปิดกรองงวดด้วยวันที่ ให้ตั้ง TGA_FILTER_BY_EFFECTIVE=1",
       }, ...S.skuWarnings];
     }
     S.yellow = {};
@@ -844,6 +876,7 @@ function showLoginError(msg) {
    STEP 1 RENDER
 ══════════════════════════════════════════════ */
 let _skuSec1Sort = "code"; 
+let _skuSec1View = "sku"; // "sku" | "brand"
 
 /* ══════════════════════════════════════════════
    SKU RECONCILIATION WARNINGS
@@ -888,7 +921,25 @@ function _showSkuWarnings() {
 
   if (noTgaEmp.length > 0) {
     html += `<li><strong>ไม่มีแถวเป้าใน TGA สำหรับพนักงานในงวดนี้</strong> (target_sun = 0)<br>`;
-    html += noTgaEmp.map(w => escH(w.message)).join("<br>");
+    const MAX_SHOW = 12;
+    const preview = noTgaEmp.slice(0, MAX_SHOW);
+    const rest = noTgaEmp.slice(MAX_SHOW);
+    const previewHtml = preview.map(w => escH(w.message)).join("<br>");
+    html += `<div style="margin-top:6px; max-height:110px; overflow:auto; padding:8px 10px; background:var(--bg-main); border:1px solid var(--border); border-radius:8px; line-height:1.55;">${previewHtml}</div>`;
+    if (rest.length > 0) {
+      const allHtml = noTgaEmp.map(w => `<div style="margin:0 0 6px 0;">${escH(w.message)}</div>`).join("");
+      html += `
+        <details style="margin-top:8px;">
+          <summary style="cursor:pointer; color:var(--accent); font-weight:600;">
+            ดูทั้งหมด (${noTgaEmp.length.toLocaleString()} คน)
+          </summary>
+          <div style="margin-top:8px; max-height:220px; overflow:auto; padding:8px 10px; background:var(--bg-main); border:1px solid var(--border); border-radius:8px; line-height:1.55;">
+            ${allHtml}
+          </div>
+        </details>`;
+    } else {
+      html += `<div style="margin-top:6px;color:var(--text-3);font-size:11px;">รวม ${noTgaEmp.length} คน</div>`;
+    }
     html += `</li>`;
   }
 
@@ -944,7 +995,7 @@ function _showSkuWarnings() {
   }
 
   html += `</ul>
-      <div class="change-banner-note">💡 แก้ข้อมูลใน Fabric (tga_target_salesman) หรือใช้โหมด USE_LEGACY_TARGET_CSV=1 ชั่วคราว</div>
+      <div class="change-banner-note">💡 แก้ข้อมูลใน Fabric (tga_target_salesman_next) หรือใช้โหมด USE_LEGACY_TARGET_CSV=1 ชั่วคราว</div>
       <div class="change-banner-actions">
         <button class="btn-banner-close" onclick="document.getElementById('skuWarningBanner').remove()">รับทราบ ปิด</button>
       </div>
@@ -978,6 +1029,14 @@ function renderStep1() {
   _renderSkuSec1();
 }
 
+/** Step1 ราคา: หลัก CREDIT (PRODUCTSIZE=0); ฟ้า = สำรองประวัติหาร; เหลือง = ไม่มีเลย */
+function _sec1PriceStates(s) {
+  const price = Number(s.price_per_box) || 0;
+  const fromHist = Boolean(s.price_from_sales_history ?? s.price_from_cfm_cost);
+  const missing = Boolean(s.price_missing);
+  return { price, fromHist, missing };
+}
+
 function _renderSkuSec1() {
   let sorted = [...S.skus];
   if (_skuSec1Sort === "brand") {
@@ -991,29 +1050,130 @@ function _renderSkuSec1() {
   }
 
   let totalVal = 0;
-  qs("#skuTableBody").innerHTML = sorted.map(s => {
-    const boxes = Number(s.supervisor_target_boxes) || 0;
-    const price = Number(s.price_per_box) || 0;
-    const val = boxes * price;
-    totalVal += val;
-    const brand = s.brand_name_thai || s.brand_name_english || "";
-    return `<tr>
-      <td class="mono" style="font-size:12px;font-weight:600;">${s.sku}</td>
-      <td>${brand ? `<span class="brand-chip">${brand}</span>` : '<span style="color:var(--text-3)">—</span>'}</td>
-      <td class="r mono">${fmt(price)}</td>
-      <td class="r mono"><strong>${fmt(boxes)}</strong></td>
-      <td class="r mono">${baht(val)}</td>
-    </tr>`;
-  }).join("");
+  let totalBoxesAll = 0;
+
+  if (_skuSec1View === "sku") {
+    qs("#skuTableBody").innerHTML = sorted.map(s => {
+      const boxes = Number(s.supervisor_target_boxes) || 0;
+      const st = _sec1PriceStates(s);
+      const { price, fromHist, missing } = st;
+      const val = boxes * price;
+      totalVal += val;
+      totalBoxesAll += boxes;
+      const brand = s.brand_name_thai || s.brand_name_english || "";
+      const priceCls = missing ? "price-missing" : (fromHist ? "price-from-history" : "");
+      const priceInner = missing
+        ? `<span class="price-missing-badge">ไม่มีราคา</span>`
+        : `${fmt(price)}${fromHist ? ` <span class="price-history-badge">สำรอง: ประวัติหาร</span>` : ""}`;
+      return `<tr>
+        <td class="mono" style="font-size:12px;font-weight:600;">${s.sku}</td>
+        <td>${brand ? `<span class="brand-chip">${brand}</span>` : '<span style="color:var(--text-3)">—</span>'}</td>
+        <td class="r mono ${priceCls}">${priceInner}</td>
+        <td class="r mono"><strong>${fmt(boxes)}</strong></td>
+        <td class="r mono ${priceCls}">${baht(val)}</td>
+      </tr>`;
+    }).join("");
+  } else {
+    // brand view: แสดงยอดรวมต่อแบรนด์ และสามารถกดเพื่อเปิดดูราย SKU ของแบรนด์นั้น
+    const brandMap = new Map(); // brand -> items
+    sorted.forEach(s => {
+      const brand = (s.brand_name_thai || s.brand_name_english || "").trim() || "—";
+      if (!brandMap.has(brand)) brandMap.set(brand, []);
+      brandMap.get(brand).push(s);
+    });
+
+    const brandList = Array.from(brandMap.entries()).map(([brand, items]) => ({ brand, items }));
+    brandList.sort((a, b) => a.brand.localeCompare(b.brand, "th"));
+
+    qs("#skuTableBody").innerHTML = brandList.map((b, idx) => {
+      const items = b.items;
+      let brandBoxes = 0;
+      let brandValue = 0;
+      let brandMissing = 0;
+      let brandHist = 0;
+      items.forEach(s => {
+        const boxes = Number(s.supervisor_target_boxes) || 0;
+        const st = _sec1PriceStates(s);
+        const { price, fromHist, missing } = st;
+        const val = boxes * price;
+        brandBoxes += boxes;
+        brandValue += val;
+        totalVal += val;
+        totalBoxesAll += boxes;
+        if (missing) brandMissing += 1;
+        if (fromHist) brandHist += 1;
+      });
+      const weightedPrice = brandBoxes > 0 ? (brandValue / brandBoxes) : 0;
+
+      // sort ภายในแบรนด์: รหัสสินค้า
+      const itemsSorted = [...items].sort((a, c) => a.sku.localeCompare(c.sku));
+
+      const childRows = itemsSorted.map(s => {
+        const boxes = Number(s.supervisor_target_boxes) || 0;
+        const st = _sec1PriceStates(s);
+        const { price, fromHist, missing } = st;
+        const val = boxes * price;
+        const brand = s.brand_name_thai || s.brand_name_english || "";
+        const priceCls = missing ? "price-missing" : (fromHist ? "price-from-history" : "");
+        const priceInner = missing
+          ? `<span class="price-missing-badge">ไม่มีราคา</span>`
+          : `${fmt(price)}${fromHist ? ` <span class="price-history-badge">สำรอง: ประวัติหาร</span>` : ""}`;
+        return `<tr class="brand-child" data-brand-idx="${idx}" style="display:none;">
+          <td class="mono" style="font-size:12px;font-weight:600;">${s.sku}</td>
+          <td>${brand ? `<span class="brand-chip">${brand}</span>` : '<span style="color:var(--text-3)">—</span>'}</td>
+          <td class="r mono ${priceCls}">${priceInner}</td>
+          <td class="r mono"><strong>${fmt(boxes)}</strong></td>
+          <td class="r mono ${priceCls}">${baht(val)}</td>
+        </tr>`;
+      }).join("");
+
+      const hdrCls = brandMissing > 0 ? "price-missing" : (brandHist > 0 ? "price-from-history" : "");
+      const hdrBadges = [
+        brandMissing > 0 ? `<span class="price-missing-badge">ไม่มีราคา ${brandMissing}</span>` : "",
+        brandHist > 0 ? `<span class="price-history-badge">ประวัติหาร ${brandHist}</span>` : "",
+      ].filter(Boolean).join(" ");
+
+      return `<tr class="brand-header" data-brand-idx="${idx}" onclick="toggleSkuBrand(${idx})">
+        <td class="mono" style="font-size:12px;font-weight:700;">
+          <span id="brandIcon_${idx}" class="brand-icon">▶</span> รวม
+        </td>
+        <td>${b.brand !== "—" ? `<span class="brand-chip">${b.brand}</span>` : '<span style="color:var(--text-3)">—</span>'}</td>
+        <td class="r mono">${brandBoxes > 0 ? fmt(weightedPrice) : "—"}</td>
+        <td class="r mono"><strong>${fmt(brandBoxes)}</strong></td>
+        <td class="r mono ${hdrCls}">${baht(brandValue)}${hdrBadges ? ` ${hdrBadges}` : ""}</td>
+      </tr>${childRows}`;
+    }).join("");
+  }
   qs("#totalBoxValue").textContent = baht(totalVal);
+  qs("#totalBoxesAll").textContent = fmt(totalBoxesAll);
 
   qs("#sec1SortCode")?.classList.toggle("sec1-sort-active", _skuSec1Sort === "code");
   qs("#sec1SortBrand")?.classList.toggle("sec1-sort-active", _skuSec1Sort === "brand");
+
+  qs("#sec1ViewSku")?.classList.toggle("sec1-view-active", _skuSec1View === "sku");
+  qs("#sec1ViewBrand")?.classList.toggle("sec1-view-active", _skuSec1View === "brand");
 }
 
 function sec1SetSort(mode) {
   _skuSec1Sort = mode;
   _renderSkuSec1();
+}
+
+function sec1SetView(mode) {
+  _skuSec1View = mode;
+  // รีเซ็ตการขยายแบรนด์ให้กลับเป็นเริ่มต้น
+  // (render ใหม่อยู่แล้ว แต่กันเคสค้างจาก DOM เก่า)
+  qs("#skuTableBody") && (qs("#skuTableBody").innerHTML = "");
+  _renderSkuSec1();
+}
+
+function toggleSkuBrand(idx) {
+  const rows = document.querySelectorAll(`#skuTableBody tr.brand-child[data-brand-idx="${idx}"]`);
+  if (!rows || rows.length === 0) return;
+  const shouldExpand = rows[0].style.display === "none";
+  rows.forEach(r => { r.style.display = shouldExpand ? "table-row" : "none"; });
+  const icon = qs(`#brandIcon_${idx}`);
+  if (icon) icon.textContent = shouldExpand ? "▼" : "▶";
 }
 
 /* ══════════════════════════════════════════════
@@ -1796,7 +1956,7 @@ async function doExport() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     const dlRes = await fetchWithTimeout(
-      `${API_BASE_URL}/download/excel?sup_id=${S.supId}`,
+      `${API_BASE_URL}/download/excel?sup_id=${S.supId}&t=${Date.now()}&brand=${encodeURIComponent(brand)}`,
       {},
       60000
     );
