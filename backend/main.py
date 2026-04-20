@@ -1008,8 +1008,6 @@ def run_optimization(
         force_min_one=req.force_min_one,
         locked_edits=locked_edits_data if locked_edits_data else None,
         cap_multiplier=req.cap_multiplier,
-        df_hist_ly_same_month=df_hist_lysm if not df_hist_lysm.empty else None,
-        hist_roll_months=hist_months,
     )
 
     # คำนวณ hist_avg รายพนักงาน×SKU (เฉลี่ยต่อเดือนจากช่วงที่โหลด: 3 หรือ 6 เดือน)
