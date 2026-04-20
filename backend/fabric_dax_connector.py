@@ -324,6 +324,42 @@ SUMMARIZECOLUMNS(
         print(f"✅ พบ SuperCode ทั้งหมด {len(sorted_codes)} รหัส")
         return sorted_codes
 
+    def get_trf_select_supervisor_rows(self) -> list[dict]:
+        """
+        ดึงจากตาราง trf_select_supervisor (ใช้หน้า login):
+          - SUPERVISORCODE: รหัส Supervisor
+          - DEPENDON: รหัส Manager ที่ supervisor ขึ้นต่อ (manager ดูแลหลาย supervisor ได้)
+        """
+        print("📡 [trf_select_supervisor] กำลังดึง SUPERVISORCODE / DEPENDON...")
+        dax = """
+EVALUATE
+SELECTCOLUMNS(
+    'trf_select_supervisor',
+    "SUPERVISORCODE", 'trf_select_supervisor'[SUPERVISORCODE],
+    "DEPENDON", 'trf_select_supervisor'[DEPENDON]
+)
+"""
+        try:
+            rows = self._execute_dax(dax)
+        except Exception as ex:
+            print(f"⚠️ trf_select_supervisor DAX ล้มเหลว: {ex}")
+            return []
+
+        out: list[dict] = []
+        for r in rows or []:
+            sup = str(
+                self._get(r, "[SUPERVISORCODE]", "trf_select_supervisor[SUPERVISORCODE]", default="")
+            ).strip()
+            dep = str(
+                self._get(r, "[DEPENDON]", "trf_select_supervisor[DEPENDON]", default="")
+            ).strip()
+            if not sup or sup.upper() in ("NONE", "0", "(BLANK)"):
+                continue
+            out.append({"supervisor_code": sup.upper(), "depend_on": dep.upper() if dep else ""})
+
+        print(f"✅ trf_select_supervisor: {len(out)} แถว")
+        return out
+
     # ── 1. พนักงานจาก SuperCode ─────────────────────────────────────
     def get_employees_by_manager(self, manager_code: str) -> pd.DataFrame:
         """
@@ -628,6 +664,170 @@ SUMMARIZECOLUMNS(
             if missing_emps:
                 print(f"  ℹ️ ไม่มีประวัติ {n_months}M: {missing_emps} (จะได้ hist_avg=0)")
 
+        return df
+
+    def get_same_month_prior_year_by_emp_sku(
+        self,
+        target_month: int,
+        target_year: int,
+        sku_list: list | None = None,
+        emp_list: list | None = None,
+    ) -> pd.DataFrame:
+        """
+        ยอดขายจริง (จำนวนหีบ + บาท) รายคู่ (emp, sku) เฉพาะเดือนเดียวกับงวดที่เลือก แต่ปีที่แล้ว (YoY)
+        ใช้ประกอบการเกลี่ยหีบร่วมกับช่วง 3M/6M เพื่อให้สัดส่วนใกล้ฤดูกาลเดียวกันของปีก่อน
+        """
+        ly_year = int(target_year) - 1
+        ly_month = int(target_month)
+        sku_filter = self._sku_treatas(sku_list)
+        emp_filter = self._emp_treatas(emp_list)
+
+        print(
+            f"📡 [historical YoY] เดือน {ly_month}/{ly_year} ราย emp×sku "
+            f"(emp={len(emp_list) if emp_list else 'all'}, sku={len(sku_list) if sku_list else 'all'})..."
+        )
+
+        dax = f"""
+EVALUATE
+SUMMARIZECOLUMNS(
+    'cross_sold_history_2y_qu'[SalesmanCode],
+    'cross_sold_history_2y_qu'[ProductCode],
+    CALCULATETABLE(
+        FILTER('DimDate',
+            YEAR('DimDate'[Date]) = {ly_year}
+            && MONTH('DimDate'[Date]) = {ly_month}
+        )
+    ),
+    {sku_filter}
+    {emp_filter}
+    "hist_boxes",  SUM('cross_sold_history_2y_qu'[TotalQuantity]),
+    "hist_amount", SUM('cross_sold_history_2y_qu'[Amount])
+)
+"""
+        rows = self._execute_dax(dax, debug=True)
+
+        records = []
+        for r in rows:
+            emp = str(
+                self._get(
+                    r,
+                    "cross_sold_history_2y_qu[SalesmanCode]",
+                    "[SalesmanCode]",
+                    default="",
+                )
+            ).strip()
+            sku = str(
+                self._get(
+                    r,
+                    "cross_sold_history_2y_qu[ProductCode]",
+                    "[ProductCode]",
+                    default="",
+                )
+            ).strip()
+            boxes = float(self._get(r, "[hist_boxes]", default=0) or 0)
+            amount = float(self._get(r, "[hist_amount]", default=0) or 0)
+            if emp and sku:
+                records.append(
+                    {
+                        "emp_id": emp,
+                        "sku": sku,
+                        "hist_boxes": boxes,
+                        "hist_amount": amount,
+                    }
+                )
+
+        df = pd.DataFrame(records) if records else pd.DataFrame(
+            columns=["emp_id", "sku", "hist_boxes", "hist_amount"]
+        )
+        if not df.empty:
+            df = df[df["hist_boxes"] > 0]
+        print(
+            f"✅ historical YoY: {len(df)} รายการ (emp×sku), "
+            f"{df['emp_id'].nunique() if not df.empty else 0} พนักงาน"
+        )
+        return df
+
+    def get_prev_month_by_emp_sku(
+        self,
+        target_month: int,
+        target_year: int,
+        sku_list: list | None = None,
+        emp_list: list | None = None,
+    ) -> pd.DataFrame:
+        """
+        ยอดขายจริง (จำนวนหีบ + บาท) รายคู่ (emp, sku) เฉพาะ "เดือนที่แล้ว" (เดือนก่อนงวดที่เลือก)
+        ใช้แสดงในผลลัพธ์เพื่อให้เห็น momentum ล่าสุด
+        """
+        prev = self._prev_months(int(target_month), int(target_year), n=1)
+        if not prev:
+            return pd.DataFrame(columns=["emp_id", "sku", "hist_boxes", "hist_amount"])
+        m, y = prev[0]
+        sku_filter = self._sku_treatas(sku_list)
+        emp_filter = self._emp_treatas(emp_list)
+
+        print(
+            f"📡 [historical prev] เดือน {m}/{y} ราย emp×sku "
+            f"(emp={len(emp_list) if emp_list else 'all'}, sku={len(sku_list) if sku_list else 'all'})..."
+        )
+
+        dax = f"""
+EVALUATE
+SUMMARIZECOLUMNS(
+    'cross_sold_history_2y_qu'[SalesmanCode],
+    'cross_sold_history_2y_qu'[ProductCode],
+    CALCULATETABLE(
+        FILTER('DimDate',
+            YEAR('DimDate'[Date]) = {y}
+            && MONTH('DimDate'[Date]) = {m}
+        )
+    ),
+    {sku_filter}
+    {emp_filter}
+    "hist_boxes",  SUM('cross_sold_history_2y_qu'[TotalQuantity]),
+    "hist_amount", SUM('cross_sold_history_2y_qu'[Amount])
+)
+"""
+        rows = self._execute_dax(dax, debug=True)
+
+        records = []
+        for r in rows:
+            emp = str(
+                self._get(
+                    r,
+                    "cross_sold_history_2y_qu[SalesmanCode]",
+                    "[SalesmanCode]",
+                    default="",
+                )
+            ).strip()
+            sku = str(
+                self._get(
+                    r,
+                    "cross_sold_history_2y_qu[ProductCode]",
+                    "[ProductCode]",
+                    default="",
+                )
+            ).strip()
+            boxes = float(self._get(r, "[hist_boxes]", default=0) or 0)
+            amount = float(self._get(r, "[hist_amount]", default=0) or 0)
+            if emp and sku:
+                records.append(
+                    {
+                        "emp_id": emp,
+                        "sku": sku,
+                        "hist_boxes": boxes,
+                        "hist_amount": amount,
+                    }
+                )
+
+        df = pd.DataFrame(records) if records else pd.DataFrame(
+            columns=["emp_id", "sku", "hist_boxes", "hist_amount"]
+        )
+        if not df.empty:
+            df = df[df["hist_boxes"] > 0]
+        print(
+            f"✅ historical prev: {len(df)} รายการ (emp×sku), "
+            f"{df['emp_id'].nunique() if not df.empty else 0} พนักงาน"
+        )
         return df
 
     # ── Price per box จากยอดขายเดือนล่าสุด (Amount / TotalQuantity) ──────────

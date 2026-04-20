@@ -9,7 +9,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Instrument+Serif:ital@0;1&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=202604173" />
+  <link rel="stylesheet" href="style.css?v=202604203" />
 </head>
 
 <body>
@@ -58,7 +58,7 @@
               <div class="login-mark">🎯</div>
               <div>
                 <div class="login-title2">เข้าสู่ระบบ</div>
-                <div class="login-sub2">เลือกหัวหน้าทีม (Supervisor) และงวดเดือนที่จะกระจายเป้าหมาย</div>
+                <div class="login-sub2">เลือก Supervisor หรือ Manager (จาก trf_select_supervisor) และงวดเดือนที่จะกระจายเป้าหมาย</div>
               </div>
             </div>
 
@@ -70,12 +70,12 @@
 
             <div id="loginFormBlock">
             <div class="field-group">
-              <label class="field-label">Supervisor (Super Code)</label>
+              <label class="field-label">Supervisor หรือ Manager</label>
               <div style="position: relative;">
                 <input type="text" id="supSelect" class="field-input" placeholder="⏳ กำลังดึงข้อมูล..." autocomplete="off">
                 <div id="customDropdown" class="custom-dropdown" style="display:none;"></div>
               </div>
-              <div class="field-help">ตัวอย่าง: <code>SL330</code> · พิมพ์ค้นหา หรือคลิกเพื่อเลือกจากรายการ</div>
+              <div class="field-help">เลือก <code>SL330 (Supervisor)</code> เพื่อเข้าแบบหัวหน้าทีม · เลือก <code>… (Manager)</code> เพื่อดูทีมของหลาย Supervisor แล้วสลับได้ในหน้า Dashboard</div>
               <div class="login-row">
                 <div id="recentSupWrap" class="recent-sup" style="display:none;"></div>
                 <button id="managersRetryBtn" class="btn-mini" type="button" onclick="loadManagers(true)" style="display:none;">
@@ -122,7 +122,11 @@
               <span id="serverStatusText">กำลังตรวจสอบ server...</span>
             </div>
 
-            <button class="btn-run login-btn" id="loginBtn" onclick="handleLogin()">
+            <p id="loginManagersWaitHint" class="login-managers-wait" style="display:none;" role="status" aria-live="polite">
+              ⏳ กำลังดึงรายชื่อ Supervisor / Manager จากระบบ… รอสักครู่ก่อนกดเข้าสู่ระบบ
+            </p>
+
+            <button type="button" class="btn-run login-btn" id="loginBtn" onclick="handleLogin()">
               เข้าสู่ระบบ Dashboard
             </button>
             <div class="login-error" id="loginError" style="display:none;"></div>
@@ -141,9 +145,27 @@
     <div id="dashboardView" style="display:none;">
 
       <div class="page-header">
-        <div style="display:flex; align-items:baseline; gap:12px; flex-wrap:wrap;">
+        <div class="page-header-top">
           <h1 class="page-title">ระบบกระจายเป้าหมายยอดขาย</h1>
           <span id="currentSupName" class="page-sup-badge"></span>
+          <div id="supervisorSwitchWrap" class="sup-switch" style="display:none;" role="region" aria-label="สลับ Supervisor" aria-busy="false">
+            <div class="sup-switch__card">
+              <span class="sup-switch__emoji" aria-hidden="true">👥</span>
+              <div class="sup-switch__main">
+                <div class="sup-switch__head">
+                  <span class="sup-switch__title">สลับ Supervisor</span>
+                  <span class="sup-switch__hint">เลือกทีมที่ต้องการดูข้อมูล</span>
+                </div>
+                <div class="sup-switch__controls">
+                  <select id="supervisorSwitchSelect" class="sup-switch__select" aria-label="เลือกรหัส Supervisor"></select>
+                </div>
+              </div>
+              <div id="supervisorSwitchOverlay" class="sup-switch__overlay" hidden>
+                <span class="sup-switch__spinner" aria-hidden="true"></span>
+                <span id="supervisorSwitchLoadingText" class="sup-switch__loading-text">กำลังโหลดข้อมูล…</span>
+              </div>
+            </div>
+          </div>
         </div>
         <p class="page-sub" id="pagePeriodDesc">—</p>
       </div>

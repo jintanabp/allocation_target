@@ -212,15 +212,196 @@ let S = {
   totalTarget: 0,
   yellow: {},
   allocations: [],
+  /** 3 หรือ 6 — ตรงกับ cache ที่ใช้ตอน optimize (แสดงคำว่าเฉลี่ย 3M/6M) */
+  histWindowMonths: 3,
   activeBrand: "ALL",
   targetMonth: null,
   targetYear: null,
   supId: null,
   supervisorName: "",
   managers: [],
+  /** login: 'supervisor' | 'manager' | null — manager สลับดูหลาย supervisor ได้ */
+  loginRole: null,
+  managerCode: null,
+  supervisorChoices: [],
+  supervisorRows: [],
+  byManager: {},
+  _loginPickMap: null,
+  _supervisorSet: null,
+  _managerSet: null,
   yellowLocked: {},
   skuWarnings: [],    // SKU reconciliation warnings จาก backend
 };
+
+/** สร้าง map จาก rows ของ /managers (trf_select_supervisor) */
+function buildLoginPickFromRows(rows) {
+  S.supervisorRows = Array.isArray(rows) ? rows : [];
+  S.byManager = {};
+  const sups = new Set();
+  const mgrs = new Set();
+  for (const r of S.supervisorRows) {
+    const sc = String(r.supervisor_code || "").trim().toUpperCase();
+    const dep = String(r.depend_on || "").trim().toUpperCase();
+    if (sc) sups.add(sc);
+    if (dep && dep !== "NONE" && dep !== "0") {
+      mgrs.add(dep);
+      if (!S.byManager[dep]) S.byManager[dep] = [];
+      if (sc && !S.byManager[dep].includes(sc)) S.byManager[dep].push(sc);
+    }
+  }
+  for (const k of Object.keys(S.byManager)) {
+    S.byManager[k] = S.byManager[k].sort();
+  }
+  S._supervisorSet = new Set(sups);
+  S._managerSet = new Set(mgrs);
+  S._loginPickMap = {};
+  [...sups].sort().forEach(c => {
+    const lab = `${c} (Supervisor)`;
+    S._loginPickMap[lab] = { kind: "supervisor", code: c };
+  });
+  [...mgrs].sort().forEach(c => {
+    const lab = `${c} (Manager)`;
+    S._loginPickMap[lab] = { kind: "manager", code: c };
+  });
+  const labels = [];
+  [...sups].sort().forEach(c => labels.push(`${c} (Supervisor)`));
+  [...mgrs].sort().forEach(c => labels.push(`${c} (Manager)`));
+  return labels;
+}
+
+/** แปลงค่าที่พิมพ์/เลือกจากช่อง login → { kind, code } */
+function resolveLoginPick(raw) {
+  const t = String(raw || "").trim();
+  if (!t) return null;
+  if (S._loginPickMap && S._loginPickMap[t]) return S._loginPickMap[t];
+  if (t.endsWith(" (Supervisor)")) {
+    const c = t.slice(0, -" (Supervisor)".length).trim();
+    if (c && S._supervisorSet && S._supervisorSet.has(c.toUpperCase())) {
+      return { kind: "supervisor", code: c.toUpperCase() };
+    }
+  }
+  if (t.endsWith(" (Manager)")) {
+    const c = t.slice(0, -" (Manager)".length).trim();
+    if (c && S._managerSet && S._managerSet.has(c.toUpperCase())) {
+      return { kind: "manager", code: c.toUpperCase() };
+    }
+  }
+  const up = t.toUpperCase();
+  if (S._supervisorSet && S._supervisorSet.has(up)) return { kind: "supervisor", code: up };
+  if (S._managerSet && S._managerSet.has(up)) return { kind: "manager", code: up };
+  return null;
+}
+
+function setSupervisorSwitchLoading(on, message) {
+  const wrap = document.getElementById("supervisorSwitchWrap");
+  const sel = document.getElementById("supervisorSwitchSelect");
+  const ov = document.getElementById("supervisorSwitchOverlay");
+  const tx = document.getElementById("supervisorSwitchLoadingText");
+  if (!wrap || !sel) return;
+  if (tx && message) tx.textContent = message;
+  if (ov) {
+    if (on) {
+      ov.removeAttribute("hidden");
+    } else {
+      ov.setAttribute("hidden", "");
+    }
+  }
+  sel.disabled = !!on;
+  wrap.setAttribute("aria-busy", on ? "true" : "false");
+  wrap.classList.toggle("is-loading", !!on);
+}
+
+function updateSupervisorSwitcherUI() {
+  const wrap = document.getElementById("supervisorSwitchWrap");
+  const sel = document.getElementById("supervisorSwitchSelect");
+  if (!wrap || !sel) return;
+  if (S.loginRole === "manager" && Array.isArray(S.supervisorChoices) && S.supervisorChoices.length > 1) {
+    wrap.style.display = "flex";
+    sel.innerHTML = S.supervisorChoices.map(c =>
+      `<option value="${c}"${c === S.supId ? " selected" : ""}>${c}</option>`
+    ).join("");
+  } else {
+    wrap.style.display = "none";
+    sel.innerHTML = "";
+    setSupervisorSwitchLoading(false);
+  }
+}
+
+function _bindSupervisorSwitchOnce() {
+  const sel = document.getElementById("supervisorSwitchSelect");
+  if (!sel || sel._supSwitchBound) return;
+  sel._supSwitchBound = true;
+  sel.addEventListener("change", async () => {
+    if (sel.disabled) return;
+    const v = sel.value;
+    if (!v || v === S.supId) return;
+    await switchSupervisorContext(v);
+  });
+}
+
+function updateDashboardSupBadge() {
+  const supName = (S.supervisorName || "").trim();
+  const base = supName ? `(${S.supId}) ${supName}` : `(${S.supId})`;
+  if (S.loginRole === "manager" && S.managerCode) {
+    document.getElementById("currentSupName").textContent =
+      `Manager ${S.managerCode} · ${base}`;
+  } else {
+    document.getElementById("currentSupName").textContent = base;
+  }
+}
+
+async function switchSupervisorContext(newSupId) {
+  if (!newSupId || newSupId === S.supId) return;
+  if (S._hasUnsaved) {
+    const ok = window.confirm("มีการแก้ไขที่ยังไม่ได้บันทึก/Export — ต้องการสลับ Supervisor ต่อหรือไม่?");
+    if (!ok) {
+      updateSupervisorSwitcherUI();
+      return;
+    }
+  }
+
+  const prevId = S.supId;
+  setSupervisorSwitchLoading(true, "กำลังโหลดข้อมูลทีมจาก Fabric…");
+  try {
+    S.supId = newSupId;
+    S.allocations = [];
+    S._hasUnsaved = false;
+    _undoStack = [];
+    const rb = document.getElementById("resultBlock");
+    if (rb) rb.style.display = "none";
+    const pl = document.getElementById("progList");
+    if (pl) pl.style.display = "none";
+
+    const ok = await loadData(S.supId, S.targetMonth, S.targetYear);
+    if (!ok) {
+      S.supId = prevId;
+      updateSupervisorSwitcherUI();
+      updateDashboardSupBadge();
+      toast("โหลดข้อมูล Supervisor ไม่สำเร็จ — ลองอีกครั้ง", "red");
+      return;
+    }
+
+    renderStep1();
+    renderYellowTable();
+    updateValidation();
+    checkAndLoadDraft();
+    checkSnapshotChanges();
+    _showSkuWarnings();
+    _setUndoEnabled();
+    updateDashboardSupBadge();
+    updateSupervisorSwitcherUI();
+    buildBrandTabs(S.allocations);
+    renderResult(S.allocations);
+  } catch (err) {
+    console.error("switchSupervisorContext:", err);
+    S.supId = prevId;
+    updateSupervisorSwitcherUI();
+    updateDashboardSupBadge();
+    toast(String(err?.message || err), "red");
+  } finally {
+    setSupervisorSwitchLoading(false);
+  }
+}
 
 /* ══════════════════════════════════════════════
    UNDO STACK (Step 3 edits)
@@ -251,6 +432,8 @@ function _pushUndoState(reason = "") {
       brand_name_english: a.brand_name_english || "",
       product_name_thai: a.product_name_thai || "",
       hist_avg: Number(a.hist_avg) || 0,
+      hist_ly_same_month: Number(a.hist_ly_same_month) || 0,
+      hist_prev_month: Number(a.hist_prev_month) || 0,
     })),
   };
   _undoStack.push(snap);
@@ -471,9 +654,9 @@ async function _pollServerStatus() {
         dot.style.background  = "var(--green)";
         text.textContent = "✓ Server พร้อมใช้งาน";
         text.style.color = "var(--green)";
-        // enable login button ถ้าถูก disable จาก server offline
+        // enable login button ถ้าถูก disable จาก server offline (อย่าเปิดขณะกำลังโหลด /managers)
         const btn = document.getElementById("loginBtn");
-        if (btn) btn.disabled = false;
+        if (btn && !_managersListLoading) btn.disabled = false;
         // โหลดรายชื่อ Supervisor อัตโนมัติเมื่อ server พร้อม (กันกรณีเปิดเว็บมาก่อนรัน server)
         if (!_managersLoadedOnce && entraMsalReady()) {
           _managersLoadedOnce = true;
@@ -555,10 +738,48 @@ function getPrevThreeMonths(m, y) {
   return result;
 }
 
+const _LOGIN_BTN_DEFAULT = "เข้าสู่ระบบ Dashboard";
+const _LOGIN_BTN_LOADING_MANAGERS = "กำลังโหลดรายชื่อ…";
+let _managersListLoading = false;
+let _loadManagersRunning = false;
+
+/** ระหว่างดึง /managers — ปิดปุ่ม login + ช่องกรอก เพื่อกันกดแล้ว error (ผู้ใช้ไม่เห็น backend) */
+function setLoginFormManagersLoading(isBusy) {
+  const fb = document.getElementById("loginFormBlock");
+  const hint = document.getElementById("loginManagersWaitHint");
+  const btn = document.getElementById("loginBtn");
+  const sup = document.getElementById("supSelect");
+  const ms = document.getElementById("monthSelect");
+  const ys = document.getElementById("yearSelect");
+  const retryBtn = document.getElementById("managersRetryBtn");
+  if (fb) fb.classList.toggle("is-managers-loading", !!isBusy);
+  if (hint) hint.style.display = isBusy ? "block" : "none";
+  if (btn) {
+    btn.disabled = !!isBusy;
+    if (isBusy) {
+      if (!btn.dataset._savedLabel) btn.dataset._savedLabel = (btn.textContent || "").trim() || _LOGIN_BTN_DEFAULT;
+      btn.textContent = _LOGIN_BTN_LOADING_MANAGERS;
+    } else {
+      btn.textContent = btn.dataset._savedLabel || _LOGIN_BTN_DEFAULT;
+    }
+  }
+  [sup, ms, ys].forEach(el => {
+    if (el) el.disabled = !!isBusy;
+  });
+  if (retryBtn) retryBtn.disabled = !!isBusy;
+}
+
 async function loadManagers() {
+  if (_loadManagersRunning) return;
   const supInput = document.getElementById("supSelect");
   const retryBtn = document.getElementById("managersRetryBtn");
+  if (!supInput) return;
+
+  _loadManagersRunning = true;
   if (retryBtn) retryBtn.style.display = "none";
+  _managersListLoading = true;
+  setLoginFormManagersLoading(true);
+
   try {
     const res = await fetchWithTimeout(`${API_BASE_URL}/managers`, {}, 15000);
     if (res.status === 401) {
@@ -583,23 +804,44 @@ async function loadManagers() {
     }
     if (res.ok) {
       const data = await res.json();
-      if (Array.isArray(data.managers)) {
+      const rows = Array.isArray(data.rows) ? data.rows : [];
+      let list = [];
+      if (rows.length > 0) {
+        list = buildLoginPickFromRows(rows);
+        S.managers = list;
+      } else if (Array.isArray(data.managers)) {
         S.managers = data.managers;
+        S.loginRole = null;
+        S.managerCode = null;
+        S.supervisorChoices = [];
+        S.byManager = {};
+        S._loginPickMap = null;
+        S._supervisorSet = new Set(data.managers.map(x => String(x).toUpperCase()));
+        S._managerSet = new Set();
+        list = data.managers;
+      }
+      if (list.length > 0 || (Array.isArray(data.managers) && data.managers.length > 0)) {
         supInput.placeholder =
-          data.managers.length > 0
-            ? "พิมพ์ค้นหา หรือคลิกเพื่อเลือก..."
-            : "ไม่พบ Supervisor จาก Fabric — พิมพ์รหัส SuperCode เอง";
-        setupAutocomplete(supInput, S.managers);
-        if (retryBtn) retryBtn.style.display = data.managers.length > 0 ? "none" : "inline-flex";
+          list.length > 0
+            ? "พิมพ์ค้นหา Supervisor / Manager หรือคลิกเลือก..."
+            : "ไม่พบรายการ — พิมพ์รหัส SuperCode เอง";
+        setupAutocomplete(supInput, list.length > 0 ? list : S.managers);
+        if (retryBtn) retryBtn.style.display = list.length > 0 ? "none" : "inline-flex";
         return;
       }
     }
+    supInput.placeholder = "ดึงรายการ Supervisor ไม่สำเร็จ (พิมพ์รหัสเองได้เลย)";
+    if (retryBtn) retryBtn.style.display = "inline-flex";
   } catch (err) {
     console.error("loadManagers error:", err);
     showLoginError(`❌ ${err?.message || String(err)}`);
+    supInput.placeholder = "ดึงรายการ Supervisor ไม่สำเร็จ (พิมพ์รหัสเองได้เลย)";
+    if (retryBtn) retryBtn.style.display = "inline-flex";
+  } finally {
+    _managersListLoading = false;
+    setLoginFormManagersLoading(false);
+    _loadManagersRunning = false;
   }
-  supInput.placeholder = "ดึงรายการ Supervisor ไม่สำเร็จ (พิมพ์รหัสเองได้เลย)";
-  if (retryBtn) retryBtn.style.display = "inline-flex";
 }
 
 function setupAutocomplete(input, list) {
@@ -618,7 +860,8 @@ function setupAutocomplete(input, list) {
       filtered.forEach(item => {
         const div = document.createElement("div");
         div.className = "custom-dropdown-item";
-        div.textContent = `👨‍💼 ${item}`;
+        const icon = String(item).includes("(Manager)") ? "👔" : "👨‍💼";
+        div.textContent = `${icon} ${item}`;
         div.addEventListener("click", () => selectManager(item));
         dropdown.appendChild(div);
       });
@@ -667,10 +910,14 @@ async function handleLogin() {
     return;
   }
 
-  // ตรวจ sup_id ก่อน fetch — ป้องกัน API call ด้วยค่าว่าง
+  if (_managersListLoading) {
+    showLoginError("⏳ กำลังโหลดรายชื่อ Supervisor / Manager จากระบบ — กรุณารอสักครู่แล้วค่อยกดเข้าสู่ระบบ");
+    return;
+  }
+
   const rawSupId = document.getElementById("supSelect").value.trim();
   if (!rawSupId) {
-    showLoginError("❌ กรุณาระบุ Supervisor Code ก่อนเข้าสู่ระบบ");
+    showLoginError("❌ กรุณาระบุ Supervisor หรือ Manager ก่อนเข้าสู่ระบบ");
     return;
   }
 
@@ -681,10 +928,31 @@ async function handleLogin() {
     return;
   }
 
+  let pick = resolveLoginPick(rawSupId);
+  if (!pick) {
+    const guess = rawSupId.trim().toUpperCase();
+    if (guess) pick = { kind: "supervisor", code: guess };
+  }
+
+  if (pick.kind === "manager") {
+    S.loginRole = "manager";
+    S.managerCode = pick.code;
+    S.supervisorChoices = (S.byManager && S.byManager[pick.code]) ? [...S.byManager[pick.code]] : [];
+    if (S.supervisorChoices.length === 0) {
+      showLoginError(`❌ ไม่พบ Supervisor ภายใต้ Manager "${pick.code}" ใน trf_select_supervisor`);
+      return;
+    }
+    S.supId = S.supervisorChoices[0];
+  } else {
+    S.loginRole = "supervisor";
+    S.managerCode = null;
+    S.supervisorChoices = [];
+    S.supId = pick.code;
+  }
+
   loginBtn.textContent = "กำลังเชื่อมต่อ Fabric...";
   loginBtn.disabled = true;
 
-  S.supId = rawSupId;
   S.targetMonth = tm;
   S.targetYear = ty;
   persistLoginMemory();
@@ -706,9 +974,7 @@ async function handleLogin() {
 
   const periodStr = MONTH_FULL_TH[S.targetMonth] + " " + (S.targetYear + 543);
   document.getElementById("topbarPeriodText").textContent = periodStr;
-  const supName = (S.supervisorName || "").trim();
-  document.getElementById("currentSupName").textContent =
-    supName ? `(${S.supId}) ${supName}` : `(${S.supId})`;
+  updateDashboardSupBadge();
   document.getElementById("pagePeriodDesc").textContent =
     `กระจายเป้า ${periodStr} · ประวัติ 3 เดือน + LY ดึงจาก Fabric`;
 
@@ -720,6 +986,8 @@ async function handleLogin() {
     checkSnapshotChanges();
     _showSkuWarnings();
     _setUndoEnabled();
+    updateSupervisorSwitcherUI();
+    _bindSupervisorSwitchOnce();
   } catch (err) {
     console.error("RENDER ERROR:", err);
     alert("Render error: " + err.message);
@@ -750,12 +1018,29 @@ function _doLogout() {
     }
   }
   const keepManagers = S.managers || [];
+  const keepLoginMeta = {
+    supervisorRows: S.supervisorRows,
+    byManager: S.byManager,
+    _loginPickMap: S._loginPickMap,
+    _supervisorSet: S._supervisorSet,
+    _managerSet: S._managerSet,
+  };
   S._hasUnsaved = false;
   S = {
     employees: [], skus: [], totalTarget: 0, yellow: {}, allocations: [],
+    histWindowMonths: 3,
     activeBrand: "ALL", targetMonth: null, targetYear: null, supId: null,
     supervisorName: "",
-    managers: keepManagers, yellowLocked: {}, skuWarnings: [],
+    managers: keepManagers,
+    loginRole: null,
+    managerCode: null,
+    supervisorChoices: [],
+    supervisorRows: keepLoginMeta.supervisorRows || [],
+    byManager: keepLoginMeta.byManager || {},
+    _loginPickMap: keepLoginMeta._loginPickMap,
+    _supervisorSet: keepLoginMeta._supervisorSet,
+    _managerSet: keepLoginMeta._managerSet,
+    yellowLocked: {}, skuWarnings: [],
   };
   // ลบ banners ทั้งหมดที่อาจค้างจาก session ก่อน
   ["skuWarningBanner", "changeBanner", "logoutModal", "draftModal"].forEach(id => {
@@ -835,6 +1120,7 @@ async function loadData(supId, targetMonth, targetYear) {
     data.employees.sort((a, b) => a.emp_id.localeCompare(b.emp_id));
 
     S.yellowLocked = {};
+    S.histWindowMonths = 3;
     S.skus = data.skus;
     S.employees = data.employees;
     S.supervisorName = (data.supervisor_name || "").trim();
@@ -851,7 +1137,11 @@ async function loadData(supId, targetMonth, targetYear) {
       }, ...S.skuWarnings];
     }
     S.yellow = {};
-    S.employees.forEach(e => { S.yellow[e.emp_id] = Number(e.target_sun) || 0; });
+    // ค่าเริ่มต้น Step 2: เท่ากับ Target Sun (ให้ผู้ใช้ปรับเอง)
+    S.employees.forEach(e => {
+      const base = Number(e.target_sun);
+      S.yellow[e.emp_id] = Number.isFinite(base) ? Math.max(0, base) : 0;
+    });
     document.getElementById("totalTargetDisplay").textContent = baht(S.totalTarget);
     return true;
   } catch (err) {
@@ -892,6 +1182,7 @@ function _showSkuWarnings() {
   const noTarget    = warnings.filter(w => w.type === "no_target");
   const empMismatch = warnings.filter(w => w.type === "emp_mismatch");
   const noTgaEmp    = warnings.filter(w => w.type === "no_tga_employee");
+  const excludedNoTga = warnings.filter(w => w.type === "employees_excluded_no_tga");
   const noTgaSku    = warnings.filter(w => w.type === "no_tga_sku");
   const zeroTotal   = warnings.filter(w => w.type === "zero_total");
   const escH = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
@@ -916,6 +1207,12 @@ function _showSkuWarnings() {
   if (empMismatch.length > 0) {
     html += `<li><strong style="color:var(--amber)">⚠️ รหัสพนักงานใน target_sun ไม่ตรงกับทีม</strong><br>`;
     html += empMismatch.map(w => escH(w.message)).join("<br>");
+    html += `</li>`;
+  }
+
+  if (excludedNoTga.length > 0) {
+    html += `<li><strong style="color:var(--accent)">ℹ️ พนักงานที่ไม่ร่วมกระจายหีบ</strong><br>`;
+    html += excludedNoTga.map(w => escH(w.message)).join("<br>");
     html += `</li>`;
   }
 
@@ -1400,6 +1697,7 @@ async function _doOptimize(lockedEdits = []) {
     }
 
     const json = await res.json();
+    S.histWindowMonths = Number(json.hist_window_months) === 6 ? 6 : 3;
     const allocs = json.allocations;
     allocs.forEach(a => { a.is_edited = false; });
 
@@ -1420,6 +1718,8 @@ async function _doOptimize(lockedEdits = []) {
           brand_name_english: skuInfo.brand_name_english || "",
           product_name_thai: skuInfo.product_name_thai || "",
           hist_avg: 0,
+          hist_ly_same_month: 0,
+          hist_prev_month: 0,
         });
       }
     });
@@ -1502,12 +1802,22 @@ function renderResult(allocs) {
   const emps = [...new Set(allocs.map(a => a.emp_id))];
 
   const lk = {};
-  const lkHist = {};
+  const lkHistRoll = {};
+  const lkHistLy = {};
+  const lkHistPrev = {};
   for (const a of allocs) {
-    if (!lk[a.emp_id]) { lk[a.emp_id] = {}; lkHist[a.emp_id] = {}; }
+    if (!lk[a.emp_id]) {
+      lk[a.emp_id] = {};
+      lkHistRoll[a.emp_id] = {};
+      lkHistLy[a.emp_id] = {};
+      lkHistPrev[a.emp_id] = {};
+    }
     lk[a.emp_id][a.sku] = a.allocated_boxes || 0;
-    lkHist[a.emp_id][a.sku] = a.hist_avg || 0;
+    lkHistRoll[a.emp_id][a.sku] = a.hist_avg || 0;
+    lkHistLy[a.emp_id][a.sku] = Number(a.hist_ly_same_month) || 0;
+    lkHistPrev[a.emp_id][a.sku] = Number(a.hist_prev_month) || 0;
   }
+  const hm = S.histWindowMonths === 6 ? 6 : 3;
 
   if (isFiltered) {
     const brandTotal = filtered.reduce((acc, a) => {
@@ -1574,7 +1884,9 @@ function renderResult(allocs) {
     const empName = empInfo?.emp_name || "";
 
     const boxes = skus.map(s => lk[emp]?.[s] ?? 0);
-    const hists = skus.map(s => lkHist[emp]?.[s] ?? 0);
+    const histsRoll = skus.map(s => lkHistRoll[emp]?.[s] ?? 0);
+    const histsLy = skus.map(s => lkHistLy[emp]?.[s] ?? 0);
+    const histsPrev = skus.map(s => lkHistPrev[emp]?.[s] ?? 0);
 
     boxes.forEach((b, i) => { skuTotals[i] += b; });
 
@@ -1594,8 +1906,15 @@ function renderResult(allocs) {
 
     skus.forEach((s, i) => {
       const b = boxes[i];
-      const h = hists[i];
-      const hText = h > 0 ? `<div class="hist-sub">เคยขาย: ${h.toFixed(1)}</div>` : "";
+      const hr = histsRoll[i];
+      const hy = histsLy[i];
+      const hp = histsPrev[i];
+      const line1 = `เฉลี่ย ${hm}M ย้อนหลัง: ${Number(hr).toFixed(1)}`;
+      const line1b = hp > 0 ? `เดือนที่แล้ว: ${Number(hp).toFixed(1)}` : "เดือนที่แล้ว: —";
+      const line2 = hy > 0
+        ? `เดือนเดียวกันปีก่อน: ${Number(hy).toFixed(1)}`
+        : "เดือนเดียวกันปีก่อน: —";
+      const hText = `<div class="hist-sub"><div>${line1}</div><div>${line1b}</div><div>${line2}</div></div>`;
       const colorClass = _editedSet.has(`${emp}::${s}`) ? "is-edited" : "";
 
       rowHtml += `<td class="r result-cell" style="vertical-align:top;">
@@ -1800,7 +2119,7 @@ function onResultEdit(el) {
   } else {
     const skuInfo = S.skus.find(x => x.sku === sku) || {};
     S.allocations.push({
-      emp_id: emp, sku, allocated_boxes: val, hist_avg: 0,
+      emp_id: emp, sku, allocated_boxes: val, hist_avg: 0, hist_ly_same_month: 0, hist_prev_month: 0,
       price_per_box: Number(skuInfo.price_per_box) || 0, brand_name_thai: skuInfo.brand_name_thai || "",
       brand_name_english: skuInfo.brand_name_english || "", product_name_thai: skuInfo.product_name_thai || "", is_edited: true
     });
@@ -1935,6 +2254,8 @@ async function doExport() {
         sku: a.sku,
         allocated_boxes: a.allocated_boxes || 0,
         hist_avg: a.hist_avg || 0,
+        hist_ly_same_month: Number(a.hist_ly_same_month) || 0,
+        hist_prev_month: Number(a.hist_prev_month) || 0,
         price_per_box: Number(S.skus.find(x => x.sku === a.sku)?.price_per_box) || Number(a.price_per_box) || 0,
         brand_name_thai: a.brand_name_thai || "",
         brand_name_english: a.brand_name_english || "",
@@ -2264,6 +2585,8 @@ function mergeDraftIncreasedOfficialTargets() {
             brand_name_english: skuInfo.brand_name_english || "",
             product_name_thai: skuInfo.product_name_thai || "",
             hist_avg: 0,
+            hist_ly_same_month: 0,
+            hist_prev_month: 0,
           });
         });
         msgs.push({

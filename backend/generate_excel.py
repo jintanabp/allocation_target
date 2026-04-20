@@ -369,6 +369,12 @@ def create_target_excel(
     df = pd.read_csv(result_csv, dtype={"sku": str, "emp_id": str})
     df["allocated_boxes"] = pd.to_numeric(df["allocated_boxes"], errors="coerce").fillna(0).astype(int)
     df["hist_avg"]        = pd.to_numeric(df["hist_avg"],        errors="coerce").fillna(0.0)
+    df["hist_ly_same_month"] = pd.to_numeric(
+        df.get("hist_ly_same_month", 0), errors="coerce"
+    ).fillna(0.0)
+    df["hist_prev_month"] = pd.to_numeric(
+        df.get("hist_prev_month", 0), errors="coerce"
+    ).fillna(0.0)
     df["price_per_box"]   = pd.to_numeric(df["price_per_box"],   errors="coerce").fillna(0.0)
     df["brand_name_thai"] = df.get("brand_name_thai", pd.Series("", index=df.index)).fillna("").astype(str)
     df["product_name_thai"] = df.get("product_name_thai", pd.Series("", index=df.index)).fillna("").astype(str)

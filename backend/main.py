@@ -12,6 +12,7 @@ uvicorn backend.main:app --reload  (จากรากโปรเจกต์)
 
 import os
 import re
+import time
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -76,7 +77,7 @@ def _cleanup_old_caches(max_age_days: int = 7):
     cutoff = datetime.now() - timedelta(days=max_age_days)
     try:
         for fname in os.listdir("data"):
-            if fname.startswith(("hist_cache_", "emp_cache_")):
+            if fname.startswith(("hist_cache_", "hist_lysm_", "hist_prev_", "emp_cache_")):
                 fpath = os.path.join("data", fname)
                 if datetime.fromtimestamp(os.path.getmtime(fpath)) < cutoff:
                     os.remove(fpath)
@@ -84,10 +85,84 @@ def _cleanup_old_caches(max_age_days: int = 7):
     except Exception as e:
         logger.warning("Cache cleanup error: %s", e)
 
+
+# ไฟล์ cache รายชื่อ Supervisor/Manager (trf_select_supervisor) — เติมตอน startup + หลังดึง Fabric สำเร็จ
+MANAGERS_CACHE_FILE = "data/managers_cache.json"
+
+
+def _build_managers_payload_from_trf_rows(rows: list[dict]) -> dict:
+    """สร้าง payload สำหรับหน้า login: Supervisor + Manager (DEPENDON) และ map manager → supervisors"""
+    by_manager: dict[str, list[str]] = {}
+    supervisors: set[str] = set()
+    managers_set: set[str] = set()
+    for r in rows:
+        sc = str(r.get("supervisor_code") or "").strip().upper()
+        dep = str(r.get("depend_on") or "").strip().upper()
+        if sc:
+            supervisors.add(sc)
+        if dep and dep not in ("NONE", "0", "(BLANK)"):
+            managers_set.add(dep)
+            by_manager.setdefault(dep, [])
+            if sc and sc not in by_manager[dep]:
+                by_manager[dep].append(sc)
+    for k in list(by_manager.keys()):
+        by_manager[k] = sorted(by_manager[k])
+    pick_labels: list[str] = []
+    for c in sorted(supervisors):
+        pick_labels.append(f"{c} (Supervisor)")
+    for c in sorted(managers_set):
+        pick_labels.append(f"{c} (Manager)")
+    return {
+        "rows": rows,
+        "by_manager": by_manager,
+        "supervisors": sorted(supervisors),
+        "manager_codes": sorted(managers_set),
+        "managers": pick_labels,
+        "source": "trf_select_supervisor",
+    }
+
+
+def _try_fetch_managers_from_fabric() -> dict | None:
+    """ดึง trf_select_supervisor จาก Fabric — ไม่เขียนไฟล์ cache"""
+    try:
+        fabric = FabricDAXConnector()
+        rows = fabric.get_trf_select_supervisor_rows()
+        if rows:
+            return _build_managers_payload_from_trf_rows(rows)
+    except Exception as e:
+        logger.warning("get_trf_select_supervisor_rows error: %s", e)
+    return None
+
+
+def _persist_managers_payload(payload: dict) -> None:
+    os.makedirs("data", exist_ok=True)
+    with open(MANAGERS_CACHE_FILE, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False)
+
+
+def warm_managers_cache_at_startup() -> None:
+    """
+    Preload รายชื่อ Supervisor/Manager ตอน uvicorn startup (ใช้ Service Principal กับ Fabric)
+    เพื่อให้หลังล็อกอิน Microsoft แล้ว GET /managers อ่านจาก cache ได้ทันที (เมื่อยังอยู่ใน TTL)
+    """
+    payload = _try_fetch_managers_from_fabric()
+    if not payload:
+        return
+    try:
+        _persist_managers_payload(payload)
+        logger.info(
+            "managers cache warmed at startup: %d rows (trf_select_supervisor)",
+            len(payload.get("rows") or []),
+        )
+    except Exception as e:
+        logger.warning("managers cache persist at startup failed: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app_: FastAPI):
     os.makedirs("data", exist_ok=True)
     _cleanup_old_caches(max_age_days=7)
+    warm_managers_cache_at_startup()
     yield
 
 # ── App ───────────────────────────────────────────────────
@@ -153,6 +228,8 @@ class AllocationRow(BaseModel):
     sku: str
     allocated_boxes: int = Field(ge=0)
     hist_avg: float = 0.0
+    hist_ly_same_month: float = 0.0  # หีบรวมเดือนเดียวกับงวด แต่ปีก่อน (emp×sku) — แสดงใน UI / export
+    hist_prev_month: float = 0.0     # หีบเดือนที่แล้ว (เดือนก่อนงวด) — แสดงใน UI / export
     price_per_box: float = 0.0
     brand_name_thai: str = ""
     brand_name_english: str = ""
@@ -180,6 +257,16 @@ def hist_cache_path(sup_id: str, month: int, year: int, n_months: int = 3) -> st
     if n_months == 3:
         return f"{base}.csv"
     return f"{base}_{int(n_months)}m.csv"
+
+
+def hist_ly_same_month_cache_path(sup_id: str, month: int, year: int) -> str:
+    """ยอดหีบ emp×sku เดือนเดียวกับงวดที่เลือก แต่ปีที่แล้ว (ใช้ blend กับ 3M/6M ตอน optimize)"""
+    return f"data/hist_lysm_{_safe_id(sup_id)}_{year}_{month:02d}.csv"
+
+def hist_prev_month_cache_path(sup_id: str, month: int, year: int) -> str:
+    """ยอดหีบ emp×sku เดือนล่าสุดก่อนงวดที่เลือก (เดือนที่แล้ว)"""
+    return f"data/hist_prev_{_safe_id(sup_id)}_{year}_{month:02d}.csv"
+
 
 def emp_cache_path(sup_id: str, month: int, year: int) -> str:
     return f"data/emp_cache_{_safe_id(sup_id)}_{year}_{month:02d}.csv"
@@ -379,32 +466,60 @@ def managers_common_typo():
 @app.get("/managers")
 def get_managers(_user: dict = Depends(require_entra_member)):
     os.makedirs("data", exist_ok=True)
-    cache_path = "data/managers_cache.json"
-    
-    try:
-        fabric = FabricDAXConnector()
-        managers = fabric.get_all_super_codes()
-        
-        if managers:
-            # เซฟเก็บไว้ในไฟล์ เผื่อรอบหน้า Power BI ตอบช้า
-            with open(cache_path, "w", encoding="utf-8") as f:
-                json.dump(managers, f)
-            return {"managers": managers}
-            
-    except Exception as e:
-        logger.warning("get_all_super_codes error: %s", e)
-        
-    # ถ้ายิง Fabric ไม่สำเร็จ ให้โหลดจาก Cache ล่าสุดมาใช้แทน
+    cache_path = MANAGERS_CACHE_FILE
+
+    # ไม่ต้องรอ DAX ซ้ำถ้า cache ยังสด (เติมตอน startup หรือครั้งก่อนที่ดึงสำเร็จ)
+    ttl = int(os.environ.get("MANAGERS_CACHE_TTL_SEC", "86400"))
+    if ttl > 0 and os.path.exists(cache_path):
+        try:
+            age = time.time() - os.path.getmtime(cache_path)
+            if age < ttl:
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict) and data.get("rows"):
+                    return data
+        except Exception as e:
+            logger.warning("managers cache fast read: %s", e)
+
+    payload = _try_fetch_managers_from_fabric()
+    if payload:
+        try:
+            _persist_managers_payload(payload)
+        except Exception as e:
+            logger.warning("managers cache write failed: %s", e)
+        return payload
+
     if os.path.exists(cache_path):
         try:
             with open(cache_path, "r", encoding="utf-8") as f:
-                return {"managers": json.load(f)}
+                data = json.load(f)
+            if isinstance(data, dict) and data.get("rows"):
+                return data
+            if isinstance(data, list):
+                return {
+                    "managers": data,
+                    "rows": [],
+                    "by_manager": {},
+                    "source": "cache_legacy",
+                }
         except Exception as cache_err:
             logger.warning("managers cache corrupt: %s", cache_err)
-            
-    # ไม่มีรายชื่อจาก Fabric และไม่มี cache — คืน [] ให้ผู้ใช้พิมพ์ SuperCode เอง
-    logger.warning("ไม่มีรายชื่อ Supervisor — ตรวจสอบการล็อกอิน Fabric และสิทธิ์ dataset")
-    return {"managers": []}
+
+    try:
+        fabric = FabricDAXConnector()
+        codes = fabric.get_all_super_codes()
+        if codes:
+            return {
+                "managers": codes,
+                "rows": [],
+                "by_manager": {},
+                "source": "dim_fallback",
+            }
+    except Exception as e:
+        logger.warning("get_all_super_codes error: %s", e)
+
+    logger.warning("ไม่มีรายชื่อ Supervisor/Manager — ตรวจสอบ trf_select_supervisor / Fabric")
+    return {"managers": [], "rows": [], "by_manager": {}, "source": "empty"}
 
 
 # ══════════════════════════════════════════════════════════
@@ -540,6 +655,16 @@ def get_employees(
     else:
         df_emp["has_tga_rows"] = True
 
+    # แสดงทั้งทีมใน Dashboard แม้ target_sun = 0 — ไม่กรองที่นี่ (กรองเฉพาะตอน POST /optimize)
+    df_emp["target_sun"] = pd.to_numeric(df_emp["target_sun"], errors="coerce").fillna(0.0)
+    emp_list = df_emp["emp_id"].astype(str).str.strip().tolist()
+    excluded_from_allocation = int((df_emp["target_sun"] <= 0).sum())
+    if excluded_from_allocation > 0:
+        logger.info(
+            "พนักงาน %d คนมีเป้าเงิน 0 — แสดงใน Dashboard แต่จะไม่ถูกนำไปเกลี่ยหีบ",
+            excluded_from_allocation,
+        )
+
     # ── Step 4: LY sales ──────────────────────────────────
     # get_ly_sales แล้ว fill 0 ให้ครบทุก emp (handled ใน connector)
     try:
@@ -553,6 +678,9 @@ def get_employees(
         logger.warning("LY sales error: %s", e)
         df_emp["ly_sales"] = 0.0
     df_emp["ly_sales"] = df_emp["ly_sales"].fillna(0.0)
+
+    # ค่าเริ่มต้นเป้าเหลือง (Step 2): เท่ากับ Target Sun (ให้ผู้ใช้ปรับเอง)
+    df_emp["target_sun_suggested"] = df_emp["target_sun"].clip(lower=0.0).round(2)
 
     # ── Step 5: Historical 3M (+ cache 6M แยกไฟล์สำหรับกลยุทธ์ L6M) ─────
     df_hist = pd.DataFrame()
@@ -591,6 +719,39 @@ def get_employees(
         df_emp["hist_avg_3m"] = 0.0
     df_emp["hist_avg_3m"] = df_emp["hist_avg_3m"].fillna(0.0)
 
+    # ── Step 5b: ยอดหีบ emp×sku เดือนเดียวกันในปีที่แล้ว (YoY) — blend กับ 3M/6M ตอนเกลี่ยหีบ
+    if fabric is not None:
+        try:
+            df_lysm = fabric.get_same_month_prior_year_by_emp_sku(
+                target_month, target_year, sku_list=sku_list, emp_list=emp_list
+            )
+            if not df_lysm.empty:
+                p_lysm = hist_ly_same_month_cache_path(sup_id, target_month, target_year)
+                df_lysm.to_csv(p_lysm, index=False)
+                logger.info(
+                    "historical LY same-month cache saved: %d rows → %s",
+                    len(df_lysm),
+                    p_lysm,
+                )
+        except Exception as el:
+            logger.warning("historical LY same month (emp×sku) skipped: %s", el)
+
+        # เดือนที่แล้ว (เดือนก่อนงวด) — แสดงในผลลัพธ์
+        try:
+            df_prev = fabric.get_prev_month_by_emp_sku(
+                target_month, target_year, sku_list=sku_list, emp_list=emp_list
+            )
+            if not df_prev.empty:
+                p_prev = hist_prev_month_cache_path(sup_id, target_month, target_year)
+                df_prev.to_csv(p_prev, index=False)
+                logger.info(
+                    "historical prev-month cache saved: %d rows → %s",
+                    len(df_prev),
+                    p_prev,
+                )
+        except Exception as ep:
+            logger.warning("historical prev month (emp×sku) skipped: %s", ep)
+
     # ── Step 6: Warehouse ─────────────────────────────────
     try:
         df_wh = fabric.get_warehouse_by_emp(emp_list)
@@ -614,19 +775,18 @@ def get_employees(
     # ── Fix 3: เช็ค emp_id ใน target_sun.csv ที่ไม่ตรงกับพนักงานจริง (โหมด legacy เท่านั้น) ──
     sku_warnings = []
 
+    if excluded_from_allocation > 0:
+        sku_warnings.append({
+            "type": "employees_excluded_no_tga",
+            "sku": "",
+            "brand": "",
+            "message": (
+                f"พนักงาน {excluded_from_allocation} คนมีเป้าเงิน (Target Sun) เป็น 0 — "
+                "ยังแสดงใน Dashboard แต่จะไม่ถูกนำไปเกลี่ยหีบเมื่อกดปุ่มนั้น"
+            ),
+        })
+
     if not use_legacy and emp_with_tga_set is not None:
-        for e in emp_list:
-            se = str(e).strip()
-            if se not in emp_with_tga_set:
-                sku_warnings.append({
-                    "type": "no_tga_employee",
-                    "sku": "",
-                    "brand": "",
-                    "message": (
-                        f"พนักงาน {se} ไม่มีแถวเป้าใน tga_target_salesman_next สำหรับงวดนี้ "
-                        f"— target_sun = 0 (ตรวจสอบข้อมูลใน Fabric)"
-                    ),
-                })
         zero_skus = [
             str(r["sku"]).strip()
             for _, r in df_sku.iterrows()
@@ -770,8 +930,24 @@ def run_optimization(
     if df_sku is None:
         raise HTTPException(500, detail="ไม่พบ target_boxes.csv กรุณาโหลดหน้า Dashboard ก่อน")
 
-    df_emp_targets = pd.DataFrame([t.model_dump() for t in req.yellowTargets])
-    emp_list = df_emp_targets["emp_id"].tolist()
+    df_all_targets = pd.DataFrame([t.model_dump() for t in req.yellowTargets])
+    if df_all_targets.empty:
+        raise HTTPException(400, detail="ไม่มีเป้าเหลือง (yellowTargets) — โหลดข้อมูล Dashboard ก่อน")
+    df_all_targets["yellow_target"] = pd.to_numeric(
+        df_all_targets["yellow_target"], errors="coerce"
+    ).fillna(0.0)
+    # เกลี่ยหีบเฉพาะพนักงานที่มีเป้าเงิน > 0 (ตรงกับ target_sun ที่โหลดมา)
+    df_emp_targets = df_all_targets[df_all_targets["yellow_target"] > 0].copy()
+    if df_emp_targets.empty:
+        raise HTTPException(
+            400,
+            detail=(
+                "ไม่มีพนักงานที่มีเป้าเงิน > 0 — ไม่สามารถเกลี่ยหีบได้ "
+                "(ทุกคนเป้า 0 ในงวดนี้ / ตรวจสอบ Target Sun)"
+            ),
+        )
+    emp_list = df_emp_targets["emp_id"].astype(str).str.strip().tolist()
+    eligible_set = set(emp_list)
 
     strategy_u = req.strategy.upper()
     # L6M ใช้ประวัติ 6 เดือน (ไฟล์ _6m.csv) — ถ้าไม่มีให้ fallback 3 เดือน
@@ -792,15 +968,48 @@ def run_optimization(
 
     hist_months = 6 if (want_6m and os.path.exists(cache_6)) else 3
 
+    lysm_path = hist_ly_same_month_cache_path(sup_id, target_month, target_year)
+    df_hist_lysm = pd.DataFrame()
+    if os.path.exists(lysm_path):
+        try:
+            df_hist_lysm = pd.read_csv(lysm_path, dtype={"sku": str, "emp_id": str})
+            df_hist_lysm = df_hist_lysm[df_hist_lysm["emp_id"].isin(emp_list)]
+            logger.info(
+                "hist LY same-month loaded: %d rows (blend weight env ALLOC_HIST_LYM_WEIGHT, default 0.5)",
+                len(df_hist_lysm),
+            )
+        except Exception as e:
+            logger.warning("hist LY same-month cache read failed: %s", e)
+            df_hist_lysm = pd.DataFrame()
+
+    prev_path = hist_prev_month_cache_path(sup_id, target_month, target_year)
+    df_hist_prev = pd.DataFrame()
+    if os.path.exists(prev_path):
+        try:
+            df_hist_prev = pd.read_csv(prev_path, dtype={"sku": str, "emp_id": str})
+            df_hist_prev = df_hist_prev[df_hist_prev["emp_id"].isin(emp_list)]
+            logger.info("hist prev-month loaded: %d rows", len(df_hist_prev))
+        except Exception as e:
+            logger.warning("hist prev-month cache read failed: %s", e)
+            df_hist_prev = pd.DataFrame()
+
     # รัน allocation ตาม strategy ที่เลือก
-    logger.info("Running strategy=%s for sup=%s", req.strategy, sup_id)
-    locked_edits_data = [{"emp_id": le.emp_id, "sku": le.sku, "locked_boxes": le.locked_boxes} for le in req.locked_edits]
+    logger.info("Running strategy=%s for sup=%s (eligible emps for boxes: %d)", req.strategy, sup_id, len(emp_list))
+    locked_edits_data = [
+        {"emp_id": le.emp_id, "sku": le.sku, "locked_boxes": le.locked_boxes}
+        for le in req.locked_edits
+        if str(le.emp_id).strip() in eligible_set
+    ]
     df_allocation = allocate_boxes(
-        df_emp_targets, df_sku, df_hist,
+        df_emp_targets,
+        df_sku,
+        df_hist,
         strategy=req.strategy,
         force_min_one=req.force_min_one,
         locked_edits=locked_edits_data if locked_edits_data else None,
         cap_multiplier=req.cap_multiplier,
+        df_hist_ly_same_month=df_hist_lysm if not df_hist_lysm.empty else None,
+        hist_roll_months=hist_months,
     )
 
     # คำนวณ hist_avg รายพนักงาน×SKU (เฉลี่ยต่อเดือนจากช่วงที่โหลด: 3 หรือ 6 เดือน)
@@ -816,6 +1025,32 @@ def run_optimization(
         on=["emp_id", "sku"], how="left"
     )
     df_final["hist_avg"] = df_final["hist_avg"].fillna(0)
+
+    if not df_hist_lysm.empty:
+        df_lym = (
+            df_hist_lysm.groupby(["emp_id", "sku"], as_index=False)["hist_boxes"]
+            .sum()
+            .rename(columns={"hist_boxes": "hist_ly_same_month"})
+        )
+        df_final = pd.merge(df_final, df_lym, on=["emp_id", "sku"], how="left")
+    else:
+        df_final["hist_ly_same_month"] = 0.0
+    df_final["hist_ly_same_month"] = (
+        pd.to_numeric(df_final["hist_ly_same_month"], errors="coerce").fillna(0.0).round(1)
+    )
+
+    if not df_hist_prev.empty:
+        df_pm = (
+            df_hist_prev.groupby(["emp_id", "sku"], as_index=False)["hist_boxes"]
+            .sum()
+            .rename(columns={"hist_boxes": "hist_prev_month"})
+        )
+        df_final = pd.merge(df_final, df_pm, on=["emp_id", "sku"], how="left")
+    else:
+        df_final["hist_prev_month"] = 0.0
+    df_final["hist_prev_month"] = (
+        pd.to_numeric(df_final["hist_prev_month"], errors="coerce").fillna(0.0).round(1)
+    )
 
     # merge brand + product names + price_per_box
     brand_cols = [c for c in ["brand_name_thai", "brand_name_english", "product_name_thai", "product_name_english", "price_per_box"]

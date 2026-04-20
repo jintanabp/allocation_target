@@ -7,6 +7,10 @@ Strategies:
   EVEN  — เกลี่ยเท่ากันทุกคน (fair distribution)
   PUSH  — ผลักดันคนขายน้อย (inverse ratio)
   LP    — Linear Programming ตาม yellow_target (revenue-optimal, slow)
+
+น้ำหนัก L3M / L6M / PUSH (ไม่รวม EVEN):
+  ผสม (1−α)×ค่าเฉลี่ยหีบ/เดือนจากช่วงย้อนหลัง + α×หีบเดือนเดียวกันปีที่แล้ว (YoY)
+  α จาก env ALLOC_HIST_LYM_WEIGHT (ค่าเริ่มต้น 0.5) — ถ้าไม่มีไฟล์ cache YoY จะใช้ α=0
 """
 
 import pandas as pd
@@ -23,6 +27,8 @@ def allocate_boxes(
     force_min_one: bool = False,
     locked_edits: list = None,
     cap_multiplier: float = None,  # override _CAP_MULTIPLIER (Custom strategy)
+    df_hist_ly_same_month: pd.DataFrame | None = None,
+    hist_roll_months: int = 3,
 ) -> pd.DataFrame:
     strategy = strategy.upper()
     valid = ("L3M", "L6M", "EVEN", "PUSH", "LP")
@@ -40,12 +46,88 @@ def allocate_boxes(
     # ถ้า custom strategy ส่ง cap_multiplier มา ให้ใช้ค่านั้นแทน default
     effective_cap = cap_multiplier if cap_multiplier is not None else _CAP_MULTIPLIER
 
+    ly_w = float(os.environ.get("ALLOC_HIST_LYM_WEIGHT", "0.5") or 0)
+    ly_w = max(0.0, min(1.0, ly_w))
+    if df_hist_ly_same_month is None or df_hist_ly_same_month.empty:
+        ly_w = 0.0
+    n_roll = max(1, int(hist_roll_months or 3))
+    if ly_w > 0:
+        logger.info(
+            "allocate_boxes: blend YoY same-month (weight=%.2f) + rolling avg/%d months",
+            ly_w,
+            n_roll,
+        )
+
     if strategy == "LP":
-        df_out = _lp_optimize(df_emp_targets, df_sku, df_hist, force_min_one, locked_map)
+        df_out = _lp_optimize(
+            df_emp_targets,
+            df_sku,
+            df_hist,
+            force_min_one,
+            locked_map,
+            df_hist_ly_same_month=df_hist_ly_same_month,
+            hist_roll_months=n_roll,
+            ly_same_month_weight=ly_w,
+        )
     else:
-        df_out = _proportional(df_emp_targets, df_sku, df_hist, strategy, force_min_one, locked_map, effective_cap)
+        df_out = _proportional(
+            df_emp_targets,
+            df_sku,
+            df_hist,
+            strategy,
+            force_min_one,
+            locked_map,
+            effective_cap,
+            df_hist_ly_same_month=df_hist_ly_same_month,
+            hist_roll_months=n_roll,
+            ly_same_month_weight=ly_w,
+        )
+
+        # เป้าเงินสำหรับ greedy: ให้ความสำคัญกับข้อมูลจริง (YoY + rolling) มากกว่าเป้าเหลือง ถ้าตั้งค่าไว้
+        # แนวคิด: อยากให้ทุกคนโตจากปีก่อนเท่า ๆ กัน (default +10%) ถ้าเป็นไปได้
+        growth_pct = float(os.environ.get("ALLOC_GROWTH_PCT", "0.10") or 0.10)
+        growth_pct = max(-0.5, min(1.0, growth_pct))  # กันค่าหลุด
+        hist_target_weight = float(os.environ.get("ALLOC_TARGET_HIST_WEIGHT", "0.75") or 0.75)
+        hist_target_weight = max(0.0, min(1.0, hist_target_weight))
+
+        sku_prices = dict(zip(df_sku["sku"], df_sku["price_per_box"]))
+        emps = df_emp_targets["emp_id"].tolist()
+
+        # rolling value: (hist_boxes / n_roll) × price
+        roll_val = {e: 0.0 for e in emps}
+        if df_hist is not None and not df_hist.empty and "hist_boxes" in df_hist.columns:
+            d = df_hist.copy()
+            d["price_per_box"] = d["sku"].map(sku_prices).fillna(0.0)
+            d["hist_boxes"] = pd.to_numeric(d["hist_boxes"], errors="coerce").fillna(0.0)
+            d["v"] = (d["hist_boxes"] / float(n_roll)) * d["price_per_box"]
+            g = d.groupby("emp_id", as_index=False)["v"].sum()
+            roll_val.update({str(r["emp_id"]): float(r["v"] or 0) for _, r in g.iterrows()})
+
+        # YoY same-month value: hist_boxes × price
+        yoy_val = {e: 0.0 for e in emps}
+        if df_hist_ly_same_month is not None and not df_hist_ly_same_month.empty and "hist_boxes" in df_hist_ly_same_month.columns:
+            d2 = df_hist_ly_same_month.copy()
+            d2["price_per_box"] = d2["sku"].map(sku_prices).fillna(0.0)
+            d2["hist_boxes"] = pd.to_numeric(d2["hist_boxes"], errors="coerce").fillna(0.0)
+            d2["v"] = d2["hist_boxes"] * d2["price_per_box"]
+            g2 = d2.groupby("emp_id", as_index=False)["v"].sum()
+            yoy_val.update({str(r["emp_id"]): float(r["v"] or 0) for _, r in g2.iterrows()})
+
+        # blended baseline (value) แล้วคูณ growth
+        baseline = {e: (1.0 - ly_w) * float(roll_val.get(e, 0.0) or 0.0) + ly_w * float(yoy_val.get(e, 0.0) or 0.0) for e in emps}
+        desired = {e: max(0.0, baseline[e] * (1.0 + growth_pct)) for e in emps}
+
+        # blend กับเป้าเหลืองเดิม (yellow_target) — ถ้า weight=1 จะยึด desired ล้วน
+        y_in = dict(zip(df_emp_targets["emp_id"], df_emp_targets["yellow_target"]))
+        target_override = {e: (1.0 - hist_target_weight) * float(y_in.get(e, 0.0) or 0.0) + hist_target_weight * float(desired.get(e, 0.0) or 0.0) for e in emps}
+
         df_out = _greedy_revenue_balancer(
-            df_out, df_emp_targets, df_sku, locked_map, force_min_one=force_min_one
+            df_out,
+            df_emp_targets,
+            df_sku,
+            locked_map,
+            force_min_one=force_min_one,
+            target_rev_override=target_override,
         )
 
     return df_out
@@ -99,10 +181,23 @@ def _cap_and_redistribute(raw: dict, total: int, cap_multiplier: float = None) -
     return floored
 
 
-def _proportional(df_emp_targets, df_sku, df_hist, strategy, force_min_one=False, locked_map=None, cap_multiplier=None):
+def _proportional(
+    df_emp_targets,
+    df_sku,
+    df_hist,
+    strategy,
+    force_min_one=False,
+    locked_map=None,
+    cap_multiplier=None,
+    df_hist_ly_same_month=None,
+    hist_roll_months: int = 3,
+    ly_same_month_weight: float = 0.0,
+):
     locked_map = locked_map or {}
     employees = df_emp_targets["emp_id"].tolist()
     target_boxes = dict(zip(df_sku["sku"], df_sku["supervisor_target_boxes"]))
+    n_roll = max(1, int(hist_roll_months or 3))
+    w_ly = max(0.0, min(1.0, float(ly_same_month_weight or 0.0)))
 
     results = []
 
@@ -129,15 +224,22 @@ def _proportional(df_emp_targets, df_sku, df_hist, strategy, force_min_one=False
             base_box = 1
             total -= len(active_employees)
 
-        # ── คำนวณ hist weight ──
+        # ── คำนวณ hist weight (ผสม YoY เดือนเดียวกันปีที่แล้ว + ค่าเฉลี่ย/เดือนจากช่วง 3M/6M) ──
         hist_by_emp = {}
         for emp in active_employees:
-            if df_hist.empty:
-                val = 0.0
-            else:
+            roll = 0.0
+            if not df_hist.empty:
                 mask = (df_hist["emp_id"] == emp) & (df_hist["sku"] == sku)
-                val = df_hist.loc[mask, "hist_boxes"].sum()
-            hist_by_emp[emp] = max(float(val), 0.0)
+                roll = float(df_hist.loc[mask, "hist_boxes"].sum())
+            roll_avg = roll / float(n_roll)
+
+            lym = 0.0
+            if df_hist_ly_same_month is not None and not df_hist_ly_same_month.empty:
+                mask2 = (df_hist_ly_same_month["emp_id"] == emp) & (df_hist_ly_same_month["sku"] == sku)
+                lym = float(df_hist_ly_same_month.loc[mask2, "hist_boxes"].sum())
+
+            blended = (1.0 - w_ly) * roll_avg + w_ly * lym
+            hist_by_emp[emp] = max(float(blended), 0.0)
 
         hist_sum = sum(hist_by_emp.values())
 
@@ -173,13 +275,17 @@ def _greedy_revenue_balancer(
     df_sku: pd.DataFrame,
     locked_map=None,
     force_min_one: bool = False,
+    target_rev_override: dict | None = None,
     tolerance_baht: float = 1000.0,
     max_iters: int = 50000,
 ) -> pd.DataFrame:
     if df_out.empty:
         return df_out
     locked_map = locked_map or {}
-    target_rev = dict(zip(df_emp_targets["emp_id"], df_emp_targets["yellow_target"]))
+    if target_rev_override is not None:
+        target_rev = {str(k): float(v or 0) for k, v in dict(target_rev_override).items()}
+    else:
+        target_rev = dict(zip(df_emp_targets["emp_id"], df_emp_targets["yellow_target"]))
     sku_prices = dict(zip(df_sku["sku"], df_sku["price_per_box"]))
     target_boxes = dict(zip(df_sku["sku"], df_sku["supervisor_target_boxes"]))
     emps = df_emp_targets["emp_id"].tolist()
@@ -215,6 +321,23 @@ def _greedy_revenue_balancer(
     for _, r in df_out.iterrows():
         if r["emp_id"] in alloc and r["sku"] in sku_prices: 
             alloc[r["emp_id"]][r["sku"]] = r["allocated_boxes"]
+
+    # Anchor กับ baseline จากผล _proportional (ก่อน greedy) เพื่อไม่ให้บิดรูปทรงที่อิงประวัติมากเกินไป
+    # หน่วยเป็น "บาท" (คิดเป็น price_per_box × การเบี่ยงจาก baseline) — ยิ่งสูงยิ่งยึด baseline มากขึ้น
+    try:
+        hist_anchor = float(os.environ.get("ALLOC_GREEDY_HIST_ANCHOR", "0.15") or 0.15)
+    except Exception:
+        hist_anchor = 0.15
+    hist_anchor = max(0.0, min(2.0, hist_anchor))
+
+    baseline = {}
+    for emp in emps:
+        baseline[emp] = {s: 0 for s in sku_prices.keys()}
+    for _, r in df_out.iterrows():
+        e = r.get("emp_id")
+        s = r.get("sku")
+        if e in baseline and s in sku_prices:
+            baseline[e][s] = int(r.get("allocated_boxes") or 0)
         
     def get_current_rev(emp): return sum(alloc[emp][s] * sku_prices[s] for s in sku_prices)
 
@@ -250,7 +373,7 @@ def _greedy_revenue_balancer(
         prev_total_error = total_error
             
         best_sku_to_move = None
-        best_improvement = 0
+        best_score = 0
         
         for sku, price in sku_prices.items():
             # 🔴 ข้ามการสลับหีบที่คนพิมพ์แก้ไขไว้แล้ว (ห้ามยุ่งเด็ดขาด)
@@ -266,8 +389,24 @@ def _greedy_revenue_balancer(
                 new_error = abs(new_rich_diff) + abs(new_poor_diff)
                 
                 improvement = current_error - new_error
-                if improvement > best_improvement:
-                    best_improvement = improvement
+
+                # penalty: ถ้าย้ายแล้ว "ห่าง baseline" มากขึ้น ให้หักคะแนน
+                if hist_anchor > 0:
+                    br = baseline[rich_emp][sku]
+                    bp = baseline[poor_emp][sku]
+                    cr = alloc[rich_emp][sku]
+                    cp = alloc[poor_emp][sku]
+                    # หลัง move: rich-1, poor+1
+                    before = abs(cr - br) + abs(cp - bp)
+                    after = abs((cr - 1) - br) + abs((cp + 1) - bp)
+                    delta_boxes = after - before
+                    penalty = float(delta_boxes) * float(price) * float(hist_anchor)
+                else:
+                    penalty = 0.0
+
+                score = improvement - penalty
+                if score > best_score:
+                    best_score = score
                     best_sku_to_move = sku
                     
         if best_sku_to_move is None:
@@ -282,10 +421,31 @@ def _greedy_revenue_balancer(
     final_results = [{"emp_id": emp, "sku": sku, "allocated_boxes": boxes} for emp in emps for sku, boxes in alloc[emp].items() if boxes > 0]
     return pd.DataFrame(final_results)
 
-def _lp_optimize(df_emp_targets, df_sku, df_hist, force_min_one=False, locked_map=None):
+def _lp_optimize(
+    df_emp_targets,
+    df_sku,
+    df_hist,
+    force_min_one=False,
+    locked_map=None,
+    df_hist_ly_same_month=None,
+    hist_roll_months: int = 3,
+    ly_same_month_weight: float = 0.0,
+):
     locked_map = locked_map or {}
     try: import pulp
-    except ImportError: return _proportional(df_emp_targets, df_sku, df_hist, "L3M", force_min_one, locked_map)
+    except ImportError:
+        return _proportional(
+            df_emp_targets,
+            df_sku,
+            df_hist,
+            "L3M",
+            force_min_one,
+            locked_map,
+            None,
+            df_hist_ly_same_month=df_hist_ly_same_month,
+            hist_roll_months=hist_roll_months,
+            ly_same_month_weight=ly_same_month_weight,
+        )
 
     employees    = df_emp_targets["emp_id"].tolist()
     skus         = df_sku["sku"].tolist()
@@ -298,7 +458,18 @@ def _lp_optimize(df_emp_targets, df_sku, df_hist, force_min_one=False, locked_ma
     # ── Anchor ให้ LP ใกล้ baseline จากประวัติขาย (ลดการกระจายแปลกๆ) ──
     # ค่า 0.0 = ปิด anchor (LP แบบเดิม), ค่า ~0.05–0.30 แนะนำ
     lp_anchor = float(os.environ.get("LP_HIST_ANCHOR", "0.15") or 0.15)
-    df_base = _proportional(df_emp_targets, df_sku, df_hist, "L3M", force_min_one, locked_map)
+    df_base = _proportional(
+        df_emp_targets,
+        df_sku,
+        df_hist,
+        "L3M",
+        force_min_one,
+        locked_map,
+        None,
+        df_hist_ly_same_month=df_hist_ly_same_month,
+        hist_roll_months=hist_roll_months,
+        ly_same_month_weight=ly_same_month_weight,
+    )
     base_map = {}
     if df_base is not None and not df_base.empty:
         for _, r in df_base.iterrows():
@@ -353,12 +524,45 @@ def _lp_optimize(df_emp_targets, df_sku, df_hist, force_min_one=False, locked_ma
     except Exception as e:
         # CBC solver ไม่พร้อม (solver binary หาย, permission error ฯลฯ) — fallback ทันที
         logger.warning("LP solver error: %s → fallback to L3M", e)
-        return _proportional(df_emp_targets, df_sku, df_hist, "L3M", force_min_one, locked_map)
+        return _proportional(
+            df_emp_targets,
+            df_sku,
+            df_hist,
+            "L3M",
+            force_min_one,
+            locked_map,
+            None,
+            df_hist_ly_same_month=df_hist_ly_same_month,
+            hist_roll_months=hist_roll_months,
+            ly_same_month_weight=ly_same_month_weight,
+        )
 
     # "Optimal" เท่านั้นที่เชื่อถือได้ — "Not Solved" (time-limit hit) และสถานะอื่น fallback หมด
     if pulp.LpStatus[prob.status] != "Optimal":
         logger.warning("LP status=%s → fallback to L3M", pulp.LpStatus[prob.status])
-        return _proportional(df_emp_targets, df_sku, df_hist, "L3M", force_min_one, locked_map)
+        return _proportional(
+            df_emp_targets,
+            df_sku,
+            df_hist,
+            "L3M",
+            force_min_one,
+            locked_map,
+            None,
+            df_hist_ly_same_month=df_hist_ly_same_month,
+            hist_roll_months=hist_roll_months,
+            ly_same_month_weight=ly_same_month_weight,
+        )
 
     results = [{"emp_id": emp, "sku": sku, "allocated_boxes": int(round(x[(emp, sku)].varValue))} for emp in employees for sku in skus if x[(emp, sku)].varValue is not None and x[(emp, sku)].varValue > 0.5]
-    return pd.DataFrame(results) if results else _proportional(df_emp_targets, df_sku, df_hist, "L3M", force_min_one, locked_map)
+    return pd.DataFrame(results) if results else _proportional(
+        df_emp_targets,
+        df_sku,
+        df_hist,
+        "L3M",
+        force_min_one,
+        locked_map,
+        None,
+        df_hist_ly_same_month=df_hist_ly_same_month,
+        hist_roll_months=hist_roll_months,
+        ly_same_month_weight=ly_same_month_weight,
+    )

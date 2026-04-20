@@ -433,6 +433,22 @@ body.is-login .footer {
   line-height: 1.5;
 }
 
+.login-managers-wait {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--accent);
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-brd);
+  border-radius: var(--r-md);
+  font-weight: 600;
+}
+
+#loginFormBlock.is-managers-loading {
+  position: relative;
+}
+
 /* ── FORM FIELDS ── */
 .field-group {
   margin-bottom: clamp(10px, 1.8vh, 18px);
@@ -723,6 +739,13 @@ body.is-login {
   border-bottom: 1px solid var(--border);
 }
 
+.page-header-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .page-title {
   font-size: 24px;
   font-weight: 700;
@@ -747,6 +770,148 @@ body.is-login {
   color: var(--text-3);
   margin-top: 6px;
   font-weight: 400;
+}
+
+/* ══════════════════════════════════════════════
+   SUPERVISOR SWITCHER (Manager → หลาย Supervisor)
+══════════════════════════════════════════════ */
+.sup-switch {
+  flex-shrink: 0;
+}
+
+.sup-switch__card {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px 10px 12px;
+  background: linear-gradient(135deg, #fff 0%, var(--accent-bg) 100%);
+  border: 1px solid var(--accent-brd);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+  min-width: 0;
+  max-width: min(360px, 92vw);
+}
+
+.sup-switch__emoji {
+  font-size: 22px;
+  line-height: 1;
+  margin-top: 2px;
+  filter: saturate(1.1);
+}
+
+.sup-switch__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sup-switch__head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sup-switch__title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-1);
+  letter-spacing: 0.02em;
+}
+
+.sup-switch__hint {
+  font-size: 11px;
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+.sup-switch__controls {
+  position: relative;
+}
+
+.sup-switch__select {
+  width: 100%;
+  max-width: 280px;
+  padding: 8px 32px 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--font);
+  color: var(--text-1);
+  background: var(--white);
+  border: 1px solid var(--border-md);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23475569' d='M3 4.5L6 8l3-3.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.sup-switch__select:hover:not(:disabled) {
+  border-color: var(--accent-light);
+}
+
+.sup-switch__select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+
+.sup-switch__select:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.sup-switch.is-loading .sup-switch__select {
+  pointer-events: none;
+}
+
+/* ต้องซ่อนเมื่อมี [hidden] — อย่าให้ display:flex ชนะ attribute hidden (ไม่งั้นโหลดค้างตลอด) */
+.sup-switch__overlay[hidden] {
+  display: none !important;
+}
+
+.sup-switch__overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(4px);
+  border-radius: var(--r-lg);
+  z-index: 2;
+  flex-wrap: wrap;
+}
+
+.sup-switch__spinner {
+  width: 20px;
+  height: 20px;
+  border: 2.5px solid var(--accent-brd);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: supSwitchSpin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+.sup-switch__loading-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  text-align: center;
+  line-height: 1.35;
+  max-width: 200px;
+}
+
+@keyframes supSwitchSpin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* ══════════════════════════════════════════════
