@@ -15,6 +15,25 @@ import os
 
 logger = logging.getLogger("target_allocation.OR")
 
+
+def _norm_sku(s) -> str:
+    return str(s).strip() if s is not None else ""
+
+
+def _skus_zero_team_hist(df_hist: pd.DataFrame, sku_list: list) -> frozenset[str]:
+    """
+    SKU ที่รวมยอดหีบในประวัติช่วงที่ใช้เกลี่ย (df_hist) = 0 ทั้งทีม
+    ใช้เสริมเมื่อติ๊กสินค้าใหม่ — กันกรณีไม่มี/ไม่ครบ hist_cy หรือคีย์ SKU ไม่ตรง CY/LY
+    """
+    sku_list = [_norm_sku(s) for s in sku_list if _norm_sku(s)]
+    if df_hist is None or df_hist.empty:
+        return frozenset(sku_list)
+    df = df_hist.copy()
+    df["sku"] = df["sku"].map(_norm_sku)
+    g = df.groupby("sku")["hist_boxes"].sum()
+    return frozenset(s for s in sku_list if float(g.get(s, 0) or 0) <= 0)
+
+
 def allocate_boxes(
     df_emp_targets: pd.DataFrame,
     df_sku: pd.DataFrame,
@@ -23,6 +42,8 @@ def allocate_boxes(
     force_min_one: bool = False,
     locked_edits: list = None,
     cap_multiplier: float = None,  # override _CAP_MULTIPLIER (Custom strategy)
+    even_new_products: bool = False,
+    new_product_skus: set | frozenset | None = None,
 ) -> pd.DataFrame:
     strategy = strategy.upper()
     valid = ("L3M", "L6M", "EVEN", "PUSH", "LP")
@@ -34,18 +55,60 @@ def allocate_boxes(
         for le in locked_edits:
             locked_map[(le["emp_id"], le["sku"])] = int(le["locked_boxes"])
 
-    logger.info("allocate_boxes: strategy=%s emp=%d sku=%d force_min_one=%s locked=%d",
-                strategy, len(df_emp_targets), len(df_sku), force_min_one, len(locked_map))
+    cy_ly_skus: frozenset[str] = frozenset()
+    zero_hist_skus: frozenset[str] = frozenset()
+    even_skus: frozenset[str] = frozenset()
+    if even_new_products:
+        # ถ้า backend ส่งชุด SKU จาก CY/LY มา (ไม่ None) ให้ใช้ "เฉพาะชุดนั้น" ตามนิยามสินค้าใหม่
+        # fallback ไปใช้ยอด 3M/6M = 0 เฉพาะตอน cache CY/LY ไม่พร้อมเท่านั้น (backend จะส่ง None)
+        if new_product_skus is None:
+            zero_hist_skus = _skus_zero_team_hist(df_hist, df_sku["sku"].tolist())
+            even_skus = zero_hist_skus
+        else:
+            cy_ly_skus = frozenset(_norm_sku(s) for s in (new_product_skus or []))
+            even_skus = cy_ly_skus
+
+    logger.info(
+        "allocate_boxes: strategy=%s emp=%d sku=%d force_min_one=%s locked=%d even_new_products=%s even_skus=%d (cy_ly=%d zero_hist=%d)",
+        strategy,
+        len(df_emp_targets),
+        len(df_sku),
+        force_min_one,
+        len(locked_map),
+        even_new_products,
+        len(even_skus),
+        len(cy_ly_skus),
+        len(zero_hist_skus),
+    )
 
     # ถ้า custom strategy ส่ง cap_multiplier มา ให้ใช้ค่านั้นแทน default
     effective_cap = cap_multiplier if cap_multiplier is not None else _CAP_MULTIPLIER
 
+    # ห้าม greedy ย้ายหีบของ SKU เหล่านี้ — ไม่งั้นเป้าเงินจะดึงหีบไปมาแม้ตอนแรกแบ่งเท่าแล้ว
+    skip_balance_skus = even_skus if even_new_products else None
+
     if strategy == "LP":
-        df_out = _lp_optimize(df_emp_targets, df_sku, df_hist, force_min_one, locked_map)
+        df_out = _lp_optimize(
+            df_emp_targets, df_sku, df_hist, force_min_one, locked_map, even_skus=even_skus
+        )
     else:
-        df_out = _proportional(df_emp_targets, df_sku, df_hist, strategy, force_min_one, locked_map, effective_cap)
+        df_out = _proportional(
+            df_emp_targets,
+            df_sku,
+            df_hist,
+            strategy,
+            force_min_one,
+            locked_map,
+            effective_cap,
+            even_skus=even_skus,
+        )
         df_out = _greedy_revenue_balancer(
-            df_out, df_emp_targets, df_sku, locked_map, force_min_one=force_min_one
+            df_out,
+            df_emp_targets,
+            df_sku,
+            locked_map,
+            force_min_one=force_min_one,
+            skip_balance_skus=skip_balance_skus,
         )
 
     return df_out
@@ -99,8 +162,18 @@ def _cap_and_redistribute(raw: dict, total: int, cap_multiplier: float = None) -
     return floored
 
 
-def _proportional(df_emp_targets, df_sku, df_hist, strategy, force_min_one=False, locked_map=None, cap_multiplier=None):
+def _proportional(
+    df_emp_targets,
+    df_sku,
+    df_hist,
+    strategy,
+    force_min_one=False,
+    locked_map=None,
+    cap_multiplier=None,
+    even_skus: frozenset | None = None,
+):
     locked_map = locked_map or {}
+    even_skus = even_skus or frozenset()
     employees = df_emp_targets["emp_id"].tolist()
     target_boxes = dict(zip(df_sku["sku"], df_sku["supervisor_target_boxes"]))
 
@@ -130,18 +203,21 @@ def _proportional(df_emp_targets, df_sku, df_hist, strategy, force_min_one=False
             total -= len(active_employees)
 
         # ── คำนวณ hist weight ──
+        sku_key = _norm_sku(sku)
         hist_by_emp = {}
         for emp in active_employees:
             if df_hist.empty:
                 val = 0.0
             else:
-                mask = (df_hist["emp_id"] == emp) & (df_hist["sku"] == sku)
-                val = df_hist.loc[mask, "hist_boxes"].sum()
+                m_emp = df_hist["emp_id"].astype(str).str.strip() == str(emp).strip()
+                m_sku = df_hist["sku"].map(_norm_sku) == sku_key
+                val = df_hist.loc[m_emp & m_sku, "hist_boxes"].sum()
             hist_by_emp[emp] = max(float(val), 0.0)
 
         hist_sum = sum(hist_by_emp.values())
 
-        if strategy == "EVEN" or hist_sum == 0:
+        # สินค้าใหม่ (ไม่มียอดปีปฏิทินปีนี้+ปีที่แล้ว): เกลี่ยเท่ากัน แม้ strategy จะเป็น L3M/L6M/PUSH
+        if strategy == "EVEN" or sku_key in even_skus or hist_sum == 0:
             weights = {e: 1.0 for e in active_employees}
         elif strategy in ("L3M", "L6M"):
             weights = {e: max(hist_by_emp[e], 0.01) for e in active_employees}
@@ -173,12 +249,14 @@ def _greedy_revenue_balancer(
     df_sku: pd.DataFrame,
     locked_map=None,
     force_min_one: bool = False,
+    skip_balance_skus: frozenset | set | None = None,
     tolerance_baht: float = 1000.0,
     max_iters: int = 50000,
 ) -> pd.DataFrame:
     if df_out.empty:
         return df_out
     locked_map = locked_map or {}
+    skip_balance_skus = skip_balance_skus or set()
     target_rev = dict(zip(df_emp_targets["emp_id"], df_emp_targets["yellow_target"]))
     sku_prices = dict(zip(df_sku["sku"], df_sku["price_per_box"]))
     target_boxes = dict(zip(df_sku["sku"], df_sku["supervisor_target_boxes"]))
@@ -253,6 +331,8 @@ def _greedy_revenue_balancer(
         best_improvement = 0
         
         for sku, price in sku_prices.items():
+            if _norm_sku(sku) in skip_balance_skus:
+                continue
             # 🔴 ข้ามการสลับหีบที่คนพิมพ์แก้ไขไว้แล้ว (ห้ามยุ่งเด็ดขาด)
             if (rich_emp, sku) in locked_map or (poor_emp, sku) in locked_map:
                 continue
@@ -282,10 +362,20 @@ def _greedy_revenue_balancer(
     final_results = [{"emp_id": emp, "sku": sku, "allocated_boxes": boxes} for emp in emps for sku, boxes in alloc[emp].items() if boxes > 0]
     return pd.DataFrame(final_results)
 
-def _lp_optimize(df_emp_targets, df_sku, df_hist, force_min_one=False, locked_map=None):
+def _lp_optimize(
+    df_emp_targets,
+    df_sku,
+    df_hist,
+    force_min_one=False,
+    locked_map=None,
+    even_skus: frozenset | None = None,
+):
     locked_map = locked_map or {}
+    even_skus = even_skus or frozenset()
     try: import pulp
-    except ImportError: return _proportional(df_emp_targets, df_sku, df_hist, "L3M", force_min_one, locked_map)
+    except ImportError: return _proportional(
+        df_emp_targets, df_sku, df_hist, "L3M", force_min_one, locked_map, even_skus=even_skus
+    )
 
     employees    = df_emp_targets["emp_id"].tolist()
     skus         = df_sku["sku"].tolist()
@@ -298,7 +388,9 @@ def _lp_optimize(df_emp_targets, df_sku, df_hist, force_min_one=False, locked_ma
     # ── Anchor ให้ LP ใกล้ baseline จากประวัติขาย (ลดการกระจายแปลกๆ) ──
     # ค่า 0.0 = ปิด anchor (LP แบบเดิม), ค่า ~0.05–0.30 แนะนำ
     lp_anchor = float(os.environ.get("LP_HIST_ANCHOR", "0.15") or 0.15)
-    df_base = _proportional(df_emp_targets, df_sku, df_hist, "L3M", force_min_one, locked_map)
+    df_base = _proportional(
+        df_emp_targets, df_sku, df_hist, "L3M", force_min_one, locked_map, even_skus=even_skus
+    )
     base_map = {}
     if df_base is not None and not df_base.empty:
         for _, r in df_base.iterrows():
@@ -353,12 +445,18 @@ def _lp_optimize(df_emp_targets, df_sku, df_hist, force_min_one=False, locked_ma
     except Exception as e:
         # CBC solver ไม่พร้อม (solver binary หาย, permission error ฯลฯ) — fallback ทันที
         logger.warning("LP solver error: %s → fallback to L3M", e)
-        return _proportional(df_emp_targets, df_sku, df_hist, "L3M", force_min_one, locked_map)
+        return _proportional(
+            df_emp_targets, df_sku, df_hist, "L3M", force_min_one, locked_map, even_skus=even_skus
+        )
 
     # "Optimal" เท่านั้นที่เชื่อถือได้ — "Not Solved" (time-limit hit) และสถานะอื่น fallback หมด
     if pulp.LpStatus[prob.status] != "Optimal":
         logger.warning("LP status=%s → fallback to L3M", pulp.LpStatus[prob.status])
-        return _proportional(df_emp_targets, df_sku, df_hist, "L3M", force_min_one, locked_map)
+        return _proportional(
+            df_emp_targets, df_sku, df_hist, "L3M", force_min_one, locked_map, even_skus=even_skus
+        )
 
     results = [{"emp_id": emp, "sku": sku, "allocated_boxes": int(round(x[(emp, sku)].varValue))} for emp in employees for sku in skus if x[(emp, sku)].varValue is not None and x[(emp, sku)].varValue > 0.5]
-    return pd.DataFrame(results) if results else _proportional(df_emp_targets, df_sku, df_hist, "L3M", force_min_one, locked_map)
+    return pd.DataFrame(results) if results else _proportional(
+        df_emp_targets, df_sku, df_hist, "L3M", force_min_one, locked_map, even_skus=even_skus
+    )

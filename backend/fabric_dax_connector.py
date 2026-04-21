@@ -666,6 +666,71 @@ SUMMARIZECOLUMNS(
 
         return df
 
+    def get_calendar_year_sales_by_emp_sku(
+        self,
+        calendar_year: int,
+        sku_list: list | None = None,
+        emp_list: list | None = None,
+    ) -> pd.DataFrame:
+        """
+        ยอดขาย (จำนวนหีบ + บาท) รายคู่ (emp, sku) รวมทุกเดือนในปีปฏิทินที่ระบุ (Jan–Dec)
+        ใช้ตรวจว่า SKU ไม่มียอดทั้งปีปัจจุบันและปีก่อน (สินค้าใหม่) ตอน optimize
+        """
+        cy = int(calendar_year)
+        sku_filter = self._sku_treatas(sku_list)
+        emp_filter = self._emp_treatas(emp_list)
+
+        print(
+            f"📡 [historical CY] ปีปฏิทิน {cy} ราย emp×sku "
+            f"(emp={len(emp_list) if emp_list else 'all'}, sku={len(sku_list) if sku_list else 'all'})..."
+        )
+
+        dax = f"""
+EVALUATE
+SUMMARIZECOLUMNS(
+    'cross_sold_history_2y_qu'[SalesmanCode],
+    'cross_sold_history_2y_qu'[ProductCode],
+    CALCULATETABLE(
+        FILTER('DimDate',
+            YEAR('DimDate'[Date]) = {cy}
+        )
+    ),
+    {sku_filter}
+    {emp_filter}
+    "hist_boxes",  SUM('cross_sold_history_2y_qu'[TotalQuantity]),
+    "hist_amount", SUM('cross_sold_history_2y_qu'[Amount])
+)
+"""
+        rows = self._execute_dax(dax, debug=True)
+
+        records = []
+        for r in rows:
+            emp = str(self._get(r,
+                "cross_sold_history_2y_qu[SalesmanCode]",
+                "[SalesmanCode]", default="")).strip()
+            sku = str(self._get(r,
+                "cross_sold_history_2y_qu[ProductCode]",
+                "[ProductCode]", default="")).strip()
+            boxes = float(self._get(r, "[hist_boxes]", default=0) or 0)
+            amount = float(self._get(r, "[hist_amount]", default=0) or 0)
+            if emp and sku:
+                records.append({
+                    "emp_id": emp,
+                    "sku": sku,
+                    "hist_boxes": boxes,
+                    "hist_amount": amount,
+                })
+
+        df = pd.DataFrame(records) if records else pd.DataFrame(
+            columns=["emp_id", "sku", "hist_boxes", "hist_amount"])
+        if not df.empty:
+            df = df[df["hist_boxes"] > 0]
+        print(
+            f"✅ historical CY {cy}: {len(df)} รายการ (emp×sku), "
+            f"{df['emp_id'].nunique() if not df.empty else 0} พนักงาน"
+        )
+        return df
+
     def get_same_month_prior_year_by_emp_sku(
         self,
         target_month: int,

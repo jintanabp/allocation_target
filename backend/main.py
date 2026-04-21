@@ -77,7 +77,7 @@ def _cleanup_old_caches(max_age_days: int = 7):
     cutoff = datetime.now() - timedelta(days=max_age_days)
     try:
         for fname in os.listdir("data"):
-            if fname.startswith(("hist_cache_", "hist_lysm_", "hist_prev_", "emp_cache_")):
+            if fname.startswith(("hist_cache_", "hist_lysm_", "hist_prev_", "hist_cy_", "emp_cache_")):
                 fpath = os.path.join("data", fname)
                 if datetime.fromtimestamp(os.path.getmtime(fpath)) < cutoff:
                     os.remove(fpath)
@@ -220,6 +220,7 @@ class OptimizeRequest(BaseModel):
     yellowTargets: list[YellowTargetInput]
     strategy: str = "L3M"
     force_min_one: bool = False
+    new_products_even: bool = False
     locked_edits: list[LockedEditInput] = []
     cap_multiplier: float | None = None  # Custom strategy override (1.5–5.0)
 
@@ -268,6 +269,11 @@ def hist_prev_month_cache_path(sup_id: str, month: int, year: int) -> str:
     return f"data/hist_prev_{_safe_id(sup_id)}_{year}_{month:02d}.csv"
 
 
+def hist_calendar_year_cache_path(sup_id: str, calendar_year: int) -> str:
+    """ยอดหีบ emp×sku รวมทั้งปีปฏิทิน (Jan–Dec) — ใช้ตรวจสินค้าใหม่ (ไม่มียอด CY + LY)"""
+    return f"data/hist_cy_{_safe_id(sup_id)}_{int(calendar_year)}.csv"
+
+
 def emp_cache_path(sup_id: str, month: int, year: int) -> str:
     return f"data/emp_cache_{_safe_id(sup_id)}_{year}_{month:02d}.csv"
 
@@ -292,6 +298,56 @@ def excel_export_path(sup_id: str, brand: str) -> str:
 def export_result_path(sup_id: str, brand: str) -> str:
     brand_safe = _safe_id(brand) if brand != "ALL" else "ALL"
     return f"data/export_{_safe_id(sup_id)}_{brand_safe}.csv"
+
+
+def _skus_no_sales_cy_ly(sup_id: str, target_year: int, sku_list: list[str]) -> set[str]:
+    """
+    SKU ที่รวมยอดหีบทั้งทีม = 0 ทั้งปีปฏิทิน target_year และปีก่อน (อิงไฟล์ hist_cy_*)
+    """
+    cy_path = hist_calendar_year_cache_path(sup_id, target_year)
+    ly_path = hist_calendar_year_cache_path(sup_id, target_year - 1)
+    if not os.path.exists(cy_path) or not os.path.exists(ly_path):
+        return set()
+    try:
+        df_cy = pd.read_csv(cy_path, dtype={"sku": str, "emp_id": str})
+        df_ly = pd.read_csv(ly_path, dtype={"sku": str, "emp_id": str})
+    except Exception:
+        return set()
+    for df in (df_cy, df_ly):
+        if "hist_boxes" not in df.columns:
+            df["hist_boxes"] = 0.0
+    cy_sum = df_cy.groupby("sku")["hist_boxes"].sum()
+    ly_sum = df_ly.groupby("sku")["hist_boxes"].sum()
+    out: set[str] = set()
+    for sku in sku_list:
+        s = str(sku).strip()
+        c = float(cy_sum.get(s, 0) or 0)
+        l = float(ly_sum.get(s, 0) or 0)
+        if c <= 0 and l <= 0:
+            out.add(s)
+    return out
+
+
+def _skus_zero_team_hist_window(df_hist: pd.DataFrame, sku_list: list[str]) -> set[str]:
+    """
+    SKU ที่รวมยอดหีบในประวัติช่วงที่ใช้เกลี่ย (df_hist: 3M/6M) = 0 ทั้งทีม
+    ใช้เป็น fallback ของ "สินค้าใหม่กระจายเท่ากัน" เฉพาะเมื่อไม่มี cache CY/LY
+    """
+    sku_list = [str(s or "").strip() for s in (sku_list or []) if str(s or "").strip()]
+    if not sku_list:
+        return set()
+    if df_hist is None or df_hist.empty or "sku" not in df_hist.columns:
+        return set(sku_list)
+    df = df_hist.copy()
+    df["sku"] = df["sku"].astype(str).str.strip()
+    if "hist_boxes" not in df.columns:
+        return set(sku_list)
+    sums = df.groupby("sku")["hist_boxes"].sum()
+    out: set[str] = set()
+    for s in sku_list:
+        if float(sums.get(s, 0) or 0) <= 0:
+            out.add(s)
+    return out
 
 
 def _validate_allocation_vs_targets(df_alloc: pd.DataFrame, df_sku: pd.DataFrame) -> list[dict]:
@@ -752,6 +808,33 @@ def get_employees(
         except Exception as ep:
             logger.warning("historical prev month (emp×sku) skipped: %s", ep)
 
+        # ── Step 5c: ยอดหีบรวมตามปีปฏิทิน (CY + ปีก่อน) — ใช้ตรวจ "สินค้าใหม่" ตอน optimize
+        try:
+            for cy in (int(target_year), int(target_year) - 1):
+                df_cy = fabric.get_calendar_year_sales_by_emp_sku(
+                    cy, sku_list=sku_list, emp_list=emp_list
+                )
+                pcy = hist_calendar_year_cache_path(sup_id, cy)
+                if df_cy is not None and not df_cy.empty:
+                    df_cy.to_csv(pcy, index=False)
+                    logger.info(
+                        "historical calendar-year %d cache: %d rows → %s",
+                        cy,
+                        len(df_cy),
+                        pcy,
+                    )
+                else:
+                    pd.DataFrame(columns=["emp_id", "sku", "hist_boxes", "hist_amount"]).to_csv(
+                        pcy, index=False
+                    )
+                    logger.info(
+                        "historical calendar-year %d: empty → %s",
+                        cy,
+                        pcy,
+                    )
+        except Exception as ecy:
+            logger.warning("historical calendar-year caches skipped: %s", ecy)
+
     # ── Step 6: Warehouse ─────────────────────────────────
     try:
         df_wh = fabric.get_warehouse_by_emp(emp_list)
@@ -1000,6 +1083,32 @@ def run_optimization(
         for le in req.locked_edits
         if str(le.emp_id).strip() in eligible_set
     ]
+    sku_ids_opt = df_sku["sku"].astype(str).str.strip().tolist()
+    new_skus_cy_ly: set[str] | None = set()
+    new_products_even_mode = "off"
+    new_product_skus_used: list[str] = []
+    if req.new_products_even:
+        cy_ok = os.path.exists(hist_calendar_year_cache_path(sup_id, target_year))
+        ly_ok = os.path.exists(hist_calendar_year_cache_path(sup_id, target_year - 1))
+        if not cy_ok or not ly_ok:
+            logger.warning(
+                "new_products_even เปิดอยู่ แต่ไม่พบ cache ปีปฏิทิน (hist_cy_) — "
+                "จะ fallback ใช้เงื่อนไขยอด 3M/6M = 0 (ชั่วคราว) — "
+                "แนะนำให้โหลดหน้า Dashboard ใหม่เพื่อสร้างไฟล์ CY/LY"
+            )
+            # ส่ง None เพื่อให้ OR_engine ตัดสินใจ fallback แบบจำกัดขอบเขต (ไม่ขยายเมื่อมี CY/LY แล้ว)
+            new_skus_cy_ly = None
+            new_products_even_mode = "fallback_hist_window"
+            new_product_skus_used = sorted(_skus_zero_team_hist_window(df_hist, sku_ids_opt))
+        else:
+            new_skus_cy_ly = _skus_no_sales_cy_ly(sup_id, target_year, sku_ids_opt)
+            new_products_even_mode = "cy_ly"
+            new_product_skus_used = sorted(list(new_skus_cy_ly))
+            logger.info(
+                "new_products_even: SKU ไม่มียอดทั้งปีนี้และปีที่แล้ว (ปีปฏิทิน) = %d รายการ",
+                len(new_skus_cy_ly),
+            )
+
     df_allocation = allocate_boxes(
         df_emp_targets,
         df_sku,
@@ -1008,6 +1117,8 @@ def run_optimization(
         force_min_one=req.force_min_one,
         locked_edits=locked_edits_data if locked_edits_data else None,
         cap_multiplier=req.cap_multiplier,
+        even_new_products=bool(req.new_products_even),
+        new_product_skus=new_skus_cy_ly if req.new_products_even else None,
     )
 
     # คำนวณ hist_avg รายพนักงาน×SKU (เฉลี่ยต่อเดือนจากช่วงที่โหลด: 3 หรือ 6 เดือน)
@@ -1080,6 +1191,8 @@ def run_optimization(
         "allocations": df_final.to_dict(orient="records"),
         "sku_total_checks": sku_checks,
         "hist_window_months": hist_months,
+        "new_products_even_mode": new_products_even_mode,
+        "new_product_skus": new_product_skus_used,
     }
 
 

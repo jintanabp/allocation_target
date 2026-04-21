@@ -72,7 +72,20 @@
             <div class="field-group">
               <label class="field-label">Supervisor หรือ Manager</label>
               <div style="position: relative;">
-                <input type="text" id="supSelect" class="field-input" placeholder="⏳ กำลังดึงข้อมูล..." autocomplete="off">
+                <input
+                  type="search"
+                  id="supSelect"
+                  class="field-input"
+                  placeholder="⏳ กำลังดึงข้อมูล..."
+                  name="allocation_supervisor_picker"
+                  autocomplete="off"
+                  autocorrect="off"
+                  autocapitalize="none"
+                  spellcheck="false"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
+                  data-form-type="other"
+                >
                 <div id="customDropdown" class="custom-dropdown" style="display:none;"></div>
               </div>
               <div class="field-help">เลือก <code>SL330 (Supervisor)</code> เพื่อเข้าแบบหัวหน้าทีม · เลือก <code>… (Manager)</code> เพื่อดูทีมของหลาย Supervisor แล้วสลับได้ในหน้า Dashboard</div>
@@ -381,6 +394,12 @@
               <input type="checkbox" id="forceMinOneBox"
                 style="accent-color: var(--accent); width: 16px; height: 16px;">
               <b>บังคับ AI กระจายอย่างน้อย 1 หีบ/คน</b> (เฉพาะ SKU ที่เป้าหีบ ≥ จำนวนพนักงาน — เช่น 6 หีบ / 6 คน)
+            </label>
+            <label
+              style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer; font-size: 13px; color: var(--text-2); margin-top: 10px;">
+              <input type="checkbox" id="newProductsEvenBox"
+                style="accent-color: var(--accent); width: 16px; height: 16px; flex-shrink: 0; margin-top: 2px;">
+              <span><b>สินค้าใหม่กระจายเท่ากัน</b> — SKU ที่ไม่มียอดขายปีปฏิทินปีนี้และปีที่แล้ว (รวมทีม) จะถูกแบ่งหีบเท่าๆ กันทุกคน (อิงไฟล์ประวัติ CY หลังโหลด Dashboard)</span>
             </label>
           </div>
         </div>

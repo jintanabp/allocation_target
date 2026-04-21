@@ -231,6 +231,8 @@ let S = {
   _managerSet: null,
   yellowLocked: {},
   skuWarnings: [],    // SKU reconciliation warnings จาก backend
+  newProductSkus: new Set(),
+  newProductsEvenMode: "off",
 };
 
 /** สร้าง map จาก rows ของ /managers (trf_select_supervisor) */
@@ -290,6 +292,56 @@ function resolveLoginPick(raw) {
   if (S._supervisorSet && S._supervisorSet.has(up)) return { kind: "supervisor", code: up };
   if (S._managerSet && S._managerSet.has(up)) return { kind: "manager", code: up };
   return null;
+}
+
+/** ค่าที่ควรจำใน localStorage / ชิปประวัติ — เฉพาะรหัสจริงจากระบบ ไม่เก็บสตริงค้นหาแบบ "330" */
+function canonicalSupervisorLoginValue(raw) {
+  const t = String(raw || "").trim();
+  if (!t) return null;
+  if (Array.isArray(S.managers) && S.managers.length > 0) {
+    const exact = S.managers.find(x => String(x).trim() === t);
+    if (exact) return String(exact);
+  }
+  const pick = resolveLoginPick(t);
+  if (!pick) return null;
+  return pick.kind === "supervisor" ? `${pick.code} (Supervisor)` : `${pick.code} (Manager)`;
+}
+
+function looksLikeSupervisorManagerLabel(s) {
+  const t = String(s || "").trim();
+  return /\s+\(Supervisor\)\s*$/i.test(t) || /\s+\(Manager\)\s*$/i.test(t);
+}
+
+/** แสดงชิปประวัติได้เมื่อหน้าตาเหมือนป้ายจริง และ (ถ้ามีรายการจาก API) ต้องตรงกับรายการนั้น */
+function isRecentSupDisplayable(s) {
+  if (!looksLikeSupervisorManagerLabel(s)) return false;
+  if (!Array.isArray(S.managers) || S.managers.length === 0) return true;
+  return S.managers.some(x => String(x).trim() === String(s).trim());
+}
+
+/** ล้างค่าเก่าใน localStorage ที่ไม่ใช่รายการจาก /managers */
+function sanitizeLoginMemoryAgainstManagers() {
+  if (!Array.isArray(S.managers) || S.managers.length === 0) return;
+  const allow = new Set(S.managers.map(x => String(x).trim()));
+  let mem;
+  try {
+    mem = JSON.parse(localStorage.getItem(_LOGIN_MEM_KEY) || "null");
+  } catch {
+    return;
+  }
+  if (!mem || typeof mem !== "object") return;
+  if (Array.isArray(mem.recent)) {
+    mem.recent = mem.recent.filter(x => allow.has(String(x).trim()));
+  }
+  if (mem.last && mem.last.sup != null && !allow.has(String(mem.last.sup).trim())) {
+    delete mem.last.sup;
+  }
+  try {
+    localStorage.setItem(_LOGIN_MEM_KEY, JSON.stringify(mem));
+  } catch {
+    /* ignore */
+  }
+  renderRecentSupChips();
 }
 
 function setSupervisorSwitchLoading(on, message) {
@@ -578,18 +630,30 @@ function _disableLoginScrollLock() {
 const _LOGIN_MEM_KEY = "LoginMem_v1";
 
 function persistLoginMemory() {
-  const sup = document.getElementById("supSelect")?.value?.trim() || "";
+  const rawSup = document.getElementById("supSelect")?.value?.trim() || "";
   const m = parseInt(document.getElementById("monthSelect")?.value || "", 10);
   const y = parseInt(document.getElementById("yearSelect")?.value || "", 10);
-  if (!sup && (!m || !y)) return;
+  const hasPeriod = !Number.isNaN(m) && !Number.isNaN(y) && m && y;
+  if (!rawSup && !hasPeriod) return;
 
   let mem = {};
   try { mem = JSON.parse(localStorage.getItem(_LOGIN_MEM_KEY) || "{}"); } catch { mem = {}; }
-  mem.last = { sup, m, y, ts: Date.now() };
-  mem.recent = Array.isArray(mem.recent) ? mem.recent : [];
-  if (sup) {
-    mem.recent = [sup, ...mem.recent.filter(x => x !== sup)].slice(0, 6);
+  const canon = canonicalSupervisorLoginValue(rawSup);
+
+  mem.last = mem.last && typeof mem.last === "object" ? { ...mem.last } : {};
+  if (hasPeriod) {
+    mem.last.m = m;
+    mem.last.y = y;
   }
+  mem.last.ts = Date.now();
+  if (canon) mem.last.sup = canon;
+
+  mem.recent = Array.isArray(mem.recent) ? mem.recent : [];
+  if (canon) {
+    mem.recent = [canon, ...mem.recent.filter(x => x !== canon)].slice(0, 6);
+  }
+  mem.recent = mem.recent.filter(isRecentSupDisplayable).slice(0, 6);
+
   localStorage.setItem(_LOGIN_MEM_KEY, JSON.stringify(mem));
   renderRecentSupChips();
 }
@@ -601,7 +665,7 @@ function restoreLoginMemory() {
     const { sup, m, y } = mem.last;
     if (sup) {
       const inp = document.getElementById("supSelect");
-      if (inp && !inp.value) inp.value = sup;
+      if (inp && !inp.value && isRecentSupDisplayable(sup)) inp.value = sup;
     }
     if (m) {
       const ms = document.getElementById("monthSelect");
@@ -621,15 +685,24 @@ function renderRecentSupChips() {
   if (!wrap) return;
   let mem;
   try { mem = JSON.parse(localStorage.getItem(_LOGIN_MEM_KEY) || "null"); } catch { mem = null; }
-  const recent = Array.isArray(mem?.recent) ? mem.recent.filter(Boolean) : [];
-  if (recent.length === 0) { wrap.style.display = "none"; wrap.innerHTML = ""; return; }
+  const recent = Array.isArray(mem?.recent) ? mem.recent.filter(Boolean).filter(isRecentSupDisplayable) : [];
+  if (recent.length === 0) { wrap.style.display = "none"; wrap.replaceChildren(); return; }
   wrap.style.display = "flex";
-  wrap.innerHTML = recent.map(s => `<span class="chip" onclick="setSupFromChip('${String(s).replace(/'/g, "\\\\'")}')">🕘 ${s}</span>`).join("");
+  wrap.replaceChildren();
+  for (const s of recent) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip";
+    chip.textContent = `🕘 ${s}`;
+    chip.addEventListener("click", () => setSupFromChip(s));
+    wrap.appendChild(chip);
+  }
 }
 
 function setSupFromChip(sup) {
   const inp = document.getElementById("supSelect");
   if (!inp) return;
+  if (!isRecentSupDisplayable(sup)) return;
   inp.value = sup;
   persistLoginMemory();
 }
@@ -826,6 +899,7 @@ async function loadManagers() {
             ? "พิมพ์ค้นหา Supervisor / Manager หรือคลิกเลือก..."
             : "ไม่พบรายการ — พิมพ์รหัส SuperCode เอง";
         setupAutocomplete(supInput, list.length > 0 ? list : S.managers);
+        sanitizeLoginMemoryAgainstManagers();
         if (retryBtn) retryBtn.style.display = list.length > 0 ? "none" : "inline-flex";
         return;
       }
@@ -846,6 +920,16 @@ async function loadManagers() {
 
 function setupAutocomplete(input, list) {
   const dropdown = document.getElementById("customDropdown");
+
+  // ลบ listener เก่า (กันโหลด /managers ซ้ำแล้ว listener ซ้อน)
+  if (input._supAutocomplete) {
+    const prev = input._supAutocomplete;
+    input.removeEventListener("focus", prev.onFocus);
+    input.removeEventListener("mousedown", prev.onMouseDown);
+    input.removeEventListener("input", prev.onInput);
+    input.removeEventListener("keydown", prev.onKeyDown);
+    input._supAutocomplete = null;
+  }
 
   function renderList(filterText = "") {
     const filtered = list.filter(item => item.toLowerCase().includes(filterText.toLowerCase()));
@@ -868,15 +952,46 @@ function setupAutocomplete(input, list) {
     }
   }
 
-  input.addEventListener("focus", () => {
-    renderList(input.value);
-    dropdown.style.display = "block";
-  });
+  // กันเบราว์เซอร์แสดงประวัติพิมพ์เอง (เช่น "33", "330") แต่ยังให้พิมพ์ค้นหาได้
+  function unlockTyping() {
+    if (input.readOnly) input.readOnly = false;
+  }
 
-  input.addEventListener("input", () => {
+  function onMouseDown() {
+    unlockTyping();
+  }
+
+  function onFocus() {
+    // readonly ชั่วขณะตอนโฟกัส ช่วยตัด autofill dropdown ของบางเบราว์เซอร์
+    input.readOnly = true;
+    window.setTimeout(() => {
+      unlockTyping();
+      try {
+        input.setSelectionRange(input.value.length, input.value.length);
+      } catch {
+        /* ignore */
+      }
+    }, 0);
+
     renderList(input.value);
     dropdown.style.display = "block";
-  });
+  }
+
+  function onInput() {
+    renderList(input.value);
+    dropdown.style.display = "block";
+  }
+
+  function onKeyDown(e) {
+    // พอกดพิมพ์/ลบ ให้แน่ใจว่าไม่ติด readonly
+    if (e && (e.key?.length === 1 || e.key === "Backspace" || e.key === "Delete")) unlockTyping();
+  }
+
+  input.addEventListener("mousedown", onMouseDown);
+  input.addEventListener("focus", onFocus);
+  input.addEventListener("input", onInput);
+  input.addEventListener("keydown", onKeyDown);
+  input._supAutocomplete = { onFocus, onMouseDown, onInput, onKeyDown };
 
   // ลงทะเบียน global click listener ครั้งเดียวผ่าน flag — ป้องกัน memory leak
   if (!window._autocompleteGlobalBound) {
@@ -895,6 +1010,7 @@ window.selectManager = function (val) {
   const input = document.getElementById("supSelect");
   input.value = val;
   document.getElementById("customDropdown").style.display = "none";
+  persistLoginMemory();
 }
 
 /* ══════════════════════════════════════════════
@@ -1334,6 +1450,16 @@ function _sec1PriceStates(s) {
   return { price, fromHist, missing };
 }
 
+function _skuNewBadgeHtml(sku) {
+  const key = String(sku || "").trim();
+  if (!key) return "";
+  const set = S.newProductSkus;
+  if (set && typeof set.has === "function" && set.has(key)) {
+    return `<span class="badge-new" title="SKU นี้ถูกจัดเป็นสินค้าใหม่และถูกกระจายเท่ากัน">NEW</span>`;
+  }
+  return "";
+}
+
 function _renderSkuSec1() {
   let sorted = [...S.skus];
   if (_skuSec1Sort === "brand") {
@@ -1363,7 +1489,7 @@ function _renderSkuSec1() {
         ? `<span class="price-missing-badge">ไม่มีราคา</span>`
         : `${fmt(price)}${fromHist ? ` <span class="price-history-badge">สำรอง: ประวัติหาร</span>` : ""}`;
       return `<tr>
-        <td class="mono" style="font-size:12px;font-weight:600;">${s.sku}</td>
+        <td class="mono" style="font-size:12px;font-weight:600;">${s.sku} ${_skuNewBadgeHtml(s.sku)}</td>
         <td>${brand ? `<span class="brand-chip">${brand}</span>` : '<span style="color:var(--text-3)">—</span>'}</td>
         <td class="r mono ${priceCls}">${priceInner}</td>
         <td class="r mono"><strong>${fmt(boxes)}</strong></td>
@@ -1416,7 +1542,7 @@ function _renderSkuSec1() {
           ? `<span class="price-missing-badge">ไม่มีราคา</span>`
           : `${fmt(price)}${fromHist ? ` <span class="price-history-badge">สำรอง: ประวัติหาร</span>` : ""}`;
         return `<tr class="brand-child" data-brand-idx="${idx}" style="display:none;">
-          <td class="mono" style="font-size:12px;font-weight:600;">${s.sku}</td>
+          <td class="mono" style="font-size:12px;font-weight:600;">${s.sku} ${_skuNewBadgeHtml(s.sku)}</td>
           <td>${brand ? `<span class="brand-chip">${brand}</span>` : '<span style="color:var(--text-3)">—</span>'}</td>
           <td class="r mono ${priceCls}">${priceInner}</td>
           <td class="r mono"><strong>${fmt(boxes)}</strong></td>
@@ -1669,6 +1795,7 @@ async function _doOptimize(lockedEdits = []) {
 
   let strategy = document.querySelector('[name="strategy"]:checked')?.value || "L3M";
   const forceMinOne = document.getElementById("forceMinOneBox")?.checked || false;
+  const newProductsEven = document.getElementById("newProductsEvenBox")?.checked || false;
 
   try {
     const payload = {
@@ -1678,6 +1805,7 @@ async function _doOptimize(lockedEdits = []) {
       })),
       strategy,
       force_min_one: forceMinOne,
+      new_products_even: newProductsEven,
       locked_edits: lockedEdits,
     };
 
@@ -1698,6 +1826,8 @@ async function _doOptimize(lockedEdits = []) {
 
     const json = await res.json();
     S.histWindowMonths = Number(json.hist_window_months) === 6 ? 6 : 3;
+    S.newProductsEvenMode = String(json.new_products_even_mode || "off");
+    S.newProductSkus = new Set(Array.isArray(json.new_product_skus) ? json.new_product_skus.map(x => String(x).trim()) : []);
     const allocs = json.allocations;
     allocs.forEach(a => { a.is_edited = false; });
 
@@ -1838,8 +1968,9 @@ function renderResult(allocs) {
   skus.forEach(s => {
     const info = S.skus.find(x => x.sku === s) || {};
     const price = _skuPriceMap[s] ?? 0;
+    const newBadge = _skuNewBadgeHtml(s);
     headerHtml += `<th class="r sku-th">` +
-      `<div class="sku-th-code">${s}</div>` +
+      `<div class="sku-th-code">${s} ${newBadge}</div>` +
       `<div class="sku-th-brand">${info.brand_name_thai || info.brand_name_english || ""}</div>` +
       `<div class="sku-th-price">${fmt(price)} <span class="muted">บาท/หีบ</span></div>` +
       `</th>`;
