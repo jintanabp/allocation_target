@@ -289,6 +289,7 @@ def load_employees_payload(
     # ── Step 4: History caches (3M/6M + LY same-month + prev-month) ──
     sku_warnings: list[dict] = []
     df_hist = pd.DataFrame(columns=["emp_id", "sku", "hist_boxes", "hist_amount"])
+    df_lysm = pd.DataFrame(columns=["emp_id", "sku", "hist_boxes", "hist_amount"])
     try:
         df_hist = fabric.get_historical_sales(
             target_month,
@@ -367,6 +368,47 @@ def load_employees_payload(
                 logger.info("historical calendar-year %d: empty → %s", cy, pcy)
     except Exception as e:
         logger.warning("historical calendar-year caches skipped: %s", e)
+
+    # ── Step 5b: เติมตัวเลขสรุปให้หน้า Step1 (LY ยอดขาย / เฉลี่ย 3M) ─────────
+    # Frontend ใช้ฟิลด์ชื่อ: ly_sales, hist_avg_3m
+    df_emp["ly_sales"] = 0.0
+    df_emp["hist_avg_3m"] = 0.0
+    try:
+        if df_lysm is not None and not df_lysm.empty:
+            g_ly = (
+                df_lysm.groupby("emp_id", as_index=True)["hist_amount"]
+                .sum()
+                .astype(float)
+            )
+            df_emp = pd.merge(
+                df_emp,
+                g_ly.rename("ly_sales").reset_index(),
+                on="emp_id",
+                how="left",
+            )
+            df_emp["ly_sales"] = pd.to_numeric(df_emp["ly_sales"], errors="coerce").fillna(0.0)
+    except Exception as e:
+        logger.warning("merge ly_sales failed: %s", e)
+
+    try:
+        if df_hist is not None and not df_hist.empty:
+            g_3m = (
+                df_hist.groupby("emp_id", as_index=True)["hist_amount"]
+                .sum()
+                .astype(float)
+                / 3.0
+            )
+            df_emp = pd.merge(
+                df_emp,
+                g_3m.rename("hist_avg_3m").reset_index(),
+                on="emp_id",
+                how="left",
+            )
+            df_emp["hist_avg_3m"] = (
+                pd.to_numeric(df_emp["hist_avg_3m"], errors="coerce").fillna(0.0)
+            )
+    except Exception as e:
+        logger.warning("merge hist_avg_3m failed: %s", e)
 
     # ── Step 6: Warehouse ─────────────────────────────────
     try:
