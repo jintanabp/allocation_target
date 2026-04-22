@@ -373,42 +373,34 @@ def load_employees_payload(
     # Frontend ใช้ฟิลด์ชื่อ: ly_sales, hist_avg_3m
     df_emp["ly_sales"] = 0.0
     df_emp["hist_avg_3m"] = 0.0
+
     try:
         if df_lysm is not None and not df_lysm.empty:
-            g_ly = (
+            ly_by_emp = (
                 df_lysm.groupby("emp_id", as_index=True)["hist_amount"]
                 .sum()
                 .astype(float)
+                .to_dict()
             )
-            df_emp = pd.merge(
-                df_emp,
-                g_ly.rename("ly_sales").reset_index(),
-                on="emp_id",
-                how="left",
+            df_emp["ly_sales"] = (
+                df_emp["emp_id"].astype(str).str.strip().map(ly_by_emp).fillna(0.0)
             )
             df_emp["ly_sales"] = pd.to_numeric(df_emp["ly_sales"], errors="coerce").fillna(0.0)
     except Exception as e:
-        logger.warning("merge ly_sales failed: %s", e)
+        logger.warning("compute ly_sales failed: %s", e)
 
     try:
         if df_hist is not None and not df_hist.empty:
-            g_3m = (
-                df_hist.groupby("emp_id", as_index=True)["hist_amount"]
-                .sum()
-                .astype(float)
-                / 3.0
-            )
-            df_emp = pd.merge(
-                df_emp,
-                g_3m.rename("hist_avg_3m").reset_index(),
-                on="emp_id",
-                how="left",
+            avg3_by_emp = (
+                (df_hist.groupby("emp_id", as_index=True)["hist_amount"].sum().astype(float) / 3.0)
+                .to_dict()
             )
             df_emp["hist_avg_3m"] = (
-                pd.to_numeric(df_emp["hist_avg_3m"], errors="coerce").fillna(0.0)
+                df_emp["emp_id"].astype(str).str.strip().map(avg3_by_emp).fillna(0.0)
             )
+            df_emp["hist_avg_3m"] = pd.to_numeric(df_emp["hist_avg_3m"], errors="coerce").fillna(0.0)
     except Exception as e:
-        logger.warning("merge hist_avg_3m failed: %s", e)
+        logger.warning("compute hist_avg_3m failed: %s", e)
 
     # ── Step 6: Warehouse ─────────────────────────────────
     try:
