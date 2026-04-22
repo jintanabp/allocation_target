@@ -4,6 +4,8 @@ setlocal
 cd /d "%~dp0"
 
 set "ROOT=%~dp0"
+REM Force UTF-8 for Python stdout/stderr (avoid 'charmap' codec issues on Windows consoles)
+set "PYTHONUTF8=1"
 set "PORT_PY=%ROOT%runtime\python\python.exe"
 set "VPY=%ROOT%.venv\Scripts\python.exe"
 set "VPIP=%ROOT%.venv\Scripts\pip.exe"

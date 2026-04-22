@@ -5,6 +5,8 @@ cd /d "%~dp0\.."
 echo ============================================
 echo  Target Allocation - เริ่ม Server
 echo ============================================
+REM Force UTF-8 for Python stdout/stderr (avoid 'charmap' codec issues on Windows consoles)
+set "PYTHONUTF8=1"
 
 REM การหา conda — ให้ตรงกับ scripts\setup.bat (รองรับ LocalAppData, miniforge, conda ใน PATH)
 if "%CONDA_PATH%"=="" if exist "%USERPROFILE%\miniconda3\Scripts\conda.exe" set CONDA_PATH=%USERPROFILE%\miniconda3

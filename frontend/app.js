@@ -1123,16 +1123,8 @@ function handleLogout() {
 }
 
 function _doLogout() {
-  if (AUTH_CONFIG.authRequired && msalInstance) {
-    const acc = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
-    if (acc) {
-      msalInstance.logoutRedirect({
-        account: acc,
-        postLogoutRedirectUri: msalRedirectUri(),
-      });
-      return;
-    }
-  }
+  // กลับไปหน้าเลือก Supervisor/Manager เท่านั้น — ไม่เรียก MSAL logoutRedirect
+  // (ผู้ใช้ยังล็อกอิน Microsoft อยู่; token/cache ใช้เรียก API รอบถัดไปได้)
   const keepManagers = S.managers || [];
   const keepLoginMeta = {
     supervisorRows: S.supervisorRows,
@@ -1193,13 +1185,14 @@ function _showLogoutModal() {
   modal.style.display = "flex";
   modal.innerHTML = `
     <div class="modal-card">
-      <div class="modal-title">⚠️ ออกจากระบบ?</div>
+      <div class="modal-title">⚠️ กลับไปเลือก Supervisor?</div>
       <div class="modal-body" style="font-size:13px; color:var(--text-2); line-height:1.7;">
+        จะกลับไปหน้าเลือก Supervisor / เดือน-ปี — <b>ไม่ล็อกเอาต์บัญชี Microsoft</b><br/>
         มีข้อมูลการกระจายหีบที่ยังไม่ได้ Export อยู่
         ${draftNote}
       </div>
       <div class="modal-foot">
-        <button class="btn-logout" id="logoutConfirmBtn" style="color:var(--red);border-color:var(--red-brd);">ออกจากระบบ</button>
+        <button class="btn-logout" id="logoutConfirmBtn" style="color:var(--red);border-color:var(--red-brd);">กลับไปเลือก Supervisor</button>
         <button class="btn-run" id="logoutCancelBtn">กลับไปทำต่อ</button>
       </div>
     </div>`;

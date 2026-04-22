@@ -7,7 +7,12 @@
 
 ## โครงสร้างโฟลเดอร์
 
-โปรเจกต์แยกตามบทบาทชัดเจน: **frontend** หน้าเว็บ, **backend** API + ธุรกิจ, **config** ตัวค่าและตัวอย่าง env (ไม่ใส่ secret ใน Git), **scripts** สคริปต์ติดตั้ง/รัน/แพ็ก, **data** ไฟล์รันไทม์และ cache
+โปรเจกต์แยกตามบทบาทชัดเจน: 
+**frontend** หน้าเว็บ, 
+**backend** API + ธุรกิจ, 
+**config** ตัวค่าและตัวอย่าง env (ไม่ใส่ secret ใน Git),
+**scripts** สคริปต์ติดตั้ง/รัน/แพ็ก,
+**data** ไฟล์รันไทม์และ cache
 
 ```
 allocation_target/
@@ -19,7 +24,13 @@ allocation_target/
 │       └── msal-browser.min.js   # MSAL (เสิร์ฟคู่แอป — ไม่พึ่ง CDN)
 │
 ├── backend/
-│   ├── main.py             # FastAPI — endpoints, static, mount frontend
+│   ├── main.py             # Uvicorn entrypoint + mount frontend (สั้น)
+│   ├── app_factory.py      # ประกอบ FastAPI app + routers + middleware
+│   ├── deps.py             # Dependencies (เช่น require_entra_member)
+│   ├── schemas.py          # Pydantic models ของ request/response
+│   ├── routers/            # แยก endpoints ตามโดเมน (auth/managers/data/optimize/export/health/debug)
+│   ├── services/           # business logic (เช่น load /data/employees, optimize, export)
+│   ├── core/               # helpers shared (paths/constants/cache checks/targets loader)
 │   ├── load_env.py         # โหลด config/.env แล้ว .env ที่ราก (ราก override ได้)
 │   ├── auth_entra.py       # ตรวจโทเคน Microsoft / กลุ่ม Entra
 │   ├── OR_engine.py        # กระจายหีบ (L3M / L6M / EVEN / PUSH / LP)
@@ -27,7 +38,7 @@ allocation_target/
 │   └── fabric_dax_connector.py   # Fabric / Power BI ผ่าน DAX REST
 │
 ├── config/
-│   ├── .env.example        # ตัวอย่างค่า FABRIC_* / Entra — คัดลอกเป็น config/.env
+│   ├── .env.example        # ตัวอย่างตัวแปร (ไม่มี secret) — คัดลอกเป็น `config/.env`
 │   └── README.md           # หมายเหตุการแพ็ก .env และความปลอดภัย
 │
 ├── scripts/
@@ -48,7 +59,7 @@ allocation_target/
 ├── requirements.txt
 ├── requirements-dev.txt
 ├── .gitignore              # ไม่รวม .env, config/.env, runtime/, data/, ...
-├── .env.example            # ชี้ไปที่ config/.env.example
+├── .env.example            # ตัวอย่างสำหรับ override ที่ราก (แนะนำใช้ `config/.env` เป็นหลัก)
 ├── Run_Local.bat           # รัน server + เปิดเบราว์เซอร์ (runtime\ หรือ .venv)
 └── readme.md
 ```
@@ -96,7 +107,7 @@ cd <repo-name>
 
 ## การตั้งค่า Fabric / Power BI (`config/.env` / `.env`)
 
-สร้าง **`config/.env`** (อ้างอิงจาก **`config/.env.example`**) หรือ **`.env`** ที่รากโปรเจกต์ — backend โหลด **`config/.env` ก่อน** แล้วโหลด `.env` ที่รากถ้ามี (ค่าที่รากทับค่าซ้ำได้) จากนั้นตั้งตัวแปรต่อไปนี้:
+เริ่มจากคัดลอกไฟล์ **`config/.env.example` → `config/.env`** แล้วกรอกค่า (หรือสร้าง `.env` ที่รากเพื่อ override) — backend โหลด **`config/.env` ก่อน** แล้วโหลด `.env` ที่รากถ้ามี (ค่าที่รากทับค่าซ้ำได้) จากนั้นตั้งตัวแปรต่อไปนี้:
 
 | ตัวแปร | ความจำเป็น | คำอธิบาย |
 |--------|------------|----------|
@@ -128,6 +139,16 @@ cd <repo-name>
 **GET สำเร็จ แต่ `executeQueries` ยัง 404 (`PowerBIEntityNotFound`):** เป็นไปได้ว่า semantic model เป็น **composite** หรือมี **upstream semantic model** — ตาม [กรณีที่ Microsoft Fabric Community อธิบาย](https://community.fabric.microsoft.com/t5/Developer/Power-BI-REST-API-returns-PowerBIEntityNotFound-for-dataset-with/m-p/5004110) REST `executeQueries` อาจล้มเหลวแม้ caller เป็น admin ขณะที่ **XMLA** ยังใช้ได้ — ทางออกเชิงผลิตภัณฑ์: ชี้ `FABRIC_DATASET_ID` ไปที่ **dataset ต้นทาง (import)** ที่ REST รองรับ, ปรับโมเดลไม่ให้พึ่ง dataset ซ้อน dataset, หรือใช้ **XMLA** สำหรับ query โปรแกรม (ต้องพัฒนาเส้นทางแยก — ยังไม่มีใน repo นี้)
 
 `backend/load_env.py` (เรียกจาก `main.py` และ `fabric_dax_connector.py`) โหลด **`config/.env`** แล้ว **`.env`** ที่รากอัตโนมัติ (ต้องติดตั้ง `python-dotenv` ผ่าน `requirements.txt`)
+
+### ตัวแปรสภาพแวดล้อมเสริม (ทางเลือก)
+
+| ตัวแปร | ค่าเริ่มต้น / พฤติกรรม | คำอธิบาย |
+|--------|-------------------------|----------|
+| `MANAGERS_CACHE_TTL_SEC` | `86400` | อายุ cache ของ `GET /managers` (วินาที) — หมดอายุแล้วจะลองดึงจาก Fabric ใหม่ |
+| `ENABLE_DEBUG_ENDPOINTS` | ปิด | ตั้งเป็น `1` / `true` / `yes` เพื่อเปิด `GET /debug/fabric` (ใช้เฉพาะตอนวินิจฉัย) |
+| `USE_LEGACY_TARGET_CSV` | ปิด | ตั้งเป็น `1` / `true` / `yes` ถ้าต้องการเส้นทางอ่านไฟล์เป้าแบบเก่า (พัฒนา/ย้อนกลับ) |
+| `LP_HIST_ANCHOR` | `0.15` | น้ำหนัก anchor ประวัติในกลยุทธ์ **LP** (`backend/OR_engine.py`) |
+| `TGA_TABLE_NAME`, `TGA_COL_*`, `TGA_FILTER_BY_EFFECTIVE` | ดู `fabric_dax_connector.py` | ปรับชื่อตาราง/คอลัมน์เมื่อ semantic model ใช้ schema ต่างจากค่า default |
 
 ### ล็อกอิน Microsoft (Entra) — จำกัดเฉพาะสมาชิกกลุ่ม
 
@@ -168,11 +189,23 @@ uvicorn backend.main:app --host 127.0.0.1 --port 8000
 ### แบบ portable (แจกให้คนอื่นโดยไม่ต้องลง Python)
 
 1. บนเครื่องผู้ดูแล (มีอินเทอร์เน็ต, Windows 64-bit): รัน **`scripts\build_portable_runtime.bat`** ครั้งหนึ่ง  
-2. สร้าง **`config/.env`** จาก **`config/.env.example`** (หรือคัดลอกจากเครื่อง dev) — โฟลเดอร์นี้เหมาะกับการใส่ไฟล์ env ลง zip แจกทีม demo (อย่า commit ไฟล์จริงขึ้น Git)  
+2. สร้าง **`config/.env`** ตามตัวแปรใน README (หรือคัดลอกจากเครื่อง dev ที่ตั้งค่าแล้ว) — **อย่า commit** ไฟล์จริงขึ้น Git  
 3. Zip ทั้งโฟลเดอร์โปรเจกต์ **รวม `runtime\`** และ **`config/.env`** ถ้าต้องการให้ผู้รับรันได้ทันที — แล้วส่งให้ผู้ใช้  
 4. ผู้ใช้แตก zip แล้วดับเบิลคลิก **`Run_Local.bat`** — เปิด **http://localhost:8000/**
 
 โฟลเดอร์ **`runtime\`** ไม่ขึ้น Git; ถ้า clone ใหม่ต้องสร้าง portable ใหม่หรือใช้ conda / `.venv` ตามด้านบน
+
+### Production / แจกให้ทีมขนาดใหญ่ (แนะนำ)
+
+โหมด **zip + portable** เหมาะกับ **demo / pilot จำกัด** — สำหรับ production หรือผู้ใช้หลายสิบเครื่องควรเลือกอย่างใดอย่างหนึ่งต่อไปนี้แทนการพึ่ง zip เป็นหลัก:
+
+| แนวทาง | เหมาะเมื่อ |
+|--------|------------|
+| **โฮสต์กลาง** — รัน FastAPI + เสิร์ฟ static frontend บนเซิร์ฟเวอร์หรือ container (เช่น Azure App Service, VM + Docker, Kubernetes) | ต้องการ **แหล่งความจริงเดียว**, อัปเดตโค้ดครั้งเดียว, เก็บ secret ใน Key Vault / ตัวแปร CI ไม่แนบในแพ็กเก็ต |
+| **Git + สคริปต์ติดตั้ง** — `git clone` + `scripts\setup.bat` (หรือ pip + venv) บนแล็ปท็อปแต่ละเครื่อง | ผู้ใช้มีสิทธิ์ติดตั้งซอฟต์แวร์ / Python ได้ และรับ `config/.env` ผ่านช่องทางที่องค์กรอนุมัติ |
+| **แพ็กเกจองค์กร** — MSIX / Intune / SCCM | ต้องการควบคุมเวอร์ชันและนโยบายเหมือนแอปภายในอื่นๆ |
+
+ไม่ว่าจะเลือกแบบไหน ให้ถือว่า **`config/.env` และ client secret เป็นข้อมูลอ่อนไหว** — หมุน secret หลัง demo, จำกัดสิทธิ์ workspace Power BI/Fabric และตั้ง redirect URI ของ Entra ให้ตรงกับ URL จริงของระบบ (ไม่ใช่แค่ localhost) เมื่อ deploy ขึ้นโดเมน
 
 ### เปิด Dashboard
 
@@ -252,6 +285,16 @@ uvicorn backend.main:app --host 127.0.0.1 --port 8000
 | **PUSH** | ผลักดันคนขายน้อย (ให้หีบมากกว่าปกติ) |
 | **LP** | Linear Programming ตามเป้าเงิน (แม่นยำสุด แต่ช้ากว่า) |
 
+กลยุทธ์ **L3M / L6M / EVEN / PUSH** จะคำนวณสัดส่วนจากประวัติที่ส่งเข้า engine แล้วมีขั้น **เกลี่ยยอดเงิน (revenue balancer)** ให้ใกล้เป้าเหลืองรายคน โดยคงยอดหีบรวมต่อ SKU และล็อกที่ตั้งไว้ — กลยุทธ์ **LP** ใช้เส้นทาง optimization แยก
+
+### คอลัมน์ประวัติในผลลัพธ์ (หน้า Dashboard / Export)
+
+API `POST /optimize` และไฟล์ Excel สามารถมีฟิลด์ประกอบการตัดสินใจดังนี้ (เมื่อ backend ส่งมาจาก Fabric):
+
+- **`hist_avg`** — ค่าเฉลี่ยหีบในช่วงที่ใช้เกลี่ย (เช่น 3M / 6M)
+- **`hist_ly_same_month`** — หีบรวมเดือนเดียวกับงวด แต่ปีก่อน (emp×sku)
+- **`hist_prev_month`** — หีบเดือนก่อนงวด (emp×sku)
+
 ---
 
 ## API Endpoints
@@ -287,7 +330,7 @@ git pull
 | อาการ | สาเหตุ | วิธีแก้ |
 |-------|--------|---------|
 | `conda is not recognized` | ยังไม่ได้ลง Miniconda หรือไม่ได้ติ๊ก Add to PATH | ติดตั้ง Miniconda ใหม่ ติ๊ก Add to PATH |
-| Fabric / ล็อกอินไม่ทำงานหลังแตก zip | ไม่มี `config/.env` หรือ `.env` ที่ราก | วางไฟล์ตาม **`config/.env.example`** แล้วรีสตาร์ท server |
+| Fabric / ล็อกอินไม่ทำงานหลังแตก zip | ไม่มี `config/.env` หรือ `.env` ที่ราก | สร้าง `config/.env` ตามตาราง Fabric/Entra ใน README แล้วรีสตาร์ท server |
 | Dashboard ขึ้น error เชื่อมต่อ | Server ไม่ได้รัน | เปิด `Run_Local.bat` หรือ `scripts\start_server.bat` ก่อน |
 | อัปโหลด Excel แล้วขึ้น error คอลัมน์ | ชื่อ header ไม่ตรง | ดาวน์โหลด Template แล้วกรอกข้อมูลตาม |
 | หน้าเว็บแสดงผลไม่ครบ | ข้อมูลจาก Fabric ดึงไม่ได้ | เช็ค log ที่ `data/app.log` |
@@ -298,13 +341,14 @@ Log file อยู่ที่ `data/app.log` — เปิดดูได้ท
 
 ---
 
-## รายชื่อ Supervisor (SuperCode)
+## รายชื่อ Supervisor / Manager (`GET /managers`)
 
-รายการใน dropdown มาจาก **Microsoft Fabric / Power BI semantic model** — ดึงค่า `SuperCode` ที่ไม่ซ้ำจากตาราง `dim_salesman` ผ่าน API `GET /managers`
+รายการใน dropdown มาจาก **Microsoft Fabric** — ดึงแถวจากมุมมอง/ตาราง **`trf_select_supervisor`** (รวมโค้ด Supervisor และ Manager ที่เกี่ยวข้อง) ผ่าน API `GET /managers`
 
-- ถ้าเพิ่ม Supervisor ใหม่ใน **ข้อมูลฝั่ง Fabric** แล้ว refresh โมเดล — รอบหน้าที่เรียก `/managers` จะเห็นรหัสใหม่ (หรือกดโหลดรายการใหม่ในหน้า Login)
+- **ตอน startup** ถ้า backend เชื่อม Fabric ได้ (เช่น ตั้ง `FABRIC_CLIENT_SECRET` เป็น Service Principal) ระบบจะพยายาม **preload** รายการลง `data/managers_cache.json` เพื่อให้หลังผู้ใช้ล็อกอิน Microsoft แล้วโหลดหน้า Login ได้เร็วขึ้น (ภายใน `MANAGERS_CACHE_TTL_SEC`)
+- ถ้าเพิ่ม Supervisor ใหม่ใน **ข้อมูลฝั่ง Fabric** แล้ว refresh โมเดล — รอบหน้าที่เรียก `/managers` (หรือหมด TTL ของ cache) จะเห็นรหัสใหม่ (หรือกดโหลดรายการใหม่ในหน้า Login)
 - ถ้า Fabric ตอบไม่ได้ แต่เคยสำเร็จมาก่อน ระบบใช้ไฟล์ cache `data/managers_cache.json`
-- ถ้าได้รายการว่าง ยัง **พิมพ์ SuperCode เอง** ในช่อง Supervisor ได้ — ระบบจะลองดึงพนักงานจาก `dim_salesman` ตามรหัสนั้น
+- ถ้าได้รายการว่าง ยัง **พิมพ์รหัส Supervisor เอง** ในช่องได้ — ระบบจะลองดึงพนักงานตามรหัสนั้น
 
 ---
 
