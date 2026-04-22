@@ -290,8 +290,12 @@ def load_employees_payload(
     sku_warnings: list[dict] = []
     df_hist = pd.DataFrame(columns=["emp_id", "sku", "hist_boxes", "hist_amount"])
     try:
-        df_hist = fabric.get_sales_history_by_emp_sku(
-            target_month, target_year, sku_list=sku_list, emp_list=emp_list, n_months=3
+        df_hist = fabric.get_historical_sales(
+            target_month,
+            target_year,
+            sku_list=sku_list,
+            emp_list=emp_list,
+            n_months=3,
         )
         if df_hist is not None and not df_hist.empty:
             df_hist.to_csv(
@@ -303,8 +307,12 @@ def load_employees_payload(
         logger.warning("historical 3M skipped: %s", e)
 
     try:
-        df_hist6 = fabric.get_sales_history_by_emp_sku(
-            target_month, target_year, sku_list=sku_list, emp_list=emp_list, n_months=6
+        df_hist6 = fabric.get_historical_sales(
+            target_month,
+            target_year,
+            sku_list=sku_list,
+            emp_list=emp_list,
+            n_months=6,
         )
         if df_hist6 is not None and not df_hist6.empty:
             df_hist6.to_csv(
