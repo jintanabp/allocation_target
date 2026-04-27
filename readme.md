@@ -12,7 +12,7 @@
 **backend** API + ธุรกิจ, 
 **config** ตัวค่าและตัวอย่าง env (ไม่ใส่ secret ใน Git),
 **scripts** สคริปต์ติดตั้ง/รัน/แพ็ก,
-**data** ไฟล์รันไทม์และ cache
+ำปำแส mujgik รทยนพะ vvd,**data** ไฟล์รันไทม์และ cache
 
 ```
 allocation_target/
