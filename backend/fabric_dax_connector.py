@@ -1061,7 +1061,25 @@ ORDER BY 'cross_sold_history_2y_qu'[SalesmanCode], [cnt] DESC
             columns=["emp_id", "warehouse_code"])
         return df.drop_duplicates(subset="emp_id", keep="first")
 
-        # ── 7. เป้าหมายจาก tga_target_salesman_next (semantic model) ─────────────
+    def get_tga_max_effective_raw(self):
+        """
+        ค่า MAX(EFFECTIVEDATE) จาก tga_target_salesman_next (ทุกแถวมักเป็นค่าเดียวกัน)
+        ใช้ตรวจว่างวดเป้าที่ผู้ใช้เลือกยังตรงกับ snapshot ปัจจุบันหรือไม่
+        """
+        t = os.environ.get("TGA_TABLE_NAME", "tga_target_salesman_next").strip()
+        c_eff = os.environ.get("TGA_COL_EFFECTIVE", "EFFECTIVEDATE").strip()
+        print(f"📡 [{t}] ดึง MAX({c_eff}) เพื่อตรวจงวดเป้า (TGA snapshot)...")
+        dax = f"""
+EVALUATE
+ROW("MaxEffective", MAX('{t}'[{c_eff}]))
+"""
+        rows = self._execute_dax(dax, debug=True)
+        if not rows:
+            return None
+        r = rows[0]
+        return self._get(r, "[MaxEffective]", "MaxEffective", default=None)
+
+    # ── 7. เป้าหมายจาก tga_target_salesman_next (semantic model) ─────────────
     def get_tga_target_salesman(
         self,
         emp_list: list,

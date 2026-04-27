@@ -13,6 +13,7 @@ from ..core.paths import (
     hist_prev_month_cache_path,
 )
 from ..core.targets import load_target_csv
+from ..core.tga_period import enforce_tga_selection_matches_effective_window
 from ..fabric_dax_connector import FabricDAXConnector
 
 logger = logging.getLogger("target_allocation")
@@ -182,6 +183,17 @@ def load_employees_payload(
             df_sun_csv = pd.read_csv("data/target_sun.csv", dtype={"emp_id": str}).fillna(0)
             df_sun_csv["emp_id"] = df_sun_csv["emp_id"].astype(str).str.strip()
     else:
+        if fabric is None:
+            try:
+                fabric = FabricDAXConnector()
+            except Exception as e:
+                raise HTTPException(
+                    503,
+                    detail=f"ไม่สามารถเชื่อมต่อ Fabric สำหรับดึงเป้าและประวัติ: {e}",
+                )
+        enforce_tga_selection_matches_effective_window(
+            fabric, target_month, target_year
+        )
         try:
             sku_list = fabric.get_skus_sold_by_team(
                 emp_list, target_month, target_year, n_months=6

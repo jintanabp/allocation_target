@@ -39,3 +39,16 @@ class ExportRequest(BaseModel):
     brand_filter: str = "ALL"
     yellow_targets: list[YellowTargetInput] = []
 
+
+class LakehouseUploadRow(BaseModel):
+    emp_id: str
+    sku: str
+    allocated_boxes: int = Field(ge=0)
+
+
+class LakehouseUploadRequest(BaseModel):
+    sup_id: str
+    target_month: int = Field(ge=1, le=12)
+    target_year: int = Field(ge=2020, le=2100)
+    allocations: list[LakehouseUploadRow]
+

@@ -13,6 +13,7 @@ from .routers import debug as debug_router
 from .routers import export as export_router
 from .routers import favicon as favicon_router
 from .routers import health as health_router
+from .routers import lakehouse as lakehouse_router
 from .routers import managers as managers_router
 from .routers import optimize as optimize_router
 from .services.managers import warm_managers_cache_at_startup
@@ -51,6 +52,7 @@ def create_app() -> FastAPI:
     app.include_router(data_router.router)
     app.include_router(optimize_router.router)
     app.include_router(export_router.router)
+    app.include_router(lakehouse_router.router)
     app.include_router(health_router.router)
     app.include_router(debug_router.router)
 

@@ -45,6 +45,49 @@ function _uiError(msg) {
   el.innerHTML = String(msg).replace(/\n/g, "<br>");
 }
 
+// escape HTML (กัน backend ส่ง detail เป็นข้อความที่มี < > แล้วไปกลายเป็น HTML)
+function escH(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function _showInfoModal({ title, bodyHtml, primaryLabel, onPrimary, secondaryLabel = "ปิด" } = {}) {
+  const existing = document.getElementById("infoModal");
+  if (existing) existing.remove();
+
+  const modal = document.createElement("div");
+  modal.id = "infoModal";
+  modal.className = "modal-overlay";
+  modal.style.display = "flex";
+  modal.innerHTML = `
+    <div class="modal-card">
+      <div class="modal-title">${escH(title || "แจ้งเตือน")}</div>
+      <div class="modal-body" style="font-size:13px; color:var(--text-2); line-height:1.7;">
+        ${bodyHtml || ""}
+      </div>
+      <div class="modal-foot">
+        ${primaryLabel ? `<button class="btn-run" id="infoModalPrimaryBtn" type="button">${escH(primaryLabel)}</button>` : ""}
+        <button class="btn-logout" id="infoModalCloseBtn" type="button">${escH(secondaryLabel)}</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(modal);
+  const close = () => modal.remove();
+  document.getElementById("infoModalCloseBtn")?.addEventListener("click", close, { once: true });
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) close();
+  });
+  if (primaryLabel) {
+    document.getElementById("infoModalPrimaryBtn")?.addEventListener("click", () => {
+      try { onPrimary && onPrimary(); } finally { close(); }
+    }, { once: true });
+  }
+}
+
 // แสดง error บนหน้า (กันกรณีผู้ใช้ไม่เปิด Console แล้วดูเหมือน “กดแล้วไม่เกิดอะไร”)
 window.addEventListener("error", (e) => {
   const m = e?.error?.message || e?.message || "JavaScript error";
@@ -1216,8 +1259,47 @@ async function loadData(supId, targetMonth, targetYear) {
     const res = await fetchWithTimeout(url, {}, 120000);
     if (!res.ok) {
       let detail = "ดึงข้อมูลไม่สำเร็จ";
-      try { const j = await res.json(); detail = j.detail || detail; } catch (_) { }
-      showLoginError(`❌ ${detail} (HTTP ${res.status})\nกรุณาเช็ค Terminal ของ Python`);
+      let j = null;
+      try { j = await res.json(); detail = j.detail || detail; } catch (_) { j = null; }
+
+      // Friendly handling: งวดที่เลือกไม่ตรงกับ snapshot ของ TGA (EFFECTIVEDATE)
+      if (res.status === 409 && detail && typeof detail === "object" && detail.code === "TGA_EFFECTIVE_WINDOW") {
+        const sug = detail.suggested || {};
+        const sm = Number(sug.month);
+        const sy = Number(sug.year);
+        const label = (sm && sy) ? (MONTH_FULL_TH[sm] + " " + (sy + 543)) : "";
+        const eff = detail.effectiveDateLabel ? `อัปเดตล่าสุด: <b>${escH(detail.effectiveDateLabel)}</b>` : "";
+        const bodyHtml = `
+          <div style="margin-bottom:8px;">
+            ${escH(detail.message || "กรุณาเลือกงวดเดือนที่ระบบแนะนำ")}
+          </div>
+          ${label ? `<div style="margin:6px 0 0;"><b>งวดที่แนะนำ:</b> ${escH(label)}</div>` : ""}
+          ${eff ? `<div style="margin-top:6px;color:var(--text-3);font-size:12px;">${eff}</div>` : ""}
+        `;
+        _showInfoModal({
+          title: "⏳ งวดที่เลือกหมดช่วงกำหนดแล้ว",
+          bodyHtml,
+          primaryLabel: (sm && sy) ? "เปลี่ยนเป็นงวดที่แนะนำ" : null,
+          onPrimary: () => {
+            const ms = document.getElementById("monthSelect");
+            const ys = document.getElementById("yearSelect");
+            if (sm && sy) {
+              if (ms) ms.value = String(sm);
+              if (ys) ys.value = String(sy);
+              try { updateDatePreview(); } catch (_) {}
+              persistLoginMemory();
+            }
+          },
+          secondaryLabel: "รับทราบ",
+        });
+        // กล่อง error ด้านล่างไม่ต้องยืดยาว
+        showLoginError("⚠️ งวดที่เลือกหมดช่วงกำหนดแล้ว — โปรดเลือกงวดที่ระบบแนะนำ");
+        return false;
+      }
+
+      // Default error
+      const printable = (typeof detail === "string") ? detail : (detail?.message || detail?.title || "ดึงข้อมูลไม่สำเร็จ");
+      showLoginError(`❌ ${escH(String(printable))} (HTTP ${res.status})`);
       return false;
     }
     const data = await res.json();
@@ -1294,7 +1376,6 @@ function _showSkuWarnings() {
   const excludedNoTga = warnings.filter(w => w.type === "employees_excluded_no_tga");
   const noTgaSku    = warnings.filter(w => w.type === "no_tga_sku");
   const zeroTotal   = warnings.filter(w => w.type === "zero_total");
-  const escH = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 
   const banner = document.createElement("div");
   banner.id = "skuWarningBanner";
@@ -2363,6 +2444,72 @@ function showExportModal() {
 
 function closeExportModal() { qs("#exportModal").style.display = "none"; }
 function closeModalOnBg(e) { if (e.target === qs("#exportModal")) closeExportModal(); }
+
+/* ══════════════════════════════════════════════
+   LAKEHOUSE UPLOAD
+══════════════════════════════════════════════ */
+function showLakehouseUploadModal() {
+  if (!S.allocations || S.allocations.length === 0) {
+    toast("ยังไม่มีผลลัพธ์ให้ อัปโหลด (ต้องกดคำนวณ/Optimize ก่อน)", "red");
+    return;
+  }
+  const rows = S.allocations.filter(a => (Number(a.allocated_boxes) || 0) >= 0).length;
+  const periodStr = MONTH_FULL_TH[S.targetMonth] + " " + (S.targetYear + 543);
+  const body = `
+    <div style="line-height:1.75;">
+      จะอัปโหลดผลลัพธ์การกระจายหีบของทีม <b>${escH(S.supId || "")}</b> งวด <b>${escH(periodStr)}</b><br>
+      รูปแบบข้อมูล: <code>sup_id, target_year, target_month, emp_id, sku, allocated_boxes</code><br>
+      จำนวนแถวประมาณ: <b>${rows.toLocaleString("th-TH")}</b> แถว
+      <div style="margin-top:10px;color:var(--text-3);font-size:12px;">
+        หมายเหตุ: ระบบจะอัปโหลดเป็นไฟล์ CSV เข้า Lakehouse (OneLake Files) แล้วค่อยนำไปสร้างตาราง/ทำ ingest ต่อได้
+      </div>
+    </div>
+  `;
+  const el = document.getElementById("lakehouseBody");
+  if (el) el.innerHTML = body;
+  qs("#lakehouseModal").style.display = "flex";
+}
+
+function closeLakehouseUploadModal() { qs("#lakehouseModal").style.display = "none"; }
+function closeLakehouseModalOnBg(e) { if (e.target === qs("#lakehouseModal")) closeLakehouseUploadModal(); }
+
+async function doLakehouseUpload() {
+  const btn = document.getElementById("lakehouseUploadBtn");
+  if (btn) { btn.textContent = "กำลังอัปโหลด..."; btn.disabled = true; }
+  try {
+    const payload = {
+      sup_id: S.supId,
+      target_month: S.targetMonth,
+      target_year: S.targetYear,
+      allocations: S.allocations.map(a => ({
+        emp_id: a.emp_id,
+        sku: a.sku,
+        allocated_boxes: Number(a.allocated_boxes) || 0,
+      })),
+    };
+    const res = await fetchWithTimeout(
+      `${API_BASE_URL}/lakehouse/upload`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+      180000
+    );
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg = (j && (j.detail?.message || j.detail || j.message)) || `HTTP ${res.status}`;
+      throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+    }
+    closeLakehouseUploadModal();
+    toast(`✅ อัปโหลดสำเร็จ (${Number(j.rows || 0).toLocaleString("th-TH")} แถว)\nไฟล์: ${j.remote_path || "-"}`, "green");
+    S._hasUnsaved = false;
+  } catch (err) {
+    toast("❌ อัปโหลดไม่สำเร็จ: " + (err?.message || String(err)), "red");
+  } finally {
+    if (btn) { btn.textContent = "อัปโหลด"; btn.disabled = false; }
+  }
+}
 
 async function doExport() {
   const brand = document.querySelector('[name="exportBrand"]:checked')?.value || "ALL";

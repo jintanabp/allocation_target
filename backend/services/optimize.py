@@ -11,6 +11,7 @@ from ..core.allocation_checks import (
     validate_allocation_vs_targets,
 )
 from ..core.constants import VALID_STRATEGIES
+from ..core.tga_period import enforce_tga_selection_matches_effective_window
 from ..core.paths import (
     excel_path,
     hist_cache_path,
@@ -22,6 +23,7 @@ from ..core.paths import (
 from ..core.targets import load_target_csv
 from ..generate_excel import create_target_excel
 from ..schemas import OptimizeRequest
+from ..fabric_dax_connector import FabricDAXConnector
 
 logger = logging.getLogger("target_allocation")
 
@@ -34,6 +36,21 @@ def run_optimization_service(
 ) -> dict:
     if req.strategy.upper() not in VALID_STRATEGIES:
         raise HTTPException(400, detail=f"strategy ไม่ถูกต้อง ต้องเป็น {VALID_STRATEGIES}")
+
+    use_legacy = os.environ.get("USE_LEGACY_TARGET_CSV", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if not use_legacy:
+        try:
+            enforce_tga_selection_matches_effective_window(
+                FabricDAXConnector(), target_month, target_year
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning("TGA EFFECTIVEDATE check skipped in optimize: %s", e)
 
     os.makedirs("data", exist_ok=True)
 

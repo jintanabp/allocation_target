@@ -450,6 +450,7 @@
                 style="color:var(--text-2); border-color:var(--border-md); background:var(--bg-main);"
                 onclick="undoLastEdit()" disabled>↩️ Undo</button>
               <button class="btn-dl" onclick="showExportModal()">↓ ดาวน์โหลด Excel</button>
+              <button class="btn-dl" onclick="showLakehouseUploadModal()">↑ อัปโหลดเข้า Lakehouse</button>
             </div>
           </div>
 
@@ -489,6 +490,18 @@
     </div>
   </div>
 
+  <!-- ─── LAKEHOUSE UPLOAD MODAL ─── -->
+  <div id="lakehouseModal" class="modal-overlay" style="display:none;" onclick="closeLakehouseModalOnBg(event)">
+    <div class="modal-card">
+      <div class="modal-title">☁️ อัปโหลดผลลัพธ์เข้า Lakehouse</div>
+      <div class="modal-body" id="lakehouseBody"></div>
+      <div class="modal-foot">
+        <button class="btn-run" id="lakehouseUploadBtn" onclick="doLakehouseUpload()">อัปโหลด</button>
+        <button class="btn-logout" onclick="closeLakehouseUploadModal()">ยกเลิก</button>
+      </div>
+    </div>
+  </div>
+
   <div class="footer">
     รัน local: <code>Run_Local.bat</code> หรือ <code>uvicorn backend.main:app</code>
     · เปิด <code>http://localhost:8000/</code>
@@ -496,7 +509,7 @@
 
   <!-- ใช้ไฟล์ในโปรเจกต์ — เครือข่ายองค์กรมักบล็อก alcdn.msauth.net ทำให้ msal ไม่โหลด -->
   <script src="vendor/msal-browser.min.js"></script>
-  <script src="app.js?v=20260423"></script>
+  <script src="app.js?v=20260427"></script>
 </body>
 
 </html>
