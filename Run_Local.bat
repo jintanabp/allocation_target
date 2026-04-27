@@ -53,16 +53,18 @@ goto :START_SERVER
 
 :START_SERVER
 echo ============================================
-echo  Server: http://localhost:8000/  (แนะนำ — ล็อกอิน Microsoft / Entra)
-echo            http://127.0.0.1:8000/  (ได้เหมือนกัน แต่ OAuth จะส่งกลับมาที่ localhost)
+set "PORT=8000"
+if not "%~1"=="" set "PORT=%~1"
+echo  Server: http://localhost:%PORT%/  (แนะนำ — ล็อกอิน Microsoft / Entra)
+echo            http://127.0.0.1:%PORT%/  (ได้เหมือนกัน แต่ OAuth จะส่งกลับมาที่ localhost)
 echo  ข้อมูล/cache อยู่ในโฟลเดอร์ data\
 echo  กด Ctrl+C เพื่อหยุด
 echo ============================================
 echo.
 
-start "" cmd /c "timeout /t 2 /nobreak >nul && start http://localhost:8000/"
+start "" cmd /c "timeout /t 2 /nobreak >nul && start http://localhost:%PORT%/"
 
-"%USE_PY%" -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+"%USE_PY%" -m uvicorn backend.main:app --host 127.0.0.1 --port %PORT%
 pause
 exit /b 0
 

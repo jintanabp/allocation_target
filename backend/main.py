@@ -17,7 +17,7 @@ from .load_env import load_project_dotenv
 load_project_dotenv()
 
 # ── Logging ──────────────────────────────────────────────
-os.makedirs("data", exist_ok=True)
+os.makedirs("data", exist_ok=True) 
 try:
     import sys
 

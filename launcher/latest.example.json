@@ -1,0 +1,7 @@
+{
+  "version": "1.0.0",
+  "url": "https://intranet.example.com/target-allocation/releases/TargetAllocation-1.0.0.zip",
+  "sha256": "PUT_SHA256_OF_ZIP_HERE",
+  "notes": "Initial internal release"
+}
+

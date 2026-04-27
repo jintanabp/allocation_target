@@ -207,6 +207,42 @@ uvicorn backend.main:app --host 127.0.0.1 --port 8000
 
 ไม่ว่าจะเลือกแบบไหน ให้ถือว่า **`config/.env` และ client secret เป็นข้อมูลอ่อนไหว** — หมุน secret หลัง demo, จำกัดสิทธิ์ workspace Power BI/Fabric และตั้ง redirect URI ของ Entra ให้ตรงกับ URL จริงของระบบ (ไม่ใช่แค่ localhost) เมื่อ deploy ขึ้นโดเมน
 
+### แจกแบบ “Launcher (.exe) + Auto-update” (ไม่ต้องแตก zip ทุกครั้ง)
+
+แนวคิด: ผู้ใช้มีไฟล์ `TargetAllocationLauncher.exe` แค่ไฟล์เดียว กดแล้ว
+- เช็คไฟล์ `latest.json` จาก URL ภายในบริษัท (HTTPS)
+- ถ้ามีเวอร์ชันใหม่ → ดาวน์โหลด zip → ตรวจ `sha256` → ติดตั้งให้เองที่ `%LOCALAPPDATA%\\TargetAllocation\\app`
+- เปิด server ที่พอร์ตว่างอัตโนมัติ แล้วเปิดเว็บให้เอง
+
+**สิ่งที่ IT ต้องเตรียม**
+- โฮสต์ไฟล์ 2 อย่างไว้ใน internal HTTPS URL (ทุกคนเข้าถึงได้):
+  - `latest.json`
+  - `TargetAllocation-<version>.zip`
+
+**การสร้างไฟล์สำหรับแจก (ฝั่ง dev)**
+- สร้าง zip release + `latest.json` (ได้ `dist_release\\TargetAllocation-<version>.zip` และ `dist_release\\latest.json`):
+
+```powershell
+scripts\\build_release_zip.ps1 -Version 1.0.0
+```
+
+- สร้าง `TargetAllocationLauncher.exe` (ได้ `dist_launcher\\TargetAllocationLauncher.exe`):
+
+```powershell
+scripts\\build_launcher.ps1
+```
+
+**การใช้งานของผู้ใช้**
+1) ดาวน์โหลด `TargetAllocationLauncher.exe` ครั้งแรก
+2) ดับเบิลคลิก Launcher → ระบบจะอัปเดตเองและเปิดเว็บให้
+
+> แนะนำให้ผู้ดูแลสร้างไฟล์ `Start Target Allocation.cmd` และ shortcut `.lnk` ให้ผู้ใช้
+> เพื่อไม่ต้องตั้งค่า environment variable เอง:
+>
+> ```powershell
+> scripts\\make_launcher_shortcut.ps1 -UpdateUrl "https://<internal>/.../latest.json"
+> ```
+
 ### เปิด Dashboard
 
 หลังรัน server แล้ว เปิด **http://localhost:8000/** ใน browser (แนะนำ Chrome; ใช้ล็อกอิน Microsoft ได้ — `127.0.0.1` ยังเปิดได้แต่ OAuth จะส่งกลับที่ localhost)  
