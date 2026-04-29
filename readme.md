@@ -1,4 +1,4 @@
-# 📦 Target Allocation Dashboard
+# 📦 Target Allocation Dashboard ( AI GEN DOC ** )
 
 ระบบกระจายเป้ายอดขาย (หีบ) ให้พนักงานขายรายคน  
 ดึงข้อมูลจาก Microsoft Fabric · คำนวณด้วย OR Engine · Export เป็น Excel
@@ -11,8 +11,8 @@
 **frontend** หน้าเว็บ, 
 **backend** API + ธุรกิจ, 
 **config** ตัวค่าและตัวอย่าง env (ไม่ใส่ secret ใน Git),
-**scripts** สคริปต์ติดตั้ง/รัน/แพ็ก,
-ำปำแส mujgik รทยนพะ vvd,**data** ไฟล์รันไทม์และ cache
+**scripts** สคริปต์ติดตั้ง
+**data** ไฟล์รันไทม์และ cache
 
 ```
 allocation_target/
