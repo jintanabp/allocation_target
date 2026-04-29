@@ -232,16 +232,22 @@ scripts\\build_release_zip.ps1 -Version 1.0.0
 scripts\\build_launcher.ps1
 ```
 
+(Default สร้างแบบ `--windowed` — ไม่มีหน้าต่าง cmd เปิดแล้วดับ; debug ให้ใช้ `scripts\\build_launcher.ps1 -Console` แล้วดูข้อความใน console และดู `%LOCALAPPDATA%\\TargetAllocation\\launcher.log`)
+
 **การใช้งานของผู้ใช้**
 1) ดาวน์โหลด `TargetAllocationLauncher.exe` ครั้งแรก
 2) ดับเบิลคลิก Launcher → ระบบจะอัปเดตเองและเปิดเว็บให้
 
-> แนะนำให้ผู้ดูแลสร้างไฟล์ `Start Target Allocation.cmd` และ shortcut `.lnk` ให้ผู้ใช้
+> แนะนำให้ผู้ดูแลสร้างไฟล์ `Start Target Allocation.cmd` และ shortcut `.lnk` (`.lnk` จะเรียก `.exe` โดยตรงไม่ผ่าน `cmd.exe` — ไม่ควรเห็นหน้าต่างขาวแล้วดับ)
 > เพื่อไม่ต้องตั้งค่า environment variable เอง:
 >
 > ```powershell
 > scripts\\make_launcher_shortcut.ps1 -UpdateUrl "https://<internal>/.../latest.json"
 > ```
+>
+> สคริปต์จะสร้าง `update_url.txt` ข้าง `TargetAllocationLauncher.exe` (shortcut ไม่ใส่ URL ใน Arguments — ลดปัญหา Windows กดแล้วบอกหาไฟล์ไม่เจอเมื่อ URL มี `&` / `%`)  
+> ถ้าสงสัยให้รัน `scripts\\check_launcher_dist.ps1` (มีตรวจ Zone.Identifier และใช้ `-ClearMarkOfWeb` ถ้า Windows ฟ้อง cannot access / ถูก mark จากดาวน์โหลด)  
+> ถ้าโฟลเดอร์อยู่ใน OneDrive ให้คลิกขวาโฟลเดอร์ → **Always keep on this device** แล้วลองใหม่
 
 ### เปิด Dashboard
 

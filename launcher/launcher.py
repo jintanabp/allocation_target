@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 import webbrowser
 import zipfile
@@ -49,7 +50,7 @@ def _log_to_file(msg: str) -> None:
 
 
 def _show_error_popup(title: str, message: str) -> None:
-    # Best-effort popup for non-dev users
+    """Best-effort GUI error — tkinter may be missing from frozen PyInstaller; use Win32 fallback."""
     try:
         import tkinter  # stdlib
         from tkinter import messagebox
@@ -58,8 +59,41 @@ def _show_error_popup(title: str, message: str) -> None:
         root.withdraw()
         messagebox.showerror(title, message)
         root.destroy()
+        return
     except Exception:
         pass
+    try:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(0, message, title, 0x10)
+    except Exception:
+        pass
+
+
+def _launcher_bundle_dir() -> Path:
+    """Directory containing launcher.exe plus optional update_url.txt."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def _read_update_url_from_file() -> str:
+    d = _launcher_bundle_dir()
+    p = d / "update_url.txt"
+    try:
+        if not p.is_file():
+            return ""
+        raw = p.read_text(encoding="utf-8")
+        raw = raw.lstrip("\ufeff")
+        line = ""
+        for seg in raw.splitlines():
+            s = seg.strip()
+            if s and not s.startswith("#"):
+                line = s
+                break
+        return line.strip()
+    except Exception:
+        return ""
 
 
 def _user_data_dir() -> Path:
@@ -124,9 +158,47 @@ class Manifest:
 
 
 def _fetch_manifest(url: str) -> Manifest:
+    """Fetch latest.json — must return raw JSON (not HTML login/share pages)."""
     req = urllib.request.Request(url, headers={"User-Agent": f"{APP_NAME}/1.0"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        data = json.loads(r.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            body = r.read()
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(
+            "Cannot fetch update manifest (HTTP %s).\n\n"
+            "Use a direct HTTPS URL to latest.json hosted by IT (anonymous GET returns JSON)." % e.code
+        ) from e
+    except urllib.error.URLError as e:
+        detail = str(e.reason) if e.reason else str(e)
+        raise RuntimeError("Cannot reach update URL: %s" % detail) from e
+    except Exception as e:
+        raise RuntimeError("Download failed for manifest URL: %s" % e) from e
+
+    try:
+        text = body.decode("utf-8")
+    except Exception:
+        text = body.decode("utf-8", errors="replace")
+    snippet = text.lstrip().lower()
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        hint = ""
+        if snippet.startswith("<!doctype") or snippet.startswith("<html") or "<head" in snippet[:800]:
+            hint = (
+                "\n\nThe server returned a web page (HTML), not JSON. "
+                "SharePoint/Microsoft 365 sharing links usually need a login in a browser "
+                "and cannot be used here.\n"
+                "Ask IT to expose latest.json via a direct HTTPS URL (static file / internal web server)."
+            )
+        raise RuntimeError(
+            "Manifest is not valid JSON.%s\n\nExpected latest.json keys: version, url, sha256." % hint
+        ) from e
+
+    missing = {"version", "url", "sha256"} - set(data.keys())
+    if missing:
+        raise RuntimeError("Manifest JSON is missing keys: %s" % (", ".join(sorted(missing))))
+
     return Manifest(
         version=str(data["version"]),
         url=str(data["url"]),
@@ -243,13 +315,31 @@ def run_app(app_dir: Path) -> None:
 
 
 def main() -> int:
-    # Priority: argv[1] (from .cmd/shortcut) > env
+    _log_to_file(
+        "{ts} START argc={argc} bundle={bud} cwd={cwd}".format(
+            ts=time.strftime("%Y-%m-%d %H:%M:%S"),
+            argc=len(sys.argv),
+            bud=str(_launcher_bundle_dir()),
+            cwd=os.getcwd(),
+        )
+    )
+    # Priority: argv[1] > env TARGET_ALLOC_UPDATE_URL > update_url.txt next to launcher.exe (avoids broken .lnk arg parsing with & % etc.)
     manifest_url = (sys.argv[1].strip() if len(sys.argv) > 1 else "") or (
         (os.environ.get("TARGET_ALLOC_UPDATE_URL") or "").strip()
     )
     if not manifest_url:
+        manifest_url = _read_update_url_from_file().strip()
+
+    if not manifest_url:
         _log("ERROR: Missing TARGET_ALLOC_UPDATE_URL (URL to latest.json)")
         _log("Ask IT to provide an internal HTTPS URL for updates.")
+        _log_to_file("ERROR: Missing manifest URL (argv, env, update_url.txt)")
+        _show_error_popup(
+            "Target Allocation",
+            "Launcher was started without update URL.\n\n"
+            + f"Expect update_url.txt in:\n{_launcher_bundle_dir()}\n\n"
+            + "Run: scripts\\make_launcher_shortcut.ps1 -UpdateUrl \"https://.../latest.json\"",
+        )
         return 2
     try:
         app_dir, ver = ensure_latest(manifest_url)

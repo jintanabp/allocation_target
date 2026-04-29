@@ -1,41 +1,122 @@
 param(
-  [Parameter(Mandatory=$true)][string]$UpdateUrl,
-  [Parameter(Mandatory=$false)][string]$OutDir = "dist_launcher",
-  [Parameter(Mandatory=$false)][string]$ShortcutName = "Target Allocation.lnk"
+
+  [Parameter(Mandatory = $true)][string]$UpdateUrl,
+
+  [Parameter(Mandatory = $false)][string]$OutDir = "dist_launcher",
+
+  [Parameter(Mandatory = $false)][string]$ShortcutName = "Target Allocation.lnk"
+
 )
+
+
 
 $ErrorActionPreference = "Stop"
 
-if (-not (Test-Path $OutDir)) {
-  New-Item -ItemType Directory -Force $OutDir | Out-Null
+
+
+if (-not (Test-Path -LiteralPath $OutDir)) {
+
+  New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+
 }
 
-$exe = Join-Path $OutDir "TargetAllocationLauncher.exe"
-if (-not (Test-Path $exe)) {
-  throw "TargetAllocationLauncher.exe not found. Run scripts\\build_launcher.ps1 first."
-}
+# Absolute path: shortcuts with relative WorkingDirectory often break when Explorer runs them
 
-# Create a .cmd wrapper so the shortcut is simple and does not require setting env
-$cmdPath = Join-Path $OutDir "Start Target Allocation.cmd"
-$cmd = @"
-@echo off
-setlocal
-set ""TARGET_ALLOC_UPDATE_URL=$UpdateUrl""
-start """" ""%~dp0TargetAllocationLauncher.exe"" ""%TARGET_ALLOC_UPDATE_URL%""
+$OutAbs = (Resolve-Path -LiteralPath $OutDir).Path
+
+
+
+$exe = Join-Path $OutAbs "TargetAllocationLauncher.exe"
+
+if (-not (Test-Path -LiteralPath $exe)) {
+
+  throw @"
+
+TargetAllocationLauncher.exe not found in: $OutAbs
+
+
+
+Build the launcher first (from repo root):
+
+  powershell -ExecutionPolicy Bypass -File .\scripts\build_launcher.ps1 -OutDir dist_launcher
+
+
+
+Then run this script again.
+
 "@
+
+}
+
+
+
+# URL lives beside the exe — launcher reads update_url.txt (avoids fragile .lnk / argv with & etc.)
+
+$urlPath = Join-Path $OutAbs "update_url.txt"
+
+[System.IO.File]::WriteAllText(
+
+  $urlPath,
+
+  $($UpdateUrl.Trim()) + "`n",
+
+  (New-Object System.Text.UTF8Encoding $false)
+
+)
+
+
+
+
+# Optional double-click fallback (runs exe without args; reads update_url.txt)
+
+$cmdPath = Join-Path $OutAbs "Start Target Allocation.cmd"
+
+$cmd = @"
+
+@echo off
+
+cd /d "%~dp0"
+
+"%~dp0TargetAllocationLauncher.exe"
+
+"@
+
 Set-Content -Path $cmdPath -Value $cmd -Encoding ASCII
 
-# Create shortcut (.lnk) pointing to the .cmd
+
+
+# Shortcut targets ONLY the exe — Arguments empty — icon from exe(,0)
+
 $shell = New-Object -ComObject WScript.Shell
-$lnk = $shell.CreateShortcut((Join-Path $OutDir $ShortcutName))
-$lnk.TargetPath = "$env:WINDIR\System32\cmd.exe"
-# Run the .cmd in WorkingDirectory (portable)
-$lnk.Arguments = "/c ""Start Target Allocation.cmd"""
-$lnk.WorkingDirectory = $OutDir
-$lnk.IconLocation = $exe
+
+$lnkPath = Join-Path $OutAbs $ShortcutName
+
+$lnk = $shell.CreateShortcut($lnkPath)
+
+$lnk.TargetPath = $exe
+
+$lnk.Arguments = ""
+
+$lnk.WorkingDirectory = $OutAbs
+
+$lnk.IconLocation = "${exe},0"
+
+$lnk.Description = "Target Allocation (launcher + updates)"
+
+
+
 $lnk.Save()
 
+
+
 Write-Host "Created:" -ForegroundColor Green
+
+Write-Host " - $urlPath"
+
 Write-Host " - $cmdPath"
-Write-Host " - $(Join-Path $OutDir $ShortcutName)"
+
+Write-Host " - $lnkPath"
+
+Write-Host "Tip: run scripts\\check_launcher_dist.ps1 to validate files and shortcut targets." -ForegroundColor DarkGray
+
 

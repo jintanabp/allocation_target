@@ -1,5 +1,7 @@
 param(
-  [Parameter(Mandatory=$false)][string]$OutDir = "dist_launcher"
+  [Parameter(Mandatory=$false)][string]$OutDir = "dist_launcher",
+  # No console window on double-click (errors go to %LOCALAPPDATA%\TargetAllocation\launcher.log)
+  [Parameter(Mandatory=$false)][switch]$Console = $false
 )
 
 $ErrorActionPreference = "Stop"
@@ -56,17 +58,28 @@ if ($pyKind -eq "portable") {
   $pyForBuild = ".venv\\Scripts\\python.exe"
 }
 
-if (Test-Path $OutDir) { Remove-Item -Recurse -Force $OutDir }
-New-Item -ItemType Directory -Force $OutDir | Out-Null
+# Do not Remove-Item OutDir recursively: preserves Start Target Allocation.cmd / .lnk from make_launcher_shortcut.ps1
+if (-not (Test-Path -LiteralPath $OutDir)) {
+  New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+}
 
-& $pyForBuild -m PyInstaller `
-  --noconfirm `
-  --clean `
-  --onefile `
-  --name "TargetAllocationLauncher" `
-  launcher\\launcher.py
+$pyiArgs = @(
+  "--noconfirm"
+  "--clean"
+  "--onefile"
+  "--name", "TargetAllocationLauncher"
+  "launcher\\launcher.py"
+)
+if (-not $Console) {
+  $pyiArgs = @("--windowed") + $pyiArgs
+  Write-Host "PyInstaller: --windowed (use -Console to show a console for debugging)" -ForegroundColor DarkGray
+}
 
-Copy-Item ".\\dist\\TargetAllocationLauncher.exe" -Destination (Join-Path $OutDir "TargetAllocationLauncher.exe") -Force
+& $pyForBuild -m PyInstaller @pyiArgs
 
-Write-Host "Output: $OutDir\\TargetAllocationLauncher.exe" -ForegroundColor Green
+$outExe = Join-Path $OutDir "TargetAllocationLauncher.exe"
+Copy-Item ".\\dist\\TargetAllocationLauncher.exe" -Destination $outExe -Force
+
+Write-Host "Output: $outExe" -ForegroundColor Green
+Write-Host "Tip: run make_launcher_shortcut.ps1 if you need a fresh .cmd/.lnk with a new update URL." -ForegroundColor DarkGray
 
