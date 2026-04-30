@@ -1,11 +1,6 @@
 """
-Microsoft Entra — อนุญาตเฉพาะผู้ใช้ที่อยู่ใน security group (Object ID ใน AZURE_AUTH_ALLOWED_GROUP_ID)
-
-ลำดับการตรวจ:
-1) Access token ของ Microsoft Graph → ตรวจลายเซ็นด้วย JWKS; ถ้าไม่ผ่านแต่ GET Graph /me ได้ 200 ให้ถือว่าโทเคนถูกต้อง (Microsoft ตรวจแล้ว)
-   จากนั้น POST /me/checkMemberGroups (ใช้ scope User.Read ตอนล็อกอิน)
-2) ID token (aud = AZURE_AUTH_CLIENT_ID) + claim \"groups\" มี group id ที่อนุญาต
-   (ตั้งใน Entra: Token configuration → groups ใน ID token)
+Microsoft Entra — ล็อกอินผ่าน Microsoft จากนั้นใช้อีเมลไปผูกกับ ACC_USER_CONTROL ในฐานข้อมูล
+(ไม่บังคับ membership ใน security group อีกต่อไป — เก่าใช้ AZURE_AUTH_ALLOWED_GROUP_ID)
 
 ปิดการบังคับ: AZURE_AUTH_DISABLED=1
 """
@@ -39,10 +34,6 @@ def _client_id() -> str:
 # ค่าเริ่มต้นตอน import (สำหรับ log / เอกสาร)
 TENANT_ID = _tenant_id()
 CLIENT_ID = _client_id()
-ALLOWED_GROUP_ID = (
-    os.environ.get("AZURE_AUTH_ALLOWED_GROUP_ID")
-    or "06043b2d-153b-4f88-965a-8b0500ca951e"
-).strip()
 
 GRAPH_AUDIENCES = (
     "https://graph.microsoft.com",
@@ -295,11 +286,33 @@ def spa_config_payload() -> dict[str, Any]:
     }
 
 
-def _allowed_group_id() -> str:
-    return (
-        os.environ.get("AZURE_AUTH_ALLOWED_GROUP_ID")
-        or "06043b2d-153b-4f88-965a-8b0500ca951e"
-    ).strip()
+
+def fetch_graph_primary_email(bearer: str) -> str | None:
+    """ดึง mail จาก Microsoft Graph เมื่อ claims ไม่มีอีเมลชัดเจน"""
+    try:
+        r = requests.get(
+            "https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName",
+            headers={"Authorization": f"Bearer {bearer}"},
+            timeout=15,
+        )
+        if r.status_code != 200:
+            return None
+        js = r.json()
+        for k in ("mail", "userPrincipalName"):
+            v = js.get(k)
+            if isinstance(v, str) and "@" in v:
+                return v.strip().lower()
+    except requests.RequestException as e:
+        logger.warning("Graph /me fetch email failed: %s", e)
+    return None
+
+
+def get_primary_email_from_claims(payload: dict[str, Any]) -> str | None:
+    for key in ("email", "preferred_username", "unique_name", "upn"):
+        v = payload.get(key)
+        if isinstance(v, str) and "@" in v:
+            return v.strip().lower()
+    return None
 
 
 def _verify_tid(payload: dict[str, Any]) -> None:
@@ -309,47 +322,11 @@ def _verify_tid(payload: dict[str, Any]) -> None:
         raise ValueError("โทเคนไม่ใช่ของ tenant นี้")
 
 
-def _groups_from_claims(payload: dict[str, Any]) -> list[str]:
-    g = payload.get("groups")
-    if g is None:
-        return []
-    if isinstance(g, str):
-        return [g]
-    if isinstance(g, list):
-        return [str(x) for x in g]
-    return []
-
-
-def _member_of_allowed_group_via_graph(bearer: str) -> tuple[bool, str | None]:
+def verify_microsoft_identity(token: str) -> dict[str, Any]:
     """
-    คืน (True, None) ถ้าอยู่ในกลุ่ม
-    (False, None) ถ้าไม่อยู่ในกลุ่ม
-    (False, reason) ถ้าเรียก Graph ไม่ได้ (สิทธิ์/เครือข่าย)
+    ตรวจว่า Bearer เป็น JWT ของ tenant เรา (Graph AT หรือ SPA ID token)
+    คืน payload ดั้งเดิม + email (สำหรับ ACC_USER_CONTROL)
     """
-    r = requests.post(
-        "https://graph.microsoft.com/v1.0/me/checkMemberGroups",
-        headers={
-            "Authorization": f"Bearer {bearer}",
-            "Content-Type": "application/json",
-        },
-        json={"groupIds": [_allowed_group_id()]},
-        timeout=30,
-    )
-    if r.status_code == 200:
-        matched = r.json().get("value") or []
-        gid = _allowed_group_id().lower()
-        ok = gid in {str(x).lower() for x in matched}
-        return ok, None
-    if r.status_code in (401, 403):
-        return False, (
-            "แอปไม่มีสิทธิ์เรียก Microsoft Graph หรือผู้ใช้ไม่ได้ consent "
-            "(ต้องการ delegated: User.Read และมักต้อง GroupMember.Read.All + admin consent)"
-        )
-    logger.warning("checkMemberGroups HTTP %s: %s", r.status_code, r.text[:400])
-    return False, f"Microsoft Graph ตอบ HTTP {r.status_code}"
-
-
-def verify_bearer_and_group(token: str) -> dict[str, Any]:
     if not token:
         raise ValueError("ไม่มีโทเคน")
     token = token.strip()
@@ -360,32 +337,34 @@ def verify_bearer_and_group(token: str) -> dict[str, Any]:
     aud = payload.get("aud")
     cid = _client_id()
 
-    # ── 1) Microsoft Graph access token ─────────────────
     if _aud_matches_graph(aud):
-        ok, err = _member_of_allowed_group_via_graph(token)
-        if ok:
-            return payload
-        if err:
-            raise PermissionError(err)
-        raise PermissionError(
-            "บัญชีนี้ไม่อยู่ในกลุ่มที่อนุญาตใช้ระบบ (ต้องเป็นสมาชิกกลุ่มที่องค์กรกำหนด)"
-        )
-
-    # ── 2) ID token (groups ใน token) ─────────────────
-    if _aud_matches_client(aud, cid):
-        groups = _groups_from_claims(payload)
-        if _allowed_group_id().lower() in [g.lower() for g in groups]:
-            return payload
-        if groups:
-            raise PermissionError(
-                "บัญชีไม่อยู่ในกลุ่มที่อนุญาตใช้ระบบ"
+        email = get_primary_email_from_claims(payload)
+        if not email:
+            email = fetch_graph_primary_email(token)
+        if not email:
+            raise ValueError(
+                "ไม่พบที่อยู่อีเมลในโทเคน — "
+                "ลองล็อกอินด้วย scope เช่น User.Read และตรวจว่าได้ access token ของ Graph"
             )
-        raise PermissionError(
-            "โทเคนไม่มีรายการกลุ่ม — ใน Entra ให้เพิ่ม groups ใน ID token "
-            "หรือล็อกอินด้วย scope User.Read เพื่อให้ส่ง access token ของ Graph"
+        return {"payload": payload, "email": email}
+
+    if _aud_matches_client(aud, cid):
+        email = get_primary_email_from_claims(payload)
+        if email:
+            return {"payload": payload, "email": email}
+
+        raise ValueError(
+            "โทเคน ID token ของแอปไม่มี claim อีเมล — "
+            "ใน Azure AD เพิ่ม optional claim `email` หรือล็อกอินให้ได้ access token จาก Graph "
+            "(scope User.Read)"
         )
 
     raise ValueError(
         "โทเคนไม่ใช่ Microsoft Graph access token หรือ ID token ของแอปนี้ "
         f"(aud ในโทเคนไม่ตรง Graph / client_id={cid})"
     )
+
+
+def verify_bearer_and_group(token: str) -> dict[str, Any]:
+    """คงชื่อเดิม — ไม่เช็ค group แล้ว คืนเฉพาะ JWT payload"""
+    return verify_microsoft_identity(token)["payload"]

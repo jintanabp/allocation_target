@@ -360,6 +360,40 @@ SELECTCOLUMNS(
         print(f"✅ trf_select_supervisor: {len(out)} แถว")
         return out
 
+    def get_acc_user_control_rows(self) -> list[dict]:
+        """
+        ACC_USER_CONTROL: คอลัมน์ EMAIL และ USERPL (สิทธิ์เข้าใช้เป็นรหัส Supervisor หรือ Manager)
+        แถวซ้ำ EMAIL+USERPL — ฝั่ง access_control จะรวมเป็น set
+        """
+        print("📡 [ACC_USER_CONTROL] EMAIL / USERPL...")
+        dax = """
+EVALUATE
+SELECTCOLUMNS(
+    'ACC_USER_CONTROL',
+    "EMAIL", 'ACC_USER_CONTROL'[EMAIL],
+    "USERPL", 'ACC_USER_CONTROL'[USERPL]
+)
+"""
+        try:
+            rows = self._execute_dax(dax)
+        except Exception as ex:
+            print(f"⚠️ ACC_USER_CONTROL DAX ล้มเหลว: {ex}")
+            return []
+
+        out: list[dict] = []
+        for r in rows or []:
+            em = str(
+                self._get(r, "[EMAIL]", "ACC_USER_CONTROL[EMAIL]", default="")
+            ).strip()
+            upl = str(
+                self._get(r, "[USERPL]", "ACC_USER_CONTROL[USERPL]", default="")
+            ).strip()
+            if not em or not upl:
+                continue
+            out.append({"email": em, "userpl": upl.upper()})
+        print(f"✅ ACC_USER_CONTROL: {len(out)} แถว (dedupe ฝั่ง access control)")
+        return out
+
     # ── 1. พนักงานจาก SuperCode ─────────────────────────────────────
     def get_employees_by_manager(self, manager_code: str) -> pd.DataFrame:
         """

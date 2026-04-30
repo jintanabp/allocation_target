@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..core.constants import debug_endpoints_enabled
-from ..deps import require_entra_member
+from ..deps import ensure_supervisor_allowed, require_authenticated_user
 from ..fabric_dax_connector import FabricDAXConnector
 
 logger = logging.getLogger("target_allocation")
@@ -13,7 +13,7 @@ router = APIRouter(tags=["debug"])
 
 @router.get("/debug/fabric")
 def debug_fabric(
-    _user: dict = Depends(require_entra_member),
+    user: dict = Depends(require_authenticated_user),
     sup_id: str = Query("SL330"),
 ):
     """
@@ -25,6 +25,7 @@ def debug_fabric(
     """
     if not debug_endpoints_enabled():
         raise HTTPException(404, detail="ไม่พบ endpoint")
+    ensure_supervisor_allowed(user, sup_id)
     try:
         fabric = FabricDAXConnector()
 

@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import time
 
 from ..fabric_dax_connector import FabricDAXConnector
 
@@ -57,6 +58,65 @@ def persist_managers_payload(payload: dict) -> None:
     os.makedirs("data", exist_ok=True)
     with open(MANAGERS_CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False)
+
+
+def load_full_managers_payload() -> dict:
+    """
+    Same source as GET /managers (cache TTL, Fabric, fallbacks) — used by access control
+    without going through the HTTP layer.
+    """
+    os.makedirs("data", exist_ok=True)
+    cache_path = MANAGERS_CACHE_FILE
+    ttl = int(os.environ.get("MANAGERS_CACHE_TTL_SEC", "86400"))
+    if ttl > 0 and os.path.exists(cache_path):
+        try:
+            age = time.time() - os.path.getmtime(cache_path)
+            if age < ttl:
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict) and data.get("rows"):
+                    return data
+        except Exception as e:
+            logger.warning("managers cache fast read: %s", e)
+
+    payload = try_fetch_managers_from_fabric()
+    if payload:
+        try:
+            persist_managers_payload(payload)
+        except Exception as e:
+            logger.warning("managers cache write failed: %s", e)
+        return payload
+
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and data.get("rows"):
+                return data
+            if isinstance(data, list):
+                return {
+                    "managers": data,
+                    "rows": [],
+                    "by_manager": {},
+                    "source": "cache_legacy",
+                }
+        except Exception as cache_err:
+            logger.warning("managers cache corrupt: %s", cache_err)
+
+    try:
+        fabric = FabricDAXConnector()
+        codes = fabric.get_all_super_codes()
+        if codes:
+            return {
+                "managers": codes,
+                "rows": [],
+                "by_manager": {},
+                "source": "dim_fallback",
+            }
+    except Exception as e:
+        logger.warning("get_all_super_codes error: %s", e)
+
+    return {"managers": [], "rows": [], "by_manager": {}, "source": "empty"}
 
 
 def warm_managers_cache_at_startup() -> None:

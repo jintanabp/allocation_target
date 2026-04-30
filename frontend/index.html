@@ -9,7 +9,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Instrument+Serif:ital@0;1&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=202604203" />
+  <link rel="stylesheet" href="style.css?v=202604292" />
 </head>
 
 <body>
@@ -58,39 +58,34 @@
               <div class="login-mark">🎯</div>
               <div>
                 <div class="login-title2">เข้าสู่ระบบ</div>
-                <div class="login-sub2">เลือก Supervisor หรือ Manager (จาก trf_select_supervisor) และงวดเดือนที่จะกระจายเป้าหมาย</div>
+                <div class="login-sub2">หลังล็อกอิน Microsoft เลือก Supervisor หรือ Manager จากรหัสที่ตรง USERPL ของคุณใน ACC_USER_CONTROL และงวดที่จะกระจายเป้า</div>
               </div>
             </div>
 
             <div id="msAuthBlock" class="ms-auth-block" style="display: none;" aria-live="polite">
               <button type="button" id="msLoginBtn" class="btn-ms">ล็อกอินด้วย Microsoft</button>
               <p id="msUserLine" class="ms-user-line" style="display: none;"></p>
-              <p class="ms-auth-hint">เฉพาะบัญชีองค์กรที่อยู่ในกลุ่มที่ได้รับอนุญาต</p>
+              <p class="ms-auth-hint">ล็อกอินด้วยบัญชีองค์กร — จากนั้นเลือกรหัสเฉพาะที่อยู่ในสิทธิ์ของอีเมลคุณ (ACC_USER_CONTROL)</p>
             </div>
 
             <div id="loginFormBlock">
             <div class="field-group">
               <label class="field-label">Supervisor หรือ Manager</label>
-              <div style="position: relative;">
-                <input
-                  type="search"
+              <div>
+                <select
                   id="supSelect"
-                  class="field-input"
-                  placeholder="⏳ กำลังดึงข้อมูล..."
+                  class="field-select"
+                  style="width:100%;"
                   name="allocation_supervisor_picker"
                   autocomplete="off"
-                  autocorrect="off"
-                  autocapitalize="none"
-                  spellcheck="false"
-                  data-lpignore="true"
-                  data-1p-ignore="true"
-                  data-form-type="other"
+                  aria-label="เลือก Supervisor หรือ Manager"
+                  disabled
                 >
-                <div id="customDropdown" class="custom-dropdown" style="display:none;"></div>
+                  <option value="">⏳ กำลังดึงข้อมูล...</option>
+                </select>
               </div>
-              <div class="field-help">เลือก <code>SL330 (Supervisor)</code> เพื่อเข้าแบบหัวหน้าทีม · เลือก <code>… (Manager)</code> เพื่อดูทีมของหลาย Supervisor แล้วสลับได้ในหน้า Dashboard</div>
+              <div class="field-help">เลือกจากรายการเท่านั้น (ไม่พิมพ์รหัสเอง) — แสดงเฉพาะรหัสที่ตรง USERPL ของอีเมลคุณ · หลายรหัสให้เลือกที่นี่ · เหลือหนึ่งรหัสจะถูกกำหนดให้อัตโนมัติ · <code>(Manager)</code> สลับดู Supervisor ในหน้า Dashboard</div>
               <div class="login-row">
-                <div id="recentSupWrap" class="recent-sup" style="display:none;"></div>
                 <button id="managersRetryBtn" class="btn-mini" type="button" onclick="loadManagers(true)" style="display:none;">
                   ↻ รีเฟรชรายการ
                 </button>
@@ -139,15 +134,11 @@
               ⏳ กำลังดึงรายชื่อ Supervisor / Manager จากระบบ… รอสักครู่ก่อนกดเข้าสู่ระบบ
             </p>
 
-            <button type="button" class="btn-run login-btn" id="loginBtn" onclick="handleLogin()">
+            <button type="button" class="btn-run login-btn" id="loginBtn">
               เข้าสู่ระบบ Dashboard
             </button>
             <div class="login-error" id="loginError" style="display:none;"></div>
 
-            <div class="login-foot2">
-              <span>จำค่า Supervisor และงวดล่าสุดอัตโนมัติบนเครื่องนี้</span>
-              <button class="link-btn" type="button" onclick="clearLoginMemory()">ล้างค่าที่จำไว้</button>
-            </div>
             </div><!-- /loginFormBlock -->
           </div>
         </main>
@@ -509,7 +500,7 @@
 
   <!-- ใช้ไฟล์ในโปรเจกต์ — เครือข่ายองค์กรมักบล็อก alcdn.msauth.net ทำให้ msal ไม่โหลด -->
   <script src="vendor/msal-browser.min.js"></script>
-  <script src="app.js?v=20260427"></script>
+  <script src="app.js?v=202604310"></script>
 </body>
 
 </html>

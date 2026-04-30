@@ -9,12 +9,15 @@
 
 /**
  * API ชี้ไปที่ origin เดียวกับหน้าเว็บเสมอ (ยกเว้นเปิดไฟล์ file://)
- * เดิมจำกัดแค่ port 8000 ทำให้รันคนละพอร์ตแล้ว /auth/config ไม่โหลด → ไม่เห็นปุ่มล็อกอิน MS
+ * รวม pathname ด้วย — ใช้ตอนโฮสต์แอปใต้ subpath (reverse proxy / static mount)
  */
-const API_BASE_URL =
-  typeof window !== "undefined" && window.location.protocol !== "file:"
-    ? window.location.origin
-    : "http://localhost:8000";
+const API_BASE_URL = (() => {
+  if (typeof window === "undefined" || window.location.protocol === "file:") {
+    return "http://localhost:8000";
+  }
+  const path = window.location.pathname.replace(/\/$/, "");
+  return window.location.origin + path;
+})();
 
 /**
  * Entra ไม่อนุญาต redirect แบบ http://127.0.0.1/... ต้องเป็น https หรือ http://localhost
@@ -28,7 +31,7 @@ function msalRedirectUri() {
     const p = port ? `:${port}` : "";
     return `http://localhost${p}/`;
   }
-  return `${window.location.origin}/`;
+  return `${API_BASE_URL.replace(/\/$/, "")}/`;
 }
 
 /** Scope แบบเต็ม — ให้ได้ access token ของ Microsoft Graph (ไม่สับสนกับ ID token) */
@@ -55,6 +58,108 @@ function escH(s) {
     .replace(/'/g, "&#39;");
 }
 
+/* ══════════════════════════════════════════════
+   GLOBAL UI BUSY LOCK (กันกดซ้ำ/งานซ้อน)
+══════════════════════════════════════════════ */
+let _globalBusyCount = 0;
+
+function _ensureGlobalBusyCss() {
+  if (document.getElementById("globalBusySpinCss")) return;
+  const st = document.createElement("style");
+  st.id = "globalBusySpinCss";
+  st.textContent = "@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}";
+  document.head.appendChild(st);
+}
+
+function _setGlobalBusyOverlayVisible(visible, message) {
+  const id = "globalBusyOverlay";
+  const existing = document.getElementById(id);
+  if (!visible) {
+    if (existing) existing.remove();
+    return;
+  }
+  const msg = message || "กำลังดำเนินการ...";
+  if (existing) {
+    const t = existing.querySelector("#globalBusyText");
+    if (t) t.textContent = msg;
+    return;
+  }
+  _ensureGlobalBusyCss();
+  const ov = document.createElement("div");
+  ov.id = id;
+  ov.style.cssText = [
+    "position:fixed",
+    "inset:0",
+    "background:rgba(15,18,28,.45)",
+    "backdrop-filter:blur(2px)",
+    "z-index:99999",
+    "display:flex",
+    "align-items:center",
+    "justify-content:center",
+    "padding:18px",
+  ].join(";");
+  ov.innerHTML = `
+    <div style="min-width:280px;max-width:520px;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:16px 18px;box-shadow:0 14px 45px rgba(0,0,0,.22);">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div aria-hidden="true" style="width:18px;height:18px;border-radius:50%;border:2px solid var(--border-md);border-top-color:var(--accent);animation:spin .8s linear infinite;"></div>
+        <div id="globalBusyText" style="font-weight:700;color:var(--text-1);"></div>
+      </div>
+      <div style="margin-top:8px;font-size:12px;color:var(--text-3);line-height:1.55;">
+        กรุณารอสักครู่ — ระบบกำลังเชื่อมต่อ/ประมวลผล เพื่อป้องกันการทำงานซ้ำ
+      </div>
+    </div>
+  `;
+  document.body.appendChild(ov);
+  const t = ov.querySelector("#globalBusyText");
+  if (t) t.textContent = msg;
+}
+
+function _setControlsDisabled(disabled) {
+  const nodes = document.querySelectorAll("button, input, select, textarea, [contenteditable]");
+  nodes.forEach((el) => {
+    if (!el) return;
+    if (el.closest && el.closest("#globalBusyOverlay")) return;
+    if (disabled) {
+      if (el.matches && el.matches("button, input, select, textarea")) {
+        el.dataset._busyPrevDisabled = el.disabled ? "1" : "0";
+        el.disabled = true;
+      }
+      if (el.getAttribute && el.getAttribute("contenteditable") != null) {
+        el.dataset._busyPrevContentEditable = el.getAttribute("contenteditable");
+        el.setAttribute("contenteditable", "false");
+      }
+      if (el.style) el.style.pointerEvents = "none";
+    } else {
+      if (el.matches && el.matches("button, input, select, textarea")) {
+        const prev = el.dataset._busyPrevDisabled;
+        if (prev === "0") el.disabled = false;
+        delete el.dataset._busyPrevDisabled;
+      }
+      if (el.dataset && Object.prototype.hasOwnProperty.call(el.dataset, "_busyPrevContentEditable")) {
+        const prevCE = el.dataset._busyPrevContentEditable;
+        if (prevCE == null) el.removeAttribute("contenteditable");
+        else el.setAttribute("contenteditable", prevCE);
+        delete el.dataset._busyPrevContentEditable;
+      }
+      if (el.style) el.style.pointerEvents = "";
+    }
+  });
+}
+
+function pushGlobalBusy(message) {
+  _globalBusyCount += 1;
+  if (_globalBusyCount === 1) _setControlsDisabled(true);
+  _setGlobalBusyOverlayVisible(true, message);
+}
+
+function popGlobalBusy() {
+  _globalBusyCount = Math.max(0, _globalBusyCount - 1);
+  if (_globalBusyCount === 0) {
+    _setGlobalBusyOverlayVisible(false);
+    _setControlsDisabled(false);
+  }
+}
+
 function _showInfoModal({ title, bodyHtml, primaryLabel, onPrimary, secondaryLabel = "ปิด" } = {}) {
   const existing = document.getElementById("infoModal");
   if (existing) existing.remove();
@@ -77,14 +182,32 @@ function _showInfoModal({ title, bodyHtml, primaryLabel, onPrimary, secondaryLab
 
   document.body.appendChild(modal);
   const close = () => modal.remove();
-  document.getElementById("infoModalCloseBtn")?.addEventListener("click", close, { once: true });
+  document.getElementById("infoModalCloseBtn")?.addEventListener(
+    "click",
+    (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      close();
+    },
+    { once: true },
+  );
   modal.addEventListener("click", (e) => {
     if (e.target === modal) close();
   });
   if (primaryLabel) {
-    document.getElementById("infoModalPrimaryBtn")?.addEventListener("click", () => {
-      try { onPrimary && onPrimary(); } finally { close(); }
-    }, { once: true });
+    document.getElementById("infoModalPrimaryBtn")?.addEventListener(
+      "click",
+      (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        try {
+          onPrimary && onPrimary();
+        } finally {
+          close();
+        }
+      },
+      { once: true },
+    );
   }
 }
 
@@ -130,7 +253,7 @@ async function initEntraAuth() {
           `เชื่อมต่อ ${API_BASE_URL}/auth/config ไม่ได้ — ตรวจว่าเปิด URL นี้ผ่าน server เดียวกัน (ไม่ใช้ไฟล์เปล่า) และรีเฟรช`;
       } else {
         hintEl.textContent =
-          "ล็อกอิน Microsoft ปิดอยู่ — ใส่ AZURE_AUTH_CLIENT_ID + FABRIC_TENANT_ID (หรือ AZURE_AUTH_TENANT_ID) ใน config/.env หรือ .env ที่ราก แล้วรีสตาร์ท Run_Local / uvicorn";
+          "ล็อกอิน Microsoft ปิดอยู่ — ใส่ AZURE_AUTH_CLIENT_ID + FABRIC_TENANT_ID (หรือ AZURE_AUTH_TENANT_ID) ใน config/.env หรือ .env ที่ราก แล้วรีสตาร์ท server · ในโหมดนี้รายชื่อ Supervisor/Manager แสดงทั้งระบบ (ไม่กรองตาม ACC_USER_CONTROL)";
       }
     }
     if (msBtn) msBtn.style.display = "none";
@@ -152,7 +275,7 @@ async function initEntraAuth() {
     hintEl.textContent =
       window.location.hostname === "127.0.0.1"
         ? `ล็อกอิน Microsoft จะพากลับมาที่ ${msalRedirectUri().replace(/\/$/, "")} (Entra ไม่รับ 127.0.0.1)`
-        : "เฉพาะบัญชีองค์กรที่อยู่ในกลุ่มที่ได้รับอนุญาต";
+        : "ล็อกอินบัญชีองค์กรแล้วเลือกรหัสตามสิทธิ์ USERPL";
   }
   msalInstance = new Msal.PublicClientApplication({
     auth: {
@@ -278,7 +401,57 @@ let S = {
   newProductsEvenMode: "off",
 };
 
-/** สร้าง map จาก rows ของ /managers (trf_select_supervisor) */
+/**
+ * หลังกรองสิทธิ ACC/backend — ใช้รายการป้ายจาก API + map by_manager เท่านั้น
+ * (อย่านำทุก depend_on จาก rows ไปเป็น Manager เลือกในหน้า login เพราะจะดึง “หัวหน้า” ของ sup ที่ไม่ได้เป็น USERPL ของผู้ใช้)
+ */
+function buildLoginPickFromFilteredResponse(rows, pickLabels, byManagerBackend) {
+  const labels = Array.isArray(pickLabels) ? pickLabels.map(x => String(x).trim()) : [];
+  S.supervisorRows = Array.isArray(rows) ? rows : [];
+  S.byManager = {};
+  if (byManagerBackend && typeof byManagerBackend === "object") {
+    for (const [k, v] of Object.entries(byManagerBackend)) {
+      const mk = String(k).trim().toUpperCase();
+      const arr = Array.isArray(v)
+        ? [...new Set(v.map(x => String(x).trim().toUpperCase()).filter(Boolean))].sort()
+        : [];
+      S.byManager[mk] = arr;
+    }
+  }
+
+  const sups = new Set();
+  const mgrs = new Set();
+  const map = {};
+
+  function consumeLabel(raw) {
+    const s = String(raw || "").trim();
+    const iSup = /\s*\(Supervisor\)\s*$/i;
+    const iMgr = /\s*\(Manager\)\s*$/i;
+    if (iSup.test(s)) {
+      const c = String(s.replace(iSup, "").trim()).toUpperCase();
+      if (c) {
+        sups.add(c);
+        map[`${c} (Supervisor)`] = { kind: "supervisor", code: c };
+      }
+      return;
+    }
+    if (iMgr.test(s)) {
+      const c = String(s.replace(iMgr, "").trim()).toUpperCase();
+      if (c) {
+        mgrs.add(c);
+        map[`${c} (Manager)`] = { kind: "manager", code: c };
+      }
+    }
+  }
+  labels.forEach(consumeLabel);
+
+  S._loginPickMap = map;
+  S._supervisorSet = sups;
+  S._managerSet = mgrs;
+  return [...labels];
+}
+
+/** สร้าง map จาก rows ของ /managers (เต็มจาก trf — ใช้เมื่อไม่ได้กรอง ACC) */
 function buildLoginPickFromRows(rows) {
   S.supervisorRows = Array.isArray(rows) ? rows : [];
   S.byManager = {};
@@ -337,56 +510,6 @@ function resolveLoginPick(raw) {
   return null;
 }
 
-/** ค่าที่ควรจำใน localStorage / ชิปประวัติ — เฉพาะรหัสจริงจากระบบ ไม่เก็บสตริงค้นหาแบบ "330" */
-function canonicalSupervisorLoginValue(raw) {
-  const t = String(raw || "").trim();
-  if (!t) return null;
-  if (Array.isArray(S.managers) && S.managers.length > 0) {
-    const exact = S.managers.find(x => String(x).trim() === t);
-    if (exact) return String(exact);
-  }
-  const pick = resolveLoginPick(t);
-  if (!pick) return null;
-  return pick.kind === "supervisor" ? `${pick.code} (Supervisor)` : `${pick.code} (Manager)`;
-}
-
-function looksLikeSupervisorManagerLabel(s) {
-  const t = String(s || "").trim();
-  return /\s+\(Supervisor\)\s*$/i.test(t) || /\s+\(Manager\)\s*$/i.test(t);
-}
-
-/** แสดงชิปประวัติได้เมื่อหน้าตาเหมือนป้ายจริง และ (ถ้ามีรายการจาก API) ต้องตรงกับรายการนั้น */
-function isRecentSupDisplayable(s) {
-  if (!looksLikeSupervisorManagerLabel(s)) return false;
-  if (!Array.isArray(S.managers) || S.managers.length === 0) return true;
-  return S.managers.some(x => String(x).trim() === String(s).trim());
-}
-
-/** ล้างค่าเก่าใน localStorage ที่ไม่ใช่รายการจาก /managers */
-function sanitizeLoginMemoryAgainstManagers() {
-  if (!Array.isArray(S.managers) || S.managers.length === 0) return;
-  const allow = new Set(S.managers.map(x => String(x).trim()));
-  let mem;
-  try {
-    mem = JSON.parse(localStorage.getItem(_LOGIN_MEM_KEY) || "null");
-  } catch {
-    return;
-  }
-  if (!mem || typeof mem !== "object") return;
-  if (Array.isArray(mem.recent)) {
-    mem.recent = mem.recent.filter(x => allow.has(String(x).trim()));
-  }
-  if (mem.last && mem.last.sup != null && !allow.has(String(mem.last.sup).trim())) {
-    delete mem.last.sup;
-  }
-  try {
-    localStorage.setItem(_LOGIN_MEM_KEY, JSON.stringify(mem));
-  } catch {
-    /* ignore */
-  }
-  renderRecentSupChips();
-}
-
 function setSupervisorSwitchLoading(on, message) {
   const wrap = document.getElementById("supervisorSwitchWrap");
   const sel = document.getElementById("supervisorSwitchSelect");
@@ -406,19 +529,40 @@ function setSupervisorSwitchLoading(on, message) {
   wrap.classList.toggle("is-loading", !!on);
 }
 
+/** เวลากำหนดตัวเลือกจากโค้ด — อย่ายิงเหมือนผู้ใช้เลือก */
+let _suppressSupSwitchUiEvent = false;
+/** clear timeout id จากรอบอัปเดต supervisor select ครั้งก่อน */
+let _suppressSupSwitchReleaseTimer = null;
+
 function updateSupervisorSwitcherUI() {
   const wrap = document.getElementById("supervisorSwitchWrap");
   const sel = document.getElementById("supervisorSwitchSelect");
   if (!wrap || !sel) return;
-  if (S.loginRole === "manager" && Array.isArray(S.supervisorChoices) && S.supervisorChoices.length > 1) {
-    wrap.style.display = "flex";
-    sel.innerHTML = S.supervisorChoices.map(c =>
-      `<option value="${c}"${c === S.supId ? " selected" : ""}>${c}</option>`
-    ).join("");
-  } else {
-    wrap.style.display = "none";
-    sel.innerHTML = "";
-    setSupervisorSwitchLoading(false);
+  /** การยัด innerHTML ให้ใส่อาจทำให้บาง browser ชั่วขณะเลือก option ผิดแล้วยิง change เดียวกับผู้ใช้สลับผู้ดูแล */
+  if (_suppressSupSwitchReleaseTimer) {
+    clearTimeout(_suppressSupSwitchReleaseTimer);
+    _suppressSupSwitchReleaseTimer = null;
+  }
+  _suppressSupSwitchUiEvent = true;
+  try {
+    if (S.loginRole === "manager" && Array.isArray(S.supervisorChoices) && S.supervisorChoices.length > 1) {
+      wrap.style.display = "flex";
+      const cur = String(S.supId ?? "").trim();
+      sel.innerHTML = S.supervisorChoices.map(c => {
+        const cs = String(c);
+        return `<option value="${cs}"${cs === cur ? " selected" : ""}>${cs}</option>`;
+      }).join("");
+      if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+    } else {
+      wrap.style.display = "none";
+      sel.innerHTML = "";
+      setSupervisorSwitchLoading(false);
+    }
+  } finally {
+    _suppressSupSwitchReleaseTimer = setTimeout(() => {
+      _suppressSupSwitchUiEvent = false;
+      _suppressSupSwitchReleaseTimer = null;
+    }, 150);
   }
 }
 
@@ -426,10 +570,27 @@ function _bindSupervisorSwitchOnce() {
   const sel = document.getElementById("supervisorSwitchSelect");
   if (!sel || sel._supSwitchBound) return;
   sel._supSwitchBound = true;
+  // บาง browser อาจยิง change หลังเรา set innerHTML/value เองได้
+  // ให้ยอมรับการสลับเฉพาะกรณีมี user interaction จริงๆ ภายในช่วงสั้น ๆ
+  const markUserIntent = () => {
+    try { sel.dataset.userIntentTs = String(Date.now()); } catch (_) { /* ignore */ }
+  };
+  sel.addEventListener("pointerdown", markUserIntent);
+  sel.addEventListener("keydown", (e) => {
+    // keyboard navigation ใน select ก็ถือว่า user intent
+    if (e && (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter" || e.key === " ")) {
+      markUserIntent();
+    }
+  });
   sel.addEventListener("change", async () => {
+    if (_suppressSupSwitchUiEvent) return;
     if (sel.disabled) return;
-    const v = sel.value;
-    if (!v || v === S.supId) return;
+    const ts = Number(sel.dataset.userIntentTs || "0");
+    if (!ts || (Date.now() - ts) > 3000) return; // ignore phantom/programmatic change
+    const v = String(sel.value ?? "").trim();
+    const cur = String(S.supId ?? "").trim();
+    if (!v || v === cur) return;
+    try { sel.dataset.userIntentTs = ""; } catch (_) { /* ignore */ }
     await switchSupervisorContext(v);
   });
 }
@@ -446,7 +607,9 @@ function updateDashboardSupBadge() {
 }
 
 async function switchSupervisorContext(newSupId) {
-  if (!newSupId || newSupId === S.supId) return;
+  const ns = String(newSupId ?? "").trim();
+  const cur = String(S.supId ?? "").trim();
+  if (!ns || ns === cur) return;
   if (S._hasUnsaved) {
     const ok = window.confirm("มีการแก้ไขที่ยังไม่ได้บันทึก/Export — ต้องการสลับ Supervisor ต่อหรือไม่?");
     if (!ok) {
@@ -457,8 +620,9 @@ async function switchSupervisorContext(newSupId) {
 
   const prevId = S.supId;
   setSupervisorSwitchLoading(true, "กำลังโหลดข้อมูลทีมจาก Fabric…");
+  pushGlobalBusy("กำลังโหลดข้อมูลทีมจาก Fabric…");
   try {
-    S.supId = newSupId;
+    S.supId = ns;
     S.allocations = [];
     S._hasUnsaved = false;
     _undoStack = [];
@@ -494,6 +658,7 @@ async function switchSupervisorContext(newSupId) {
     updateDashboardSupBadge();
     toast(String(err?.message || err), "red");
   } finally {
+    popGlobalBusy();
     setSupervisorSwitchLoading(false);
   }
 }
@@ -585,7 +750,7 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
 document.addEventListener("DOMContentLoaded", async () => {
   await initEntraAuth();
 
-  // ผูก event แบบ JS ตรงๆ (กัน inline onclick หา function ไม่เจอ / โดน error ทำงานค้าง)
+  // ปุ่ม login อย่าใส่ onclick ใน HTML ด้วย — ถ้ามีซ้ำจะเรียก handleLogin สองครั้งต่อคลิก
   const loginBtn = document.getElementById("loginBtn");
   if (loginBtn) {
     loginBtn.addEventListener("click", (e) => {
@@ -602,16 +767,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.body.classList.add("is-login");
   _enableLoginScrollLock();
   populateYearSelect();
-  restoreLoginMemory();
   ensureLoginPeriodDefault();
   updateDatePreview();
-  document.getElementById("monthSelect").addEventListener("change", updateDatePreview);
-  document.getElementById("yearSelect").addEventListener("change", updateDatePreview);
+  const onMonthYearChange = () => updateDatePreview();
+  document.getElementById("monthSelect").addEventListener("change", onMonthYearChange);
+  document.getElementById("yearSelect").addEventListener("change", onMonthYearChange);
   if (entraMsalReady()) loadManagers();
-  document.getElementById("supSelect")?.addEventListener("change", persistLoginMemory);
-  document.getElementById("supSelect")?.addEventListener("blur", persistLoginMemory);
-  document.getElementById("monthSelect")?.addEventListener("change", persistLoginMemory);
-  document.getElementById("yearSelect")?.addEventListener("change", persistLoginMemory);
 
   document.querySelectorAll('[name="strategy"]').forEach(r => {
     r.addEventListener("change", () => {
@@ -650,6 +811,10 @@ function _enableLoginScrollLock() {
   };
   const preventKeys = (e) => {
     if (!document.body.classList.contains("is-login")) return;
+    const lv = document.getElementById("loginView");
+    if (lv && e.target && lv.contains(e.target) && String(e.target.tagName).toUpperCase() === "SELECT") {
+      return;
+    }
     const k = e.key;
     const blocked = ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "];
     if (blocked.includes(k)) e.preventDefault();
@@ -665,96 +830,6 @@ function _disableLoginScrollLock() {
   // คืนค่า scroll ให้ html element เมื่อเข้า dashboard
   document.documentElement.style.overflow = '';
   document.documentElement.style.height = '';
-}
-
-/* ══════════════════════════════════════════════
-   LOGIN MEMORY (Supervisor + Period)
-══════════════════════════════════════════════ */
-const _LOGIN_MEM_KEY = "LoginMem_v1";
-
-function persistLoginMemory() {
-  const rawSup = document.getElementById("supSelect")?.value?.trim() || "";
-  const m = parseInt(document.getElementById("monthSelect")?.value || "", 10);
-  const y = parseInt(document.getElementById("yearSelect")?.value || "", 10);
-  const hasPeriod = !Number.isNaN(m) && !Number.isNaN(y) && m && y;
-  if (!rawSup && !hasPeriod) return;
-
-  let mem = {};
-  try { mem = JSON.parse(localStorage.getItem(_LOGIN_MEM_KEY) || "{}"); } catch { mem = {}; }
-  const canon = canonicalSupervisorLoginValue(rawSup);
-
-  mem.last = mem.last && typeof mem.last === "object" ? { ...mem.last } : {};
-  if (hasPeriod) {
-    mem.last.m = m;
-    mem.last.y = y;
-  }
-  mem.last.ts = Date.now();
-  if (canon) mem.last.sup = canon;
-
-  mem.recent = Array.isArray(mem.recent) ? mem.recent : [];
-  if (canon) {
-    mem.recent = [canon, ...mem.recent.filter(x => x !== canon)].slice(0, 6);
-  }
-  mem.recent = mem.recent.filter(isRecentSupDisplayable).slice(0, 6);
-
-  localStorage.setItem(_LOGIN_MEM_KEY, JSON.stringify(mem));
-  renderRecentSupChips();
-}
-
-function restoreLoginMemory() {
-  let mem;
-  try { mem = JSON.parse(localStorage.getItem(_LOGIN_MEM_KEY) || "null"); } catch { mem = null; }
-  if (mem?.last) {
-    const { sup, m, y } = mem.last;
-    if (sup) {
-      const inp = document.getElementById("supSelect");
-      if (inp && !inp.value && isRecentSupDisplayable(sup)) inp.value = sup;
-    }
-    if (m) {
-      const ms = document.getElementById("monthSelect");
-      if (ms) ms.value = String(m);
-    }
-    if (y) {
-      const ys = document.getElementById("yearSelect");
-      if (ys) ys.value = String(y);
-    }
-    updateDatePreview();
-  }
-  renderRecentSupChips();
-}
-
-function renderRecentSupChips() {
-  const wrap = document.getElementById("recentSupWrap");
-  if (!wrap) return;
-  let mem;
-  try { mem = JSON.parse(localStorage.getItem(_LOGIN_MEM_KEY) || "null"); } catch { mem = null; }
-  const recent = Array.isArray(mem?.recent) ? mem.recent.filter(Boolean).filter(isRecentSupDisplayable) : [];
-  if (recent.length === 0) { wrap.style.display = "none"; wrap.replaceChildren(); return; }
-  wrap.style.display = "flex";
-  wrap.replaceChildren();
-  for (const s of recent) {
-    const chip = document.createElement("button");
-    chip.type = "button";
-    chip.className = "chip";
-    chip.textContent = `🕘 ${s}`;
-    chip.addEventListener("click", () => setSupFromChip(s));
-    wrap.appendChild(chip);
-  }
-}
-
-function setSupFromChip(sup) {
-  const inp = document.getElementById("supSelect");
-  if (!inp) return;
-  if (!isRecentSupDisplayable(sup)) return;
-  inp.value = sup;
-  persistLoginMemory();
-}
-
-function clearLoginMemory() {
-  localStorage.removeItem(_LOGIN_MEM_KEY);
-  const wrap = document.getElementById("recentSupWrap");
-  if (wrap) { wrap.style.display = "none"; wrap.innerHTML = ""; }
-  toast("ล้างค่าที่จำไว้เรียบร้อย", "green");
 }
 
 async function _pollServerStatus() {
@@ -801,11 +876,27 @@ function populateYearSelect() {
   const curYear = new Date().getFullYear();
   for (let y = curYear - 1; y <= curYear + 1; y++) {
     const opt = document.createElement("option");
-    opt.value = y;
+    opt.value = String(y);
     opt.textContent = (y + 543) + " (" + y + ")";
     if (y === curYear) opt.selected = true;
     sel.appendChild(opt);
   }
+}
+
+/** เพิ่มปี ค.ศ. ใน #yearSelect ถ้ายังไม่มี — assignment .value จะพังเงียบๆ ถ้าไม่มี option ตรงกัน */
+function ensureYearSelectHasOption(ceYear) {
+  const n = Number(ceYear);
+  if (!Number.isFinite(n)) return;
+  const sel = document.getElementById("yearSelect");
+  if (!sel) return;
+  const key = String(n);
+  if ([...sel.options].some(o => o.value === key)) return;
+  const opt = document.createElement("option");
+  opt.value = key;
+  opt.textContent = n + 543 + " (" + n + ")";
+  sel.appendChild(opt);
+  const sorted = [...sel.options].sort((a, b) => Number(a.value) - Number(b.value));
+  sorted.forEach(o => sel.appendChild(o));
 }
 
 /** งวดเป้าเริ่มต้น = เดือนถัดจากวันนี้ (ใช้เกลี่ยเป้าเดือนหน้า) — ธ.ค. → ม.ค. ปีถัดไป */
@@ -821,16 +912,18 @@ function getNextMonthPeriod() {
   return { month: m, year: y };
 }
 
-/** ถ้ายังไม่มีงวดที่จำจาก localStorage — ตั้งเป็นเดือนถัดไปอัตโนมัติ */
+/** งวดเริ่มต้นบนหน้า login — เดือนถัดจากวันนี้ (ไม่จำค่าใน localStorage) */
 function ensureLoginPeriodDefault() {
-  let mem = null;
-  try { mem = JSON.parse(localStorage.getItem(_LOGIN_MEM_KEY) || "null"); } catch { mem = null; }
-  const last = mem?.last;
-  if (last && last.m && last.y) return;
+  try {
+    localStorage.removeItem("LoginMem_v1");
+  } catch {
+    /* ignore */
+  }
   const { month, year } = getNextMonthPeriod();
   const ms = document.getElementById("monthSelect");
   const ys = document.getElementById("yearSelect");
   if (ms) ms.value = String(month);
+  ensureYearSelectHasOption(year);
   if (ys) ys.value = String(year);
 }
 
@@ -852,6 +945,47 @@ function getPrevThreeMonths(m, y) {
     result.push({ m: cm, y: cy });
   }
   return result;
+}
+
+/**
+ * ช่องเลือกรหัส — ใช้เฉพาะ `<select>`: 1 รายการ = ล็อกให้เลย, หลายรายการ = ต้องเลือกจากรายการ
+ */
+function populateLoginSupervisorSelect(list, emptyMessage) {
+  const sel = document.getElementById("supSelect");
+  if (!sel || String(sel.tagName).toUpperCase() !== "SELECT") return;
+  sel.innerHTML = "";
+  const labs = (Array.isArray(list) ? list : []).map(x => String(x).trim()).filter(Boolean);
+  if (labs.length === 0) {
+    const o = document.createElement("option");
+    o.value = "";
+    o.textContent = emptyMessage || "ไม่พบรายการที่ใช้ได้ — กดรีเฟรชหรือตรวจสิทธิ์";
+    sel.appendChild(o);
+    sel.disabled = true;
+    sel.dataset.loginPickLocked = "1";
+    return;
+  }
+  if (labs.length === 1) {
+    const o = document.createElement("option");
+    o.value = labs[0];
+    o.textContent = labs[0];
+    sel.appendChild(o);
+    sel.selectedIndex = 0;
+    sel.disabled = true;
+    sel.dataset.loginPickLocked = "1";
+    return;
+  }
+  const ph = document.createElement("option");
+  ph.value = "";
+  ph.textContent = "— เลือก Supervisor / Manager —";
+  sel.appendChild(ph);
+  labs.forEach(lab => {
+    const o = document.createElement("option");
+    o.value = lab;
+    o.textContent = lab;
+    sel.appendChild(o);
+  });
+  sel.disabled = false;
+  sel.dataset.loginPickLocked = "0";
 }
 
 const _LOGIN_BTN_DEFAULT = "เข้าสู่ระบบ Dashboard";
@@ -879,7 +1013,10 @@ function setLoginFormManagersLoading(isBusy) {
       btn.textContent = btn.dataset._savedLabel || _LOGIN_BTN_DEFAULT;
     }
   }
-  [sup, ms, ys].forEach(el => {
+  if (sup) {
+    sup.disabled = isBusy ? true : sup.dataset.loginPickLocked === "1";
+  }
+  [ms, ys].forEach(el => {
     if (el) el.disabled = !!isBusy;
   });
   if (retryBtn) retryBtn.disabled = !!isBusy;
@@ -904,17 +1041,17 @@ async function loadManagers() {
         const j = await res.json();
         if (j.detail) d = j.detail;
       } catch (_) { /* ignore */ }
-      supInput.placeholder = d;
+      populateLoginSupervisorSelect([], d);
       showLoginError(`❌ ${d}`);
       return;
     }
     if (res.status === 403) {
-      let d = "บัญชีไม่อยู่ในกลุ่มที่อนุญาต";
+      let d = "บัญชีนี้ไม่มีสิทธิ์ตาม ACC_USER_CONTROL หรือรหัส USERPL ไม่พบในระบบ";
       try {
         const j = await res.json();
         if (j.detail) d = j.detail;
       } catch (_) { /* ignore */ }
-      supInput.placeholder = d;
+      populateLoginSupervisorSelect([], d);
       showLoginError(`❌ ${d}`);
       return;
     }
@@ -922,37 +1059,40 @@ async function loadManagers() {
       const data = await res.json();
       const rows = Array.isArray(data.rows) ? data.rows : [];
       let list = [];
-      if (rows.length > 0) {
+      const filteredByAcc =
+        data.filtered_by_userpl_only === true || data.filtered_by_acc === true;
+      const backendPicksFiltered =
+        filteredByAcc &&
+        Array.isArray(data.managers) &&
+        data.managers.length > 0 &&
+        data.by_manager != null &&
+        typeof data.by_manager === "object";
+
+      if (rows.length > 0 && backendPicksFiltered) {
+        list = buildLoginPickFromFilteredResponse(rows, data.managers, data.by_manager);
+        S.managers = list;
+      } else if (rows.length > 0) {
         list = buildLoginPickFromRows(rows);
         S.managers = list;
-      } else if (Array.isArray(data.managers)) {
-        S.managers = data.managers;
-        S.loginRole = null;
-        S.managerCode = null;
-        S.supervisorChoices = [];
-        S.byManager = {};
-        S._loginPickMap = null;
-        S._supervisorSet = new Set(data.managers.map(x => String(x).toUpperCase()));
-        S._managerSet = new Set();
-        list = data.managers;
+      } else if (Array.isArray(data.managers) && data.managers.length > 0) {
+        list = buildLoginPickFromFilteredResponse([], data.managers, data.by_manager || {});
+        S.managers = list;
       }
-      if (list.length > 0 || (Array.isArray(data.managers) && data.managers.length > 0)) {
-        supInput.placeholder =
-          list.length > 0
-            ? "พิมพ์ค้นหา Supervisor / Manager หรือคลิกเลือก..."
-            : "ไม่พบรายการ — พิมพ์รหัส SuperCode เอง";
-        setupAutocomplete(supInput, list.length > 0 ? list : S.managers);
-        sanitizeLoginMemoryAgainstManagers();
-        if (retryBtn) retryBtn.style.display = list.length > 0 ? "none" : "inline-flex";
+
+      list = Array.isArray(S.managers) && S.managers.length ? S.managers : [];
+
+      if (list.length > 0) {
+        populateLoginSupervisorSelect(list);
+        if (retryBtn) retryBtn.style.display = "none";
         return;
       }
     }
-    supInput.placeholder = "ดึงรายการ Supervisor ไม่สำเร็จ (พิมพ์รหัสเองได้เลย)";
+    populateLoginSupervisorSelect([], "ดึงรายการ Supervisor / Manager ไม่สำเร็จ — ลองกดรีเฟรช");
     if (retryBtn) retryBtn.style.display = "inline-flex";
   } catch (err) {
     console.error("loadManagers error:", err);
     showLoginError(`❌ ${err?.message || String(err)}`);
-    supInput.placeholder = "ดึงรายการ Supervisor ไม่สำเร็จ (พิมพ์รหัสเองได้เลย)";
+    populateLoginSupervisorSelect([], "ไม่สามารถโหลดรายการ — ตรวจ server หรือกดรีเฟรช");
     if (retryBtn) retryBtn.style.display = "inline-flex";
   } finally {
     _managersListLoading = false;
@@ -961,199 +1101,115 @@ async function loadManagers() {
   }
 }
 
-function setupAutocomplete(input, list) {
-  const dropdown = document.getElementById("customDropdown");
-
-  // ลบ listener เก่า (กันโหลด /managers ซ้ำแล้ว listener ซ้อน)
-  if (input._supAutocomplete) {
-    const prev = input._supAutocomplete;
-    input.removeEventListener("focus", prev.onFocus);
-    input.removeEventListener("mousedown", prev.onMouseDown);
-    input.removeEventListener("input", prev.onInput);
-    input.removeEventListener("keydown", prev.onKeyDown);
-    input._supAutocomplete = null;
-  }
-
-  function renderList(filterText = "") {
-    const filtered = list.filter(item => item.toLowerCase().includes(filterText.toLowerCase()));
-    dropdown.replaceChildren();
-    if (filtered.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "custom-dropdown-item";
-      empty.style.cssText = "color:var(--text-3);cursor:default;";
-      empty.textContent = "ไม่พบรหัสที่ค้นหา";
-      dropdown.appendChild(empty);
-    } else {
-      filtered.forEach(item => {
-        const div = document.createElement("div");
-        div.className = "custom-dropdown-item";
-        const icon = String(item).includes("(Manager)") ? "👔" : "👨‍💼";
-        div.textContent = `${icon} ${item}`;
-        div.addEventListener("click", () => selectManager(item));
-        dropdown.appendChild(div);
-      });
-    }
-  }
-
-  // กันเบราว์เซอร์แสดงประวัติพิมพ์เอง (เช่น "33", "330") แต่ยังให้พิมพ์ค้นหาได้
-  function unlockTyping() {
-    if (input.readOnly) input.readOnly = false;
-  }
-
-  function onMouseDown() {
-    unlockTyping();
-  }
-
-  function onFocus() {
-    // readonly ชั่วขณะตอนโฟกัส ช่วยตัด autofill dropdown ของบางเบราว์เซอร์
-    input.readOnly = true;
-    window.setTimeout(() => {
-      unlockTyping();
-      try {
-        input.setSelectionRange(input.value.length, input.value.length);
-      } catch {
-        /* ignore */
-      }
-    }, 0);
-
-    renderList(input.value);
-    dropdown.style.display = "block";
-  }
-
-  function onInput() {
-    renderList(input.value);
-    dropdown.style.display = "block";
-  }
-
-  function onKeyDown(e) {
-    // พอกดพิมพ์/ลบ ให้แน่ใจว่าไม่ติด readonly
-    if (e && (e.key?.length === 1 || e.key === "Backspace" || e.key === "Delete")) unlockTyping();
-  }
-
-  input.addEventListener("mousedown", onMouseDown);
-  input.addEventListener("focus", onFocus);
-  input.addEventListener("input", onInput);
-  input.addEventListener("keydown", onKeyDown);
-  input._supAutocomplete = { onFocus, onMouseDown, onInput, onKeyDown };
-
-  // ลงทะเบียน global click listener ครั้งเดียวผ่าน flag — ป้องกัน memory leak
-  if (!window._autocompleteGlobalBound) {
-    window._autocompleteGlobalBound = true;
-    document.addEventListener("click", (e) => {
-      const inp = document.getElementById("supSelect");
-      const dd  = document.getElementById("customDropdown");
-      if (inp && dd && e.target !== inp && e.target !== dd && !dd.contains(e.target)) {
-        dd.style.display = "none";
-      }
-    });
-  }
-}
-
-window.selectManager = function (val) {
-  const input = document.getElementById("supSelect");
-  input.value = val;
-  document.getElementById("customDropdown").style.display = "none";
-  persistLoginMemory();
-}
-
 /* ══════════════════════════════════════════════
    LOGIN / LOGOUT
 ══════════════════════════════════════════════ */
+/** กันคลิกซ้อน — เคยมี onclick + addEventListener เรียก handleLogin ซ้ำ → modal TGA เด้งสองครั้ง */
+let _handleLoginInFlight = false;
+
 async function handleLogin() {
-  const loginBtn = document.getElementById("loginBtn");
-  const errorDiv = document.getElementById("loginError");
-  errorDiv.style.display = "none";
+  if (_handleLoginInFlight) return;
+  _handleLoginInFlight = true;
+  let _didBusy = false;
+  try {
+    const loginBtn = document.getElementById("loginBtn");
+    const errorDiv = document.getElementById("loginError");
+    errorDiv.style.display = "none";
 
-  if (AUTH_CONFIG.authRequired && !entraMsalReady()) {
-    showLoginError("❌ กรุณาล็อกอินด้วย Microsoft ก่อน (ปุ่มด้านบน)");
-    return;
-  }
-
-  if (_managersListLoading) {
-    showLoginError("⏳ กำลังโหลดรายชื่อ Supervisor / Manager จากระบบ — กรุณารอสักครู่แล้วค่อยกดเข้าสู่ระบบ");
-    return;
-  }
-
-  const rawSupId = document.getElementById("supSelect").value.trim();
-  if (!rawSupId) {
-    showLoginError("❌ กรุณาระบุ Supervisor หรือ Manager ก่อนเข้าสู่ระบบ");
-    return;
-  }
-
-  const tm = parseInt(document.getElementById("monthSelect").value, 10);
-  const ty = parseInt(document.getElementById("yearSelect").value, 10);
-  if (!ty || Number.isNaN(tm) || Number.isNaN(ty)) {
-    showLoginError("❌ กรุณาเลือกเดือนและปี (ค.ศ.) ให้ครบ");
-    return;
-  }
-
-  let pick = resolveLoginPick(rawSupId);
-  if (!pick) {
-    const guess = rawSupId.trim().toUpperCase();
-    if (guess) pick = { kind: "supervisor", code: guess };
-  }
-
-  if (pick.kind === "manager") {
-    S.loginRole = "manager";
-    S.managerCode = pick.code;
-    S.supervisorChoices = (S.byManager && S.byManager[pick.code]) ? [...S.byManager[pick.code]] : [];
-    if (S.supervisorChoices.length === 0) {
-      showLoginError(`❌ ไม่พบ Supervisor ภายใต้ Manager "${pick.code}" ใน trf_select_supervisor`);
+    if (AUTH_CONFIG.authRequired && !entraMsalReady()) {
+      showLoginError("❌ กรุณาล็อกอินด้วย Microsoft ก่อน (ปุ่มด้านบน)");
       return;
     }
-    S.supId = S.supervisorChoices[0];
-  } else {
-    S.loginRole = "supervisor";
-    S.managerCode = null;
-    S.supervisorChoices = [];
-    S.supId = pick.code;
-  }
 
-  loginBtn.textContent = "กำลังเชื่อมต่อ Fabric...";
-  loginBtn.disabled = true;
+    if (_managersListLoading) {
+      showLoginError("⏳ กำลังโหลดรายชื่อ Supervisor / Manager จากระบบ — กรุณารอสักครู่แล้วค่อยกดเข้าสู่ระบบ");
+      return;
+    }
 
-  S.targetMonth = tm;
-  S.targetYear = ty;
-  persistLoginMemory();
+    const rawSupId = document.getElementById("supSelect").value.trim();
+    if (!rawSupId) {
+      showLoginError("❌ กรุณาเลือก Supervisor หรือ Manager จากรายการ");
+      return;
+    }
 
-  const ok = await loadData(S.supId, S.targetMonth, S.targetYear);
+    const tm = parseInt(document.getElementById("monthSelect").value, 10);
+    const ty = parseInt(document.getElementById("yearSelect").value, 10);
+    if (!ty || Number.isNaN(tm) || Number.isNaN(ty)) {
+      showLoginError("❌ กรุณาเลือกเดือนและปี (ค.ศ.) ให้ครบ");
+      return;
+    }
 
-  if (!ok) {
+    const pick = resolveLoginPick(rawSupId);
+    if (!pick) {
+      showLoginError("❌ กรุณาเลือกรหัสจากรายการเท่านั้น — ไม่สามารถพิมพ์รหัสเอง");
+      return;
+    }
+    if (pick.kind === "manager") {
+      S.loginRole = "manager";
+      S.managerCode = pick.code;
+      S.supervisorChoices = (S.byManager && S.byManager[pick.code]) ? [...S.byManager[pick.code]] : [];
+      if (S.supervisorChoices.length === 0) {
+        showLoginError(`❌ ไม่พบ Supervisor ภายใต้ Manager "${pick.code}" ใน trf_select_supervisor`);
+        return;
+      }
+      S.supId = S.supervisorChoices[0];
+    } else {
+      S.loginRole = "supervisor";
+      S.managerCode = null;
+      S.supervisorChoices = [];
+      S.supId = pick.code;
+    }
+
+    loginBtn.textContent = "กำลังเชื่อมต่อ Fabric...";
+    loginBtn.disabled = true;
+    pushGlobalBusy("กำลังเชื่อมต่อ Fabric...");
+    _didBusy = true;
+
+    S.targetMonth = tm;
+    S.targetYear = ty;
+
+    const ok = await loadData(S.supId, S.targetMonth, S.targetYear);
+
+    if (!ok) {
+      loginBtn.textContent = "เข้าสู่ระบบ Dashboard";
+      loginBtn.disabled = false;
+      return;
+    }
+
+    _disableLoginScrollLock();
+    document.getElementById("loginView").style.display = "none";
+    document.getElementById("dashboardView").style.display = "block";
+    document.getElementById("topbarTotalContainer").style.display = "block";
+    document.getElementById("topbarPeriodContainer").style.display = "block";
+    document.getElementById("logoutBtn").style.display = "block";
+
+    const periodStr = MONTH_FULL_TH[S.targetMonth] + " " + (S.targetYear + 543);
+    document.getElementById("topbarPeriodText").textContent = periodStr;
+    updateDashboardSupBadge();
+    document.getElementById("pagePeriodDesc").textContent =
+      `กระจายเป้า ${periodStr} · ประวัติ 3 เดือน + LY ดึงจาก Fabric`;
+
+    try {
+      renderStep1();
+      renderYellowTable();
+      updateValidation();
+      checkAndLoadDraft();
+      checkSnapshotChanges();
+      _showSkuWarnings();
+      _setUndoEnabled();
+      updateSupervisorSwitcherUI();
+      _bindSupervisorSwitchOnce();
+    } catch (err) {
+      console.error("RENDER ERROR:", err);
+      alert("Render error: " + err.message);
+    }
+
     loginBtn.textContent = "เข้าสู่ระบบ Dashboard";
     loginBtn.disabled = false;
-    return;
+  } finally {
+    if (_didBusy) popGlobalBusy();
+    _handleLoginInFlight = false;
   }
-
-  _disableLoginScrollLock();
-  document.getElementById("loginView").style.display = "none";
-  document.getElementById("dashboardView").style.display = "block";
-  document.getElementById("topbarTotalContainer").style.display = "block";
-  document.getElementById("topbarPeriodContainer").style.display = "block";
-  document.getElementById("logoutBtn").style.display = "block";
-
-  const periodStr = MONTH_FULL_TH[S.targetMonth] + " " + (S.targetYear + 543);
-  document.getElementById("topbarPeriodText").textContent = periodStr;
-  updateDashboardSupBadge();
-  document.getElementById("pagePeriodDesc").textContent =
-    `กระจายเป้า ${periodStr} · ประวัติ 3 เดือน + LY ดึงจาก Fabric`;
-
-  try {
-    renderStep1();
-    renderYellowTable();
-    updateValidation();
-    checkAndLoadDraft();
-    checkSnapshotChanges();
-    _showSkuWarnings();
-    _setUndoEnabled();
-    updateSupervisorSwitcherUI();
-    _bindSupervisorSwitchOnce();
-  } catch (err) {
-    console.error("RENDER ERROR:", err);
-    alert("Render error: " + err.message);
-  }
-
-  loginBtn.textContent = "เข้าสู่ระบบ Dashboard";
-  loginBtn.disabled = false;
 }
 
 function handleLogout() {
@@ -1176,6 +1232,7 @@ function _doLogout() {
     _supervisorSet: S._supervisorSet,
     _managerSet: S._managerSet,
   };
+  _draftPromptSuppressedForKeys.clear();
   S._hasUnsaved = false;
   S = {
     employees: [], skus: [], totalTarget: 0, yellow: {}, allocations: [],
@@ -1209,6 +1266,16 @@ function _doLogout() {
   document.getElementById("progList").style.display = "none";
   _undoStack = [];
   _setUndoEnabled();
+
+  if (Array.isArray(S.managers) && S.managers.length > 0) {
+    populateLoginSupervisorSelect(S.managers);
+  } else if (entraMsalReady()) {
+    loadManagers(true);
+  }
+  ensureLoginPeriodDefault();
+  try {
+    updateDatePreview();
+  } catch (_) {}
 }
 
 function _showLogoutModal() {
@@ -1216,8 +1283,12 @@ function _showLogoutModal() {
   if (existing) existing.remove();
 
   // เช็คว่า draft ถูก save แล้วหรือยัง
-  const draftKey = `Draft_${S.supId}_${S.targetMonth}_${S.targetYear}`;
-  const hasDraft = !!localStorage.getItem(draftKey);
+  const draftKey = currentDraftStorageKey();
+  const legacyKey = `Draft_${S.supId}_${S.targetMonth}_${S.targetYear}`;
+  const hasDraft = !!(
+    localStorage.getItem(draftKey) ||
+    (legacyKey !== draftKey && localStorage.getItem(legacyKey))
+  );
   const draftNote = hasDraft
     ? `<div style="margin-top:8px;padding:8px 10px;background:var(--green-bg);border-radius:6px;border:1px solid var(--green-brd);font-size:12px;color:var(--green);">✓ ข้อมูลถูกบันทึกไว้ในเครื่องแล้ว — กลับมา Login ได้เลย</div>`
     : `<div style="margin-top:8px;padding:8px 10px;background:var(--red-bg);border-radius:6px;border:1px solid var(--red-brd);font-size:12px;color:var(--red);">⚠️ ยังไม่มี draft ที่บันทึกไว้ — แนะนำให้กด Export Excel ก่อนออก</div>`;
@@ -1284,10 +1355,16 @@ async function loadData(supId, targetMonth, targetYear) {
             const ms = document.getElementById("monthSelect");
             const ys = document.getElementById("yearSelect");
             if (sm && sy) {
+              ensureYearSelectHasOption(sy);
               if (ms) ms.value = String(sm);
               if (ys) ys.value = String(sy);
-              try { updateDatePreview(); } catch (_) {}
-              persistLoginMemory();
+              try {
+                updateDatePreview();
+              } catch (_) {}
+              /** มี option ครบแล้ว — เข้าให้อัตโนมัติเพื่อไม่ต้องกดเข้าระบบซ้ำ (เคสเดียวกันเคยยิง loadData ด้วยงวดเก่าอยู่) */
+              setTimeout(() => {
+                handleLogin().catch(e => console.error("handleLogin after TGA modal:", e));
+              }, 0);
             }
           },
           secondaryLabel: "รับทราบ",
@@ -1825,7 +1902,9 @@ async function runOptimization() {
     .filter(a => a.is_edited)
     .map(a => ({ emp_id: a.emp_id, sku: a.sku, locked_boxes: a.allocated_boxes }));
 
+  pushGlobalBusy("กำลังคำนวณ/Optimize...");
   const allocs = await _doOptimize(lockedEdits);
+  popGlobalBusy();
   if (!allocs) return;
 
   S.allocations = allocs;
@@ -2476,6 +2555,7 @@ function closeLakehouseModalOnBg(e) { if (e.target === qs("#lakehouseModal")) cl
 async function doLakehouseUpload() {
   const btn = document.getElementById("lakehouseUploadBtn");
   if (btn) { btn.textContent = "กำลังอัปโหลด..."; btn.disabled = true; }
+  pushGlobalBusy("กำลังอัปโหลดเข้า Lakehouse...");
   try {
     const payload = {
       sup_id: S.supId,
@@ -2507,6 +2587,7 @@ async function doLakehouseUpload() {
   } catch (err) {
     toast("❌ อัปโหลดไม่สำเร็จ: " + (err?.message || String(err)), "red");
   } finally {
+    popGlobalBusy();
     if (btn) { btn.textContent = "อัปโหลด"; btn.disabled = false; }
   }
 }
@@ -2518,6 +2599,7 @@ async function doExport() {
   const btn = qs("#dlBtn");
   if (btn) { btn.textContent = "กำลังสร้าง..."; btn.disabled = true; }
 
+  pushGlobalBusy("กำลังสร้างไฟล์ Excel...");
   try {
     const payload = {
       allocations: S.allocations.map(a => ({
@@ -2564,6 +2646,7 @@ async function doExport() {
   } catch (err) {
     toast("❌ Export ไม่สำเร็จ: " + err.message);
   } finally {
+    popGlobalBusy();
     if (btn) { btn.textContent = "↓ Export Excel"; btn.disabled = false; }
   }
 }
@@ -2609,9 +2692,35 @@ function toast(msg, type = "red") {
 /* ══════════════════════════════════════════════
    SAVE & LOAD DRAFT (Local Storage)
 ══════════════════════════════════════════════ */
+/** draft key เดียวกันทุกที่กันเลขเป็น string ให้ได้คีย์คนละแบบ (Set ซ้ำกับ modal ไม่ match) */
+function currentDraftStorageKey() {
+  return `Draft_${String(S.supId).trim()}_${Number(S.targetMonth)}_${Number(S.targetYear)}`;
+}
+
+function _removeDraftKeysBothLocals() {
+  const k = currentDraftStorageKey();
+  const leg = `Draft_${S.supId}_${S.targetMonth}_${S.targetYear}`;
+  try {
+    localStorage.removeItem(k);
+    if (leg !== k) localStorage.removeItem(leg);
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+/** กันโชว์ modal แบบร่างซ้ำในรอบโหลดหน้าเดียว (รีเฟรช = เริ่มชุดใหม่ → ถามใหม่; logout เคลียร์ชุดนี้) */
+const _draftPromptSuppressedForKeys = new Set();
+
+function _markDraftPromptSuppressed(draftKey) {
+  _draftPromptSuppressedForKeys.add(draftKey);
+}
+
+/** ป้องกัน checkAndLoadDraft เรียกพร้อมกันเกินหนึ่งครั้ง (แข่งสร้าง #draftModal) */
+let _draftPromptOpening = false;
+
 function saveDraft(silent = false) {
   if (S.allocations.length === 0) return;
-  const draftKey = `Draft_${S.supId}_${S.targetMonth}_${S.targetYear}`;
+  const draftKey = currentDraftStorageKey();
   const draftData = { yellow: S.yellow, yellowLocked: S.yellowLocked, allocations: S.allocations };
   try {
     localStorage.setItem(draftKey, JSON.stringify(draftData));
@@ -2628,29 +2737,56 @@ function saveDraft(silent = false) {
 }
 
 function checkAndLoadDraft() {
-  const draftKey = `Draft_${S.supId}_${S.targetMonth}_${S.targetYear}`;
-  const savedStr = localStorage.getItem(draftKey);
+  const draftKey = currentDraftStorageKey();
+  const legacyKey = `Draft_${S.supId}_${S.targetMonth}_${S.targetYear}`;
+  let savedStr = localStorage.getItem(draftKey);
+  let fromLegacy = false;
+  if (!savedStr && legacyKey !== draftKey) {
+    savedStr = localStorage.getItem(legacyKey);
+    fromLegacy = !!savedStr;
+  }
   if (!savedStr) return;
+  if (fromLegacy) {
+    try {
+      localStorage.setItem(draftKey, savedStr);
+      localStorage.removeItem(legacyKey);
+    } catch (_) {
+      /* ignore */
+    }
+  }
 
-  // กัน modal ซ้ำถ้าถูกเรียกซ้อนในรอบเดียวกัน (ไม่ใช้ sessionStorage — ค่านั้นค้างข้าม F5 ทำให้รีเฟรชแล้วไม่โหลดดราฟ)
+  // กันการสร้างซ้อนขณะใน DOM
   if (document.getElementById("draftModal")) return;
 
   // Draft ที่ว่าง/เสียหาย: อย่าเด้ง modal ให้รำคาญ — ลบทิ้งเลย
   let peek;
-  try { peek = JSON.parse(savedStr); } catch { localStorage.removeItem(draftKey); return; }
+  try {
+    peek = JSON.parse(savedStr);
+  } catch {
+    _removeDraftKeysBothLocals();
+    return;
+  }
   const allocs = Array.isArray(peek?.allocations) ? peek.allocations : [];
   const hasAllocations = allocs.some(a => (Number(a?.allocated_boxes) || 0) > 0);
   if (!hasAllocations) {
-    localStorage.removeItem(draftKey);
+    _removeDraftKeysBothLocals();
     return;
   }
 
-  // แสดง custom modal แทน confirm() ที่ block UI thread
-  _showDraftModal(
+  if (_draftPromptSuppressedForKeys.has(draftKey)) return;
+
+  if (_draftPromptOpening) return;
+  _draftPromptOpening = true;
+  try {
+    _showDraftModal(
+    draftKey,
     () => {
       // ผู้ใช้กด "โหลดต่อ"
       let draftData;
-      try { draftData = JSON.parse(savedStr); } catch { localStorage.removeItem(draftKey); return; }
+      try { draftData = JSON.parse(savedStr); } catch {
+        _removeDraftKeysBothLocals();
+        return;
+      }
 
       S.yellow = draftData.yellow || S.yellow;
       S.yellowLocked = draftData.yellowLocked || {};
@@ -2680,15 +2816,24 @@ function checkAndLoadDraft() {
         draftToast += "\n\n" + mergeMsgs.map(m => m.text).join("\n");
       }
       toast(draftToast, mergeMsgs.some(m => m.type === "warn") ? "red" : "green");
+      try {
+        saveDraft(true);
+      } catch (_) {
+        /* ignore */
+      }
     },
     () => {
       // ผู้ใช้กด "เริ่มใหม่"
-      localStorage.removeItem(draftKey);
+      _removeDraftKeysBothLocals();
     }
-  );
+    );
+  } catch (err) {
+    _draftPromptOpening = false;
+    console.error("_showDraftModal:", err);
+  }
 }
 
-function _showDraftModal(onLoad, onDiscard) {
+function _showDraftModal(draftKey, onLoad, onDiscard) {
   const existing = document.getElementById("draftModal");
   if (existing) existing.remove();
 
@@ -2710,18 +2855,37 @@ function _showDraftModal(onLoad, onDiscard) {
     </div>`;
   document.body.appendChild(modal);
 
-  document.getElementById("draftLoadBtn").addEventListener("click", () => {
-    // กัน click ซ้ำ / กันกรณีอยู่ใน <form> แล้ว submit ทำให้ reload
-    document.getElementById("draftLoadBtn").disabled = true;
-    document.getElementById("draftDiscardBtn").disabled = true;
+  document.getElementById("draftLoadBtn").addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const loadBtn = document.getElementById("draftLoadBtn");
+    const disBtn = document.getElementById("draftDiscardBtn");
+    loadBtn.disabled = true;
+    disBtn.disabled = true;
+    _markDraftPromptSuppressed(draftKey);
+    _draftPromptOpening = false;
     modal.remove();
-    onLoad();
+    try {
+      onLoad();
+    } catch (err) {
+      console.error("draft onLoad:", err);
+    }
   });
-  document.getElementById("draftDiscardBtn").addEventListener("click", () => {
-    document.getElementById("draftLoadBtn").disabled = true;
-    document.getElementById("draftDiscardBtn").disabled = true;
+  document.getElementById("draftDiscardBtn").addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const loadBtn = document.getElementById("draftLoadBtn");
+    const disBtn = document.getElementById("draftDiscardBtn");
+    loadBtn.disabled = true;
+    disBtn.disabled = true;
+    _markDraftPromptSuppressed(draftKey);
+    _draftPromptOpening = false;
     modal.remove();
-    onDiscard();
+    try {
+      onDiscard();
+    } catch (err) {
+      console.error("draft onDiscard:", err);
+    }
   });
 }
 /* ══════════════════════════════════════════════

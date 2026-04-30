@@ -26,13 +26,13 @@ allocation_target/
 ├── backend/
 │   ├── main.py             # Uvicorn entrypoint + mount frontend (สั้น)
 │   ├── app_factory.py      # ประกอบ FastAPI app + routers + middleware
-│   ├── deps.py             # Dependencies (เช่น require_entra_member)
+│   ├── deps.py             # Dependencies (ล็อกอิน + verify รหัส sup ตาม ACC)
 │   ├── schemas.py          # Pydantic models ของ request/response
 │   ├── routers/            # แยก endpoints ตามโดเมน (auth/managers/data/optimize/export/health/debug)
 │   ├── services/           # business logic (เช่น load /data/employees, optimize, export)
 │   ├── core/               # helpers shared (paths/constants/cache checks/targets loader)
 │   ├── load_env.py         # โหลด config/.env แล้ว .env ที่ราก (ราก override ได้)
-│   ├── auth_entra.py       # ตรวจโทเคน Microsoft / กลุ่ม Entra
+│   ├── auth_entra.py       # ตรวจโทเคน Microsoft (สิทธิ์รหัสจาก ACC_USER_CONTROL + services/access_control)
 │   ├── OR_engine.py        # กระจายหีบ (L3M / L6M / EVEN / PUSH / LP)
 │   ├── generate_excel.py   # สร้างไฟล์ Excel สรุปผล
 │   └── fabric_dax_connector.py   # Fabric / Power BI ผ่าน DAX REST
@@ -150,15 +150,21 @@ cd <repo-name>
 | `LP_HIST_ANCHOR` | `0.15` | น้ำหนัก anchor ประวัติในกลยุทธ์ **LP** (`backend/OR_engine.py`) |
 | `TGA_TABLE_NAME`, `TGA_COL_*`, `TGA_FILTER_BY_EFFECTIVE` | ดู `fabric_dax_connector.py` | ปรับชื่อตาราง/คอลัมน์เมื่อ semantic model ใช้ schema ต่างจากค่า default |
 
-### ล็อกอิน Microsoft (Entra) — จำกัดเฉพาะสมาชิกกลุ่ม
+### ล็อกอิน Microsoft (Entra) และสิทธิ์ ACC_USER_CONTROL
 
-เมื่อตั้ง **`AZURE_AUTH_CLIENT_ID`** ใน `config/.env` หรือ `.env` ที่ราก ระบบจะบังคับให้ผู้ใช้ล็อกอิน Microsoft ก่อนเรียก API หลัก และยอมรับเฉพาะผู้ที่อยู่ใน **security group** ที่ระบุใน **`AZURE_AUTH_ALLOWED_GROUP_ID`** (ค่าเริ่มต้น: กลุ่ม `AIAgentTesting` — Object ID `06043b2d-153b-4f88-965a-8b0500ca951e`)
+เมื่อตั้ง **`AZURE_AUTH_CLIENT_ID`** ใน `config/.env` หรือ `.env` ที่ราก ระบบจะบังคับให้ผู้ใช้ล็อกอิน Microsoft ก่อนเรียก API  
+สิทธิ์เข้ากระจายเป้ากำหนดจากตาราง **Fabric `ACC_USER_CONTROL`** — เปรียบเทียบ `[EMAIL]` ในแถวกับอีเมลจากบัญชี Microsoft และใช้คอลัมน์ **`USERPL`** ว่าตรงกับ **รหัส Supervisor** (`trf_select_supervisor` / `Dim_Salesman`) หรือกับ **รหัส Manager** (DEPENDON) หรือไม่ — หากเป็น Manager ผู้ใช้จะกระจายได้เฉพาะ Supervisor ภายใต้ Manager เดียวกับที่ใช้อยู่ในระบบ (แถว `EMAIL`/`USERPL` ซ้ำใน `ACC_USER_CONTROL` ถือเป็นรายการเดียวในการตัดสิน)  
+ถ้าระบุ **`ALLOCATION_ADMIN_EMAILS`** ใน `config/.env` — อีเมลเหล่านั้นเข้ามองเลือกรหัส Supervisor/Manager ได้เหมือนไม่ผูก ACC (เหมาะสำหรับผู้ดูแลระบบ; ควบคุมสิทธิ์จากไฟล์ env / pipeline deploy)
+
+**ไม่บังคับ membership ใน security group ใน Entra** แล้ว (ฟิลด์ `AZURE_AUTH_ALLOWED_GROUP_ID` ไม่ใช้ในโค้ดฉบับนี้)
 
 | ตัวแปร | คำอธิบาย |
 |--------|----------|
 | `AZURE_AUTH_CLIENT_ID` | **Application (client) ID** ของ App registration แบบ **Single-page application** — ใส่ Redirect URI เป็น **`http://localhost:8000/`** (Entra **ไม่ยอมรับ** `http://127.0.0.1/...` สำหรับ HTTP) |
 | `AZURE_AUTH_TENANT_ID` | ทางเลือก — ถ้าว่าง ใช้ `FABRIC_TENANT_ID` |
-| `AZURE_AUTH_ALLOWED_GROUP_ID` | Object ID ของกลุ่มใน Entra (ไม่ใช่ชื่อกลุ่ม) |
+| `ACC_USER_CONTROL_CACHE_TTL_SEC` | แคชการดึง `ACC_USER_CONTROL` จาก Fabric (ค่าเริ่มต้นประมาณ 300 วินาที) — เปลี่ยนข้อมูลใน Fabric แล้วอยากเห็นทันที ตั้งเป็น `0` ช่วงทดสอบ |
+| `ALLOCATION_ADMIN_EMAILS` | ทางเลือก — รายการอีเมล (คั่นด้วย comma) ที่เข้ามองได้ทุกรหัสและเรียก API ได้ทุก `sup_id` โดยไม่ต้องอยู่ใน `ACC_USER_CONTROL` |
+| `ALLOCATION_ALLOW_ACC_DEV_JSON` + `ACC_USER_CONTROL_DEV_JSON` | ทางเลือก **dev เท่านั้น** — เปิดเป็น `1` และชี้ path JSON จำลองแทนการดึง ACC จาก Fabric (ดู `config/acc_user_control.dev.example.json`) |
 | `AZURE_AUTH_DISABLED=1` | ปิดการบังคับล็อกอิน (ใช้ตอนพัฒนา) |
 
 **ถ้า Sign-in ขึ้น `AADSTS50011` (redirect URI mismatch):** ใน Entra ให้ใส่ Redirect URI ให้ตรงกับที่แอปส่ง — ค่าเริ่มต้นคือ **`http://localhost:8000/`** (มี `/` ท้าย) ภายใต้ **Single-page application**
@@ -167,9 +173,19 @@ cd <repo-name>
 
 **ห้าม**ใส่แค่ในแท็บ **Web** ถ้าแอปใช้ MSAL แบบ SPA + PKCE — ต้องอยู่ใต้ **Single-page application** ตาม [คู่มือ redirect URI](https://aka.ms/redirectUriMismatchError)
 
-**ใน Entra (แอปเดียวกับ client id ด้านบน):** เพิ่ม **API permissions** แบบ **Delegated** สำหรับ Microsoft Graph — อย่างน้อย **User.Read** และแนะนำ **GroupMember.Read.All** จากนั้น **Grant admin consent** เพื่อให้ backend ตรวจสมาชิกกลุ่มผ่าน `checkMemberGroups` ได้
+**ใน Entra (แอปเดียวกับ client id ด้านบน):** เพิ่ม **API permissions** แบบ **Delegated** สำหรับ Microsoft Graph — อย่างน้อย **User.Read** เพื่อให้ backend อ่านอีเมลจากโทเคน / Graph ได้
 
-ทางเลือก: ตั้ง **Token configuration** → เพิ่ม claim **groups** ใน **ID token** แล้ว backend จะอ่านจากโทเคนโดยไม่ต้องเรียก Graph (ระวังขนาดโทเคนถ้าผู้ใช้อยู่กลุ่มจำนวนมาก)
+ทางเลือก: ตั้ง **Token configuration** → เพิ่ม optional claim **email** ใน **ID token** ถ้าโทเคนไม่มีอีเมลชัดเจน
+
+#### ทดสอบว่า dropdown แสดงแค่ USERPL ของอีเมล (ทำใน dev)
+
+1. **ล็อกอินด้วยจริง** — `AZURE_AUTH_CLIENT_ID`/`TENANT` เปิด และ **อย่า**ใส่อีเมลทดสอบใน **`ALLOCATION_ADMIN_EMAILS`** (ไม่งั้นจะเห็นทุกรหัส)
+2. **ทางเลือก A — Fabric จริง:** ใน `ACC_USER_CONTROL` เพียงอย่างน้อยแถวหนึ่งให้ **`[EMAIL]`** ตรงกับบัญชี Microsoft และใส่เฉพาะ **`USERPL`** ที่อยากเห็นจากนั้นรีสตาร์ท server — มีแคช ใช้ `ACC_USER_CONTROL_CACHE_TTL_SEC=0` หรือ redeploy เพื่อล้างแถวเก่าชั่วคราว
+3. **ทางเลือก B — ไฟล์จำลอง (เร็ว):**  
+   `ALLOCATION_ALLOW_ACC_DEV_JSON=1` และ  
+   `ACC_USER_CONTROL_DEV_JSON=config/your_acc.json` (อ้างอิงตัวอย่างจาก `config/acc_user_control.dev.example.json`; ในไฟล์ใส่อีเมลเดียวกับบัญชีที่ล็อกอินจริง) แล้วรีสตาร์ท  
+   เปิดหน้า login → เลื่อกจาก dropdown → จะเห็นเฉพาะ **`X (Supervisor)` / `Y (Manager)`** ที่มาจาก USERPL ในไฟล์  
+   จาก DevTools ดู **`GET /managers`** Response: ฟิลด์ **`managers`** ต้องเป็นรายการ labels ถูกกรอง และ **`filtered_by_userpl_only`** เป็น **true**
 
 ไลบรารี MSAL โหลดจาก **`frontend/vendor/msal-browser.min.js`** (เสิร์ฟคู่กับแอป) เพราะ CDN `alcdn.msauth.net` มักถูกบล็อกในเครือข่ายองค์กร
 
