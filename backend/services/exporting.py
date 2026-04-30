@@ -5,6 +5,7 @@ import pandas as pd
 from fastapi import HTTPException
 from fastapi.responses import FileResponse
 
+from ..core.caches import cleanup_export_artifacts_keep_latest_per_sup
 from ..core.paths import excel_export_path, excel_path, export_result_path, safe_id
 from ..core.targets import load_target_csv
 from ..generate_excel import create_target_excel
@@ -93,6 +94,9 @@ def export_excel_service(req: ExportRequest, sup_id: str) -> dict:
         sup_id=sup_id,
         target_boxes_csv="data/target_boxes.csv",
     )
+
+    # cleanup export artifacts: keep only latest per sup_id (avoid data/ growth)
+    cleanup_export_artifacts_keep_latest_per_sup(keep_n=1, sup_id=sup_id)
 
     logger.info("Export excel: sup=%s brand=%s rows=%d", sup_id, brand_filter, len(df_export))
     return {"status": "ok", "brand_filter": brand_filter, "rows": len(df_export)}

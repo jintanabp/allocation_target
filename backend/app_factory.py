@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import auth_entra
-from .core.caches import cleanup_old_caches
+from .core.caches import cleanup_export_artifacts_keep_latest_per_sup, cleanup_old_caches
 from .routers import auth as auth_router
 from .routers import data as data_router
 from .routers import debug as debug_router
@@ -27,6 +27,7 @@ def create_app() -> FastAPI:
     async def lifespan(app_: FastAPI):
         os.makedirs("data", exist_ok=True)
         cleanup_old_caches(max_age_days=7)
+        cleanup_export_artifacts_keep_latest_per_sup(keep_n=1)
         warm_managers_cache_at_startup()
         yield
 
