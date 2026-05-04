@@ -21,9 +21,29 @@ _ACC_LOCK = threading.Lock()
 _ACC_ROWS_CACHE: list[dict] | None = None
 _ACC_CACHE_AT: float = 0.0
 
+_EXTRA_LOCK = threading.Lock()
+_EXTRA_ROWS_CACHE: list[dict] | None = None
+_EXTRA_CACHE_AT: float = 0.0
+
 
 def _acc_cache_ttl_sec() -> int:
     return int(os.environ.get("ACC_USER_CONTROL_CACHE_TTL_SEC", "300"))
+
+
+def _extra_cache_ttl_sec() -> int:
+    raw = os.environ.get("EXTRA_USER_ACCESS_CACHE_TTL_SEC", "").strip()
+    return int(raw) if raw else _acc_cache_ttl_sec()
+
+
+def _extra_disabled() -> bool:
+    """ปิดการดึงตาราง acc_extra_user เมื่ออยากประกันไม่ให้ยิง DAX ฟีเจอร์นี้ (ออปชัน)."""
+    flag = os.environ.get("EXTRA_USER_ACCESS_DISABLED", "").strip().lower()
+    return flag in ("1", "true", "yes")
+
+
+def _extra_must_succeed() -> bool:
+    flag = os.environ.get("EXTRA_USER_ACCESS_FAIL_CLOSED", "").strip().lower()
+    return flag in ("1", "true", "yes")
 
 
 def normalized_email(s: str | None) -> str:
@@ -213,6 +233,66 @@ def load_acc_rows() -> list[dict]:
     return list(rows)
 
 
+def load_extra_user_access_rows() -> list[dict]:
+    """
+    ตารางเสริมใน Semantic model เพื่อ map EMAIL → USERPL (Supervisor / Manager login code)
+
+    Default: ดึงจาก acc_extra_user (EMAIL, USERPL) — ไม่ต้องตั้ง env เพื่อเปิด
+    ปิดได้ด้วย EXTRA_USER_ACCESS_DISABLED=1
+    """
+    if _extra_disabled():
+        return []
+
+    global _EXTRA_ROWS_CACHE, _EXTRA_CACHE_AT
+    ttl = _extra_cache_ttl_sec()
+    now = time.time()
+    with _EXTRA_LOCK:
+        if (
+            _EXTRA_ROWS_CACHE is not None
+            and ttl > 0
+            and (now - _EXTRA_CACHE_AT) < ttl
+        ):
+            return list(_EXTRA_ROWS_CACHE)
+
+    try:
+        fabric = FabricDAXConnector()
+        rows = fabric.get_extra_user_access_rows()
+    except Exception as e:
+        msg = str(e)
+        table = (os.environ.get("EXTRA_USER_ACCESS_TABLE_NAME", "acc_extra_user").strip() or "acc_extra_user")
+        logger.error("%s fallback fetch failed: %s", table, msg)
+        if _extra_must_succeed():
+            raise PermissionError(
+                "ไม่สามารถโหลดตารางสิทธิ์ผู้ใช้เสริมจาก Fabric "
+                f"({table})"
+            ) from e
+        rows = []
+
+    with _EXTRA_LOCK:
+        _EXTRA_ROWS_CACHE = rows
+        _EXTRA_CACHE_AT = time.time()
+    return list(rows)
+
+
+def _combine_acc_and_extra(acc_rows: list[dict], extra_rows: list[dict]) -> list[dict]:
+    if not extra_rows:
+        return list(acc_rows)
+    seen: set[tuple[str, str]] = set()
+    merged: list[dict] = []
+    for batch in (acc_rows, extra_rows):
+        for r in batch or []:
+            em = normalized_email(r.get("email"))
+            upl = str(r.get("userpl") or "").strip().upper()
+            if not em or not upl:
+                continue
+            key = (em, upl)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append({"email": em, "userpl": upl})
+    return merged
+
+
 def unrestricted_user_context() -> dict[str, Any]:
     """เมื่อปิด Entra — ไม่จำกัดรหัส"""
     return {
@@ -243,11 +323,16 @@ def build_user_access_context(email: str) -> dict[str, Any]:
             "userpls_manager_pick": set(),
         }
 
-    acc_rows = load_acc_rows()
+    acc_rows_base = load_acc_rows()
+    extra_rows = load_extra_user_access_rows()
+    acc_rows = _combine_acc_and_extra(acc_rows_base, extra_rows)
+
     user_rows = _rows_for_email(acc_rows, ne)
     if not user_rows:
         raise PermissionError(
-            "ไม่พบสิทธิ์การใช้งาน — อีเมลของคุณยังไม่อยู่ในตาราง ACC_USER_CONTROL"
+            "ไม่พบสิทธิ์การใช้งาน — "
+            "อีเมลของคุณยังไม่อยู่ในตาราง ACC_USER_CONTROL"
+            + (" และ acc_extra_user" if not _extra_disabled() else "")
         )
 
     mdata = managers_svc.load_full_managers_payload()

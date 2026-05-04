@@ -384,7 +384,7 @@ SELECTCOLUMNS(
         for r in rows or []:
             em = str(
                 self._get(r, "[EMAIL]", "ACC_USER_CONTROL[EMAIL]", default="")
-            ).strip()
+            ).strip().lower()
             upl = str(
                 self._get(r, "[USERPL]", "ACC_USER_CONTROL[USERPL]", default="")
             ).strip()
@@ -392,6 +392,81 @@ SELECTCOLUMNS(
                 continue
             out.append({"email": em, "userpl": upl.upper()})
         print(f"✅ ACC_USER_CONTROL: {len(out)} แถว (dedupe ฝั่ง access control)")
+        return out
+
+    def get_extra_user_access_rows(self) -> list[dict]:
+        """
+        ตารางเสริมสำหรับเพิ่มสิทธิ์รายคนเมื่อผู้ใช้ยังไม่มีใน ACC_USER_CONTROL:
+          - EMAIL: อีเมลเข้าระบบ (Microsoft login)
+          - USERPL/SUPERVISORCODE: รหัสที่ใช้ login เป็น Supervisor หรือ Manager (เหมือน ACC)
+
+        Default semantic model table: acc_extra_user[EMAIL], acc_extra_user[USERPL].
+        Override ได้ด้วย env EXTRA_USER_ACCESS_TABLE_NAME / _EMAIL_COL / _USERPL_COL / …
+        ถ้ามี Semantic model เวอร์ชันเก่ายังไม่มีตารางนี้ — DAX จะล้มเหลวแล้วฝั่ง caller ถือว่าไม่มี extra rows (หรือ fail-closed ถ้าตั้ง env)
+        """
+        table = (
+            os.environ.get("EXTRA_USER_ACCESS_TABLE_NAME", "acc_extra_user").strip()
+            or "acc_extra_user"
+        )
+        email_col = (
+            os.environ.get("EXTRA_USER_ACCESS_EMAIL_COL", "EMAIL").strip().upper()
+            or "EMAIL"
+        )
+        upl_primary = (
+            os.environ.get("EXTRA_USER_ACCESS_USERPL_COL", "USERPL").strip().upper()
+            or "USERPL"
+        )
+        upl_alt = os.environ.get("EXTRA_USER_ACCESS_USERPL_ALT_COL", "").strip().upper()
+
+        upl_col = upl_primary if upl_primary else "USERPL"
+        if upl_alt:
+            upl_col = upl_alt
+
+        if not email_col:
+            return []
+
+        upl_alias = upl_col if upl_col not in {"EMAIL", email_col} else "USERPL"
+        upl_field = upl_col if upl_alias == "USERPL" else upl_col
+
+        print(f"📡 [{table}] EMAIL / USERPL fallback access...")
+        dax = f"""
+EVALUATE
+SELECTCOLUMNS(
+    '{table}',
+    "EMAIL", '{table}'[{email_col}],
+    "{upl_alias}", '{table}'[{upl_field}]
+)
+"""
+        try:
+            rows = self._execute_dax(dax)
+        except Exception as ex:
+            print(f"⚠️ {table} DAX ล้มเหลว: {ex}")
+            return []
+
+        out: list[dict] = []
+        seen: set[tuple[str, str]] = set()
+
+        for r in rows or []:
+            em = str(
+                self._get(r, "[EMAIL]", f"{table}[{email_col}]", default="")
+            ).strip().lower()
+            if not em:
+                continue
+            upl_raw = self._get(
+                r,
+                f"[{upl_alias}]",
+                f"{table}[{upl_field}]",
+                default="",
+            )
+            upl = str(upl_raw or "").strip()
+            if not upl:
+                continue
+            key = (em, upl.upper())
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({"email": em, "userpl": upl.upper()})
+        print(f"✅ {table}: {len(out)} แถว (dedupe EMAIL+USERPL)")
         return out
 
     # ── 1. พนักงานจาก SuperCode ─────────────────────────────────────
