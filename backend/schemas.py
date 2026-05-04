@@ -1,4 +1,10 @@
-from pydantic import BaseModel, Field
+import re
+
+from pydantic import BaseModel, Field, field_validator
+
+from .core.constants import VALID_STRATEGIES
+
+_STRATEGY_PATTERN = "^(" + "|".join(map(re.escape, VALID_STRATEGIES)) + ")$"
 
 
 class YellowTargetInput(BaseModel):
@@ -14,11 +20,18 @@ class LockedEditInput(BaseModel):
 
 class OptimizeRequest(BaseModel):
     yellowTargets: list[YellowTargetInput]
-    strategy: str = "L3M"
+    strategy: str = Field(default="L3M", pattern=_STRATEGY_PATTERN)
     force_min_one: bool = False
     new_products_even: bool = False
     locked_edits: list[LockedEditInput] = []
     cap_multiplier: float | None = None  # Custom strategy override (1.5–5.0)
+
+    @field_validator("strategy", mode="before")
+    @classmethod
+    def _normalize_strategy(cls, v: object) -> str:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return "L3M"
+        return str(v).strip().upper()
 
 
 class AllocationRow(BaseModel):

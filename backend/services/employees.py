@@ -60,7 +60,8 @@ def _build_sku_and_sun_from_tga(
         price = 0.0
         price_missing = True
         price_from_sales_history = False
-        brand_th = brand_en = pname_th = pname_en = ""
+        brand_th = brand_en =         pname_th = pname_en = ""
+        section = ""
         credit_unit_price = 0.0
         if not row_p.empty:
             r0 = row_p.iloc[0]
@@ -68,6 +69,7 @@ def _build_sku_and_sun_from_tga(
             brand_en = str(r0.get("brand_name_english", "") or "")
             pname_th = str(r0.get("product_name_thai", "") or "")
             pname_en = str(r0.get("product_name_english", "") or "")
+            section = str(r0.get("section", "") or "").strip()
             credit_unit_price = float(r0.get("credit_unit_price", 0) or 0)
         sk = str(sku).strip()
         sales_price: float | None = None
@@ -96,6 +98,7 @@ def _build_sku_and_sun_from_tga(
                 "supervisor_target_boxes": max(0, sup_boxes),
                 "brand_name_thai": brand_th,
                 "brand_name_english": brand_en,
+                "section": section,
                 "product_name_thai": pname_th,
                 "product_name_english": pname_en,
             }

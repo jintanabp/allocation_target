@@ -94,8 +94,6 @@ def run_optimization_service(
 
     df_hist = df_hist[df_hist["emp_id"].isin(emp_list)]
 
-    hist_months = 6 if (want_6m and os.path.exists(cache_6)) else 3
-
     lysm_path = hist_ly_same_month_cache_path(sup_id, target_month, target_year)
     df_hist_lysm = pd.DataFrame()
     if os.path.exists(lysm_path):
@@ -109,6 +107,22 @@ def run_optimization_service(
         except Exception as e:
             logger.warning("hist LY same-month cache read failed: %s", e)
             df_hist_lysm = pd.DataFrame()
+
+    df_hist_input = df_hist
+    if strategy_u == "LY":
+        if not df_hist_lysm.empty:
+            df_hist_input = df_hist_lysm.copy()
+            hist_months = 1
+            logger.info("LY strategy: ใช้ cache เดือนเดียวกันปีที่แล้วเป็นฐานน้ำหนักกระจายหีบ")
+        else:
+            logger.warning(
+                "กลยุทธ์ LY: ไม่พบ cache เดือนเดียวกันปีที่แล้ว — ใช้ประวัติ 3M/6M แทน "
+                "(แนะนำให้โหลดหน้า Dashboard ใหม่เพื่อสร้าง hist_lysm)"
+            )
+            df_hist_input = df_hist
+            hist_months = 6 if (want_6m and os.path.exists(cache_6)) else 3
+    else:
+        hist_months = 6 if (want_6m and os.path.exists(cache_6)) else 3
 
     prev_path = hist_prev_month_cache_path(sup_id, target_month, target_year)
     df_hist_prev = pd.DataFrame()
@@ -160,7 +174,7 @@ def run_optimization_service(
     df_allocation = allocate_boxes(
         df_emp_targets,
         df_sku,
-        df_hist,
+        df_hist_input,
         strategy=req.strategy,
         force_min_one=req.force_min_one,
         locked_edits=locked_edits_data if locked_edits_data else None,
@@ -169,8 +183,8 @@ def run_optimization_service(
         new_product_skus=new_skus_cy_ly if req.new_products_even else None,
     )
 
-    if not df_hist.empty:
-        df_hist_avg = df_hist.groupby(["emp_id", "sku"])["hist_boxes"].sum().reset_index()
+    if not df_hist_input.empty:
+        df_hist_avg = df_hist_input.groupby(["emp_id", "sku"])["hist_boxes"].sum().reset_index()
         df_hist_avg["hist_avg"] = (df_hist_avg["hist_boxes"] / float(hist_months)).round(1)
     else:
         df_hist_avg = pd.DataFrame(columns=["emp_id", "sku", "hist_avg"])

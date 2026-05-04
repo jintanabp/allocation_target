@@ -624,6 +624,7 @@ SELECTCOLUMNS(
     "Brand_NameThai",      'Dim_Product'[Brand_NameThai],
     "Product_NameThai",    'Dim_Product'[Product_NameThai],
     "Product_NameEnglish", 'Dim_Product'[Product_NameEnglish],
+    "Section",             'Dim_Product'[Section],
     "UnitCost",            COALESCE(
                              RELATED('cfm_produc_master'[ACTUALCOSTPERUNIT]),
                              LOOKUPVALUE(
@@ -660,7 +661,56 @@ SELECTCOLUMNS(
                            RETURN COALESCE(cr, 0)
 )
 """
-        rows = self._execute_dax(dax, debug=True)
+        try:
+            rows = self._execute_dax(dax, debug=True)
+        except Exception as ex:
+            print(f"⚠️ Dim_Product+Section DAX ล้มเหลว ลองไม่มี Section: {ex}")
+            dax_no_sec = f"""
+EVALUATE
+SELECTCOLUMNS(
+    {table_expr},
+    "ProductCode",         'Dim_Product'[ProductCode],
+    "Brand",               'Dim_Product'[Brand],
+    "Brand_NameThai",      'Dim_Product'[Brand_NameThai],
+    "Product_NameThai",    'Dim_Product'[Product_NameThai],
+    "Product_NameEnglish", 'Dim_Product'[Product_NameEnglish],
+    "UnitCost",            COALESCE(
+                             RELATED('cfm_produc_master'[ACTUALCOSTPERUNIT]),
+                             LOOKUPVALUE(
+                               'cfm_produc_master'[ACTUALCOSTPERUNIT],
+                               'cfm_produc_master'[PRODUCTCODE],
+                               'Dim_Product'[ProductCode]
+                             )
+                           ),
+    "CostPerUnit",         COALESCE(
+                             RELATED('cfm_produc_master'[COSTPERUNIT]),
+                             LOOKUPVALUE(
+                               'cfm_produc_master'[COSTPERUNIT],
+                               'cfm_produc_master'[PRODUCTCODE],
+                               'Dim_Product'[ProductCode]
+                             )
+                           ),
+    "CreditUnitPrice",     VAR pc = 'Dim_Product'[ProductCode]
+                           VAR t = TODAY()
+                           VAR cr =
+                             CALCULATE(
+                               MAX('cfm_product_characteristic'[CREDITUNITPRICE]),
+                               FILTER(
+                                 ALL('cfm_product_characteristic'),
+                                 TRIM(FORMAT('cfm_product_characteristic'[PRODUCTCODE], "0"))
+                                   = TRIM(FORMAT(pc, "0"))
+                                   && IFERROR(
+                                     VALUE(TRIM(FORMAT('cfm_product_characteristic'[PRODUCTSIZE], "0"))),
+                                     -1
+                                   ) = 0
+                                   && 'cfm_product_characteristic'[FROMDATE] <= t
+                                   && 'cfm_product_characteristic'[TODATE] >= t
+                               )
+                             )
+                           RETURN COALESCE(cr, 0)
+)
+"""
+            rows = self._execute_dax(dax_no_sec, debug=True)
         records = []
         for r in rows:
             sku = str(self._get(r,
@@ -668,6 +718,7 @@ SELECTCOLUMNS(
                 default="")).strip()
             if not sku:
                 continue
+            sec_raw = str(self._get(r, "[Section]", "Dim_Product[Section]", default="")).strip()
             records.append({
                 "sku":                sku,
                 "brand":              str(self._get(r, "[Brand]", "Dim_Product[Brand]", default="")).strip(),
@@ -676,6 +727,7 @@ SELECTCOLUMNS(
                                           default="")).strip(),
                 # semantic model ใหม่นี้ไม่มี Brand_NameEnglish ตาม requirement → ใส่ไว้เพื่อ backward-compat
                 "brand_name_english": "",
+                "section":            sec_raw,
                 "product_name_thai":  str(self._get(r,
                                           "[Product_NameThai]", "Dim_Product[Product_NameThai]",
                                           default="")).strip(),
@@ -695,7 +747,7 @@ SELECTCOLUMNS(
                                           default=0) or 0),
             })
         df = pd.DataFrame(records) if records else pd.DataFrame(
-            columns=["sku", "brand", "brand_name_thai", "brand_name_english",
+            columns=["sku", "brand", "brand_name_thai", "brand_name_english", "section",
                      "product_name_thai", "product_name_english", "unit_cost", "cost_per_unit",
                      "credit_unit_price"])
         print(f"✅ ดึงข้อมูลสินค้า {len(df)} รายการ")

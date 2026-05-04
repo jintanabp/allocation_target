@@ -9,7 +9,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Instrument+Serif:ital@0;1&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=202604292" />
+  <link rel="stylesheet" href="style.css?v=202605046" />
 </head>
 
 <body>
@@ -45,9 +45,9 @@
             <div class="login-hero-title">Target Allocation</div>
             <div class="login-hero-sub">ระบบกระจายเป้าหมายยอดขายสำหรับใช้งานในองค์กร</div>
             <div class="login-hero-points">
-              <div class="pt"><span class="dot"></span>ดึงเป้าจาก Fabric อัตโนมัติ</div>
-              <div class="pt"><span class="dot"></span>รองรับ L3M / L6M / LY</div>
-              <div class="pt"><span class="dot"></span>บันทึกแบบร่างและรักษา manual edits</div>
+              <div class="pt"><span class="dot"></span>ดึงเป้าจากข้อมูลกลางอัตโนมัติ</div>
+              <div class="pt"><span class="dot"></span>ย้อนหลัง 3 เดือน / 6 เดือน / เทียบปีที่แล้ว</div>
+              <div class="pt"><span class="dot"></span>บันทึกแบบร่างและรักษาการแก้ไขด้วยมือ</div>
             </div>
           </div>
         </aside>
@@ -58,19 +58,19 @@
               <div class="login-mark">🎯</div>
               <div>
                 <div class="login-title2">เข้าสู่ระบบ</div>
-                <div class="login-sub2">หลังล็อกอิน Microsoft เลือก Supervisor หรือ Manager จากรหัสที่ตรง USERPL ของคุณใน ACC_USER_CONTROL และงวดที่จะกระจายเป้า</div>
+                <div class="login-sub2">เข้าใช้งานด้วยบัญชี Microsoft และเลือกผู้รับผิดชอบ / งวดเป้า</div>
               </div>
             </div>
 
             <div id="msAuthBlock" class="ms-auth-block" style="display: none;" aria-live="polite">
               <button type="button" id="msLoginBtn" class="btn-ms">ล็อกอินด้วย Microsoft</button>
               <p id="msUserLine" class="ms-user-line" style="display: none;"></p>
-              <p class="ms-auth-hint">ล็อกอินด้วยบัญชีองค์กร — จากนั้นเลือกรหัสเฉพาะที่อยู่ในสิทธิ์ของอีเมลคุณ (ACC_USER_CONTROL)</p>
+              <p class="ms-auth-hint">เมื่อล็อกอินบัญชีองค์กรคุณสามารถเข้าใช้งานได้ตามสิทธิที่คุณมี</p>
             </div>
 
             <div id="loginFormBlock">
             <div class="field-group">
-              <label class="field-label">Supervisor หรือ Manager</label>
+              <label class="field-label">ผู้รับผิดชอบ (Supervisor / Manager)</label>
               <div>
                 <select
                   id="supSelect"
@@ -84,7 +84,7 @@
                   <option value="">⏳ กำลังดึงข้อมูล...</option>
                 </select>
               </div>
-              <div class="field-help">เลือกจากรายการเท่านั้น (ไม่พิมพ์รหัสเอง) — แสดงเฉพาะรหัสที่ตรง USERPL ของอีเมลคุณ · หลายรหัสให้เลือกที่นี่ · เหลือหนึ่งรหัสจะถูกกำหนดให้อัตโนมัติ · <code>(Manager)</code> สลับดู Supervisor ในหน้า Dashboard</div>
+              <div class="field-help field-help--short">* หากไม่มีสิทธิหรือไม่พบรายการ ให้ติดต่อ IT</div>
               <div class="login-row">
                 <button id="managersRetryBtn" class="btn-mini" type="button" onclick="loadManagers(true)" style="display:none;">
                   ↻ รีเฟรชรายการ
@@ -111,16 +111,16 @@
                 </select>
                 <select id="yearSelect" class="field-select year-select"></select>
               </div>
-              <div class="field-help">ค่าเริ่มต้น = เดือนถัดจากวันนี้ (เกลี่ยเป้าเดือนหน้า) ถ้ายังไม่เคยจำงวดไว้ · แสดงปี พ.ศ. และ (ค.ศ.)</div>
+              <div class="field-help">ค่าเริ่มต้น = เดือนถัดจากวันนี้ (เกลี่ยเป้าเดือนหน้า)</div>
             </div>
 
             <div class="login-mini">
               <div class="mini-row">
-                <span class="k">📊 ประวัติ 3 เดือน (L3M)</span>
+                <span class="k">📊 ยอดขายเฉลี่ย 3 เดือนย้อนหลัง</span>
                 <span class="v" id="prevHistRange">—</span>
               </div>
               <div class="mini-row">
-                <span class="k">📅 LY เดือนเดียวกัน</span>
+                <span class="k">📅 ยอดขายเดือนเดียวกันปีที่แล้ว</span>
                 <span class="v" id="prevLYMonth">—</span>
               </div>
             </div>
@@ -150,7 +150,7 @@
 
       <div class="page-header">
         <div class="page-header-top">
-          <h1 class="page-title">ระบบกระจายเป้าหมายยอดขาย</h1>
+          <h1 class="page-title" id="dashboardMainTitle">ระบบกระจายเป้าหมายยอดขาย</h1>
           <span id="currentSupName" class="page-sup-badge"></span>
           <div id="supervisorSwitchWrap" class="sup-switch" style="display:none;" role="region" aria-label="สลับ Supervisor" aria-busy="false">
             <div class="sup-switch__card">
@@ -171,7 +171,6 @@
             </div>
           </div>
         </div>
-        <p class="page-sub" id="pagePeriodDesc">—</p>
       </div>
 
       <!-- ══ STEP 1 ══ -->
@@ -180,25 +179,46 @@
           <span class="step-num">1</span>
           <div>
             <h2 class="step-title">ข้อมูลตั้งต้น</h2>
-            <p class="step-desc">ยอดขาย LY · เฉลี่ย 3 เดือน · Target Sun ดึงจาก Fabric — เป้าหีบต่อ SKU ที่ HQ กำหนด</p>
+            <p class="step-desc" id="step1Desc">ประวัติการขาย และ เป้าหมายของเดือนที่เลือก</p>
           </div>
+        </div>
+
+        <div class="step1-target-hero" id="step1TargetHero" aria-live="polite">
+          <div class="step1-target-hero__line1" id="step1HeroLine1">
+            <span class="step1-target-hero__label">เป้ารวม</span>
+            <span class="step1-target-hero__amount" id="step1HeroAmount">—</span>
+            <span class="step1-target-hero__period" id="step1HeroPeriod">—</span>
+          </div>
+          <p class="step1-target-hero__note">
+            หากตัวเลขเป้ารวมไม่ถูกต้อง กรุณาติดต่อ IT (เช่น กลุ่ม Microsoft Teams)
+            <a href="#" id="itContactLink" class="step1-target-hero__link" target="_blank" rel="noopener noreferrer">ติดต่อ IT</a>
+            <span class="step1-target-hero__star">*</span>
+          </p>
         </div>
 
         <div class="two-col two-col--step1">
           <div class="panel">
-            <div class="panel-head">
-              <span class="panel-icon">👤</span>
-              <span class="panel-title">เป้าหมายตั้งต้นรายพนักงาน</span>
-              <span class="panel-count" id="empCount"></span>
+            <div class="panel-head panel-head--stack">
+              <div class="panel-head__row">
+                <span class="panel-icon">👤</span>
+                <span class="panel-title">เป้าหมายตั้งต้นรายพนักงาน</span>
+                <span class="panel-count" id="empCount"></span>
+              </div>
+              <div class="emp-view-tabs" role="tablist" aria-label="โหมดแสดงคอลัมน์">
+                <button type="button" class="emp-view-tab emp-view-tab--active" id="empViewTabL3m" role="tab"
+                  aria-selected="true" onclick="setEmpStep1View('l3m')">เทียบเฉลี่ย 3 เดือน</button>
+                <button type="button" class="emp-view-tab" id="empViewTabLy" role="tab"
+                  aria-selected="false" onclick="setEmpStep1View('ly')">เทียบปีที่แล้ว</button>
+              </div>
             </div>
-            <div class="panel-scroll">
-              <table class="tbl">
+            <div class="panel-scroll panel-scroll--emp">
+              <table class="tbl tbl--emp-step1">
                 <thead>
                   <tr>
                     <th>พนักงาน</th>
-                    <th class="r">LY ยอดขาย</th>
-                    <th class="r">เฉลี่ย 3M</th>
-                    <th class="r">Target Sun</th>
+                    <th class="r">เป้า (บาท)</th>
+                    <th class="r" id="empStep1MidTh">ยอดขายเฉลี่ย 3 เดือนย้อนหลัง</th>
+                    <th class="r">% เติบโต</th>
                   </tr>
                 </thead>
                 <tbody id="empTableBody"></tbody>
@@ -207,46 +227,74 @@
           </div>
 
           <div class="panel">
-            <div class="panel-head">
-              <span class="panel-icon">📦</span>
-              <span class="panel-title">เป้าหีบรวม (SKU Master)</span>
-              <span class="panel-count" id="skuCount"></span>
-                <div class="sec1-sort-wrap">
-                <button id="sec1SortCode" class="sec1-sort-btn sec1-sort-active"
-                  onclick="sec1SetSort('code')">รหัสสินค้า</button>
-                <button id="sec1SortBrand" class="sec1-sort-btn" onclick="sec1SetSort('brand')">แบรนด์</button>
-              </div>
-                <div class="sec1-view-wrap">
-                  <button id="sec1ViewSku" class="sec1-view-btn sec1-view-active" type="button"
-                    onclick="sec1SetView('sku')">ราย SKU</button>
-                  <button id="sec1ViewBrand" class="sec1-view-btn" type="button"
-                    onclick="sec1SetView('brand')">รวมรายแบรนด์</button>
+            <div class="panel-head panel-head--stack">
+              <div class="sku-panel-meta">
+                <div class="sku-meta-line" id="sec1MetaLine1">—</div>
+                <div class="sku-meta-line sku-meta-line--controls">
+                  <span class="sku-meta-label">จัดกลุ่ม</span>
+                  <div class="sec1-view-wrap">
+                    <button id="sec1ViewSku" class="sec1-view-btn sec1-view-active" type="button"
+                      onclick="sec1SetView('sku')">ราย SKU</button>
+                    <button id="sec1ViewBrand" class="sec1-view-btn" type="button"
+                      onclick="sec1SetView('brand')">แบรนด์</button>
+                    <button id="sec1ViewSection" class="sec1-view-btn" type="button"
+                      onclick="sec1SetView('section')">Section</button>
+                  </div>
                 </div>
+              </div>
+              <div class="panel-head__row panel-head__row--tight">
+                <span class="panel-icon">📦</span>
+                <span class="panel-title">เป้าหีบรวม</span>
+                <span class="panel-count" id="skuCount"></span>
+              </div>
             </div>
-            <div class="panel-scroll">
-              <table class="tbl">
-                <thead>
-                  <tr>
-                    <th>SKU</th>
-                    <th>แบรนด์</th>
-                    <th class="r">ราคา/หีบ</th>
-                    <th class="r">เป้าหีบ</th>
-                    <th class="r">มูลค่า</th>
-                  </tr>
-                </thead>
-                <tbody id="skuTableBody"></tbody>
-                <tfoot>
-                  <tr>
-                    <td colspan="4" class="tfoot-label">มูลค่าหีบทั้งหมด</td>
-                    <td class="r tfoot-val" id="totalBoxValue">—</td>
-                  </tr>
-                  <tr>
-                    <td colspan="3" class="tfoot-label">รวมเป้าหีบทั้งหมด</td>
-                    <td class="r tfoot-val" id="totalBoxesAll">—</td>
-                    <td></td>
-                  </tr>
-                </tfoot>
-              </table>
+            <div class="panel-scroll panel-scroll--sku sku-panel-stack">
+              <div class="sku-table-scroll">
+                <table class="tbl tbl--sku-step1">
+                  <colgroup>
+                    <col class="sku-col--product" />
+                    <col class="sku-col--brand" />
+                    <col class="sku-col--section" />
+                    <col class="sku-col--price" />
+                    <col class="sku-col--boxes" />
+                    <col class="sku-col--value" />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      <th class="th-sortable" data-sort="name" onclick="sec1ToggleSort('name')">สินค้า</th>
+                      <th class="th-sortable" data-sort="brand" onclick="sec1ToggleSort('brand')">แบรนด์</th>
+                      <th class="th-sortable" data-sort="section" onclick="sec1ToggleSort('section')">Section</th>
+                      <th class="r th-sortable" data-sort="price" onclick="sec1ToggleSort('price')">ราคา/หีบ</th>
+                      <th class="r th-sortable" data-sort="boxes" onclick="sec1ToggleSort('boxes')">เป้าหีบ</th>
+                      <th class="r th-sortable" data-sort="value" onclick="sec1ToggleSort('value')">มูลค่า</th>
+                    </tr>
+                  </thead>
+                  <tbody id="skuTableBody"></tbody>
+                </table>
+              </div>
+              <div class="sku-table-foot" role="region" aria-label="สรุปเป้าหีบรวม">
+                <table class="tbl tbl--sku-step1 tbl--sku-step1-totals">
+                  <colgroup>
+                    <col class="sku-col--product" />
+                    <col class="sku-col--brand" />
+                    <col class="sku-col--section" />
+                    <col class="sku-col--price" />
+                    <col class="sku-col--boxes" />
+                    <col class="sku-col--value" />
+                  </colgroup>
+                  <tfoot>
+                    <tr>
+                      <td colspan="5" class="tfoot-label">มูลค่าหีบทั้งหมด</td>
+                      <td class="r tfoot-val" id="totalBoxValue">—</td>
+                    </tr>
+                    <tr>
+                      <td colspan="4" class="tfoot-label">รวมเป้าหีบทั้งหมด</td>
+                      <td class="r tfoot-val" id="totalBoxesAll">—</td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
             </div>
           </div>
         </div>
@@ -259,9 +307,11 @@
         <div class="step-label-row">
           <span class="step-num">2</span>
           <div>
-            <h2 class="step-title">ปรับเป้าสีเหลือง</h2>
-            <p class="step-desc">คลิกช่อง <em>เป้าสีเหลือง</em> แล้วพิมพ์แก้ได้เลย · ยอดรวมต้องเท่ากับเป้ารวมพอดีก่อนกด
-              AI</p>
+            <h2 class="step-title">กำหนดเป้าหมาย <span class="step-title-optional">(optional)</span></h2>
+            <p class="step-desc">คลิกแก้เป้าเป็นจำนวนเงินรายพนักงานในช่องที่กำหนดได้
+              <strong>ยอดรวมของทุกคนต้องเท่ากับเป้ารวมของระบบเท่านั้น</strong>
+              เช่น หากลดเป้าพนักงาน A 100,000 บาท ต้องเพิ่มเป้าพนักงานอื่น (หรือหลายคน) รวม 100,000 บาท
+              เพื่อให้ผลรวมยังคงเท่าเดิม — ขั้นตอนนี้ทำได้หรือข้ามไปใช้เป้าเริ่มต้นจากระบบได้</p>
           </div>
         </div>
 
@@ -277,7 +327,7 @@
             </div>
             <div class="stat-sep"></div>
             <div class="stat-item">
-              <span class="stat-label">ยอดสีเหลือง</span>
+              <span class="stat-label">เป้าหมายที่กำหนดเอง</span>
               <span class="stat-val" id="bYellow">—</span>
             </div>
             <div class="stat-sep"></div>
@@ -292,30 +342,44 @@
         </div>
 
         <div class="panel no-head">
-          <div class="panel-scroll" style="max-height:400px;">
-            <table class="tbl editor-tbl">
-              <thead>
-                <tr>
-                  <th>พนักงาน</th>
-                  <th class="r">LY ยอดขาย</th>
-                  <th class="r">เฉลี่ย 3M</th>
-                  <th class="r">Target Sun</th>
-                  <th class="r editable-th">✏️ เป้าสีเหลือง</th>
-                  <th class="r">Growth</th>
-                  <th class="r">สัดส่วน</th>
-                </tr>
-              </thead>
-              <tbody id="yellowTableBody"></tbody>
-              <tfoot>
-                <tr>
-                  <td class="tfoot-label" colspan="3">รวม</td>
-                  <td class="r tfoot-val" id="footTargetSum">—</td>
-                  <td class="r tfoot-val" id="footYellowSum">—</td>
-                  <td class="r tfoot-val" id="footGrowth">—</td>
-                  <td class="r tfoot-val">100%</td>
-                </tr>
-              </tfoot>
-            </table>
+          <div class="panel-scroll step2-panel-stack">
+            <div class="step2-table-scroll">
+              <table class="tbl editor-tbl tbl--step2-main">
+                <colgroup>
+                  <col class="step2-col--emp" />
+                  <col class="step2-col--num" span="6" />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th>พนักงาน</th>
+                    <th class="r">ยอดขายเดือนเดียวกันปีที่แล้ว</th>
+                    <th class="r">ยอดขายเฉลี่ย 3 เดือนย้อนหลัง</th>
+                    <th class="r">เป้า Target Sun</th>
+                    <th class="r editable-th">เป้าหมายที่กำหนดเอง</th>
+                    <th class="r">% เติบโต</th>
+                    <th class="r">สัดส่วน</th>
+                  </tr>
+                </thead>
+                <tbody id="yellowTableBody"></tbody>
+              </table>
+            </div>
+            <div class="step2-table-foot" role="region" aria-label="สรุปเป้าหมายรายพนักงาน">
+              <table class="tbl editor-tbl tbl--step2-totals">
+                <colgroup>
+                  <col class="step2-col--emp" />
+                  <col class="step2-col--num" span="6" />
+                </colgroup>
+                <tfoot>
+                  <tr>
+                    <td class="tfoot-label" colspan="3">รวม</td>
+                    <td class="r tfoot-val" id="footTargetSum">—</td>
+                    <td class="r tfoot-val" id="footYellowSum">—</td>
+                    <td class="r tfoot-val" id="footGrowth">—</td>
+                    <td class="r tfoot-val">100%</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
           </div>
         </div>
       </section>
@@ -327,32 +391,39 @@
         <div class="step-label-row">
           <span class="step-num">3</span>
           <div>
-            <h2 class="step-title">AI กระจายหีบ</h2>
-            <p class="step-desc">เลือกวิธีกระจาย · กดเริ่ม · กรองแบรนด์ · แก้ตัวเลข · Export Excel รายแบรนด์หรือทั้งหมด
-            </p>
+            <h2 class="step-title">กระจายหีบ</h2>
           </div>
         </div>
 
         <!-- Strategy selector -->
         <div class="strategy-wrap">
-          <div class="field-label" style="margin-bottom:10px;">วิธีกระจายหีบ</div>
+          <div class="field-label strategy-wrap__label">วิธีกระจายหีบ</div>
           <div class="strategy-pills" id="strategyPills">
             <label class="s-pill active">
               <input type="radio" name="strategy" value="L3M" checked>
               <span class="s-pill-icon">📊</span>
               <div>
-                <div class="s-pill-name">อ้างอิง L3M</div>
-                <div class="s-pill-desc">ตามยอดขาย 3 เดือนล่าสุด</div>
+                <div class="s-pill-name">ยอดขายเฉลี่ย 3 เดือนย้อนหลัง</div>
+                <div class="s-pill-desc">กระจายตามสัดส่วนยอดขายเฉลี่ยรวม 3 เดือนย้อนหลัง (รายพนักงานต่อ SKU)</div>
               </div>
             </label>
             <label class="s-pill">
               <input type="radio" name="strategy" value="L6M">
               <span class="s-pill-icon">📈</span>
               <div>
-                <div class="s-pill-name">อ้างอิง L6M</div>
-                <div class="s-pill-desc">ตามยอดขาย 6 เดือนล่าสุด</div>
+                <div class="s-pill-name">ยอดขายเฉลี่ย 6 เดือนย้อนหลัง</div>
+                <div class="s-pill-desc">กระจายตามสัดส่วนยอดขายเฉลี่ยรวม 6 เดือนย้อนหลัง (รายพนักงานต่อ SKU)</div>
               </div>
             </label>
+            <label class="s-pill">
+              <input type="radio" name="strategy" value="LY">
+              <span class="s-pill-icon">📅</span>
+              <div>
+                <div class="s-pill-name">เดือนเดียวกันปีที่แล้ว</div>
+                <div class="s-pill-desc">กระจายตามสัดส่วนยอดขายเดือนเดียวกับงวดที่เลือก แต่ปีที่แล้ว (รายพนักงานต่อ SKU)</div>
+              </div>
+            </label>
+            <!-- ซ่อนชั่วคราว — โค้ด backend ยังรองรับ EVEN
             <label class="s-pill">
               <input type="radio" name="strategy" value="EVEN">
               <span class="s-pill-icon">⚖️</span>
@@ -361,14 +432,16 @@
                 <div class="s-pill-desc">แบ่งเท่าๆ กันทุกคน</div>
               </div>
             </label>
+            -->
             <label class="s-pill">
               <input type="radio" name="strategy" value="PUSH">
               <span class="s-pill-icon">🚀</span>
               <div>
                 <div class="s-pill-name">ผลักดันพนักงาน</div>
-                <div class="s-pill-desc">คนขายน้อยได้หีบมากกว่า</div>
+                <div class="s-pill-desc">เริ่มจากสัดส่วนยอดขายเฉลี่ย 3 เดือนย้อนหลัง แล้วเอนน้ำหนักเพิ่มให้พนักงานที่ขาย SKU นั้นน้อยหรือไม่มียอด โดยยังอยู่ในกรอบเป้าหมายที่ตั้งไว้</div>
               </div>
             </label>
+            <!-- ซ่อนชั่วคราว — โค้ด backend ยังรองรับ LP
             <label class="s-pill">
               <input type="radio" name="strategy" value="LP">
               <span class="s-pill-icon">🤖</span>
@@ -377,20 +450,23 @@
                 <div class="s-pill-desc">ปรับยอดเงินให้ตรงเป้า</div>
               </div>
             </label>
+            -->
           </div>
 
-          <div style="margin-top: 16px; padding-top: 16px; border-top: 1px dashed var(--border);">
-            <label
-              style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: var(--text-2);">
-              <input type="checkbox" id="forceMinOneBox"
-                style="accent-color: var(--accent); width: 16px; height: 16px;">
-              <b>บังคับ AI กระจายอย่างน้อย 1 หีบ/คน</b> (เฉพาะ SKU ที่เป้าหีบ ≥ จำนวนพนักงาน — เช่น 6 หีบ / 6 คน)
+          <div class="strategy-options-block">
+            <label class="strategy-check-row">
+              <input type="checkbox" id="forceMinOneBox" class="strategy-check-input">
+              <span class="strategy-check-body">
+                <span class="strategy-check-title">บังคับให้ทุกคนได้อย่างน้อย 1 หีบ (ต่อ SKU)</span>
+                <span class="strategy-check-desc">ทุกพนักงานได้เป้าหมายหีบอย่างน้อย 1 หีบ แม้ไม่มียอดขายในรายการประวัติ — ใช้ได้เมื่อเป้าหีบรวมของ SKU นั้นไม่น้อยกว่าจำนวนพนักงาน ส่วนหีบที่เหลือจะแบ่งตามวิธีกระจายที่เลือกด้านบน</span>
+              </span>
             </label>
-            <label
-              style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer; font-size: 13px; color: var(--text-2); margin-top: 10px;">
-              <input type="checkbox" id="newProductsEvenBox"
-                style="accent-color: var(--accent); width: 16px; height: 16px; flex-shrink: 0; margin-top: 2px;">
-              <span><b>สินค้าใหม่กระจายเท่ากัน</b> — SKU ที่ไม่มียอดขายปีปฏิทินปีนี้และปีที่แล้ว (รวมทีม) จะถูกแบ่งหีบเท่าๆ กันทุกคน (อิงไฟล์ประวัติ CY หลังโหลด Dashboard)</span>
+            <label class="strategy-check-row">
+              <input type="checkbox" id="newProductsEvenBox" class="strategy-check-input">
+              <span class="strategy-check-body">
+                <span class="strategy-check-title">SKU ใหม่แบ่งเท่ากัน</span>
+                <span class="strategy-check-desc">SKU ที่ทั้งทีมไม่มียอดขายย้อนหลัง 12 เดือนปฏิทิน จะถูกแบ่งจำนวนหีบเท่า ๆ กันทุกคน (อ้างอิงข้อมูลหลังโหลด Dashboard)</span>
+              </span>
             </label>
           </div>
         </div>
@@ -500,7 +576,7 @@
 
   <!-- ใช้ไฟล์ในโปรเจกต์ — เครือข่ายองค์กรมักบล็อก alcdn.msauth.net ทำให้ msal ไม่โหลด -->
   <script src="vendor/msal-browser.min.js"></script>
-  <script src="app.js?v=202604310"></script>
+  <script src="app.js?v=202605046"></script>
 </body>
 
 </html>

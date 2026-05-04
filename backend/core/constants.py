@@ -9,7 +9,7 @@ PRICE_FALLBACK = {
     "624163": 232.71,
 }
 
-VALID_STRATEGIES = ("L3M", "L6M", "EVEN", "PUSH", "LP")
+VALID_STRATEGIES = ("L3M", "L6M", "LY", "EVEN", "PUSH", "LP")
 
 
 def debug_endpoints_enabled() -> bool:

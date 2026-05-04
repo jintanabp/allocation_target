@@ -4,6 +4,7 @@ OR_engine.py — Target Box Allocation Engine
 Strategies:
   L3M   — proportional ตามยอดขายย้อนหลัง 3 เดือน (fast, stable) — ต้องส่ง df_hist จาก cache 3 เดือน
   L6M   — proportional ตามยอดขายย้อนหลัง 6 เดือน (smoother baseline) — ต้องส่ง df_hist จาก cache 6 เดือน
+  LY    — proportional ตามยอดขายเดือนเดียวกันปีที่แล้ว (emp×sku) — ต้องส่ง df_hist จาก cache hist_lysm_
   EVEN  — เกลี่ยเท่ากันทุกคน (fair distribution)
   PUSH  — ผลักดันคนขายน้อย (inverse ratio)
   LP    — Linear Programming ตาม yellow_target (revenue-optimal, slow)
@@ -46,7 +47,7 @@ def allocate_boxes(
     new_product_skus: set | frozenset | None = None,
 ) -> pd.DataFrame:
     strategy = strategy.upper()
-    valid = ("L3M", "L6M", "EVEN", "PUSH", "LP")
+    valid = ("L3M", "L6M", "LY", "EVEN", "PUSH", "LP")
     if strategy not in valid:
         strategy = "L3M"
 
@@ -219,7 +220,7 @@ def _proportional(
         # สินค้าใหม่ (ไม่มียอดปีปฏิทินปีนี้+ปีที่แล้ว): เกลี่ยเท่ากัน แม้ strategy จะเป็น L3M/L6M/PUSH
         if strategy == "EVEN" or sku_key in even_skus or hist_sum == 0:
             weights = {e: 1.0 for e in active_employees}
-        elif strategy in ("L3M", "L6M"):
+        elif strategy in ("L3M", "L6M", "LY"):
             weights = {e: max(hist_by_emp[e], 0.01) for e in active_employees}
         elif strategy == "PUSH":
             max_h = max(hist_by_emp.values()) if hist_by_emp else 1.0

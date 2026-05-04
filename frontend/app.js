@@ -99,14 +99,14 @@ function _setGlobalBusyOverlayVisible(visible, message) {
     "padding:18px",
   ].join(";");
   ov.innerHTML = `
-    <div style="min-width:280px;max-width:520px;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:16px 18px;box-shadow:0 14px 45px rgba(0,0,0,.22);">
-      <div style="display:flex;align-items:center;gap:10px;">
-        <div aria-hidden="true" style="width:18px;height:18px;border-radius:50%;border:2px solid var(--border-md);border-top-color:var(--accent);animation:spin .8s linear infinite;"></div>
-        <div id="globalBusyText" style="font-weight:700;color:var(--text-1);"></div>
+    <div class="global-busy-card">
+      <div class="global-busy-row">
+        <div class="global-busy-spinner" aria-hidden="true"></div>
+        <div id="globalBusyText" class="global-busy-title"></div>
       </div>
-      <div style="margin-top:8px;font-size:12px;color:var(--text-3);line-height:1.55;">
-        กรุณารอสักครู่ — ระบบกำลังเชื่อมต่อ/ประมวลผล เพื่อป้องกันการทำงานซ้ำ
-      </div>
+      <p class="global-busy-hint">
+        กรุณารอสักครู่ — ระบบกำลังเชื่อมต่อข้อมูลหรือประมวลผล เพื่อป้องกันการทำงานซ้ำ
+      </p>
     </div>
   `;
   document.body.appendChild(ov);
@@ -275,7 +275,7 @@ async function initEntraAuth() {
     hintEl.textContent =
       window.location.hostname === "127.0.0.1"
         ? `ล็อกอิน Microsoft จะพากลับมาที่ ${msalRedirectUri().replace(/\/$/, "")} (Entra ไม่รับ 127.0.0.1)`
-        : "ล็อกอินบัญชีองค์กรแล้วเลือกรหัสตามสิทธิ์ USERPL";
+        : "เมื่อล็อกอินบัญชีองค์กรคุณสามารถเข้าใช้งานได้ตามสิทธิที่คุณมี";
   }
   msalInstance = new Msal.PublicClientApplication({
     auth: {
@@ -400,6 +400,19 @@ let S = {
   newProductSkus: new Set(),
   newProductsEvenMode: "off",
 };
+
+/** DOM / format helpers — ต้องอยู่ก่อนโค้ดที่เรียกใช้ (อย่าวางไว้ท้ายไฟล์เพราะเสี่ยงอ้างก่อนประกาศ) */
+const qs = s => document.querySelector(s);
+const wait = ms => new Promise(r => setTimeout(r, ms));
+function baht(n) {
+  if (n == null || Number.isNaN(Number(n))) return "—";
+  return Number(n).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function fmt(n) {
+  if (n == null || Number.isNaN(Number(n))) return "—";
+  return Number(n).toLocaleString("th-TH");
+}
+const sumYellow = () => Object.values(S.yellow).reduce((a, b) => a + b, 0);
 
 /**
  * หลังกรองสิทธิ ACC/backend — ใช้รายการป้ายจาก API + map by_manager เท่านั้น
@@ -764,6 +777,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
+  document.getElementById("itContactLink")?.addEventListener("click", (e) => {
+    const a = e.currentTarget;
+    const h = (a && a.getAttribute("href")) || "";
+    if (!h || h === "#") e.preventDefault();
+  });
+
   document.body.classList.add("is-login");
   _enableLoginScrollLock();
   populateYearSelect();
@@ -958,7 +977,7 @@ function populateLoginSupervisorSelect(list, emptyMessage) {
   if (labs.length === 0) {
     const o = document.createElement("option");
     o.value = "";
-    o.textContent = emptyMessage || "ไม่พบรายการที่ใช้ได้ — กดรีเฟรชหรือตรวจสิทธิ์";
+    o.textContent = emptyMessage || "ไม่พบสิทธิการใช้งาน";
     sel.appendChild(o);
     sel.disabled = true;
     sel.dataset.loginPickLocked = "1";
@@ -1046,7 +1065,7 @@ async function loadManagers() {
       return;
     }
     if (res.status === 403) {
-      let d = "บัญชีนี้ไม่มีสิทธิ์ตาม ACC_USER_CONTROL หรือรหัส USERPL ไม่พบในระบบ";
+      let d = "ไม่พบสิทธิการใช้งาน";
       try {
         const j = await res.json();
         if (j.detail) d = j.detail;
@@ -1186,8 +1205,6 @@ async function handleLogin() {
     const periodStr = MONTH_FULL_TH[S.targetMonth] + " " + (S.targetYear + 543);
     document.getElementById("topbarPeriodText").textContent = periodStr;
     updateDashboardSupBadge();
-    document.getElementById("pagePeriodDesc").textContent =
-      `กระจายเป้า ${periodStr} · ประวัติ 3 เดือน + LY ดึงจาก Fabric`;
 
     try {
       renderStep1();
@@ -1433,8 +1450,10 @@ function showLoginError(msg) {
 /* ══════════════════════════════════════════════
    STEP 1 RENDER
 ══════════════════════════════════════════════ */
-let _skuSec1Sort = "code"; 
-let _skuSec1View = "sku"; // "sku" | "brand"
+let _empStep1View = "l3m"; // "l3m" | "ly"
+let _skuSec1View = "sku"; // "sku" | "brand" | "section"
+let _skuSec1SortKey = "name";
+let _skuSec1SortDir = 1; // 1 = ascending, -1 = descending
 
 /* ══════════════════════════════════════════════
    SKU RECONCILIATION WARNINGS
@@ -1571,25 +1590,106 @@ function _showSkuWarnings() {
   if (dashboard) dashboard.prepend(banner);
 }
 
-function renderStep1() {
-  const empCountEl = qs("#empCount");
-  const skuCountEl = qs("#skuCount");
-  if (empCountEl) empCountEl.textContent = `${S.employees.length} คน`;
-  if (skuCountEl) skuCountEl.textContent = `${S.skus.length} SKU`;
+function updateDashboardChrome() {
+  const tm = Number(S.targetMonth) || 1;
+  const ty = Number(S.targetYear) || new Date().getFullYear();
+  const monthTh = MONTH_FULL_TH[tm] || "";
+  const be = ty + 543;
+  const titleEl = qs("#dashboardMainTitle");
+  if (titleEl) {
+    titleEl.textContent = `ระบบกระจายเป้าหมายยอดขาย · ${monthTh} พ.ศ. ${be}`;
+  }
+  const desc = qs("#step1Desc");
+  if (desc) {
+    desc.textContent = `ประวัติการขาย และ เป้าหมายของเดือน ${monthTh} ปี พ.ศ. ${be}`;
+  }
+  const ha = qs("#step1HeroAmount");
+  if (ha) ha.textContent = baht(S.totalTarget);
+  const hp = qs("#step1HeroPeriod");
+  if (hp) hp.textContent = `(เดือน) ${monthTh} · (ปี) พ.ศ. ${be}`;
+  const meta = qs("#sec1MetaLine1");
+  if (meta && Array.isArray(S.skus)) {
+    const ws = S.skuWarnings || [];
+    const noHistSet = new Set(
+      ws.filter(w => w.type === "no_history" && w.sku).map(w => String(w.sku))
+    );
+    const nHist = S.skus.filter(s => !noHistSet.has(String(s.sku))).length;
+    const withTarget = S.skus.filter(s => (Number(s.supervisor_target_boxes) || 0) > 0).length;
+    const nTgt = withTarget > 0 ? withTarget : S.skus.length;
+    meta.textContent =
+      `ประวัติสินค้า 3 เดือนย้อนหลัง ${nHist.toLocaleString("th-TH")} SKUs · สินค้าที่มีเป้าในเดือน${monthTh} ${nTgt.toLocaleString("th-TH")} SKUs`;
+  }
+}
 
-  qs("#empTableBody").innerHTML = S.employees.map(e => `
-    <tr>
+function setEmpStep1View(mode) {
+  if (mode !== "l3m" && mode !== "ly") return;
+  _empStep1View = mode;
+  _renderEmpStep1();
+}
+
+function _fmtEmpGrowthHtml(target, base) {
+  const t = Number(target) || 0;
+  const b = Number(base) || 0;
+  if (b <= 0) {
+    return `<span class="gtag" style="background:var(--bg-main);color:var(--text-3);border:1px solid var(--border);">—</span>`;
+  }
+  const g = (t - b) / b * 100;
+  return `<span class="gtag ${g >= 0 ? "gtag-up" : "gtag-down"}">${g >= 0 ? "+" : ""}${g.toFixed(1)}%</span>`;
+}
+
+function _renderEmpStep1() {
+  const midLabel =
+    _empStep1View === "ly"
+      ? "ยอดขายเดือนเดียวกันปีที่แล้ว"
+      : "ยอดขายเฉลี่ย 3 เดือนย้อนหลัง";
+  const midTh = qs("#empStep1MidTh");
+  if (midTh) midTh.textContent = midLabel;
+
+  const tabL = qs("#empViewTabL3m");
+  const tabR = qs("#empViewTabLy");
+  if (tabL) {
+    tabL.classList.toggle("emp-view-tab--active", _empStep1View === "l3m");
+    tabL.setAttribute("aria-selected", _empStep1View === "l3m" ? "true" : "false");
+  }
+  if (tabR) {
+    tabR.classList.toggle("emp-view-tab--active", _empStep1View === "ly");
+    tabR.setAttribute("aria-selected", _empStep1View === "ly" ? "true" : "false");
+  }
+
+  const body = qs("#empTableBody");
+  if (!body) return;
+  const emps = Array.isArray(S.employees) ? S.employees : [];
+  body.innerHTML = emps.map(e => {
+    const tgt = Number(e.target_sun) || 0;
+    const mid =
+      _empStep1View === "ly"
+        ? Number(e.ly_sales) || 0
+        : Number(e.hist_avg_3m) || 0;
+    const gHtml = _fmtEmpGrowthHtml(tgt, mid);
+    return `<tr>
       <td>
         <span class="emp-tag">${e.emp_id}</span>
         ${e.emp_name ? `<div class="emp-name-sub">${e.emp_name}</div>` : ""}
         ${e.has_tga_rows === false ? `<div class="emp-name-sub" style="color:var(--amber);font-size:11px;">ไม่มีแถว TGA ในงวดนี้</div>` : ""}
       </td>
-      <td class="r mono">${baht(e.ly_sales)}</td>
-      <td class="r mono" style="color:var(--text-3);">${baht(e.hist_avg_3m)}</td>
-      <td class="r mono">${baht(e.target_sun)}</td>
-    </tr>
-  `).join("");
+      <td class="r mono">${baht(tgt)}</td>
+      <td class="r mono" style="color:var(--text-3);">${baht(mid)}</td>
+      <td class="r">${gHtml}</td>
+    </tr>`;
+  }).join("");
+}
 
+function renderStep1() {
+  updateDashboardChrome();
+
+  const empCountEl = qs("#empCount");
+  const skuCountEl = qs("#skuCount");
+  const emps = Array.isArray(S.employees) ? S.employees : [];
+  const skus = Array.isArray(S.skus) ? S.skus : [];
+  if (empCountEl) empCountEl.textContent = `${emps.length} คน`;
+  if (skuCountEl) skuCountEl.textContent = `${skus.length} SKU`;
+
+  _renderEmpStep1();
   _renderSkuSec1();
 }
 
@@ -1611,142 +1711,216 @@ function _skuNewBadgeHtml(sku) {
   return "";
 }
 
-function _renderSkuSec1() {
-  let sorted = [...S.skus];
-  if (_skuSec1Sort === "brand") {
-    sorted.sort((a, b) => {
-      const ba = a.brand_name_thai || a.brand_name_english || "";
-      const bb = b.brand_name_thai || b.brand_name_english || "";
-      return ba.localeCompare(bb, "th");
-    });
-  } else {
-    sorted.sort((a, b) => a.sku.localeCompare(b.sku));
-  }
-
-  let totalVal = 0;
-  let totalBoxesAll = 0;
-
-  if (_skuSec1View === "sku") {
-    qs("#skuTableBody").innerHTML = sorted.map(s => {
-      const boxes = Number(s.supervisor_target_boxes) || 0;
-      const st = _sec1PriceStates(s);
-      const { price, fromHist, missing } = st;
-      const val = boxes * price;
-      totalVal += val;
-      totalBoxesAll += boxes;
-      const brand = s.brand_name_thai || s.brand_name_english || "";
-      const priceCls = missing ? "price-missing" : (fromHist ? "price-from-history" : "");
-      const priceInner = missing
-        ? `<span class="price-missing-badge">ไม่มีราคา</span>`
-        : `${fmt(price)}${fromHist ? ` <span class="price-history-badge">สำรอง: ประวัติหาร</span>` : ""}`;
-      return `<tr>
-        <td class="mono" style="font-size:12px;font-weight:600;">${s.sku} ${_skuNewBadgeHtml(s.sku)}</td>
-        <td>${brand ? `<span class="brand-chip">${brand}</span>` : '<span style="color:var(--text-3)">—</span>'}</td>
-        <td class="r mono ${priceCls}">${priceInner}</td>
-        <td class="r mono"><strong>${fmt(boxes)}</strong></td>
-        <td class="r mono ${priceCls}">${baht(val)}</td>
-      </tr>`;
-    }).join("");
-  } else {
-    // brand view: แสดงยอดรวมต่อแบรนด์ และสามารถกดเพื่อเปิดดูราย SKU ของแบรนด์นั้น
-    const brandMap = new Map(); // brand -> items
-    sorted.forEach(s => {
-      const brand = (s.brand_name_thai || s.brand_name_english || "").trim() || "—";
-      if (!brandMap.has(brand)) brandMap.set(brand, []);
-      brandMap.get(brand).push(s);
-    });
-
-    const brandList = Array.from(brandMap.entries()).map(([brand, items]) => ({ brand, items }));
-    brandList.sort((a, b) => a.brand.localeCompare(b.brand, "th"));
-
-    qs("#skuTableBody").innerHTML = brandList.map((b, idx) => {
-      const items = b.items;
-      let brandBoxes = 0;
-      let brandValue = 0;
-      let brandMissing = 0;
-      let brandHist = 0;
-      items.forEach(s => {
-        const boxes = Number(s.supervisor_target_boxes) || 0;
-        const st = _sec1PriceStates(s);
-        const { price, fromHist, missing } = st;
-        const val = boxes * price;
-        brandBoxes += boxes;
-        brandValue += val;
-        totalVal += val;
-        totalBoxesAll += boxes;
-        if (missing) brandMissing += 1;
-        if (fromHist) brandHist += 1;
-      });
-      const weightedPrice = brandBoxes > 0 ? (brandValue / brandBoxes) : 0;
-
-      // sort ภายในแบรนด์: รหัสสินค้า
-      const itemsSorted = [...items].sort((a, c) => a.sku.localeCompare(c.sku));
-
-      const childRows = itemsSorted.map(s => {
-        const boxes = Number(s.supervisor_target_boxes) || 0;
-        const st = _sec1PriceStates(s);
-        const { price, fromHist, missing } = st;
-        const val = boxes * price;
-        const brand = s.brand_name_thai || s.brand_name_english || "";
-        const priceCls = missing ? "price-missing" : (fromHist ? "price-from-history" : "");
-        const priceInner = missing
-          ? `<span class="price-missing-badge">ไม่มีราคา</span>`
-          : `${fmt(price)}${fromHist ? ` <span class="price-history-badge">สำรอง: ประวัติหาร</span>` : ""}`;
-        return `<tr class="brand-child" data-brand-idx="${idx}" style="display:none;">
-          <td class="mono" style="font-size:12px;font-weight:600;">${s.sku} ${_skuNewBadgeHtml(s.sku)}</td>
-          <td>${brand ? `<span class="brand-chip">${brand}</span>` : '<span style="color:var(--text-3)">—</span>'}</td>
-          <td class="r mono ${priceCls}">${priceInner}</td>
-          <td class="r mono"><strong>${fmt(boxes)}</strong></td>
-          <td class="r mono ${priceCls}">${baht(val)}</td>
-        </tr>`;
-      }).join("");
-
-      const hdrCls = brandMissing > 0 ? "price-missing" : (brandHist > 0 ? "price-from-history" : "");
-      const hdrBadges = [
-        brandMissing > 0 ? `<span class="price-missing-badge">ไม่มีราคา ${brandMissing}</span>` : "",
-        brandHist > 0 ? `<span class="price-history-badge">ประวัติหาร ${brandHist}</span>` : "",
-      ].filter(Boolean).join(" ");
-
-      return `<tr class="brand-header" data-brand-idx="${idx}" onclick="toggleSkuBrand(${idx})">
-        <td class="mono" style="font-size:12px;font-weight:700;">
-          <span id="brandIcon_${idx}" class="brand-icon">▶</span> รวม
-        </td>
-        <td>${b.brand !== "—" ? `<span class="brand-chip">${b.brand}</span>` : '<span style="color:var(--text-3)">—</span>'}</td>
-        <td class="r mono">${brandBoxes > 0 ? fmt(weightedPrice) : "—"}</td>
-        <td class="r mono"><strong>${fmt(brandBoxes)}</strong></td>
-        <td class="r mono ${hdrCls}">${baht(brandValue)}${hdrBadges ? ` ${hdrBadges}` : ""}</td>
-      </tr>${childRows}`;
-    }).join("");
-  }
-  qs("#totalBoxValue").textContent = baht(totalVal);
-  qs("#totalBoxesAll").textContent = fmt(totalBoxesAll);
-
-  qs("#sec1SortCode")?.classList.toggle("sec1-sort-active", _skuSec1Sort === "code");
-  qs("#sec1SortBrand")?.classList.toggle("sec1-sort-active", _skuSec1Sort === "brand");
-
-  qs("#sec1ViewSku")?.classList.toggle("sec1-view-active", _skuSec1View === "sku");
-  qs("#sec1ViewBrand")?.classList.toggle("sec1-view-active", _skuSec1View === "brand");
+function _skuLineValue(s) {
+  const boxes = Number(s.supervisor_target_boxes) || 0;
+  const p = Number(_sec1PriceStates(s).price) || 0;
+  return boxes * p;
 }
 
-function sec1SetSort(mode) {
-  _skuSec1Sort = mode;
+function _compareSkuForSort(a, b) {
+  const dir = _skuSec1SortDir;
+  const key = _skuSec1SortKey;
+  const nameKey = x => String(x.product_name_thai || x.product_name_english || x.sku || "").trim();
+  switch (key) {
+    case "name":
+      return nameKey(a).localeCompare(nameKey(b), "th") * dir;
+    case "brand": {
+      const ba = String(a.brand_name_thai || a.brand_name_english || "").trim();
+      const bb = String(b.brand_name_thai || b.brand_name_english || "").trim();
+      return ba.localeCompare(bb, "th") * dir;
+    }
+    case "section": {
+      const sa = String(a.section || "").trim();
+      const sb = String(b.section || "").trim();
+      return sa.localeCompare(sb, "th") * dir;
+    }
+    case "price": {
+      const pa = Number(_sec1PriceStates(a).price) || 0;
+      const pb = Number(_sec1PriceStates(b).price) || 0;
+      return (pa - pb) * dir;
+    }
+    case "boxes":
+      return (
+        ((Number(a.supervisor_target_boxes) || 0) - (Number(b.supervisor_target_boxes) || 0)) * dir
+      );
+    case "value":
+      return (_skuLineValue(a) - _skuLineValue(b)) * dir;
+    default:
+      return 0;
+  }
+}
+
+function _updateSec1SortHeaders() {
+  document.querySelectorAll(".tbl--sku-step1 thead .th-sortable").forEach(th => {
+    const k = th.getAttribute("data-sort");
+    th.classList.remove("th-sort--asc", "th-sort--desc", "th-sort--active");
+    if (k && k === _skuSec1SortKey) {
+      th.classList.add("th-sort--active");
+      th.classList.add(_skuSec1SortDir === 1 ? "th-sort--asc" : "th-sort--desc");
+    }
+  });
+}
+
+function _skuProductInnerHtml(s) {
+  const code = String(s.sku || "");
+  const nTh = String(s.product_name_thai || "").trim();
+  const nEn = String(s.product_name_english || "").trim();
+  const sub = nTh || nEn;
+  const subHtml = sub ? `<div class="sku-cell-name">${escH(sub)}</div>` : "";
+  return `<div class="sku-cell-product">
+    <div class="sku-cell-code">${escH(code)} ${_skuNewBadgeHtml(s.sku)}</div>
+    ${subHtml}
+  </div>`;
+}
+
+function _skuDataRowHtml(s, groupChildIdx = null) {
+  const boxes = Number(s.supervisor_target_boxes) || 0;
+  const st = _sec1PriceStates(s);
+  const { price, fromHist, missing } = st;
+  const val = boxes * price;
+  const priceCls = missing ? "price-missing" : (fromHist ? "price-from-history" : "");
+  const priceInner = missing
+    ? `<span class="price-missing-badge">ไม่มีราคา</span>`
+    : `${fmt(price)}${fromHist ? ` <span class="price-history-badge">สำรอง: ประวัติหาร</span>` : ""}`;
+  const brand = s.brand_name_thai || s.brand_name_english || "";
+  const sec = String(s.section || "").trim();
+  const trOpen =
+    groupChildIdx != null
+      ? `<tr class="sku-group-child" data-group-idx="${groupChildIdx}" style="display:none;">`
+      : "<tr>";
+  return `${trOpen}
+      <td>${_skuProductInnerHtml(s)}</td>
+      <td>${brand ? `<span class="brand-chip">${escH(brand)}</span>` : '<span style="color:var(--text-3)">—</span>'}</td>
+      <td>${sec ? escH(sec) : '<span style="color:var(--text-3)">—</span>'}</td>
+      <td class="r mono ${priceCls}">${priceInner}</td>
+      <td class="r mono"><strong>${fmt(boxes)}</strong></td>
+      <td class="r mono ${priceCls}">${baht(val)}</td>
+    </tr>`;
+}
+
+function _skuGroupedTableHtml(sortedFlat, keyFn) {
+  const order = [];
+  const map = new Map();
+  for (const s of sortedFlat) {
+    const k = keyFn(s);
+    if (!map.has(k)) {
+      map.set(k, []);
+      order.push(k);
+    }
+    map.get(k).push(s);
+  }
+
+  let html = "";
+  order.forEach((gKey, idx) => {
+    const items = map.get(gKey);
+    let brandBoxes = 0;
+    let brandValue = 0;
+    let brandMissing = 0;
+    let brandHist = 0;
+    items.forEach(s => {
+      const boxes = Number(s.supervisor_target_boxes) || 0;
+      const st = _sec1PriceStates(s);
+      const { fromHist, missing } = st;
+      brandBoxes += boxes;
+      brandValue += _skuLineValue(s);
+      if (missing) brandMissing += 1;
+      if (fromHist) brandHist += 1;
+    });
+    const weightedPrice = brandBoxes > 0 ? brandValue / brandBoxes : 0;
+    const hdrCls = brandMissing > 0 ? "price-missing" : (brandHist > 0 ? "price-from-history" : "");
+    const hdrBadges = [
+      brandMissing > 0 ? `<span class="price-missing-badge">ไม่มีราคา ${brandMissing}</span>` : "",
+      brandHist > 0 ? `<span class="price-history-badge">ประวัติหาร ${brandHist}</span>` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    const chip =
+      gKey !== "—"
+        ? `<span class="brand-chip">${escH(gKey)}</span>`
+        : '<span style="color:var(--text-3)">—</span>';
+
+    const headBrand = _skuSec1View === "brand" ? chip : '<span style="color:var(--text-3)">—</span>';
+    const headSec = _skuSec1View === "section" ? chip : '<span style="color:var(--text-3)">—</span>';
+
+    const childRows = [...items]
+      .sort((a, b) => String(a.sku).localeCompare(String(b.sku)))
+      .map(s => _skuDataRowHtml(s, idx))
+      .join("");
+
+    html += `<tr class="sku-group-header" data-group-idx="${idx}" onclick="toggleSkuGroup(${idx})">
+      <td class="mono" style="font-size:12px;font-weight:700;">
+        <span id="groupIcon_${idx}" class="brand-icon" aria-hidden="true">▶</span> รวม
+      </td>
+      <td>${headBrand}</td>
+      <td>${headSec}</td>
+      <td class="r mono">${brandBoxes > 0 ? fmt(weightedPrice) : "—"}</td>
+      <td class="r mono"><strong>${fmt(brandBoxes)}</strong></td>
+      <td class="r mono ${hdrCls}">${baht(brandValue)}${hdrBadges ? ` ${hdrBadges}` : ""}</td>
+    </tr>${childRows}`;
+  });
+  return html;
+}
+
+function sec1ToggleSort(key) {
+  const allowed = new Set(["name", "brand", "section", "price", "boxes", "value"]);
+  if (!allowed.has(key)) return;
+  if (_skuSec1SortKey === key) _skuSec1SortDir *= -1;
+  else {
+    _skuSec1SortKey = key;
+    _skuSec1SortDir = 1;
+  }
   _renderSkuSec1();
 }
 
+function _renderSkuSec1() {
+  const sorted = [...(S.skus || [])].sort(_compareSkuForSort);
+
+  let totalVal = 0;
+  let totalBoxesAll = 0;
+  sorted.forEach(s => {
+    totalVal += _skuLineValue(s);
+    totalBoxesAll += Number(s.supervisor_target_boxes) || 0;
+  });
+
+  const body = qs("#skuTableBody");
+  if (!body) return;
+
+  if (_skuSec1View === "sku") {
+    body.innerHTML = sorted.map(s => _skuDataRowHtml(s)).join("");
+  } else if (_skuSec1View === "brand") {
+    body.innerHTML = _skuGroupedTableHtml(sorted, s =>
+      String((s.brand_name_thai || s.brand_name_english || "").trim() || "—")
+    );
+  } else {
+    body.innerHTML = _skuGroupedTableHtml(sorted, s => String(s.section || "").trim() || "—");
+  }
+
+  qs("#totalBoxValue").textContent = baht(totalVal);
+  qs("#totalBoxesAll").textContent = fmt(totalBoxesAll);
+
+  qs("#sec1ViewSku")?.classList.toggle("sec1-view-active", _skuSec1View === "sku");
+  qs("#sec1ViewBrand")?.classList.toggle("sec1-view-active", _skuSec1View === "brand");
+  qs("#sec1ViewSection")?.classList.toggle("sec1-view-active", _skuSec1View === "section");
+
+  _updateSec1SortHeaders();
+}
+
 function sec1SetView(mode) {
+  if (mode !== "sku" && mode !== "brand" && mode !== "section") return;
   _skuSec1View = mode;
-  // รีเซ็ตการขยายแบรนด์ให้กลับเป็นเริ่มต้น
-  // (render ใหม่อยู่แล้ว แต่กันเคสค้างจาก DOM เก่า)
   qs("#skuTableBody") && (qs("#skuTableBody").innerHTML = "");
   _renderSkuSec1();
 }
 
-function toggleSkuBrand(idx) {
-  const rows = document.querySelectorAll(`#skuTableBody tr.brand-child[data-brand-idx="${idx}"]`);
+function toggleSkuGroup(idx) {
+  const rows = document.querySelectorAll(`#skuTableBody tr.sku-group-child[data-group-idx="${idx}"]`);
   if (!rows || rows.length === 0) return;
   const shouldExpand = rows[0].style.display === "none";
-  rows.forEach(r => { r.style.display = shouldExpand ? "table-row" : "none"; });
-  const icon = qs(`#brandIcon_${idx}`);
+  rows.forEach(r => {
+    r.style.display = shouldExpand ? "table-row" : "none";
+  });
+  const icon = qs(`#groupIcon_${idx}`);
   if (icon) icon.textContent = shouldExpand ? "▼" : "▶";
 }
 
@@ -1836,7 +2010,7 @@ function onYellowChange(input) {
 
   // 🔴 แจ้งเตือนให้กดคำนวณใหม่เมื่อแก้เป้าเงิน
   if (S.allocations && S.allocations.length > 0) {
-    toast("⚠️ มีการปรับเป้าเงิน! กรุณากดปุ่ม 'คำนวณใหม่' ด้านล่างเพื่อให้ AI อัปเดตหีบให้ตรงกับเป้าเงินล่าสุด", "red");
+    toast("⚠️ มีการปรับเป้าเงิน! กรุณากดปุ่ม «คำนวณใหม่» ด้านล่างเพื่อกระจายหีบให้ตรงกับเป้าเงินล่าสุด", "red");
     const btn = qs("#runBtn");
     if (btn) {
       btn.classList.add("pulse-warn");
@@ -2136,7 +2310,7 @@ function renderResult(allocs) {
   }
   headerHtml += `<th class="r sticky-grand-box">รวมหีบ<div style="font-size:9px;color:var(--text-3)">ทุกแบรนด์</div></th>`;
   headerHtml += `<th class="r sticky-grand-val">มูลค่ารวม<div style="font-size:9px;color:var(--text-3)">ทุกแบรนด์</div>` +
-    `<div class="sku-th-dev-hint">ขาด / เกิน เป้าเหลือง<br><span style="font-weight:500">(เกณฑ์ ±1,000 บ.)</span></div></th>`;
+    `<div class="sku-th-dev-hint">ขาด / เกิน เป้าหมายที่กำหนดเอง<br><span style="font-weight:500">(เกณฑ์ ±1,000 บ.)</span></div></th>`;
   headerHtml += `</tr>`;
   qs("#resultHead").innerHTML = headerHtml;
 
@@ -2656,19 +2830,6 @@ function dl(blob, name) {
   a.click(); URL.revokeObjectURL(a.href);
 }
 
-const qs = s => document.querySelector(s);
-const wait = ms => new Promise(r => setTimeout(r, ms));
-const sumYellow = () => Object.values(S.yellow).reduce((a, b) => a + b, 0);
-
-function baht(n) {
-  if (n == null || isNaN(n)) return "—";
-  return Number(n).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-function fmt(n) {
-  if (n == null || isNaN(n)) return "—";
-  return Number(n).toLocaleString("th-TH");
-}
-
 function toast(msg, type = "red") {
   const el = document.createElement("div");
   // ใช้ textContent แทน innerHTML กัน XSS จาก error message ของ API
@@ -2955,7 +3116,7 @@ function _renderFabricStep3Notices(changes) {
   const inner = `
     <div class="fabric-change-title">📡 เป้าจาก Fabric เปลี่ยนเมื่อเทียบกับครั้งล่าสุดที่บันทึก snapshot</div>
     <ul>${changes.map(c => `<li>${c}</li>`).join("")}</ul>
-    <div style="font-size:12px;color:var(--text-2);margin-top:8px;">ช่องหีบที่แก้มือและล็อกไว้ (สีเหลือง) จะไม่ถูกเขียนทับ — หีบที่เพิ่มจากเป้าทีมจะเกลี่ยไปช่องที่ยังไม่ล็อกเมื่อโหลดแบบร่าง</div>`;
+    <div style="font-size:12px;color:var(--text-2);margin-top:8px;">ช่องหีบที่แก้มือและล็อกไว้จะไม่ถูกเขียนทับ — หีบที่เพิ่มจากเป้าทีมจะเกลี่ยไปช่องที่ยังไม่ล็อกเมื่อโหลดแบบร่าง</div>`;
   const top = document.getElementById("fabricChangeStep3Notice");
   if (top) {
     top.innerHTML = inner;
@@ -3105,7 +3266,7 @@ function checkSnapshotChanges() {
         <ul class="change-banner-list">
           ${changes.map(c => `<li>${c}</li>`).join("")}
         </ul>
-        <div class="change-banner-note">⚡ ช่องหีบที่แก้มือและล็อกไว้ (สีเหลือง) จะไม่ถูกเขียนทับ — หีบที่เพิ่มจากเป้าทีมจะเกลี่ยไปช่องที่ยังไม่ล็อกเมื่อโหลดแบบร่างที่บันทึกไว้</div>
+        <div class="change-banner-note">⚡ ช่องหีบที่แก้มือและล็อกไว้จะไม่ถูกเขียนทับ — หีบที่เพิ่มจากเป้าทีมจะเกลี่ยไปช่องที่ยังไม่ล็อกเมื่อโหลดแบบร่างที่บันทึกไว้</div>
         <div class="change-banner-actions">
           ${reallocBtn}
           <button class="btn-banner-close" onclick="document.getElementById('changeBanner').remove()">ปิด</button>
