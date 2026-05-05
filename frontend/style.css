@@ -108,7 +108,7 @@ html, body {
   background: var(--text-3);
 }
 
-/* Global busy overlay — อ่านง่าย ไม่พึ่งสีตัวอักษรจางบนพื้นโปร่ง */
+/* Global busy overlay */
 .global-busy-card {
   min-width: 280px;
   max-width: 520px;
