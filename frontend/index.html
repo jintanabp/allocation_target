@@ -190,7 +190,7 @@
             <span class="step1-target-hero__period" id="step1HeroPeriod">—</span>
           </div>
           <p class="step1-target-hero__note">
-            หากตัวเลขเป้ารวมไม่ถูกต้อง กรุณาติดต่อ IT (เช่น กลุ่ม Microsoft Teams)
+            หากตัวเลขเป้ารวมไม่ถูกต้อง กรุณา
             <a href="#" id="itContactLink" class="step1-target-hero__link" target="_blank" rel="noopener noreferrer">ติดต่อ IT</a>
             <span class="step1-target-hero__star">*</span>
           </p>
@@ -217,7 +217,7 @@
                   <tr>
                     <th>พนักงาน</th>
                     <th class="r">เป้า (บาท)</th>
-                    <th class="r" id="empStep1MidTh">ยอดขายเฉลี่ย 3 เดือนย้อนหลัง</th>
+                    <th class="r" id="empStep1MidTh">เฉลี่ย 3 เดือนย้อนหลัง</th>
                     <th class="r">% เติบโต</th>
                   </tr>
                 </thead>
@@ -309,9 +309,9 @@
           <div>
             <h2 class="step-title">กำหนดเป้าหมาย <span class="step-title-optional">(optional)</span></h2>
             <p class="step-desc">คลิกแก้เป้าเป็นจำนวนเงินรายพนักงานในช่องที่กำหนดได้
-              <strong>ยอดรวมของทุกคนต้องเท่ากับเป้ารวมของระบบเท่านั้น</strong>
+              <strong>โดยที่ยอดรวมของทุกคนต้องเท่ากับเป้ารวมของระบบเท่านั้น</strong>
               เช่น หากลดเป้าพนักงาน A 100,000 บาท ต้องเพิ่มเป้าพนักงานอื่น (หรือหลายคน) รวม 100,000 บาท
-              เพื่อให้ผลรวมยังคงเท่าเดิม — ขั้นตอนนี้ทำได้หรือข้ามไปใช้เป้าเริ่มต้นจากระบบได้</p>
+              เพื่อให้ผลรวมยังคงเท่าเดิม — ขั้นตอนนี้สามารถข้ามและใช้เป้าเริ่มต้นจากระบบได้</p>
           </div>
         </div>
 
@@ -404,7 +404,7 @@
               <span class="s-pill-icon">📊</span>
               <div>
                 <div class="s-pill-name">ยอดขายเฉลี่ย 3 เดือนย้อนหลัง</div>
-                <div class="s-pill-desc">กระจายตามสัดส่วนยอดขายเฉลี่ยรวม 3 เดือนย้อนหลัง (รายพนักงานต่อ SKU)</div>
+                <div class="s-pill-desc">กระจายตามสัดส่วนยอดขายเฉลี่ยรวม 3 เดือนย้อนหลัง</div>
               </div>
             </label>
             <label class="s-pill">
@@ -412,7 +412,7 @@
               <span class="s-pill-icon">📈</span>
               <div>
                 <div class="s-pill-name">ยอดขายเฉลี่ย 6 เดือนย้อนหลัง</div>
-                <div class="s-pill-desc">กระจายตามสัดส่วนยอดขายเฉลี่ยรวม 6 เดือนย้อนหลัง (รายพนักงานต่อ SKU)</div>
+                <div class="s-pill-desc">กระจายตามสัดส่วนยอดขายเฉลี่ยรวม 6 เดือนย้อนหลัง</div>
               </div>
             </label>
             <label class="s-pill">
@@ -420,7 +420,7 @@
               <span class="s-pill-icon">📅</span>
               <div>
                 <div class="s-pill-name">เดือนเดียวกันปีที่แล้ว</div>
-                <div class="s-pill-desc">กระจายตามสัดส่วนยอดขายเดือนเดียวกับงวดที่เลือก แต่ปีที่แล้ว (รายพนักงานต่อ SKU)</div>
+                <div class="s-pill-desc">กระจายตามสัดส่วนยอดขายเดือนเดียวกับงวดที่เลือกในปีที่แล้ว </div>
               </div>
             </label>
             <!-- ซ่อนชั่วคราว — โค้ด backend ยังรองรับ EVEN
@@ -438,7 +438,7 @@
               <span class="s-pill-icon">🚀</span>
               <div>
                 <div class="s-pill-name">ผลักดันพนักงาน</div>
-                <div class="s-pill-desc">เริ่มจากสัดส่วนยอดขายเฉลี่ย 3 เดือนย้อนหลัง แล้วเอนน้ำหนักเพิ่มให้พนักงานที่ขาย SKU นั้นน้อยหรือไม่มียอด โดยยังอยู่ในกรอบเป้าหมายที่ตั้งไว้</div>
+                <div class="s-pill-desc">ใช้สัดส่วนยอดขายเฉลี่ย 3 เดือนย้อนหลัง แล้วเพิ่มให้พนักงานที่ขาย SKU นั้นน้อยหรือไม่มียอด โดยยังอยู่ในเป้าหมายที่ตั้งไว้</div>
               </div>
             </label>
             <!-- ซ่อนชั่วคราว — โค้ด backend ยังรองรับ LP
@@ -458,14 +458,14 @@
               <input type="checkbox" id="forceMinOneBox" class="strategy-check-input">
               <span class="strategy-check-body">
                 <span class="strategy-check-title">บังคับให้ทุกคนได้อย่างน้อย 1 หีบ (ต่อ SKU)</span>
-                <span class="strategy-check-desc">ทุกพนักงานได้เป้าหมายหีบอย่างน้อย 1 หีบ แม้ไม่มียอดขายในรายการประวัติ — ใช้ได้เมื่อเป้าหีบรวมของ SKU นั้นไม่น้อยกว่าจำนวนพนักงาน ส่วนหีบที่เหลือจะแบ่งตามวิธีกระจายที่เลือกด้านบน</span>
+                <span class="strategy-check-desc">ทุกพนักงานได้เป้าหมายหีบอย่างน้อย 1 หีบ แม้ไม่มียอดขายในรายการประวัติ ส่วนหีบที่เหลือจะแบ่งตามวิธีกระจายที่เลือกด้านบน</span>
               </span>
             </label>
             <label class="strategy-check-row">
               <input type="checkbox" id="newProductsEvenBox" class="strategy-check-input">
               <span class="strategy-check-body">
                 <span class="strategy-check-title">SKU ใหม่แบ่งเท่ากัน</span>
-                <span class="strategy-check-desc">SKU ที่ทั้งทีมไม่มียอดขายย้อนหลัง 12 เดือนปฏิทิน จะถูกแบ่งจำนวนหีบเท่า ๆ กันทุกคน (อ้างอิงข้อมูลหลังโหลด Dashboard)</span>
+                <span class="strategy-check-desc">SKU ที่ทั้งทีมไม่มียอดขายย้อนหลัง 12 เดือน จะถูกแบ่งจำนวนหีบเท่า ๆ กันทุกคน (อ้างอิงข้อมูลหลังโหลด Dashboard)</span>
               </span>
             </label>
           </div>
@@ -535,9 +535,8 @@
           </div>
 
           <div class="edit-note">
-            💡 คลิกตัวเลข <span style="color:var(--accent);font-weight:700;">สีส้ม</span> เพื่อแก้ไขจำนวนหีบ
-            · ยอดรวมอัปเดตอัตโนมัติ
-            · คอลัมน์ขวาสุด: มูลค่ารวม + บรรทัดเล็ก <strong>ขาด/เกิน</strong> เทียบเป้าเหลือง (เกณฑ์ ±1,000 บาท)
+            💡 คลิกตัวเลข <span style="color:var(--accent);font-weight:700;">สีน้ำเงิน</span> เพื่อแก้ไขจำนวนหีบ
+            · ยอดเงินรวมรายพนักงานจะอัปเดตอัตโนมัติที่ (เกณฑ์ ±1,000 บาท)
           </div>
         </div>
       </section>
@@ -570,13 +569,12 @@
   </div>
 
   <div class="footer">
-    รัน local: <code>Run_Local.bat</code> หรือ <code>uvicorn backend.main:app</code>
-    · เปิด <code>http://localhost:8000/</code>
+    หากมีปัญหาในการใช้งาน กรุณาติดต่อ IT
   </div>
 
   <!-- ใช้ไฟล์ในโปรเจกต์ — เครือข่ายองค์กรมักบล็อก alcdn.msauth.net ทำให้ msal ไม่โหลด -->
   <script src="vendor/msal-browser.min.js"></script>
-  <script src="app.js?v=202605046"></script>
+  <script src="app.js?v=202605047"></script>
 </body>
 
 </html>

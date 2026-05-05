@@ -2152,7 +2152,13 @@ async function _doOptimize(lockedEdits = []) {
     }
 
     const json = await res.json();
-    S.histWindowMonths = Number(json.hist_window_months) === 6 ? 6 : 3;
+    {
+      const mw = Number(json.hist_window_months);
+      /* ต้องรองรับ 1 เดือน (กลยุทธ์ LY — เกณฑ์กระจายหีบ) อย่ามารวมเป็น 3 — ถ้ามารวม UI จะเขียนว่า "3M" ทั้งที่ข้อมูลคือปีแล้วเดือนเดียวกัน */
+      if (mw === 1) S.histWindowMonths = 1;
+      else if (mw === 6) S.histWindowMonths = 6;
+      else S.histWindowMonths = 3;
+    }
     S.newProductsEvenMode = String(json.new_products_even_mode || "off");
     S.newProductSkus = new Set(Array.isArray(json.new_product_skus) ? json.new_product_skus.map(x => String(x).trim()) : []);
     const allocs = json.allocations;
@@ -2274,7 +2280,8 @@ function renderResult(allocs) {
     lkHistLy[a.emp_id][a.sku] = Number(a.hist_ly_same_month) || 0;
     lkHistPrev[a.emp_id][a.sku] = Number(a.hist_prev_month) || 0;
   }
-  const hm = S.histWindowMonths === 6 ? 6 : 3;
+  /** 1 = LY เดือนเดียวกันปีก่อนเป็นฐาน, 3/6 = ค่าเฉลี่ยหีบจาก cache rolling */
+  const hmRoll = S.histWindowMonths === 6 ? 6 : S.histWindowMonths === 1 ? 1 : 3;
 
   if (isFiltered) {
     const brandTotal = filtered.reduce((acc, a) => {
@@ -2367,12 +2374,19 @@ function renderResult(allocs) {
       const hr = histsRoll[i];
       const hy = histsLy[i];
       const hp = histsPrev[i];
-      const line1 = `เฉลี่ย ${hm}M ย้อนหลัง: ${Number(hr).toFixed(1)}`;
-      const line1b = hp > 0 ? `เดือนที่แล้ว: ${Number(hp).toFixed(1)}` : "เดือนที่แล้ว: —";
-      const line2 = hy > 0
-        ? `เดือนเดียวกันปีก่อน: ${Number(hy).toFixed(1)}`
-        : "เดือนเดียวกันปีก่อน: —";
-      const hText = `<div class="hist-sub"><div>${line1}</div><div>${line1b}</div><div>${line2}</div></div>`;
+      /* ถ้ารอบฐาน = 1 เดือน (LY) hr จะซ้ำกับ hy → โชว์บรรทัดแรกเดียว ไม่ต้องซ้ำ "เดือนเดียวกัน" สามบรรทัด */
+      const lineRoll =
+        hmRoll === 1
+          ? `เดือนเดียวกันปีก่อน (ฐานกระจาย): ${Number(hr).toFixed(1)}`
+          : `เฉลี่ย ${hmRoll}M ย้อนหลัง: ${Number(hr).toFixed(1)}`;
+      const linePrev = hp > 0 ? `เดือนที่แล้ว: ${Number(hp).toFixed(1)}` : "เดือนที่แล้ว: —";
+      const lineLyDiv =
+        hmRoll === 1
+          ? ""
+          : `<div>${hy > 0 ? `เดือนเดียวกันปีก่อน: ${Number(hy).toFixed(1)}` : "เดือนเดียวกันปีก่อน: —"}</div>`;
+
+      const hText = `<div class="hist-sub"><div>${lineRoll}</div><div>${linePrev}</div>${lineLyDiv}</div>`;
+
       const colorClass = _editedSet.has(`${emp}::${s}`) ? "is-edited" : "";
 
       rowHtml += `<td class="r result-cell" style="vertical-align:top;">
@@ -2882,7 +2896,12 @@ let _draftPromptOpening = false;
 function saveDraft(silent = false) {
   if (S.allocations.length === 0) return;
   const draftKey = currentDraftStorageKey();
-  const draftData = { yellow: S.yellow, yellowLocked: S.yellowLocked, allocations: S.allocations };
+  const draftData = {
+    yellow: S.yellow,
+    yellowLocked: S.yellowLocked,
+    allocations: S.allocations,
+    histWindowMonths: S.histWindowMonths,
+  };
   try {
     localStorage.setItem(draftKey, JSON.stringify(draftData));
     S._hasUnsaved = false;
@@ -2952,6 +2971,12 @@ function checkAndLoadDraft() {
       S.yellow = draftData.yellow || S.yellow;
       S.yellowLocked = draftData.yellowLocked || {};
       S.allocations = draftData.allocations || [];
+      {
+        const hwm = Number(draftData.histWindowMonths);
+        if (hwm === 1) S.histWindowMonths = 1;
+        else if (hwm === 6) S.histWindowMonths = 6;
+        else S.histWindowMonths = 3;
+      }
 
       const mergeMsgs = mergeDraftIncreasedOfficialTargets();
       _saveAllocationSnapshot();
