@@ -3,6 +3,7 @@ import logging
 import os
 import uuid
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import msal
 import pandas as pd
@@ -59,25 +60,47 @@ def _onelake_base_path() -> tuple[str, str]:
     return ws, lh
 
 
+def _onelake_file_url(file_path: str) -> tuple[str, str]:
+    """คืนค่า (full_dfs_url_without_query, relative_path_under_Files)."""
+    ws, lh = _onelake_base_path()
+    base = "https://onelake.dfs.fabric.microsoft.com"
+    fp = file_path.lstrip("/").replace("\\", "/")
+    if fp.lower().startswith("files/"):
+        fp = fp[6:]
+    return f"{base}/{ws}/{lh}/Files/{fp}", fp
+
+
+def _onelake_delete_if_exists(url: str, headers: dict) -> None:
+    """ลบไฟล์ใน path ถ้ามี — ใช้ก่อนทับเมื่อชื่อซ้ำ (กัน append/flush ค้างจากรอบก่อน)"""
+    r = requests.delete(url, headers=headers, timeout=60)
+    if r.status_code in (200, 202, 404):
+        return
+    logger.warning(
+        "OneLake delete before upload: HTTP %s — %s", r.status_code, (r.text or "")[:200]
+    )
+
+
+def _bangkok_date_yyyymmdd() -> str:
+    """วันที่ปฏิทิน Asia/Bangkok สำหรับ suffix ชื่อไฟล์ (alloc_*_YYYYMMDD.csv)"""
+    return datetime.now(ZoneInfo("Asia/Bangkok")).strftime("%Y%m%d")
+
+
 def _upload_bytes_to_onelake(file_path: str, content: bytes, token: str) -> None:
     """
     Upload ไป OneLake via ADLS Gen2 (dfs endpoint):
+    0) DELETE path ถ้ามี — ทับไฟล์ชื่อเดิมแบบไม่ค้าง append/flush
     1) PUT ?resource=file
     2) PATCH append
     3) PATCH flush
     """
-    ws, lh = _onelake_base_path()
-    base = "https://onelake.dfs.fabric.microsoft.com"
-    # Always write under Files/
-    fp = file_path.lstrip("/").replace("\\", "/")
-    if fp.lower().startswith("files/"):
-        fp = fp[6:]
-    url = f"{base}/{ws}/{lh}/Files/{fp}"
+    url, _fp = _onelake_file_url(file_path)
 
     headers = {
         "Authorization": f"Bearer {token}",
         "x-ms-version": "2021-08-06",
     }
+
+    _onelake_delete_if_exists(url, headers)
 
     r0 = requests.put(url + "?resource=file", headers=headers, timeout=60)
     if r0.status_code not in (201, 200, 202):
@@ -150,15 +173,22 @@ def upload_allocations_to_lakehouse(req: LakehouseUploadRequest) -> dict:
     # prefix should be relative to Files/ (allow user to include Files/...)
     if prefix.lower().startswith("files/"):
         prefix = prefix[6:]
-    fname = (
-        f"alloc_{safe_id(req.sup_id)}_{req.target_year}_{req.target_month:02d}_{batch_id}.csv"
-    )
+
+    # alloc_{sup}_{ปี}_{เดือน}_{YYYYMMDD}.csv — YYYYMMDD ตาม Asia/Bangkok; ทุกครั้งลบของเก่าแล้วเขียนทับ
+    day_tag = _bangkok_date_yyyymmdd()
+    fname = f"alloc_{safe_id(req.sup_id)}_{req.target_year}_{req.target_month:02d}_{day_tag}.csv"
+
     remote_path = f"{prefix}/{fname}"
 
     token = _get_storage_token()
     _upload_bytes_to_onelake(remote_path, content, token)
 
-    logger.info("uploaded allocations to OneLake: %s (%d rows)", remote_path, len(df))
+    logger.info(
+        "uploaded allocations to OneLake: %s (%d rows) bangkok_day=%s",
+        remote_path,
+        len(df),
+        day_tag,
+    )
     return {
         "status": "ok",
         "rows": int(len(df)),
