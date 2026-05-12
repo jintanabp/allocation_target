@@ -59,6 +59,47 @@ function escH(s) {
 }
 
 /* ══════════════════════════════════════════════
+   FRIENDLY MESSAGE — แปลงศัพท์ dev ให้เป็นภาษาที่ user เข้าใจ
+══════════════════════════════════════════════ */
+function _friendlyMsg(raw) {
+  if (raw == null) return "";
+  let s = String(raw);
+  // เปลี่ยนชื่อ technical → ภาษาเข้าใจง่าย
+  s = s
+    .replace(/tga_target_salesman_next/gi, "ระบบเป้า Target Sun")
+    .replace(/tga[_ ]target[_ ]salesman/gi, "ระบบเป้า Target Sun")
+    .replace(/target_boxes\.csv/gi, "ตารางเป้าหีบ")
+    .replace(/target_sun\.csv/gi, "ตารางเป้า Target Sun")
+    .replace(/TGA_FILTER_BY_EFFECTIVE=1/gi, "")
+    .replace(/USE_LEGACY_TARGET_CSV=1/gi, "")
+    .replace(/USE_LEGACY_TARGET_CSV/gi, "")
+    .replace(/\bTGA\b/g, "Target Sun")
+    .replace(/EFFECTIVEDATE/gi, "วันที่มีผล")
+    .replace(/Dim_Product/gi, "ตารางสินค้า")
+    .replace(/SALESMANCODE/gi, "รหัสพนักงาน")
+    .replace(/PRODUCTCODE/gi, "รหัสสินค้า")
+    .replace(/QUANTITYCASE/gi, "จำนวนหีบ")
+    .replace(/Fabric/gi, "ระบบเป้า Target Sun");
+  // ลบคำใน () ที่อ้างชื่อ field ตรงๆ
+  s = s.replace(/\(?\s*supervisor_target_boxes\s*=\s*0\s*\)?/gi, "");
+  s = s.replace(/\(?\s*target_sun\s*=\s*0\s*\)?/gi, "");
+  s = s.replace(/\bsupervisor_target_boxes\b/gi, "เป้าหีบหัวหน้า");
+  s = s.replace(/\btarget_sun\b/gi, "เป้า Target Sun");
+  // ลบคำเทคนิคที่ค้างใน vocab
+  s = s.replace(/—\s*ถ้าเปิดกรองงวดด้วยวันที่.*$/u, "");
+  s = s.replace(/—\s*ตรวจสอบ.*?ราคาต่อหีบใน.*$/u, "");
+  // ลบช่องว่างซ้ำ / วงเล็บว่าง / dash ลอย
+  s = s
+    .replace(/\(\s*\)/g, "")
+    .replace(/\(\s*[—–-]+\s*\)/g, "")
+    .replace(/\s+—\s*$/u, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s+,/g, ",")
+    .trim();
+  return s;
+}
+
+/* ══════════════════════════════════════════════
    GLOBAL UI BUSY LOCK (กันกดซ้ำ/งานซ้อน)
 ══════════════════════════════════════════════ */
 let _globalBusyCount = 0;
@@ -399,6 +440,14 @@ let S = {
   skuWarnings: [],    // SKU reconciliation warnings จาก backend
   newProductSkus: new Set(),
   newProductsEvenMode: "off",
+  /** หักบิวเทรี่ยม (Step 2): { emp_id → number } จำนวนเงินที่หักออกจาก LY ก่อนคำนวณ % เติบโต */
+  buiDeductions: {},
+  /** เปิดคอลัมน์ "หักบิวเทรี่ยม" หรือไม่ */
+  buiColumnOpen: false,
+  /** เหตุผลตั้งเป้าให้ติดลบ — ต้องกรอกก่อนกด "เริ่มคำนวณ" หากมีพนักงานที่เป้า custom ทำให้เติบโตติดลบ */
+  negGrowthReason: "",
+  /** brand → strategy map สำหรับโหมดเลือกหลายวิธี */
+  brandStrategyMap: {},
 };
 
 /** DOM / format helpers — ต้องอยู่ก่อนโค้ดที่เรียกใช้ (อย่าวางไว้ท้ายไฟล์เพราะเสี่ยงอ้างก่อนประกาศ) */
@@ -656,6 +705,8 @@ async function switchSupervisorContext(newSupId) {
     renderStep1();
     renderYellowTable();
     updateValidation();
+    _updateNegGrowthReasonState();
+    _renderBrandStrategyPanel();
     checkAndLoadDraft();
     checkSnapshotChanges();
     _showSkuWarnings();
@@ -1210,6 +1261,8 @@ async function handleLogin() {
       renderStep1();
       renderYellowTable();
       updateValidation();
+      _updateNegGrowthReasonState();
+      _renderBrandStrategyPanel();
       checkAndLoadDraft();
       checkSnapshotChanges();
       _showSkuWarnings();
@@ -1266,6 +1319,7 @@ function _doLogout() {
     _supervisorSet: keepLoginMeta._supervisorSet,
     _managerSet: keepLoginMeta._managerSet,
     yellowLocked: {}, skuWarnings: [],
+    buiDeductions: {}, buiColumnOpen: false, negGrowthReason: "", brandStrategyMap: {},
   };
   // ลบ banners ทั้งหมดที่อาจค้างจาก session ก่อน
   ["skuWarningBanner", "changeBanner", "logoutModal", "draftModal"].forEach(id => {
@@ -1418,7 +1472,7 @@ async function loadData(supId, targetMonth, targetYear) {
         type: "zero_total",
         sku: "",
         brand: "",
-        message: "เป้ารวมมูลค่า 0 บาท — ตรวจสอบ tga_target_salesman_next (SALESMANCODE, PRODUCTCODE, QUANTITYCASE) และราคาต่อหีบใน Dim_Product — ถ้าเปิดกรองงวดด้วยวันที่ ให้ตั้ง TGA_FILTER_BY_EFFECTIVE=1",
+        message: "เป้ารวมเท่ากับ 0 บาท — ระบบยังไม่พบเป้าหีบของงวดนี้ในระบบเป้า Target Sun กรุณาแจ้งทีม IT เพื่อให้อัปเดตเป้าก่อน",
       }, ...S.skuWarnings];
     }
     S.yellow = {};
@@ -1481,36 +1535,36 @@ function _showSkuWarnings() {
   let html = `<div class="change-banner-inner">
     <div class="change-banner-icon">📋</div>
     <div class="change-banner-body">
-      <div class="change-banner-title">ตรวจพบความไม่ตรงกันระหว่างเป้าหีบและข้อมูลทีม</div>
+      <div class="change-banner-title">พบข้อมูลที่ควรตรวจสอบก่อนเริ่มกระจายเป้า</div>
       <ul class="change-banner-list">`;
 
   if (zeroTotal.length > 0) {
     html += `<li><strong style="color:var(--amber)">⚠️ เป้ารวม 0 บาท</strong><br>`;
-    html += zeroTotal.map(w => escH(w.message)).join("<br>");
+    html += zeroTotal.map(w => escH(_friendlyMsg(w.message))).join("<br>");
     html += `</li>`;
   }
 
   if (empMismatch.length > 0) {
-    html += `<li><strong style="color:var(--amber)">⚠️ รหัสพนักงานใน target_sun ไม่ตรงกับทีม</strong><br>`;
-    html += empMismatch.map(w => escH(w.message)).join("<br>");
+    html += `<li><strong style="color:var(--amber)">⚠️ รหัสพนักงานในเป้า Target Sun ไม่ตรงกับทีม</strong><br>`;
+    html += empMismatch.map(w => escH(_friendlyMsg(w.message))).join("<br>");
     html += `</li>`;
   }
 
   if (excludedNoTga.length > 0) {
     html += `<li><strong style="color:var(--accent)">ℹ️ พนักงานที่ไม่ร่วมกระจายหีบ</strong><br>`;
-    html += excludedNoTga.map(w => escH(w.message)).join("<br>");
+    html += excludedNoTga.map(w => escH(_friendlyMsg(w.message))).join("<br>");
     html += `</li>`;
   }
 
   if (noTgaEmp.length > 0) {
-    html += `<li><strong>ไม่มีแถวเป้าใน TGA สำหรับพนักงานในงวดนี้</strong> (target_sun = 0)<br>`;
+    html += `<li><strong>ไม่พบเป้า Target Sun ของพนักงานบางคนในงวดนี้</strong><br>`;
     const MAX_SHOW = 12;
     const preview = noTgaEmp.slice(0, MAX_SHOW);
     const rest = noTgaEmp.slice(MAX_SHOW);
-    const previewHtml = preview.map(w => escH(w.message)).join("<br>");
+    const previewHtml = preview.map(w => escH(_friendlyMsg(w.message))).join("<br>");
     html += `<div style="margin-top:6px; max-height:110px; overflow:auto; padding:8px 10px; background:var(--bg-main); border:1px solid var(--border); border-radius:8px; line-height:1.55;">${previewHtml}</div>`;
     if (rest.length > 0) {
-      const allHtml = noTgaEmp.map(w => `<div style="margin:0 0 6px 0;">${escH(w.message)}</div>`).join("");
+      const allHtml = noTgaEmp.map(w => `<div style="margin:0 0 6px 0;">${escH(_friendlyMsg(w.message))}</div>`).join("");
       html += `
         <details style="margin-top:8px;">
           <summary style="cursor:pointer; color:var(--accent); font-weight:600;">
@@ -1527,8 +1581,8 @@ function _showSkuWarnings() {
   }
 
   if (noTgaSku.length > 0) {
-    html += `<li><strong>SKU ที่ทีมเคยขายแต่ไม่มีเป้าหีบใน TGA</strong><br>`;
-    html += noTgaSku.map(w => escH(w.message)).join("<br>");
+    html += `<li><strong>SKU ที่ทีมเคยขายแต่ไม่มีเป้าหีบในงวดนี้</strong><br>`;
+    html += noTgaSku.map(w => escH(_friendlyMsg(w.message))).join("<br>");
     html += `</li>`;
   }
 
@@ -1537,8 +1591,8 @@ function _showSkuWarnings() {
     const namedSkus = noHistory.filter(w => w.sku);
     const genericMsg = noHistory.filter(w => !w.sku);
     const MAX_SHOW = 24;
-    html += `<li><strong>มีเป้าหีบรวมทีม แต่ไม่มียอดขาย 3 เดือนในทีมนี้</strong> — กระจายตามน้ำหนักจะใช้ EVEN<br>`;
-    html += `<div style="margin:6px 0 4px;font-size:11px;color:var(--text-3);line-height:1.45;">หมายถึง <strong>ระดับ SKU ทั้งทีม</strong> (เป้ารวมจาก TGA) ไม่ใช่ว่าทุกคนต้องมีเป้ารายคนในตาราง — ช่องหีบรายคนอาจยังว่างก่อนคำนวณ</div>`;
+    html += `<li><strong>มีเป้าหีบรวมทีม แต่ไม่มียอดขายย้อนหลัง 3 เดือนในทีมนี้</strong> — ระบบจะกระจายแบบเฉลี่ยเท่ากัน<br>`;
+    html += `<div style="margin:6px 0 4px;font-size:11px;color:var(--text-3);line-height:1.45;">หมายถึง <strong>ระดับ SKU ทั้งทีม</strong> (เป้ารวมจากระบบเป้า) ไม่ใช่ว่าทุกคนต้องมีเป้ารายคนในตาราง — ช่องหีบรายคนอาจยังว่างก่อนคำนวณ</div>`;
     if (namedSkus.length > 0) {
       const preview = namedSkus.slice(0, MAX_SHOW);
       const rest = namedSkus.slice(MAX_SHOW);
@@ -1566,7 +1620,7 @@ function _showSkuWarnings() {
       }
     }
     if (genericMsg.length > 0) {
-      html += `<div style="margin-top:6px;color:var(--text-3);font-size:11px;">${genericMsg.map(w => escH(w.message)).join(" ")}</div>`;
+      html += `<div style="margin-top:6px;color:var(--text-3);font-size:11px;">${genericMsg.map(w => escH(_friendlyMsg(w.message))).join(" ")}</div>`;
     }
     html += `</li>`;
   }
@@ -1578,7 +1632,7 @@ function _showSkuWarnings() {
   }
 
   html += `</ul>
-      <div class="change-banner-note">💡 แก้ข้อมูลใน Fabric (tga_target_salesman_next) หรือใช้โหมด USE_LEGACY_TARGET_CSV=1 ชั่วคราว</div>
+      <div class="change-banner-note">💡 หากตัวเลขไม่ถูกต้อง กรุณาแจ้งทีม IT เพื่อปรับข้อมูลเป้า Target Sun ในระบบ</div>
       <div class="change-banner-actions">
         <button class="btn-banner-close" onclick="document.getElementById('skuWarningBanner').remove()">รับทราบ ปิด</button>
       </div>
@@ -1929,6 +1983,7 @@ function toggleSkuGroup(idx) {
 ══════════════════════════════════════════════ */
 function renderYellowTable() {
   const ySum = sumYellow();
+  const showBui = !!S.buiColumnOpen;
   qs("#yellowTableBody").innerHTML = S.employees.map(e => {
     const y = S.yellow[e.emp_id] || 0;
     const ly = e.ly_sales || 0;
@@ -1936,7 +1991,9 @@ function renderYellowTable() {
     const ts = e.target_sun || 0;
     const isLocked = S.yellowLocked[e.emp_id];
 
-    const growth = ly > 0 ? ((y - ly) / ly * 100) : null;
+    const bui = Number(S.buiDeductions[e.emp_id]) || 0;
+    const lyBase = Math.max(0, ly - bui);  // ฐานคำนวณการเติบโต = LY - บิวเทรี่ยม
+    const growth = lyBase > 0 ? ((y - lyBase) / lyBase * 100) : null;
     const pct = ySum > 0 ? (y / ySum * 100) : 0;
     const gTag = growth !== null
       ? `<span class="gtag ${growth >= 0 ? "gtag-up" : "gtag-down"}">${growth >= 0 ? "+" : ""}${growth.toFixed(1)}%</span>`
@@ -1947,21 +2004,38 @@ function renderYellowTable() {
       ? `<button class="unlock-btn" title="คลิกเพื่อปลดล็อก" onclick="unlockYellow('${e.emp_id}')">🔒 ล็อก</button>`
       : "";
 
+    // LY cell — เมื่อเปิด bui ให้แสดง input หักบิวเทรี่ยมใต้ตัวเลข LY (inline ไม่เพิ่มคอลัมน์)
+    const lyCell = showBui
+      ? `<td class="r mono step2-ly-cell--bui">
+          <div class="step2-ly-val">${baht(ly)}</div>
+          <label class="step2-bui-row">
+            <span class="step2-bui-label">หัก</span>
+            <input class="bui-input step2-bui-input" type="text" inputmode="numeric"
+              value="${bui > 0 ? fmt(bui) : ''}"
+              placeholder="0"
+              data-emp="${e.emp_id}"
+              onfocus="this.value = this.value.replace(/,/g, '')"
+              onblur="onBuiChange(this)" />
+          </label>
+          ${bui > 0 ? `<div class="bui-net">=&nbsp;<strong>${baht(lyBase)}</strong></div>` : ""}
+        </td>`
+      : `<td class="r mono">${baht(ly)}</td>`;
+
     return `<tr style="${rowStyle}">
       <td>
         <span class="emp-tag">${e.emp_id}</span>
         ${e.emp_name ? `<span style="font-size:11px;color:var(--text-3);margin-left:4px;">${e.emp_name}</span>` : ""}
         ${lockIcon}
       </td>
-      <td class="r mono">${baht(ly)}</td>
+      ${lyCell}
       <td class="r mono">${baht(l3m)}</td>
       <td class="r mono">${baht(ts)}</td>
       <td class="r">
         <input class="cell-input" type="text" inputmode="numeric"
           style="${isLocked ? 'color:var(--amber); border-color:var(--amber);' : ''}"
-          value="${fmt(y)}" 
+          value="${fmt(y)}"
           data-emp="${e.emp_id}"
-          onfocus="this.value = this.value.replace(/,/g, '')" 
+          onfocus="this.value = this.value.replace(/,/g, '')"
           onblur="onYellowChange(this)"/>
       </td>
       <td class="r" id="gTag_${e.emp_id}">${gTag}</td>
@@ -1971,7 +2045,17 @@ function renderYellowTable() {
 
   const tsSum = S.employees.reduce((a, e) => a + (e.target_sun || 0), 0);
   const totalLy = S.employees.reduce((a, e) => a + (e.ly_sales || 0), 0);
-  const totalG = totalLy > 0 ? ((ySum - totalLy) / totalLy * 100) : null;
+  const totalBui = S.employees.reduce((a, e) => a + (Number(S.buiDeductions[e.emp_id]) || 0), 0);
+  const lyBaseTotal = Math.max(0, totalLy - totalBui);
+  const totalG = lyBaseTotal > 0 ? ((ySum - lyBaseTotal) / lyBaseTotal * 100) : null;
+
+  // อัปเดต header LY ให้แสดงคำอธิบาย bui เมื่อเปิด
+  const thLY = qs("#step2ThLY");
+  if (thLY) {
+    thLY.innerHTML = showBui
+      ? `ยอดขายเดือนเดียวกันปีที่แล้ว<div style="font-size:10px;font-weight:500;color:var(--accent);margin-top:2px;">↓ หักบิวเทรี่ยม</div>`
+      : "ยอดขายเดือนเดียวกันปีที่แล้ว";
+  }
 
   qs("#footTargetSum").textContent = baht(tsSum);
   qs("#footYellowSum").textContent = baht(ySum);
@@ -2051,6 +2135,7 @@ function updateValidation() {
     text.textContent = "ยอดรวมตรงกับเป้ารวมพอดี — พร้อมกระจายหีบ";
     fill.style.background = "var(--green)";
     btn.disabled = false;
+    _updateNegGrowthReasonState();    // อาจ disabled กลับถ้ายังไม่ใส่เหตุผล
   } else if (Math.abs(diff) < S.totalTarget * 0.005) {
     bar.classList.add("warn");
     icon.textContent = "!";
@@ -2071,6 +2156,20 @@ function updateValidation() {
 ══════════════════════════════════════════════ */
 async function runOptimization() {
   const btn = qs("#runBtn");
+
+  // กันเริ่มคำนวณถ้ายังไม่ใส่เหตุผลกรณีติดลบ
+  if (_negGrowthOffenders().length > 0 && (S.negGrowthReason || "").trim().length < 8) {
+    toast("⚠️ กรุณาใส่เหตุผลในกล่อง \"พบเป้าหมายที่ตั้งให้เติบโตติดลบ\" ก่อนเริ่มคำนวณ", "red");
+    document.getElementById("negGrowthNoteWrap")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    return;
+  }
+  // กันเริ่มคำนวณถ้าเลือกหลายวิธีแต่ map แบรนด์ยังไม่ครบ
+  if (!_brandMappingComplete()) {
+    toast("⚠️ คุณเลือกวิธีกระจายหลายแบบ — กรุณากำหนดวิธีให้ครบทุกแบรนด์ก่อน", "red");
+    document.getElementById("brandStrategyPanel")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    return;
+  }
+
   btn.classList.remove("pulse-warn");
   const lockedEdits = S.allocations
     .filter(a => a.is_edited)
@@ -2084,7 +2183,10 @@ async function runOptimization() {
   S.allocations = allocs;
   autoRebalance(true); // เกลี่ยเศษหีบตกหล่น
 
-  const strategy = document.querySelector('[name="strategy"]:checked')?.value || "L3M";
+  const selectedStrategies = _getSelectedStrategies();
+  const strategy = selectedStrategies.length > 1
+    ? `MIXED (${selectedStrategies.join("+")})`
+    : (selectedStrategies[0] || "L3M");
   qs("#runEmoji").textContent = "✅";
   qs("#runTitle").textContent = "จัดสรรหีบสำเร็จ";
   qs("#runSub").textContent = `[${strategy}] กรองแบรนด์ · แก้ตัวเลข · Export`;
@@ -2120,7 +2222,9 @@ async function _doOptimize(lockedEdits = []) {
     qs(`#${steps[i]}`).className = "prog-row active";
   }
 
-  let strategy = document.querySelector('[name="strategy"]:checked')?.value || "L3M";
+  const selectedStrategies = _getSelectedStrategies();
+  let strategy = selectedStrategies[0] || "L3M";
+  const isMulti = selectedStrategies.length > 1;
   const forceMinOne = document.getElementById("forceMinOneBox")?.checked || false;
   const newProductsEven = document.getElementById("newProductsEvenBox")?.checked || false;
 
@@ -2134,6 +2238,12 @@ async function _doOptimize(lockedEdits = []) {
       force_min_one: forceMinOne,
       new_products_even: newProductsEven,
       locked_edits: lockedEdits,
+      // ── ส่งฟิลด์เพิ่มเติม (backend จะใช้ถ้ารองรับ; ถ้าไม่รองรับจะถูกเพิกเฉย) ──
+      brand_strategy_map: isMulti ? { ...S.brandStrategyMap } : {},
+      bui_deductions: Object.fromEntries(
+        Object.entries(S.buiDeductions || {}).filter(([, v]) => Number(v) > 0)
+      ),
+      neg_growth_reason: (S.negGrowthReason || "").trim() || null,
     };
 
     const url = `${API_BASE_URL}/optimize?sup_id=${S.supId}&target_month=${S.targetMonth}&target_year=${S.targetYear}`;
@@ -3339,4 +3449,451 @@ async function runReAllocationKeepEdits() {
   qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
   toast("✅ กระจายหีบใหม่สำเร็จ — manual edits ยังคงอยู่", "green");
   saveDraft(true);
+}
+/* ════════════════════════════════════════════════════════════════════════════
+   USER MANUAL MODAL — คู่มือการใช้งานทีละขั้นตอน (added 2026-05-12)
+════════════════════════════════════════════════════════════════════════════ */
+const MANUAL_STEPS = [
+  {
+    title: "ดูข้อมูลตั้งต้น (ขั้นที่ 1)",
+    desc: "เมื่อเข้าระบบจะพบ <strong>เป้ารวม</strong> และตารางข้อมูลตั้งต้นของพนักงานและ SKU ในงวดที่เลือก ใช้ตรวจว่าเป้าและรายชื่อทีมตรงกับที่คาดไว้",
+    tips: "💡 หากเป้ารวมไม่ตรง ให้กดลิงก์ <strong>“ติดต่อ IT”</strong> ใต้ช่องเป้ารวม",
+    art: `<svg viewBox="0 0 220 160" xmlns="http://www.w3.org/2000/svg">
+      <rect x="14" y="14" width="192" height="36" rx="8" fill="#EEF2FF" stroke="#C7D2FE"/>
+      <text x="28" y="38" font-family="Sarabun" font-size="13" font-weight="700" fill="#4F46E5">เป้ารวม 12,000,000 ฿</text>
+      <rect x="14" y="60" width="92" height="84" rx="8" fill="#FFFFFF" stroke="#E2E8F0"/>
+      <rect x="22" y="70" width="76" height="10" rx="3" fill="#94A3B8"/>
+      <rect x="22" y="86" width="60" height="8" rx="3" fill="#CBD5E1"/>
+      <rect x="22" y="98" width="68" height="8" rx="3" fill="#CBD5E1"/>
+      <rect x="22" y="110" width="50" height="8" rx="3" fill="#CBD5E1"/>
+      <rect x="22" y="122" width="64" height="8" rx="3" fill="#CBD5E1"/>
+      <rect x="114" y="60" width="92" height="84" rx="8" fill="#FFFFFF" stroke="#E2E8F0"/>
+      <rect x="122" y="70" width="76" height="10" rx="3" fill="#94A3B8"/>
+      <rect x="122" y="86" width="60" height="8" rx="3" fill="#CBD5E1"/>
+      <rect x="122" y="98" width="68" height="8" rx="3" fill="#CBD5E1"/>
+      <rect x="122" y="110" width="50" height="8" rx="3" fill="#CBD5E1"/>
+      <rect x="122" y="122" width="64" height="8" rx="3" fill="#CBD5E1"/>
+    </svg>`
+  },
+  {
+    title: "ปรับเป้าหมายรายพนักงาน (ขั้นที่ 2)",
+    desc: "ในช่อง <strong>เป้าหมายที่กำหนดเอง</strong> สามารถพิมพ์ตัวเลขเพื่อปรับเป้าของแต่ละคนได้ ระบบจะคำนวณ <strong>% เติบโต</strong> และ <strong>สัดส่วน</strong> ให้อัตโนมัติ ยอดรวมของทุกคนต้อง <strong>เท่ากับเป้ารวมพอดี</strong> จึงจะกระจายหีบได้",
+    tips: "💡 หากปรับลดให้คนใดคนหนึ่ง อย่าลืมเพิ่มให้พนักงานอีกคนเพื่อให้ผลรวมยังเท่าเดิม",
+    art: `<svg viewBox="0 0 220 160" xmlns="http://www.w3.org/2000/svg">
+      <rect x="14" y="12" width="192" height="22" rx="6" fill="#F8FAFC" stroke="#E2E8F0"/>
+      <text x="22" y="27" font-family="Sarabun" font-size="11" fill="#475569">พนักงาน A — เป้า</text>
+      <rect x="130" y="16" width="68" height="14" rx="4" fill="#FFFBEB" stroke="#FCD34D"/>
+      <text x="140" y="26" font-family="Sarabun" font-size="11" font-weight="700" fill="#D97706">2,500,000</text>
+      <rect x="14" y="40" width="192" height="22" rx="6" fill="#F8FAFC" stroke="#E2E8F0"/>
+      <text x="22" y="55" font-family="Sarabun" font-size="11" fill="#475569">พนักงาน B — เป้า</text>
+      <rect x="130" y="44" width="68" height="14" rx="4" fill="#FFFBEB" stroke="#FCD34D"/>
+      <text x="140" y="54" font-family="Sarabun" font-size="11" font-weight="700" fill="#D97706">3,200,000</text>
+      <rect x="14" y="68" width="192" height="22" rx="6" fill="#F8FAFC" stroke="#E2E8F0"/>
+      <text x="22" y="83" font-family="Sarabun" font-size="11" fill="#475569">พนักงาน C — เป้า</text>
+      <rect x="130" y="72" width="68" height="14" rx="4" fill="#FFFBEB" stroke="#FCD34D"/>
+      <text x="140" y="82" font-family="Sarabun" font-size="11" font-weight="700" fill="#D97706">1,800,000</text>
+      <rect x="14" y="100" width="192" height="44" rx="8" fill="#ECFDF5" stroke="#6EE7B7"/>
+      <text x="24" y="120" font-family="Sarabun" font-size="12" fill="#059669">รวมตรงกับเป้ารวมพอดี ✓</text>
+      <text x="24" y="136" font-family="Sarabun" font-size="11" fill="#475569">พร้อมกระจายหีบ</text>
+    </svg>`
+  },
+  {
+    title: "กรณีตั้งเป้าให้เติบโตติดลบ",
+    desc: "ถ้าตัวเลขที่ตั้งให้พนักงานทำให้ <strong>การเติบโตติดลบ</strong> (เป้าน้อยกว่ายอดเดือนเดียวกันปีที่แล้ว) ระบบจะขอให้กรอก <strong>เหตุผล</strong> ก่อน เพื่อเก็บประวัติว่าทำไมจึงต้องลดเป้า",
+    tips: "ℹ️ หากเป้าที่ใส่ <strong>เท่ากับเป้า Target Sun</strong> แล้วการเติบโตติดลบ ไม่ต้องกรอกเหตุผล",
+    art: `<svg viewBox="0 0 220 160" xmlns="http://www.w3.org/2000/svg">
+      <rect x="12" y="12" width="196" height="46" rx="8" fill="#FEF7E6" stroke="#F5C977"/>
+      <text x="24" y="32" font-family="Sarabun" font-size="13" font-weight="700" fill="#7C4A00">⚠️ พบเป้าที่เติบโตติดลบ</text>
+      <text x="24" y="48" font-family="Sarabun" font-size="11" fill="#6B4500">กรุณาใส่เหตุผลก่อนคำนวณ</text>
+      <rect x="12" y="66" width="196" height="60" rx="8" fill="#FFFFFF" stroke="#F5C977"/>
+      <rect x="20" y="74" width="78" height="8" rx="3" fill="#CBD5E1"/>
+      <rect x="20" y="88" width="160" height="8" rx="3" fill="#CBD5E1"/>
+      <rect x="20" y="100" width="120" height="8" rx="3" fill="#CBD5E1"/>
+      <rect x="20" y="112" width="100" height="8" rx="3" fill="#CBD5E1"/>
+      <rect x="12" y="134" width="196" height="20" rx="6" fill="#ECFDF5" stroke="#6EE7B7"/>
+      <text x="24" y="148" font-family="Sarabun" font-size="11" fill="#059669">เมื่อใส่เหตุผลแล้ว ปุ่ม “เริ่มคำนวณ” จะใช้งานได้</text>
+    </svg>`
+  },
+  {
+    title: "หักบิวเทรี่ยม (ถ้ามี)",
+    desc: "หากเดือนเดียวกันปีที่แล้วมี <strong>ยอดบิวเทรี่ยม</strong> ที่ไม่ควรนำมาใช้คำนวณการเติบโต ให้กดปุ่ม <strong>“หักบิวเทรี่ยม”</strong> เพื่อเปิดช่องกรอกตัวเลขที่ต้องหักออก ระบบจะใช้ยอด <strong>หลังหัก</strong> เป็นฐานคำนวณ %เติบโต",
+    tips: "💡 ใส่เฉพาะพนักงานที่ต้องหัก คนอื่นปล่อยว่างได้",
+    art: `<svg viewBox="0 0 220 160" xmlns="http://www.w3.org/2000/svg">
+      <rect x="12" y="14" width="100" height="30" rx="14" fill="#4F46E5"/>
+      <text x="28" y="34" font-family="Sarabun" font-size="12" font-weight="700" fill="#FFFFFF">➖ หักบิวเทรี่ยม</text>
+      <rect x="12" y="56" width="196" height="22" rx="6" fill="#F8FAFC" stroke="#E2E8F0"/>
+      <text x="20" y="71" font-family="Sarabun" font-size="10" fill="#475569">LY: 2,000,000</text>
+      <rect x="110" y="60" width="58" height="14" rx="4" fill="#FFFFFF" stroke="#CBD5E1"/>
+      <text x="116" y="71" font-family="Sarabun" font-size="10" fill="#0F172A">หัก 200,000</text>
+      <text x="174" y="71" font-family="Sarabun" font-size="10" fill="#94A3B8">→ 1,800,000</text>
+      <rect x="12" y="84" width="196" height="22" rx="6" fill="#F8FAFC" stroke="#E2E8F0"/>
+      <text x="20" y="99" font-family="Sarabun" font-size="10" fill="#475569">LY: 1,500,000</text>
+      <rect x="110" y="88" width="58" height="14" rx="4" fill="#FFFFFF" stroke="#CBD5E1" stroke-dasharray="2,2"/>
+      <text x="124" y="99" font-family="Sarabun" font-size="10" fill="#CBD5E1">— ว่าง —</text>
+      <text x="174" y="99" font-family="Sarabun" font-size="10" fill="#94A3B8">→ 1,500,000</text>
+      <rect x="12" y="116" width="196" height="32" rx="8" fill="#EEF2FF" stroke="#C7D2FE"/>
+      <text x="20" y="133" font-family="Sarabun" font-size="11" fill="#4F46E5" font-weight="700">% เติบโตคำนวณจากยอดหลังหัก</text>
+      <text x="20" y="145" font-family="Sarabun" font-size="10" fill="#475569">(LY − บิวเทรี่ยม)</text>
+    </svg>`
+  },
+  {
+    title: "เลือกวิธีกระจายหีบ (ขั้นที่ 3)",
+    desc: "เลือกได้ <strong>มากกว่า 1 วิธี</strong> ตามที่เหมาะกับแต่ละแบรนด์ — หากเลือกหลายวิธี ระบบจะให้กำหนดว่า <strong>แบรนด์ไหนใช้วิธีไหน</strong> เช่น แบรนด์ A ใช้ค่าเฉลี่ย 3 เดือน · แบรนด์ B ใช้ปีที่แล้ว",
+    tips: "💡 เลือกแค่วิธีเดียวก็ได้ ระบบจะใช้วิธีนั้นกับทุกแบรนด์",
+    art: `<svg viewBox="0 0 220 160" xmlns="http://www.w3.org/2000/svg">
+      <rect x="12" y="10" width="60" height="28" rx="8" fill="#EEF2FF" stroke="#C7D2FE"/>
+      <text x="22" y="28" font-family="Sarabun" font-size="11" font-weight="700" fill="#4F46E5">✓ 3M</text>
+      <rect x="78" y="10" width="60" height="28" rx="8" fill="#EEF2FF" stroke="#C7D2FE"/>
+      <text x="88" y="28" font-family="Sarabun" font-size="11" font-weight="700" fill="#4F46E5">✓ LY</text>
+      <rect x="144" y="10" width="60" height="28" rx="8" fill="#FFFFFF" stroke="#E2E8F0"/>
+      <text x="154" y="28" font-family="Sarabun" font-size="11" fill="#94A3B8">PUSH</text>
+      <rect x="12" y="48" width="196" height="100" rx="10" fill="#F8FAFF" stroke="#C7D2FE"/>
+      <text x="22" y="68" font-family="Sarabun" font-size="11" font-weight="700" fill="#0F172A">🎯 แบรนด์ → วิธีกระจาย</text>
+      <rect x="22" y="76" width="176" height="20" rx="5" fill="#FFFFFF" stroke="#E2E8F0"/>
+      <text x="30" y="90" font-family="Sarabun" font-size="11" fill="#0F172A">แบรนด์ A</text>
+      <text x="150" y="90" font-family="Sarabun" font-size="11" font-weight="700" fill="#4F46E5">3M ▾</text>
+      <rect x="22" y="100" width="176" height="20" rx="5" fill="#FFFFFF" stroke="#E2E8F0"/>
+      <text x="30" y="114" font-family="Sarabun" font-size="11" fill="#0F172A">แบรนด์ B</text>
+      <text x="150" y="114" font-family="Sarabun" font-size="11" font-weight="700" fill="#4F46E5">LY ▾</text>
+      <rect x="22" y="124" width="176" height="20" rx="5" fill="#FFFFFF" stroke="#E2E8F0"/>
+      <text x="30" y="138" font-family="Sarabun" font-size="11" fill="#0F172A">แบรนด์ C</text>
+      <text x="150" y="138" font-family="Sarabun" font-size="11" font-weight="700" fill="#4F46E5">3M ▾</text>
+    </svg>`
+  },
+  {
+    title: "เริ่มคำนวณและบันทึกผล",
+    desc: "กดปุ่ม <strong>“เริ่มคำนวณ”</strong> เพื่อให้ระบบกระจายหีบลงรายพนักงาน เมื่อเสร็จแล้ว สามารถ <strong>แก้ตัวเลขด้วยมือ</strong>, <strong>บันทึกร่าง</strong>, หรือ <strong>ดาวน์โหลด Excel</strong> ได้ทันที",
+    tips: "💡 เลขสีน้ำเงินคลิกแก้ได้ · ยอดเงินรวมรายพนักงานจะอัปเดตอัตโนมัติ",
+    art: `<svg viewBox="0 0 220 160" xmlns="http://www.w3.org/2000/svg">
+      <rect x="20" y="16" width="180" height="36" rx="10" fill="#4F46E5"/>
+      <text x="56" y="40" font-family="Sarabun" font-size="15" font-weight="700" fill="#FFFFFF">▶ เริ่มคำนวณ</text>
+      <rect x="14" y="62" width="192" height="84" rx="8" fill="#FFFFFF" stroke="#E2E8F0"/>
+      <text x="22" y="80" font-family="Sarabun" font-size="11" fill="#475569">พนักงาน A</text>
+      <rect x="100" y="68" width="36" height="14" rx="4" fill="#EEF2FF"/>
+      <text x="108" y="79" font-family="Sarabun" font-size="11" font-weight="700" fill="#4F46E5">42</text>
+      <rect x="140" y="68" width="36" height="14" rx="4" fill="#FFFFFF" stroke="#E2E8F0"/>
+      <text x="148" y="79" font-family="Sarabun" font-size="11" fill="#0F172A">18</text>
+      <text x="22" y="102" font-family="Sarabun" font-size="11" fill="#475569">พนักงาน B</text>
+      <rect x="100" y="90" width="36" height="14" rx="4" fill="#FFFFFF" stroke="#E2E8F0"/>
+      <text x="112" y="101" font-family="Sarabun" font-size="11" fill="#0F172A">35</text>
+      <rect x="140" y="90" width="36" height="14" rx="4" fill="#EEF2FF"/>
+      <text x="152" y="101" font-family="Sarabun" font-size="11" font-weight="700" fill="#4F46E5">24</text>
+      <rect x="22" y="116" width="80" height="22" rx="6" fill="#ECFDF5" stroke="#6EE7B7"/>
+      <text x="32" y="131" font-family="Sarabun" font-size="11" font-weight="700" fill="#059669">💾 บันทึกร่าง</text>
+      <rect x="110" y="116" width="86" height="22" rx="6" fill="#EEF2FF" stroke="#C7D2FE"/>
+      <text x="120" y="131" font-family="Sarabun" font-size="11" font-weight="700" fill="#4F46E5">↓ Excel</text>
+    </svg>`
+  },
+];
+
+let _manualStepIdx = 0;
+
+function showManualModal() {
+  _manualStepIdx = 0;
+  _renderManualStep();
+  const m = document.getElementById("manualModal");
+  if (m) m.style.display = "flex";
+}
+
+function closeManualModal() {
+  const m = document.getElementById("manualModal");
+  if (m) m.style.display = "none";
+}
+
+function closeManualModalOnBg(e) {
+  if (e.target === document.getElementById("manualModal")) closeManualModal();
+}
+
+function manualNext() {
+  if (_manualStepIdx < MANUAL_STEPS.length - 1) {
+    _manualStepIdx++;
+    _renderManualStep();
+  } else {
+    closeManualModal();
+  }
+}
+
+function manualPrev() {
+  if (_manualStepIdx > 0) {
+    _manualStepIdx--;
+    _renderManualStep();
+  }
+}
+
+function _renderManualStep() {
+  const total = MANUAL_STEPS.length;
+  const i = _manualStepIdx;
+  const step = MANUAL_STEPS[i];
+  const body = document.getElementById("manualBody");
+  if (body) {
+    body.innerHTML = `
+      <div class="manual-step">
+        <div class="manual-step__art">${step.art}</div>
+        <div>
+          <div class="manual-step__title"><span class="manual-step__num">${i + 1}</span>${escH(step.title)}</div>
+          <div class="manual-step__desc">${step.desc}</div>
+          ${step.tips ? `<div class="manual-step__tips">${step.tips}</div>` : ""}
+        </div>
+      </div>`;
+  }
+  const dots = document.getElementById("manualDots");
+  if (dots) {
+    dots.innerHTML = MANUAL_STEPS.map((_, idx) =>
+      `<span class="manual-dot ${idx === i ? "is-active" : ""}" onclick="_manualGoTo(${idx})"></span>`
+    ).join("");
+  }
+  const bar = document.getElementById("manualProgressBar");
+  if (bar) bar.style.width = `${((i + 1) / total) * 100}%`;
+  const prevBtn = document.getElementById("manualPrevBtn");
+  if (prevBtn) prevBtn.disabled = i === 0;
+  const nextBtn = document.getElementById("manualNextBtn");
+  if (nextBtn) nextBtn.textContent = i === total - 1 ? "เริ่มใช้งาน ✓" : "ถัดไป →";
+}
+
+function _manualGoTo(idx) {
+  if (idx < 0 || idx >= MANUAL_STEPS.length) return;
+  _manualStepIdx = idx;
+  _renderManualStep();
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   STEP 2 — บิวเทรี่ยม (deduction column)
+════════════════════════════════════════════════════════════════════════════ */
+function toggleBuiColumn() {
+  S.buiColumnOpen = !S.buiColumnOpen;
+  const btn = document.getElementById("toggleBuiBtn");
+  const hint = document.getElementById("buiHint");
+  if (btn) {
+    btn.classList.toggle("is-active", S.buiColumnOpen);
+    btn.setAttribute("aria-pressed", String(S.buiColumnOpen));
+  }
+  if (hint) {
+    hint.textContent = S.buiColumnOpen
+      ? "ใส่จำนวนเงินบิวเทรี่ยมที่ต้องหักจากยอดปีที่แล้ว — ระบบจะใช้ยอดหลังหักเป็นฐานคำนวณ % เติบโต"
+      : "กดเพื่อเปิดช่องกรอกยอดบิวเทรี่ยมที่ต้องหักจาก \"ยอดขายเดือนเดียวกันปีที่แล้ว\"";
+  }
+  renderYellowTable();
+  _updateNegGrowthReasonState();
+}
+
+function onBuiChange(input) {
+  const emp = input.dataset.emp;
+  const val = Math.max(0, parseFloat(String(input.value).replace(/,/g, "")) || 0);
+  if (val > 0) S.buiDeductions[emp] = val;
+  else delete S.buiDeductions[emp];
+  renderYellowTable();
+  updateValidation();
+  _updateNegGrowthReasonState();
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   STEP 2 — เหตุผลกรณีเป้าทำให้เติบโตติดลบ
+════════════════════════════════════════════════════════════════════════════ */
+/**
+ * เงื่อนไข: ต้องใส่เหตุผลถ้ามีพนักงานที่
+ *  - เป้าที่กำหนดเอง ≠ เป้า Target Sun
+ *  - คำนวณกับ (LY − บิวเทรี่ยม) แล้วได้การเติบโตติดลบ
+ * ถ้าเป้าที่กำหนด = Target Sun แต่ติดลบ ไม่ต้องใส่เหตุผล
+ */
+function _negGrowthOffenders() {
+  const offenders = [];
+  (S.employees || []).forEach(e => {
+    const y = Number(S.yellow[e.emp_id]) || 0;
+    const ly = Number(e.ly_sales) || 0;
+    const ts = Number(e.target_sun) || 0;
+    const bui = Number(S.buiDeductions[e.emp_id]) || 0;
+    const lyBase = Math.max(0, ly - bui);
+    if (lyBase <= 0) return;            // ไม่มีฐาน → ไม่ต้องเช็ค
+    const growth = (y - lyBase) / lyBase;
+    if (growth >= 0) return;            // เติบโต ≥ 0
+    // ถ้าเป้าเท่ากับ Target Sun (±1 บาท) — ยกเว้น
+    if (Math.abs(y - ts) <= 1) return;
+    offenders.push({
+      emp_id: e.emp_id,
+      emp_name: e.emp_name || "",
+      growth: (growth * 100),
+    });
+  });
+  return offenders;
+}
+
+function _updateNegGrowthReasonState() {
+  const wrap = document.getElementById("negGrowthNoteWrap");
+  const list = document.getElementById("negGrowthList");
+  const hint = document.getElementById("negGrowthHint");
+  const ta = document.getElementById("negGrowthReason");
+  const runBtn = document.getElementById("runBtn");
+  if (!wrap || !list || !runBtn) return;
+
+  const offenders = _negGrowthOffenders();
+  const needReason = offenders.length > 0;
+
+  if (!needReason) {
+    wrap.style.display = "none";
+    return;
+  }
+
+  wrap.style.display = "block";
+  const names = offenders.slice(0, 6).map(o => {
+    const nm = o.emp_name ? ` (${escH(o.emp_name)})` : "";
+    return `<strong>${escH(o.emp_id)}</strong>${nm} ${o.growth.toFixed(1)}%`;
+  }).join(" · ");
+  const extra = offenders.length > 6 ? ` … และอีก ${offenders.length - 6} คน` : "";
+  list.innerHTML = `พนักงานที่เป้าทำให้เติบโตติดลบ: ${names}${extra}`;
+
+  const reason = (S.negGrowthReason || "").trim();
+  const valid = reason.length >= 8;
+  if (ta && ta.value !== S.negGrowthReason) ta.value = S.negGrowthReason || "";
+
+  if (hint) {
+    if (valid) {
+      hint.textContent = "✓ บันทึกเหตุผลแล้ว — สามารถกด \"เริ่มคำนวณ\" ได้";
+      hint.classList.add("is-ok");
+    } else {
+      hint.textContent = "⏳ กรอกเหตุผลอย่างน้อย 8 ตัวอักษร เพื่อปลดล็อกปุ่ม \"เริ่มคำนวณ\"";
+      hint.classList.remove("is-ok");
+    }
+  }
+
+  if (!valid) {
+    runBtn.disabled = true;
+    runBtn.title = "กรุณากรอกเหตุผลที่ตั้งเป้าให้เติบโตติดลบก่อน";
+  } else {
+    runBtn.removeAttribute("title");
+  }
+}
+
+function onNegGrowthReasonChange() {
+  const ta = document.getElementById("negGrowthReason");
+  S.negGrowthReason = ta ? ta.value : "";
+  _updateNegGrowthReasonState();
+  try { updateValidation(); } catch (_) {}
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   STEP 3 — Multi-strategy & brand→strategy mapping
+════════════════════════════════════════════════════════════════════════════ */
+const STRATEGY_LABELS = {
+  L3M:  { icon: "📊", short: "เฉลี่ย 3M",     long: "ยอดขายเฉลี่ย 3 เดือนย้อนหลัง" },
+  L6M:  { icon: "📈", short: "เฉลี่ย 6M",     long: "ยอดขายเฉลี่ย 6 เดือนย้อนหลัง" },
+  LY:   { icon: "📅", short: "ปีที่แล้ว",      long: "เดือนเดียวกันปีที่แล้ว" },
+  PUSH: { icon: "🚀", short: "ผลักดัน",        long: "ผลักดันพนักงาน" },
+  EVEN: { icon: "⚖️", short: "เกลี่ยเท่ากัน",   long: "เกลี่ยเท่ากัน" },
+  LP:   { icon: "🤖", short: "AI",            long: "AI Smart Suggestion" },
+};
+
+function _getSelectedStrategies() {
+  return Array.from(document.querySelectorAll('input[name="strategy"]:checked'))
+    .map(i => i.value);
+}
+
+function _getAllBrands() {
+  const set = new Set();
+  (S.skus || []).forEach(s => {
+    const b = (s.brand_name_thai || s.brand_name_english || "").trim();
+    if (b) set.add(b);
+  });
+  return Array.from(set).sort();
+}
+
+function _renderBrandStrategyPanel() {
+  const panel = document.getElementById("brandStrategyPanel");
+  const listEl = document.getElementById("brandStrategyList");
+  if (!panel || !listEl) return;
+
+  const selected = _getSelectedStrategies();
+  const brands = _getAllBrands();
+
+  if (selected.length <= 1 || brands.length === 0) {
+    panel.style.display = "none";
+    return;
+  }
+
+  Object.keys(S.brandStrategyMap).forEach(b => {
+    if (!brands.includes(b) || !selected.includes(S.brandStrategyMap[b])) {
+      delete S.brandStrategyMap[b];
+    }
+  });
+
+  // auto-fill: แบรนด์ที่ยังไม่ได้เลือก → ใช้กลยุทธ์แรกที่เลือก (L3M ถ้ามี; ไม่งั้นตัวแรก)
+  const defaultStrategy = selected.includes("L3M") ? "L3M" : selected[0];
+  brands.forEach(b => {
+    if (!S.brandStrategyMap[b]) S.brandStrategyMap[b] = defaultStrategy;
+  });
+
+  panel.style.display = "block";
+
+  // quick-set buttons
+  const qsEl = document.getElementById("bspQuickset");
+  if (qsEl) {
+    qsEl.innerHTML = selected.map(s =>
+      `<button type="button" class="bsp-qs-btn" onclick="bspSetAll('${s}')" title="ตั้งทุกแบรนด์เป็น ${escH(STRATEGY_LABELS[s]?.long || s)}">
+        ตั้งทั้งหมดเป็น ${STRATEGY_LABELS[s]?.icon || ""} ${escH(STRATEGY_LABELS[s]?.short || s)}
+      </button>`
+    ).join("");
+  }
+
+  listEl.innerHTML = brands.map(b => {
+    const current = S.brandStrategyMap[b] || "";
+    const missing = !current;
+    const opts = selected.map(s => {
+        const sel = s === current ? "selected" : "";
+        return `<option value="${s}" ${sel}>${STRATEGY_LABELS[s]?.icon || ""} ${escH(STRATEGY_LABELS[s]?.long || s)}</option>`;
+      }).join("");
+    return `
+      <div class="brand-strategy-row ${missing ? "is-missing" : ""}" data-brand="${escH(b)}">
+        <span class="brand-strategy-row__name" title="${escH(b)}">🏷️ ${escH(b)}</span>
+        <select class="brand-strategy-row__select" onchange="onBrandStrategyChange(this)" data-brand="${escH(b)}">
+          ${opts}
+        </select>
+      </div>`;
+  }).join("");
+}
+
+function bspSetAll(strategy) {
+  const brands = _getAllBrands();
+  brands.forEach(b => { S.brandStrategyMap[b] = strategy; });
+  _renderBrandStrategyPanel();
+}
+
+function onBrandStrategyChange(sel) {
+  const b = sel.dataset.brand;
+  const v = sel.value;
+  if (!b) return;
+  if (v) S.brandStrategyMap[b] = v;
+  else delete S.brandStrategyMap[b];
+  _renderBrandStrategyPanel();
+}
+
+function _brandMappingComplete() {
+  const selected = _getSelectedStrategies();
+  if (selected.length <= 1) return true;
+  const brands = _getAllBrands();
+  return brands.every(b => !!S.brandStrategyMap[b] && selected.includes(S.brandStrategyMap[b]));
+}
+
+// hook checkbox change to update active pill styling + brand panel + run gating
+document.addEventListener("change", (e) => {
+  const t = e.target;
+  if (t && t.matches && t.matches('input[name="strategy"]')) {
+    const pill = t.closest(".s-pill");
+    if (pill) pill.classList.toggle("active", t.checked);
+    const any = document.querySelectorAll('input[name="strategy"]:checked').length;
+    if (any === 0) {
+      const def = document.querySelector('input[name="strategy"][value="L3M"]');
+      if (def) {
+        def.checked = true;
+        def.closest(".s-pill")?.classList.add("active");
+      }
+    }
+    _renderBrandStrategyPanel();
+  }
+});
+
+/* ════════════════════════════════════════════════════════════════════════════
+   LAKEHOUSE — coming soon (ปุ่ม disabled ชั่วคราว)
+════════════════════════════════════════════════════════════════════════════ */
+function showLakehouseComingSoon(e) {
+  if (e) { e.preventDefault(); e.stopPropagation(); }
+  try { toast("⏳ ฟีเจอร์อัปโหลด Lakehouse — รออัพเดต", "amber"); } catch (_) {}
 }

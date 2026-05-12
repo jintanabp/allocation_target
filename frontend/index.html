@@ -9,7 +9,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Instrument+Serif:ital@0;1&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=202605046" />
+  <link rel="stylesheet" href="style.css?v=202605124" />
 </head>
 
 <body>
@@ -20,7 +20,7 @@
         <span class="brand-dot"></span>
         <span class="brand-name">Target Allocation</span>
       </div>
-      <div style="display:flex; align-items:center; gap:16px;">
+      <div class="topbar-actions">
         <div class="topbar-total" id="topbarTotalContainer" style="display:none;">
           เป้ารวม <strong id="totalTargetDisplay">—</strong>
         </div>
@@ -147,6 +147,12 @@
 
     <!-- ─── DASHBOARD VIEW ─── -->
     <div id="dashboardView" style="display:none;">
+
+      <button type="button" id="openManualBtn" class="btn-manual btn-manual--floating" onclick="showManualModal()"
+        title="ดูคู่มือการใช้งานทีละขั้นตอน">
+        <span class="btn-manual__icon" aria-hidden="true">📖</span>
+        <span class="btn-manual__text">คู่มือ</span>
+      </button>
 
       <div class="page-header">
         <div class="page-header-top">
@@ -341,18 +347,27 @@
           <div class="track-fill" id="trackFill"></div>
         </div>
 
+        <!-- Step 2 toolbar: bui-teriam toggle -->
+        <div class="step2-toolbar">
+          <button type="button" id="toggleBuiBtn" class="btn-bui" onclick="toggleBuiColumn()" aria-pressed="false">
+            <span class="btn-bui__icon" aria-hidden="true">➖</span>
+            <span class="btn-bui__label">หักบิวเทรี่ยม</span>
+          </button>
+          <span class="step2-toolbar__hint" id="buiHint">กดเพื่อเปิดช่องกรอกยอดบิวเทรี่ยมที่ต้องหักจาก "ยอดขายเดือนเดียวกันปีที่แล้ว"</span>
+        </div>
+
         <div class="panel no-head">
           <div class="panel-scroll step2-panel-stack">
             <div class="step2-table-scroll">
-              <table class="tbl editor-tbl tbl--step2-main">
-                <colgroup>
+              <table class="tbl editor-tbl tbl--step2-main" id="step2Table">
+                <colgroup id="step2Colgroup">
                   <col class="step2-col--emp" />
                   <col class="step2-col--num" span="6" />
                 </colgroup>
-                <thead>
+                <thead id="step2Thead">
                   <tr>
                     <th>พนักงาน</th>
-                    <th class="r">ยอดขายเดือนเดียวกันปีที่แล้ว</th>
+                    <th class="r" id="step2ThLY">ยอดขายเดือนเดียวกันปีที่แล้ว</th>
                     <th class="r">ยอดขายเฉลี่ย 3 เดือนย้อนหลัง</th>
                     <th class="r">เป้า Target Sun</th>
                     <th class="r editable-th">เป้าหมายที่กำหนดเอง</th>
@@ -364,14 +379,14 @@
               </table>
             </div>
             <div class="step2-table-foot" role="region" aria-label="สรุปเป้าหมายรายพนักงาน">
-              <table class="tbl editor-tbl tbl--step2-totals">
-                <colgroup>
+              <table class="tbl editor-tbl tbl--step2-totals" id="step2TableTotals">
+                <colgroup id="step2TotalsColgroup">
                   <col class="step2-col--emp" />
                   <col class="step2-col--num" span="6" />
                 </colgroup>
                 <tfoot>
                   <tr>
-                    <td class="tfoot-label" colspan="3">รวม</td>
+                    <td class="tfoot-label" id="step2TotalsLabel" colspan="3">รวม</td>
                     <td class="r tfoot-val" id="footTargetSum">—</td>
                     <td class="r tfoot-val" id="footYellowSum">—</td>
                     <td class="r tfoot-val" id="footGrowth">—</td>
@@ -380,6 +395,24 @@
                 </tfoot>
               </table>
             </div>
+          </div>
+        </div>
+
+        <!-- เหตุผลการตั้งเป้าให้เติบโตติดลบ -->
+        <div id="negGrowthNoteWrap" class="neg-growth-card" style="display:none;" aria-live="polite">
+          <div class="neg-growth-card__head">
+            <span class="neg-growth-card__icon" aria-hidden="true">⚠️</span>
+            <div class="neg-growth-card__title">
+              พบเป้าหมายที่ตั้งให้เติบโตติดลบ — ขอเหตุผลประกอบก่อนคำนวณ
+            </div>
+          </div>
+          <p class="neg-growth-card__desc" id="negGrowthList">—</p>
+          <label class="neg-growth-card__label" for="negGrowthReason">เหตุผลที่ตั้งเป้าให้ติดลบ (จำเป็น)</label>
+          <textarea id="negGrowthReason" class="neg-growth-card__textarea"
+            placeholder="เช่น พนักงานลาคลอด / สินค้าหลักหยุดผลิตชั่วคราว / ปรับโครงสร้างทีม ฯลฯ"
+            oninput="onNegGrowthReasonChange()"></textarea>
+          <div class="neg-growth-card__foot">
+            <span id="negGrowthHint" class="neg-growth-card__hint">⏳ ใส่เหตุผลแล้วจะปลดล็อกปุ่ม "เริ่มคำนวณ" ให้อัตโนมัติ</span>
           </div>
         </div>
       </section>
@@ -397,10 +430,16 @@
 
         <!-- Strategy selector -->
         <div class="strategy-wrap">
-          <div class="field-label strategy-wrap__label">วิธีกระจายหีบ</div>
+          <div class="strategy-wrap__head">
+            <div class="field-label strategy-wrap__label">วิธีกระจายหีบ</div>
+            <div class="strategy-wrap__multi-hint">
+              <span class="strategy-multi-badge">เลือกได้มากกว่า 1 วิธี</span>
+              เมื่อเลือกหลายวิธี ให้กำหนดด้านล่างว่าแต่ละแบรนด์จะใช้วิธีไหน
+            </div>
+          </div>
           <div class="strategy-pills" id="strategyPills">
             <label class="s-pill active">
-              <input type="radio" name="strategy" value="L3M" checked>
+              <input type="checkbox" name="strategy" value="L3M" checked>
               <span class="s-pill-icon">📊</span>
               <div>
                 <div class="s-pill-name">ยอดขายเฉลี่ย 3 เดือนย้อนหลัง</div>
@@ -408,7 +447,7 @@
               </div>
             </label>
             <label class="s-pill">
-              <input type="radio" name="strategy" value="L6M">
+              <input type="checkbox" name="strategy" value="L6M">
               <span class="s-pill-icon">📈</span>
               <div>
                 <div class="s-pill-name">ยอดขายเฉลี่ย 6 เดือนย้อนหลัง</div>
@@ -416,7 +455,7 @@
               </div>
             </label>
             <label class="s-pill">
-              <input type="radio" name="strategy" value="LY">
+              <input type="checkbox" name="strategy" value="LY">
               <span class="s-pill-icon">📅</span>
               <div>
                 <div class="s-pill-name">เดือนเดียวกันปีที่แล้ว</div>
@@ -425,7 +464,7 @@
             </label>
             <!-- ซ่อนชั่วคราว — โค้ด backend ยังรองรับ EVEN
             <label class="s-pill">
-              <input type="radio" name="strategy" value="EVEN">
+              <input type="checkbox" name="strategy" value="EVEN">
               <span class="s-pill-icon">⚖️</span>
               <div>
                 <div class="s-pill-name">เกลี่ยเท่ากัน</div>
@@ -434,7 +473,7 @@
             </label>
             -->
             <label class="s-pill">
-              <input type="radio" name="strategy" value="PUSH">
+              <input type="checkbox" name="strategy" value="PUSH">
               <span class="s-pill-icon">🚀</span>
               <div>
                 <div class="s-pill-name">ผลักดันพนักงาน</div>
@@ -443,7 +482,7 @@
             </label>
             <!-- ซ่อนชั่วคราว — โค้ด backend ยังรองรับ LP
             <label class="s-pill">
-              <input type="radio" name="strategy" value="LP">
+              <input type="checkbox" name="strategy" value="LP">
               <span class="s-pill-icon">🤖</span>
               <div>
                 <div class="s-pill-name">AI Smart Suggestion</div>
@@ -451,6 +490,19 @@
               </div>
             </label>
             -->
+          </div>
+
+          <!-- Brand → Strategy mapping (โผล่เมื่อเลือกหลายวิธี) -->
+          <div id="brandStrategyPanel" class="brand-strategy-panel" style="display:none;" aria-live="polite">
+            <div class="brand-strategy-panel__head">
+              <span class="brand-strategy-panel__icon" aria-hidden="true">🎯</span>
+              <div style="flex:1;">
+                <div class="brand-strategy-panel__title">กำหนดวิธีกระจายให้แต่ละแบรนด์</div>
+                <div class="brand-strategy-panel__sub">เลือกได้ครบทุกแบรนด์ก่อนจึงจะเริ่มคำนวณได้</div>
+              </div>
+              <div class="bsp-quickset" id="bspQuickset"></div>
+            </div>
+            <div id="brandStrategyList" class="brand-strategy-list"></div>
           </div>
 
           <div class="strategy-options-block">
@@ -517,7 +569,10 @@
                 style="color:var(--text-2); border-color:var(--border-md); background:var(--bg-main);"
                 onclick="undoLastEdit()" disabled>↩️ Undo</button>
               <button class="btn-dl" onclick="showExportModal()">↓ ดาวน์โหลด Excel</button>
-              <button class="btn-dl" onclick="showLakehouseUploadModal()">↑ อัปโหลดเข้า Lakehouse</button>
+              <button type="button" class="btn-dl btn-dl--disabled" id="lakehouseOpenBtn"
+                aria-disabled="true" disabled
+                title="รออัพเดต"
+                onclick="showLakehouseComingSoon(event)">↑ อัปโหลดเข้า Lakehouse</button>
             </div>
           </div>
 
@@ -568,13 +623,39 @@
     </div>
   </div>
 
+  <!-- ─── USER MANUAL MODAL ─── -->
+  <div id="manualModal" class="modal-overlay manual-overlay" style="display:none;" onclick="closeManualModalOnBg(event)" role="dialog" aria-modal="true" aria-labelledby="manualModalTitle">
+    <div class="modal-card manual-card">
+      <div class="manual-head">
+        <div>
+          <div class="manual-eyebrow">คู่มือใช้งาน</div>
+          <div class="manual-title" id="manualModalTitle">ระบบกระจายเป้าหมายยอดขาย</div>
+          <div class="manual-sub">อ่านทีละขั้นตอน — ใช้เวลาประมาณ 2 นาที</div>
+        </div>
+        <button type="button" class="manual-close" onclick="closeManualModal()" aria-label="ปิด">✕</button>
+      </div>
+
+      <div class="manual-progress" aria-hidden="true">
+        <div class="manual-progress__bar" id="manualProgressBar"></div>
+      </div>
+
+      <div class="manual-body" id="manualBody"></div>
+
+      <div class="manual-foot">
+        <button type="button" class="btn-manual-step btn-manual-step--ghost" id="manualPrevBtn" onclick="manualPrev()">← ก่อนหน้า</button>
+        <div class="manual-dots" id="manualDots"></div>
+        <button type="button" class="btn-manual-step" id="manualNextBtn" onclick="manualNext()">ถัดไป →</button>
+      </div>
+    </div>
+  </div>
+
   <div class="footer">
     หากมีปัญหาในการใช้งาน กรุณาติดต่อ IT
   </div>
 
   <!-- ใช้ไฟล์ในโปรเจกต์ — เครือข่ายองค์กรมักบล็อก alcdn.msauth.net ทำให้ msal ไม่โหลด -->
   <script src="vendor/msal-browser.min.js"></script>
-  <script src="app.js?v=202605047"></script>
+  <script src="app.js?v=202605121"></script>
 </body>
 
 </html>

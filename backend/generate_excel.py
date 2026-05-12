@@ -33,10 +33,11 @@ MED  = Side(style="medium", color="595959")
 THIN_BRD = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 MED_BRD  = Border(left=MED,  right=MED,  top=MED,  bottom=MED)
 
-BOLD_HDR  = Font(name="Cordia New", bold=True, color="FFFFFF", size=12)
-BOLD_BLK  = Font(name="Cordia New", bold=True, size=11)
-NORM      = Font(name="Cordia New", size=11)
-SMALL     = Font(name="Cordia New", size=10, italic=True, color="595959")
+# ── ขยายตัวอักษรให้อ่านง่ายขึ้น (ตามคำขอ user 2026-05-12) ──
+BOLD_HDR  = Font(name="Cordia New", bold=True, color="FFFFFF", size=16)
+BOLD_BLK  = Font(name="Cordia New", bold=True, size=15)
+NORM      = Font(name="Cordia New", size=15)
+SMALL     = Font(name="Cordia New", size=13, italic=True, color="595959")
 NUM_FMT   = "#,##0"
 NUM_FMT1  = "#,##0.0"
 BAHT_FMT  = "#,##0.00"
@@ -162,21 +163,21 @@ def _write_allocation_sheet(
 
     sku_allocated = df.groupby("sku")["allocated_boxes"].sum().to_dict()
 
-    # ── Column widths ────────────────────────────────────
-    ws.column_dimensions["A"].width = 5   # ลำดับ
-    ws.column_dimensions["B"].width = 10  # S/M
-    ws.column_dimensions["C"].width = 10  # กลุ่มย่อย
-    ws.column_dimensions["D"].width = 10  # W/H
-    ws.column_dimensions["E"].width = 8   # ประเภท
+    # ── Column widths (ขยายให้พอดีกับฟอนต์ขนาดใหญ่ขึ้น) ──────
+    ws.column_dimensions["A"].width = 7    # ลำดับ
+    ws.column_dimensions["B"].width = 13   # S/M
+    ws.column_dimensions["C"].width = 13   # กลุ่มย่อย
+    ws.column_dimensions["D"].width = 13   # W/H
+    ws.column_dimensions["E"].width = 12   # ประเภท
 
     DATA_COL_START = 6  # F
     for i in range(len(skus)):
-        ws.column_dimensions[get_column_letter(DATA_COL_START + i)].width = 10
+        ws.column_dimensions[get_column_letter(DATA_COL_START + i)].width = 13
     total_col = DATA_COL_START + len(skus)
-    ws.column_dimensions[get_column_letter(total_col)].width = 18
+    ws.column_dimensions[get_column_letter(total_col)].width = 22
 
     # ── แถว 1: Title ────────────────────────────────────
-    ws.row_dimensions[1].height = 28
+    ws.row_dimensions[1].height = 34
     if use_yellow_title_total:
         header_total_baht = sum(yellow_map.values())
     else:
@@ -189,7 +190,7 @@ def _write_allocation_sheet(
         f"แบรนด์: {brand_label}  |  เป้ารวม: {header_total_baht:,.0f} บาท"
     )
     t = ws.cell(row=1, column=1, value=title_text)
-    t.font = Font(name="Cordia New", bold=True, size=13, color="1F497D")
+    t.font = Font(name="Cordia New", bold=True, size=18, color="1F497D")
     t.alignment = LFT
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_col)
 
@@ -200,7 +201,7 @@ def _write_allocation_sheet(
     ws.row_dimensions[3].height = 6
 
     # ── แถว 4: ราคา/หีบ ─────────────────────────────────
-    ws.row_dimensions[4].height = 20
+    ws.row_dimensions[4].height = 24
     for ci, lbl in enumerate(["", "ราคา/หีบ", "", "", ""], start=1):
         fill = GREY_FILL if lbl else WHITE_FILL
         _c(ws, 4, ci, lbl or None, font=BOLD_BLK, fill=fill, align=CTR, border=THIN_BRD)
@@ -210,18 +211,18 @@ def _write_allocation_sheet(
     _c(ws, 4, total_col, None, fill=WHITE_FILL, border=THIN_BRD)
 
     # ── แถว 5: รหัสสินค้า SKU ───────────────────────────
-    ws.row_dimensions[5].height = 22
+    ws.row_dimensions[5].height = 26
     for ci, lbl in enumerate(["ลำดับ", "S/M", "กลุ่มย่อย", "W/H", "ประเภท"], start=1):
         _c(ws, 5, ci, lbl, font=BOLD_BLK, fill=GREY_FILL, align=CTR, border=THIN_BRD)
     for i, sku in enumerate(skus):
         _c(ws, 5, DATA_COL_START + i, sku,
-           font=Font(name="Cordia New", bold=True, size=11),
+           font=Font(name="Cordia New", bold=True, size=15),
            fill=YELLOW_FILL, align=CTR, border=THIN_BRD)
     _c(ws, 5, total_col, "ยอดรวม (บาท)",
        font=BOLD_HDR, fill=HDR_FILL, align=CTR, border=THIN_BRD)
 
     # ── แถว 6: ชื่อสินค้า (Product_NameEnglish) ───────────────────────
-    ws.row_dimensions[6].height = 28
+    ws.row_dimensions[6].height = 34
     for ci in [1, 2, 3, 4, 5]:
         _c(ws, 6, ci, None, fill=WHITE_FILL, border=THIN_BRD)
     for i, sku in enumerate(skus):
@@ -233,7 +234,7 @@ def _write_allocation_sheet(
     ws.row_dimensions[7].height = 4
 
     # ── แถว 8: เป้ารวม (supervisor total target boxes) ──
-    ws.row_dimensions[8].height = 22
+    ws.row_dimensions[8].height = 26
     _c(ws, 8, 1, None, fill=YELLOW_FILL, border=THIN_BRD)
     _c(ws, 8, 2, None, fill=YELLOW_FILL, border=THIN_BRD)
     _c(ws, 8, 3, None, fill=YELLOW_FILL, border=THIN_BRD)
@@ -249,7 +250,7 @@ def _write_allocation_sheet(
        font=BOLD_BLK, fill=YELLOW_FILL, align=RGT, border=THIN_BRD, num_fmt=BAHT_FMT)
 
     # ── แถว 9: ผลรวมกระจาย (หลังคำนวณ) ────────────
-    ws.row_dimensions[9].height = 20
+    ws.row_dimensions[9].height = 24
     _c(ws, 9, 5, "ผลรวมกระจาย", font=BOLD_BLK, fill=YELLOW_FILL, align=CTR, border=THIN_BRD)
     for ci in [1,2,3,4]:
         _c(ws, 9, ci, None, fill=YELLOW_FILL, border=THIN_BRD)
@@ -263,7 +264,7 @@ def _write_allocation_sheet(
        font=BOLD_BLK, fill=YELLOW_FILL, align=RGT, border=THIN_BRD, num_fmt=BAHT_FMT)
 
     # ── แถว 10: เคยขาย (hist avg ทีม รวม) ───────────────
-    ws.row_dimensions[10].height = 18
+    ws.row_dimensions[10].height = 22
     _c(ws, 10, 5, "เคยขาย", font=SMALL, fill=GREY_FILL, align=CTR, border=THIN_BRD)
     for ci in [1,2,3,4]:
         _c(ws, 10, ci, None, fill=GREY_FILL, border=THIN_BRD)
@@ -276,8 +277,8 @@ def _write_allocation_sheet(
     # ── แถว 10+: รายพนักงาน ─────────────────────────────
     current_row = 11
     for idx, emp in enumerate(emps, start=1):
-        ws.row_dimensions[current_row].height     = 20
-        ws.row_dimensions[current_row + 1].height = 18
+        ws.row_dimensions[current_row].height     = 24
+        ws.row_dimensions[current_row + 1].height = 22
 
         emp_df = df[df["emp_id"] == emp]
         yellow_target = yellow_map.get(emp, 0)
@@ -324,7 +325,7 @@ def _write_allocation_sheet(
         current_row += 2
 
     # ── แถว footer: รวมหีบที่กระจาย ────────────────────
-    ws.row_dimensions[current_row].height = 22
+    ws.row_dimensions[current_row].height = 26
     for ci in [1,2,3,4]:
         _c(ws, current_row, ci, None, fill=YELLOW_FILL, border=THIN_BRD)
     _c(ws, current_row, 5, "รวมหีบ", font=BOLD_BLK, fill=YELLOW_FILL, align=CTR, border=MED_BRD)
@@ -334,7 +335,7 @@ def _write_allocation_sheet(
         foot_val += tot * sku_price.get(sku, 0)
         off = sku_official.get(sku)
         isMatch = (tot == off) if off is not None else True
-        cell_font = Font(name="Cordia New", bold=True, size=11,
+        cell_font = Font(name="Cordia New", bold=True, size=15,
                          color="2F7A4D" if isMatch else "C0392B")
         _c(ws, current_row, DATA_COL_START + i, tot,
            font=cell_font, fill=YELLOW_FILL, align=CTR, border=MED_BRD, num_fmt=NUM_FMT)
@@ -471,7 +472,6 @@ def create_target_excel(
 def create_mock_template(path):
     """Legacy stub — ไม่ใช้แล้ว แต่เก็บไว้ไม่ให้ import error"""
     pass
-
 def inject_allocation_to_excel(template, result_csv, output):
     """Legacy stub — redirect ไป create_target_excel"""
     create_target_excel(result_csv, output)

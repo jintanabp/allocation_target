@@ -24,7 +24,11 @@ class OptimizeRequest(BaseModel):
     force_min_one: bool = False
     new_products_even: bool = False
     locked_edits: list[LockedEditInput] = []
-    cap_multiplier: float | None = None  # Custom strategy override (1.5–5.0)
+    cap_multiplier: float | None = None  # Custom strategy override (1.5-5.0)
+    # Multi-strategy support
+    brand_strategy_map: dict[str, str] = Field(default_factory=dict)
+    bui_deductions: dict[str, float] = Field(default_factory=dict)
+    neg_growth_reason: str | None = None
 
     @field_validator("strategy", mode="before")
     @classmethod
@@ -32,6 +36,19 @@ class OptimizeRequest(BaseModel):
         if v is None or (isinstance(v, str) and not v.strip()):
             return "L3M"
         return str(v).strip().upper()
+
+    @field_validator("brand_strategy_map", mode="before")
+    @classmethod
+    def _normalize_brand_map(cls, v: object) -> dict[str, str]:
+        if not v or not isinstance(v, dict):
+            return {}
+        out: dict[str, str] = {}
+        for k, val in v.items():
+            ks = str(k).strip()
+            vs = str(val).strip().upper()
+            if ks and vs:
+                out[ks] = vs
+        return out
 
 
 class AllocationRow(BaseModel):
@@ -64,4 +81,3 @@ class LakehouseUploadRequest(BaseModel):
     target_month: int = Field(ge=1, le=12)
     target_year: int = Field(ge=2020, le=2100)
     allocations: list[LakehouseUploadRow]
-
