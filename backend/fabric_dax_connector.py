@@ -15,11 +15,14 @@ import pandas as pd
 import os
 import atexit
 import json
+import logging
 
 # โหลด .env เมื่อ import โมดูลโดยตรง (เช่นเทส) — main.py ก็โหลดก่อน import อยู่แล้ว
 from .load_env import load_project_dotenv
 
 load_project_dotenv()
+
+_log = logging.getLogger("target_allocation")
 
 
 class FabricDAXConnector:
@@ -1222,23 +1225,68 @@ ORDER BY 'cross_sold_history_2y_qu'[SalesmanCode], [cnt] DESC
             columns=["emp_id", "warehouse_code"])
         return df.drop_duplicates(subset="emp_id", keep="first")
 
-    def get_tga_max_effective_raw(self):
-        """
-        ค่า MAX(EFFECTIVEDATE) จาก tga_target_salesman_next (ทุกแถวมักเป็นค่าเดียวกัน)
-        ใช้ตรวจว่างวดเป้าที่ผู้ใช้เลือกยังตรงกับ snapshot ปัจจุบันหรือไม่
-        """
-        t = os.environ.get("TGA_TABLE_NAME", "tga_target_salesman_next").strip()
-        c_eff = os.environ.get("TGA_COL_EFFECTIVE", "EFFECTIVEDATE").strip()
-        print(f"📡 [{t}] ดึง MAX({c_eff}) เพื่อตรวจงวดเป้า (TGA snapshot)...")
+    @staticmethod
+    def _tga_scalar_blank(val) -> bool:
+        """ค่า scalar จาก MAX(col) ว่าง/blank/null"""
+        if val is None:
+            return True
+        if isinstance(val, str) and not str(val).strip():
+            return True
+        try:
+            return bool(pd.isna(val))
+        except Exception:
+            return False
+
+    def _tga_max_scalar(self, table: str, col: str, row_alias: str):
+        """EVALUATE ROW("Alias", MAX('Table'[col])) → ค่าเดียวหรือ None"""
         dax = f"""
 EVALUATE
-ROW("MaxEffective", MAX('{t}'[{c_eff}]))
+ROW("{row_alias}", MAX('{table}'[{col}]))
 """
         rows = self._execute_dax(dax, debug=True)
         if not rows:
             return None
         r = rows[0]
-        return self._get(r, "[MaxEffective]", "MaxEffective", default=None)
+        return self._get(r, f"[{row_alias}]", row_alias, default=None)
+
+    def get_tga_max_effective_raw(self):
+        """
+        ค่า MAX(EFFECTIVEDATE) จาก tga_target_salesman_next — ใช้ตรวจงวดเป้ากับ snapshot
+
+        ถ้า EFFECTIVEDATE ทั้งตารางเป็น blank/null (MAX = blank): เรียก
+        MAX(TGA_COL_EFFECTIVE_FALLBACK) โดยค่าเริ่มต้นคือ UPDATEDATE
+        เพื่อให้ได้วันที่อ้างอิงได้ (กติกา implied เดือนเป้ายังเหมือน EFFECTIVEDATE ใน tga_period).
+        เว้น TGA_COL_EFFECTIVE_FALLBACK= ว่างใน env = ปิด fallback
+        """
+        t = os.environ.get("TGA_TABLE_NAME", "tga_target_salesman_next").strip()
+        c_eff = os.environ.get("TGA_COL_EFFECTIVE", "EFFECTIVEDATE").strip()
+        print(f"📡 [{t}] ดึง MAX({c_eff}) เพื่อตรวจงวดเป้า (TGA snapshot)...")
+        raw = self._tga_max_scalar(t, c_eff, "MaxEffective")
+        if not self._tga_scalar_blank(raw):
+            return raw
+
+        _raw_fb = os.environ.get("TGA_COL_EFFECTIVE_FALLBACK")
+        if _raw_fb is None:
+            fb = "UPDATEDATE"
+        else:
+            fb = _raw_fb.strip()
+        if not fb or fb.casefold() == c_eff.casefold():
+            _log.warning(
+                "TGA: MAX(%s) ว่าง — ไม่มีการ fallback "
+                "(ตั้ง TGA_COL_EFFECTIVE_FALLBACK เป็นชื่อคอลัมน์ หรือเว้น env ให้เป็น UPDATEDATE)",
+                c_eff,
+            )
+            return None
+
+        print(f"📡 [{t}] MAX({c_eff}) ว่าง — ใช้ MAX({fb}) แทนเพื่อตรวจงวดเป้า...")
+        raw_fb = self._tga_max_scalar(t, fb, "MaxFallback")
+        if self._tga_scalar_blank(raw_fb):
+            _log.warning("TGA: MAX(%s) และ MAX(%s) ว่าง — ข้ามตรวจงวดจาก snapshot", c_eff, fb)
+            return None
+
+        _log.info("TGA snapshot period: EFFECTIVEDATE ว่าง → ใช้ %s แทนสำหรับ enforced window", fb)
+        print(f"✅ ใช้ MAX({fb}) เป็นวันที่อ้างอิงงวด snapshot (EFFECTIVEDATE ว่าง)")
+        return raw_fb
 
     # ── 7. เป้าหมายจาก tga_target_salesman_next (semantic model) ─────────────
     def get_tga_target_salesman(

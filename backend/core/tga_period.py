@@ -3,6 +3,10 @@
 
 กติกาธุรกิจ: วันที่มีผล (EFFECTIVEDATE) ระบุว่า snapshot นี้เริ่มใช้ตั้งแต่เดือนนั้น
 เพื่อกำหนดเป้าของ **เดือนถัดไป** (เช่น EFFECTIVEDATE = พ.ค. → กำหนดเป้าเดือน มิ.ย.)
+
+ถ้าในโมเดล EFFECTIVEDATE เป็น null ทุกแถว: Fabric connector จะลอง MAX(UPDATEDATE)
+(หรือคอลัมน์ที่ตั้ง TGA_COL_EFFECTIVE_FALLBACK) แทน — ใช้เดือนของค่านั้นเข้า
+กติกา implied เดือนเป้าเดิม (เดือนถัดจากวันที่อ้างอิง) ต่อใน enforce_tga_selection_matches_effective_window
 """
 
 from __future__ import annotations
