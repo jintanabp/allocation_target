@@ -1255,7 +1255,7 @@ ROW("{row_alias}", MAX('{table}'[{col}]))
 
         ถ้า EFFECTIVEDATE ทั้งตารางเป็น blank/null (MAX = blank): เรียก
         MAX(TGA_COL_EFFECTIVE_FALLBACK) โดยค่าเริ่มต้นคือ UPDATEDATE
-        เพื่อให้ได้วันที่อ้างอิงได้ (กติกา implied เดือนเป้ายังเหมือน EFFECTIVEDATE ใน tga_period).
+        เพื่อให้ได้วันที่อ้างอิงได้ (ถูกประมวลเป็นงวดเป้าใน tga_period ตาม TGA_EFFECTIVE_IMPLIED_TARGET).
         เว้น TGA_COL_EFFECTIVE_FALLBACK= ว่างใน env = ปิด fallback
         """
         t = os.environ.get("TGA_TABLE_NAME", "tga_target_salesman_next").strip()

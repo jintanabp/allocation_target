@@ -148,7 +148,7 @@ cd <repo-name>
 | `ENABLE_DEBUG_ENDPOINTS` | ปิด | ตั้งเป็น `1` / `true` / `yes` เพื่อเปิด `GET /debug/fabric` (ใช้เฉพาะตอนวินิจฉัย) |
 | `USE_LEGACY_TARGET_CSV` | ปิด | ตั้งเป็น `1` / `true` / `yes` ถ้าต้องการเส้นทางอ่านไฟล์เป้าแบบเก่า (พัฒนา/ย้อนกลับ) |
 | `LP_HIST_ANCHOR` | `0.15` | น้ำหนัก anchor ประวัติในกลยุทธ์ **LP** (`backend/OR_engine.py`) |
-| `TGA_TABLE_NAME`, `TGA_COL_*`, `TGA_FILTER_BY_EFFECTIVE` | ดู `fabric_dax_connector.py` | ปรับชื่อตาราง/คอลัมน์เมื่อ semantic model ใช้ schema ต่างจากค่า default |
+| `TGA_TABLE_NAME`, `TGA_COL_*`, `TGA_FILTER_BY_EFFECTIVE`, `TGA_EFFECTIVE_IMPLIED_TARGET`, `TGA_ENFORCE_EFFECTIVE_WINDOW` | ดู `fabric_dax_connector.py`, `backend/core/tga_period.py`, `config/.env.example` | ปรับ schema TGA และกติกางวดจาก EFFECTIVEDATE (ค่าเริ่มต้น: เป้า = เดือนเดียวกับวันที่อ้างอิง); ตั้ง `next` เพื่อใช้เดือนถัดไปแบบเดิม |
 
 ### ล็อกอิน Microsoft (Entra) และสิทธิ์ ACC_USER_CONTROL
 

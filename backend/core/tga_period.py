@@ -1,12 +1,13 @@
 """
 ตรวจสอบงวดเป้าที่ผู้ใช้เลือกกับ EFFECTIVEDATE ของ tga_target_salesman_next
 
-กติกาธุรกิจ: วันที่มีผล (EFFECTIVEDATE) ระบุว่า snapshot นี้เริ่มใช้ตั้งแต่เดือนนั้น
-เพื่อกำหนดเป้าของ **เดือนถัดไป** (เช่น EFFECTIVEDATE = พ.ค. → กำหนดเป้าเดือน มิ.ย.)
+กติกาธุรกิจ: วันที่มีผล (EFFECTIVEDATE) บอกว่า snapshot ใช้กำหนดเป้าของ **เดือนเดียวกันกับตัวเดือนของวันที่ค่านั้น**
+(เช่น EFFECTIVEDATE ใน พ.ค. → เป้างวด พ.ค.)
 
 ถ้าในโมเดล EFFECTIVEDATE เป็น null ทุกแถว: Fabric connector จะลอง MAX(UPDATEDATE)
-(หรือคอลัมน์ที่ตั้ง TGA_COL_EFFECTIVE_FALLBACK) แทน — ใช้เดือนของค่านั้นเข้า
-กติกา implied เดือนเป้าเดิม (เดือนถัดจากวันที่อ้างอิง) ต่อใน enforce_tga_selection_matches_effective_window
+(หรือคอลัมน์ที่ตั้ง TGA_COL_EFFECTIVE_FALLBACK) แทน — ใช้เดือนของค่านั้นเข้ากติกาช่วงประกาศเหมือนกัน
+
+ตั้ง `TGA_EFFECTIVE_IMPLIED_TARGET=next` ได้ถ้าต้องการพฤติกรรมเก่า (เป้า = เดือนถัดจากวันที่อ้างอิง)
 """
 
 from __future__ import annotations
@@ -53,13 +54,21 @@ def _to_ce_year_month(y: int, m: int) -> tuple[int, int]:
 
 
 def implied_target_year_month(eff_y_ce: int, eff_m: int) -> tuple[int, int]:
-    """เดือนที่ snapshot นี้ใช้กำหนดเป้า = เดือนถัดจาก EFFECTIVEDATE"""
-    ty, tm = eff_y_ce, eff_m
-    tm += 1
-    if tm > 12:
-        tm = 1
-        ty += 1
-    return ty, tm
+    """
+    เดือนเป้าที่ snapshot TGA นี้อ้างอิงโดย implied จากวันที่ (EFFECTIVEDATE หรือ fallback)
+
+    Default: เดือนเดียวกับ EFFECTIVEDATE
+    พฤติกรรมเก่า: ตั้ง env TGA_EFFECTIVE_IMPLIED_TARGET=next เพื่อใช้เดือนถัดไป
+    """
+    mode = os.environ.get("TGA_EFFECTIVE_IMPLIED_TARGET", "same").strip().lower()
+    if mode in ("next", "1", "yes", "true"):
+        ty, tm = eff_y_ce, eff_m
+        tm += 1
+        if tm > 12:
+            tm = 1
+            ty += 1
+        return ty, tm
+    return eff_y_ce, eff_m
 
 
 def enforce_tga_selection_matches_effective_window(
