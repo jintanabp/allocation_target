@@ -74,6 +74,7 @@ class LakehouseUploadRow(BaseModel):
     emp_id: str
     sku: str
     allocated_boxes: int = Field(ge=0)
+    warehouse_code: str | None = None
 
 
 class LakehouseUploadRequest(BaseModel):
@@ -81,3 +82,4 @@ class LakehouseUploadRequest(BaseModel):
     target_month: int = Field(ge=1, le=12)
     target_year: int = Field(ge=2020, le=2100)
     allocations: list[LakehouseUploadRow]
+    upload_user_code: str | None = None

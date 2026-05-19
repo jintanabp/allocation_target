@@ -1381,3 +1381,146 @@ CALCULATETABLE(
         )
         print(f"✅ TGA targets: {len(df)} แถว (emp×sku)")
         return df
+
+    def get_tga_lakehouse_dims_by_emp_sku(
+        self, emp_list: list, sku_list: list
+    ) -> pd.DataFrame:
+        """
+        ค่า dimension ต่อคู่ SALESMANCODE×PRODUCTCODE จาก tga_target_salesman_next
+        (ข้อมูลจริงในตารางเป้า — SALESTYPE, DIVISIONCODE, ฯลฯ)
+        """
+        empty_cols = [
+            "emp_id",
+            "sku",
+            "salestype",
+            "divisioncode",
+            "areacode",
+            "provincecode",
+            "warehouse_code",
+        ]
+        if not emp_list or not sku_list:
+            return pd.DataFrame(columns=empty_cols)
+
+        t = os.environ.get("TGA_TABLE_NAME", "tga_target_salesman_next").strip()
+        c_emp = os.environ.get("TGA_COL_SALESMAN", "SALESMANCODE").strip()
+        c_prod = os.environ.get("TGA_COL_PRODUCT", "PRODUCTCODE").strip()
+        dim_cols = {
+            "salestype": os.environ.get("LAKEHOUSE_COL_SALESTYPE", "SALESTYPE").strip(),
+            "divisioncode": os.environ.get("LAKEHOUSE_COL_DIVISION", "DIVISIONCODE").strip(),
+            "areacode": os.environ.get("LAKEHOUSE_COL_AREACODE", "AREACODE").strip(),
+            "provincecode": os.environ.get("LAKEHOUSE_COL_PROVINCE", "PROVINCECODE").strip(),
+            "warehouse_code": os.environ.get("LAKEHOUSE_COL_WAREHOUSE", "WAREHOUSECODE").strip(),
+        }
+        emp_str = ", ".join(f'"{str(e)}"' for e in emp_list)
+        sku_str = ", ".join(f'"{str(s)}"' for s in sku_list)
+        col_lines = ",\n        ".join(
+            f'"{alias}", \'{t}\'[{col}]' for alias, col in dim_cols.items()
+        )
+        dax = f"""
+EVALUATE
+CALCULATETABLE(
+    SELECTCOLUMNS(
+        '{t}',
+        "emp_id", '{t}'[{c_emp}],
+        "sku", '{t}'[{c_prod}],
+        {col_lines}
+    ),
+    TREATAS({{{emp_str}}}, '{t}'[{c_emp}]),
+    TREATAS({{{sku_str}}}, '{t}'[{c_prod}])
+)
+"""
+        print(
+            f"📡 [{t}] ดึง dimension ต่อ emp×sku สำหรับ Lakehouse "
+            f"(emp={len(emp_list)}, sku={len(sku_list)})..."
+        )
+        rows = self._execute_dax(dax, debug=True)
+        records = []
+        for r in rows:
+            emp = str(self._get(r, "[emp_id]", "emp_id", default="")).strip()
+            sku = str(self._get(r, "[sku]", "sku", default="")).strip()
+            if not emp or not sku:
+                continue
+            rec = {"emp_id": emp, "sku": sku}
+            for alias in dim_cols:
+                rec[alias] = str(self._get(r, f"[{alias}]", alias, default="") or "").strip()
+            records.append(rec)
+
+        if not records:
+            return pd.DataFrame(columns=empty_cols)
+
+        df = pd.DataFrame(records)
+        # ถ้ามีหลายแถวต่อ emp×sku เก็บแถวที่มี salestype/division ก่อน
+        df["_prio"] = (
+            df["salestype"].astype(str).str.strip().ne("").astype(int)
+            + df["divisioncode"].astype(str).str.strip().ne("").astype(int)
+        )
+        df = (
+            df.sort_values("_prio", ascending=False)
+            .drop_duplicates(subset=["emp_id", "sku"], keep="first")
+            .drop(columns=["_prio"])
+        )
+        print(f"✅ TGA lakehouse dims (emp×sku): {len(df)} แถว")
+        return df
+
+    def get_tga_lakehouse_dims_by_emp(self, emp_list: list) -> pd.DataFrame:
+        """
+        ค่า dimension ต่อพนักงานจาก tga_target_salesman_next (สำรองเมื่อไม่มีแถว emp×sku)
+        """
+        empty_cols = [
+            "emp_id",
+            "salestype",
+            "divisioncode",
+            "areacode",
+            "provincecode",
+            "warehouse_code",
+        ]
+        if not emp_list:
+            return pd.DataFrame(columns=empty_cols)
+
+        t = os.environ.get("TGA_TABLE_NAME", "tga_target_salesman_next").strip()
+        c_emp = os.environ.get("TGA_COL_SALESMAN", "SALESMANCODE").strip()
+        dim_cols = {
+            "salestype": os.environ.get("LAKEHOUSE_COL_SALESTYPE", "SALESTYPE").strip(),
+            "divisioncode": os.environ.get("LAKEHOUSE_COL_DIVISION", "DIVISIONCODE").strip(),
+            "areacode": os.environ.get("LAKEHOUSE_COL_AREACODE", "AREACODE").strip(),
+            "provincecode": os.environ.get("LAKEHOUSE_COL_PROVINCE", "PROVINCECODE").strip(),
+            "warehouse_code": os.environ.get("LAKEHOUSE_COL_WAREHOUSE", "WAREHOUSECODE").strip(),
+        }
+        emp_str = ", ".join(f'"{str(e)}"' for e in emp_list)
+        measure_lines = ",\n        ".join(
+            f'"{alias}", MAX(\'{t}\'[{col}])' for alias, col in dim_cols.items()
+        )
+        dax = f"""
+EVALUATE
+CALCULATETABLE(
+    SUMMARIZECOLUMNS(
+        '{t}'[{c_emp}],
+        {measure_lines}
+    ),
+    TREATAS({{{emp_str}}}, '{t}'[{c_emp}])
+)
+"""
+        print(f"📡 [{t}] ดึง dimension สำหรับ Lakehouse upload (emp={len(emp_list)})...")
+        rows = self._execute_dax(dax, debug=True)
+        records = []
+        for r in rows:
+            emp = str(
+                self._get(
+                    r,
+                    f"{t}[{c_emp}]",
+                    f"[{c_emp}]",
+                    "tga_target_salesman_next[SALESMANCODE]",
+                    "[SALESMANCODE]",
+                    default="",
+                )
+            ).strip()
+            if not emp:
+                continue
+            rec = {"emp_id": emp}
+            for alias in dim_cols:
+                rec[alias] = str(self._get(r, f"[{alias}]", alias, default="") or "").strip()
+            records.append(rec)
+
+        df = pd.DataFrame(records) if records else pd.DataFrame(columns=empty_cols)
+        print(f"✅ TGA lakehouse dims: {len(df)} พนักงาน")
+        return df.drop_duplicates(subset="emp_id", keep="first")

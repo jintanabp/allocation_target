@@ -2197,6 +2197,7 @@ async function runOptimization() {
   buildBrandTabs(allocs);
   qs("#resultBlock").style.display = "block";
   renderResult(allocs);
+  syncLakehouseButton();
   qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
   saveDraft(true); // บันทึกแบบร่างอัตโนมัติหลัง AI + เกลี่ยเศษ
 }
@@ -2530,6 +2531,7 @@ function renderResult(allocs) {
 
   renderResultFooter(skus, skuTotals, emps);
   syncStep3ResultFabricNote();
+  syncLakehouseButton();
   requestAnimationFrame(() => adjustResultStickyGap());
 }
 
@@ -2823,22 +2825,39 @@ function closeExportModal() { qs("#exportModal").style.display = "none"; }
 function closeModalOnBg(e) { if (e.target === qs("#exportModal")) closeExportModal(); }
 
 /* ══════════════════════════════════════════════
-   LAKEHOUSE UPLOAD
+   LAKEHOUSE / TGA CSV EXPORT
 ══════════════════════════════════════════════ */
+function syncLakehouseButton() {
+  const btn = document.getElementById("lakehouseOpenBtn");
+  if (!btn) return;
+  const has = Array.isArray(S.allocations) && S.allocations.length > 0;
+  btn.disabled = !has;
+  btn.classList.toggle("btn-dl--disabled", !has);
+  btn.setAttribute("aria-disabled", has ? "false" : "true");
+}
+
+function _lakehouseUserCode() {
+  if (S.loginRole === "manager" && S.managerCode) return String(S.managerCode).trim();
+  return String(S.supId || "").trim();
+}
+
 function showLakehouseUploadModal() {
   if (!S.allocations || S.allocations.length === 0) {
-    toast("ยังไม่มีผลลัพธ์ให้ อัปโหลด (ต้องกดคำนวณ/Optimize ก่อน)", "red");
+    toast("ยังไม่มีผลลัพธ์ให้บันทึก (ต้องกดคำนวณ/Optimize ก่อน)", "red");
     return;
   }
-  const rows = S.allocations.filter(a => (Number(a.allocated_boxes) || 0) >= 0).length;
+  const total = S.allocations.length;
+  const zeros = S.allocations.filter(a => (Number(a.allocated_boxes) || 0) === 0).length;
   const periodStr = MONTH_FULL_TH[S.targetMonth] + " " + (S.targetYear + 543);
+  const userCode = escH(_lakehouseUserCode());
   const body = `
     <div style="line-height:1.75;">
-      จะอัปโหลดผลลัพธ์การกระจายหีบของทีม <b>${escH(S.supId || "")}</b> งวด <b>${escH(periodStr)}</b><br>
-      รูปแบบข้อมูล: <code>sup_id, target_year, target_month, emp_id, sku, allocated_boxes</code><br>
-      จำนวนแถวประมาณ: <b>${rows.toLocaleString("th-TH")}</b> แถว
+      บันทึกผลเกลี่ยหีบทีม <b>${escH(S.supId || "")}</b> งวด <b>${escH(periodStr)}</b> เป็นไฟล์ Excel (.xlsx)<br>
+      รูปแบบ: <code>PRODUCTCODE … USERCODE</code> (11 คอลัมน์ ตาม tga_target_salesman_next)<br>
+      แถวทั้งหมด: <b>${total.toLocaleString("th-TH")}</b> (รวม QUANTITYCASE=0 จำนวน <b>${zeros.toLocaleString("th-TH")}</b> แถว — สำหรับทับเป้าเดิมที่ไม่ได้รับหีบ)<br>
+      EFFECTIVEDATE: วันที่ 1 ของเดือนเป้า 00:00:00 (รูปแบบเดียวกับ UPDATEDATE) · USERCODE: <b>${userCode}</b>
       <div style="margin-top:10px;color:var(--text-3);font-size:12px;">
-        หมายเหตุ: ระบบจะอัปโหลดเป็นไฟล์ CSV เข้า Lakehouse (OneLake Files) แล้วค่อยนำไปสร้างตาราง/ทำ ingest ต่อได้
+        SALESTYPE / DIVISIONCODE ดึงจากตารางเป้า tga_target_salesman_next · วันที่เป็นข้อความ (ไม่มี AM/PM)
       </div>
     </div>
   `;
@@ -2850,43 +2869,61 @@ function showLakehouseUploadModal() {
 function closeLakehouseUploadModal() { qs("#lakehouseModal").style.display = "none"; }
 function closeLakehouseModalOnBg(e) { if (e.target === qs("#lakehouseModal")) closeLakehouseUploadModal(); }
 
+function _empWarehouseForLakehouse(empId) {
+  const eid = String(empId || "").trim();
+  const emp = (S.employees || []).find(e => String(e.emp_id || "").trim() === eid);
+  const wh = emp?.warehouse_code;
+  return wh != null && String(wh).trim() ? String(wh).trim() : null;
+}
+
+function _lakehouseExportPayload() {
+  return {
+    sup_id: S.supId,
+    target_month: S.targetMonth,
+    target_year: S.targetYear,
+    upload_user_code: _lakehouseUserCode(),
+    allocations: S.allocations.map(a => ({
+      emp_id: a.emp_id,
+      sku: a.sku,
+      allocated_boxes: Number(a.allocated_boxes) || 0,
+      warehouse_code: _empWarehouseForLakehouse(a.emp_id),
+    })),
+  };
+}
+
 async function doLakehouseUpload() {
   const btn = document.getElementById("lakehouseUploadBtn");
-  if (btn) { btn.textContent = "กำลังอัปโหลด..."; btn.disabled = true; }
-  pushGlobalBusy("กำลังอัปโหลดเข้า Lakehouse...");
+  if (btn) { btn.textContent = "กำลังสร้าง..."; btn.disabled = true; }
+  pushGlobalBusy("กำลังสร้างไฟล์ Excel...");
   try {
-    const payload = {
-      sup_id: S.supId,
-      target_month: S.targetMonth,
-      target_year: S.targetYear,
-      allocations: S.allocations.map(a => ({
-        emp_id: a.emp_id,
-        sku: a.sku,
-        allocated_boxes: Number(a.allocated_boxes) || 0,
-      })),
-    };
     const res = await fetchWithTimeout(
-      `${API_BASE_URL}/lakehouse/upload`,
+      `${API_BASE_URL}/lakehouse/export-csv`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(_lakehouseExportPayload()),
       },
       180000
     );
-    const j = await res.json().catch(() => ({}));
     if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
       const msg = (j && (j.detail?.message || j.detail || j.message)) || `HTTP ${res.status}`;
       throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
     }
+    const blob = await res.blob();
+    const cd = res.headers.get("Content-Disposition") || "";
+    let fname = `alloc_${S.supId}_${S.targetYear}_${String(S.targetMonth).padStart(2, "0")}.xlsx`;
+    const m = /filename="?([^";]+)"?/i.exec(cd);
+    if (m) fname = m[1];
+    dl(blob, fname);
+    const rows = res.headers.get("X-Export-Rows");
     closeLakehouseUploadModal();
-    toast(`✅ อัปโหลดสำเร็จ (${Number(j.rows || 0).toLocaleString("th-TH")} แถว)\nไฟล์: ${j.remote_path || "-"}`, "green");
-    S._hasUnsaved = false;
+    toast(`✅ บันทึกไฟล์สำเร็จ: ${fname}${rows ? ` (${Number(rows).toLocaleString("th-TH")} แถว)` : ""}`, "green");
   } catch (err) {
-    toast("❌ อัปโหลดไม่สำเร็จ: " + (err?.message || String(err)), "red");
+    toast("❌ บันทึกไฟล์ไม่สำเร็จ: " + (err?.message || String(err)), "red");
   } finally {
     popGlobalBusy();
-    if (btn) { btn.textContent = "อัปโหลด"; btn.disabled = false; }
+    if (btn) { btn.textContent = "บันทึก Excel"; btn.disabled = false; }
   }
 }
 
@@ -3100,6 +3137,7 @@ function checkAndLoadDraft() {
         qs("#resultBlock").style.display = "block";
         buildBrandTabs(S.allocations);
         renderResult(S.allocations);
+        syncLakehouseButton();
         syncStep3ResultFabricNote();
         qs("#runEmoji").textContent = "✅";
         qs("#runTitle").textContent = "โหลดแบบร่างสำเร็จ";
@@ -3890,10 +3928,3 @@ document.addEventListener("change", (e) => {
   }
 });
 
-/* ════════════════════════════════════════════════════════════════════════════
-   LAKEHOUSE — coming soon (ปุ่ม disabled ชั่วคราว)
-════════════════════════════════════════════════════════════════════════════ */
-function showLakehouseComingSoon(e) {
-  if (e) { e.preventDefault(); e.stopPropagation(); }
-  try { toast("⏳ ฟีเจอร์อัปโหลด Lakehouse — รออัพเดต", "amber"); } catch (_) {}
-}
