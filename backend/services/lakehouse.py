@@ -11,7 +11,7 @@ import requests
 from fastapi import HTTPException
 from openpyxl import Workbook
 
-from ..core.paths import safe_id
+from ..core.paths import safe_id, tga_grain_cache_path
 from ..fabric_dax_connector import FabricDAXConnector
 from ..schemas import LakehouseUploadRequest
 
@@ -135,17 +135,27 @@ def _cell_str(val) -> str:
 
 
 def _areacode_str(val) -> str:
-    """AREACODE ว่างเมื่อไม่มีค่า — ไม่ใช้ 0 แทนค่าว่าง"""
-    s = _cell_str(val)
-    if not s:
-        return ""
-    if s in ("0", "0.0"):
+    """
+    ค่า AREACODE ใน semantic model — รวม **0** — ต้องส่งออกตามนั้น เพื่อ import กลับ TGA
+    เดิมเคยตัด 0 ออกเป็น "" (ถือว่าว่าง) ทำให้ดูเหมือนโมเดลไม่มีรหัสพื้นที่แม้ฐานข้อมูลเป็น 0
+    """
+    if val is None:
         return ""
     try:
-        if float(s) == 0:
+        if pd.isna(val):
             return ""
-    except ValueError:
+    except (TypeError, ValueError):
         pass
+    if isinstance(val, (int, float)) and not isinstance(val, bool):
+        if float(val) == int(val):
+            return str(int(val))
+        return str(val).strip()
+    s = str(val).strip()
+    if not s or s.lower() in ("nan", "none"):
+        return ""
+    low = s.lower()
+    if low in ("0", "0.0", "-0", "-0.0"):
+        return "0"
     return s
 
 
@@ -166,7 +176,174 @@ def _coalesce_col(df: pd.DataFrame, col: str, fallback: pd.Series | None = None)
     return base
 
 
-def _enrich_emp_dimensions(df: pd.DataFrame, rows_raw: list[dict]) -> pd.DataFrame:
+def _integer_split_by_weights(weights: list[float], total: int) -> list[int]:
+    """หีบแบ่งจำนวนเต็มผลรวม total ตาม weights (เกลี่ยเศษตาม leftover มากที่สุด)"""
+    total = max(0, int(round(total)))
+    n = len(weights)
+    if n == 0:
+        return []
+    if total == 0:
+        return [0] * n
+    w = [max(0.0, float(x)) for x in weights]
+    s = sum(w)
+    if s <= 0:
+        w = [1.0] * n
+        s = float(n)
+    raw = [total * (wi / s) for wi in w]
+    base = [int(x) for x in raw]
+    rem = total - sum(base)
+    frac = sorted(range(n), key=lambda i: -(raw[i] - base[i]))
+    for j in range(rem):
+        base[frac[j % n]] += 1
+    return base
+
+
+def _normalize_grain_dtype(df_grain: pd.DataFrame) -> pd.DataFrame:
+    g = df_grain.copy()
+    for c in ("emp_id", "sku"):
+        if c in g.columns:
+            g[c] = g[c].astype(str).str.strip()
+    for c in ("salestype", "divisioncode", "areacode", "provincecode", "warehouse_code"):
+        if c not in g.columns:
+            g[c] = ""
+        else:
+            g[c] = g[c].map(_cell_str)
+    if "qty" not in g.columns:
+        g["qty"] = 0.0
+    g["qty"] = pd.to_numeric(g["qty"], errors="coerce").fillna(0.0)
+    return g
+
+
+def _expand_allocations_with_tga_grain(
+    df_alloc: pd.DataFrame,
+    sup_id: str,
+    target_month: int,
+    target_year: int,
+) -> tuple[pd.DataFrame, bool]:
+    """
+    จากแถว (emp×sku × allocated_boxes) แตกเป็นหลายแถวตาม grain cache จาก tga_target_salesman_next
+    ให้ SALESTYPE / DIVISIONCODE / AREACODE / PROVINCECODE / WAREHOUSECODE ตรงกับบรรทัดเป้า
+    และรักษายอด QUANTITYCASE รวมต่อ emp×sku
+    """
+    p = tga_grain_cache_path(sup_id, target_month, target_year)
+    if not os.path.exists(p):
+        return df_alloc, False
+    try:
+        dg = pd.read_csv(p, dtype=str, keep_default_na=False)
+    except Exception:
+        logger.warning("cannot read TGA grain cache: %s", p)
+        return df_alloc, False
+    dg = _normalize_grain_dtype(dg)
+    if dg.empty:
+        return df_alloc, False
+
+    out: list[dict] = []
+
+    # แปลง DataFrame iterate — เก็บ warehouse จากคำขอเป็น hint
+    for _, arow in df_alloc.iterrows():
+        e = str(arow["emp_id"]).strip()
+        sku = str(arow["sku"]).strip()
+        boxes_val = pd.to_numeric(arow.get("allocated_boxes", 0), errors="coerce")
+        boxes = 0 if pd.isna(boxes_val) else int(round(float(boxes_val)))
+        wh_req = ""
+        raw_wh = arow.get("warehouse_code")
+        if raw_wh is not None and str(raw_wh).strip():
+            wh_req = str(raw_wh).strip()
+
+        sub = dg[(dg["emp_id"] == e) & (dg["sku"] == sku)].copy()
+
+        # ไม่พบใน cache → เก็บบรรทัดเดิมให้ชั้นถัดไปเติม dim จาก Fabric
+        if sub.empty:
+            out.append(
+                {
+                    "emp_id": e,
+                    "sku": sku,
+                    "allocated_boxes": boxes,
+                    "salestype": "",
+                    "divisioncode": "",
+                    "areacode": "",
+                    "provincecode": "",
+                    "warehouse_code": wh_req,
+                }
+            )
+            continue
+
+        sub_pos = sub[sub["qty"] > 0]
+        dims_only = sub[sub["qty"] <= 0]
+
+        if not sub_pos.empty:
+            wvals = sub_pos["qty"].astype(float).tolist()
+            split = _integer_split_by_weights(wvals, boxes)
+            for (_, r), b in zip(sub_pos.iterrows(), split):
+                wh = (
+                    _cell_str(r.get("warehouse_code", ""))
+                    or wh_req
+                    or ""
+                )
+                out.append(
+                    {
+                        "emp_id": e,
+                        "sku": sku,
+                        "allocated_boxes": int(b),
+                        "salestype": _cell_str(r.get("salestype", "")),
+                        "divisioncode": _cell_str(r.get("divisioncode", "")),
+                        "areacode": _areacode_str(r.get("areacode", "")),
+                        "provincecode": _cell_str(r.get("provincecode", "")),
+                        "warehouse_code": wh,
+                    }
+                )
+
+            # แถว TGA เดิมที่ qty = 0: เขียน QUANTITYCASE = 0 เพื่อให้ครบ dim ตอนนำเข้ากลับ
+            if not dims_only.empty:
+                for _, r in dims_only.iterrows():
+                    wh = (
+                        _cell_str(r.get("warehouse_code", ""))
+                        or wh_req
+                        or ""
+                    )
+                    out.append(
+                        {
+                            "emp_id": e,
+                            "sku": sku,
+                            "allocated_boxes": 0,
+                            "salestype": _cell_str(r.get("salestype", "")),
+                            "divisioncode": _cell_str(r.get("divisioncode", "")),
+                            "areacode": _areacode_str(r.get("areacode", "")),
+                            "provincecode": _cell_str(r.get("provincecode", "")),
+                            "warehouse_code": wh,
+                        }
+                    )
+        else:
+            # เฉพาะแถวเป้ารวมเป็น 0 ใน TGA → เกลี่ยหีบเท่า ๆ กันบนทุกความเป็นไปได้ของ dim
+            wvals = [1.0] * len(sub)
+            split = _integer_split_by_weights(wvals, boxes)
+            for (_, r), b in zip(sub.iterrows(), split):
+                wh = (
+                    _cell_str(r.get("warehouse_code", ""))
+                    or wh_req
+                    or ""
+                )
+                out.append(
+                    {
+                        "emp_id": e,
+                        "sku": sku,
+                        "allocated_boxes": int(b),
+                        "salestype": _cell_str(r.get("salestype", "")),
+                        "divisioncode": _cell_str(r.get("divisioncode", "")),
+                        "areacode": _areacode_str(r.get("areacode", "")),
+                        "provincecode": _cell_str(r.get("provincecode", "")),
+                        "warehouse_code": wh,
+                    }
+                )
+
+    return pd.DataFrame(out), True
+
+
+def _enrich_emp_dimensions(
+    df: pd.DataFrame,
+    rows_raw: list[dict],
+    skip_emp_sku_dim_merge: bool = False,
+) -> pd.DataFrame:
     emp_list = sorted({str(e).strip() for e in df["emp_id"].unique() if str(e).strip()})
     sku_list = sorted({str(s).strip() for s in df["sku"].unique() if str(s).strip()})
     wh_hint = {}
@@ -181,10 +358,11 @@ def _enrich_emp_dimensions(df: pd.DataFrame, rows_raw: list[dict]) -> pd.DataFra
     df_wh = pd.DataFrame()
     try:
         fabric = FabricDAXConnector()
-        try:
-            df_es = fabric.get_tga_lakehouse_dims_by_emp_sku(emp_list, sku_list)
-        except Exception as e:
-            logger.warning("get_tga_lakehouse_dims_by_emp_sku: %s", e)
+        if not skip_emp_sku_dim_merge:
+            try:
+                df_es = fabric.get_tga_lakehouse_dims_by_emp_sku(emp_list, sku_list)
+            except Exception as e:
+                logger.warning("get_tga_lakehouse_dims_by_emp_sku: %s", e)
         try:
             df_emp = fabric.get_tga_lakehouse_dims_by_emp(emp_list)
         except Exception as e:
@@ -200,7 +378,7 @@ def _enrich_emp_dimensions(df: pd.DataFrame, rows_raw: list[dict]) -> pd.DataFra
         if c not in df.columns:
             df[c] = ""
 
-    if not df_es.empty:
+    if not skip_emp_sku_dim_merge and not df_es.empty:
         df = df.merge(df_es, on=["emp_id", "sku"], how="left", suffixes=("", "_tga"))
 
     emp_fb = {}
@@ -260,7 +438,16 @@ def _build_tga_upload_dataframe(req: LakehouseUploadRequest) -> pd.DataFrame:
     if df.empty:
         raise HTTPException(400, detail="ไม่มีแถว emp×sku ที่สมบูรณ์สำหรับส่งออก")
 
-    df = _enrich_emp_dimensions(df, rows_raw)
+    df_expand, grain_ok = _expand_allocations_with_tga_grain(
+        df,
+        req.sup_id,
+        int(req.target_month),
+        int(req.target_year),
+    )
+    df = df_expand if grain_ok else df
+    df = _enrich_emp_dimensions(
+        df, rows_raw, skip_emp_sku_dim_merge=bool(grain_ok)
+    )
 
     user_code = _resolve_user_code(req)
     updatedate = _format_updatedate_bangkok_be()

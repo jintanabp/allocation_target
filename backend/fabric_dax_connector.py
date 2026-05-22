@@ -1296,14 +1296,33 @@ ROW("{row_alias}", MAX('{table}'[{col}]))
         target_year: int,
     ) -> pd.DataFrame:
         """
-        ดึงเป้าหีบรายคู่พนักงาน×สินค้าจาก tga_target_salesman_next (semantic model เดียวกับยอดขายย้อนหลัง)
+        ดึงเป้าหีบรายคู่พนักงาน×สินค้าจาก tga_target_salesman_next — รวมทุกบรรทัด grain ที่ตรง emp×sku
 
-        ใช้เฉพาะ: SALESMANCODE, PRODUCTCODE, QUANTITYCASE (เป้าหีบ) — นำไปคูณราคาต่อหีบจาก dim_product ใน main
-        ตารางเป้าถูกเคลียร์รายเดือนฝั่งข้อมูล → ค่าเริ่มต้น **ไม่** กรองตาม EFFECTIVEDATE
+        ภายในใช้ get_tga_target_salesman_granular() แล้ว sum(QUANTITYCASE) — สอดคล้องกับตารางที่มี
+        หลายบรรทัดต่อ SALESMANCODE×PRODUCTCODE (ต่าง PROVINCECODE / AREACODE / …)
+        """
+        df_g = self.get_tga_target_salesman_granular(emp_list, target_month, target_year)
+        if df_g.empty:
+            return pd.DataFrame(columns=["emp_id", "sku", "qty"])
+        df_a = df_g.groupby(["emp_id", "sku"], as_index=False)["qty"].sum()
+        df_a = df_a[df_a["qty"] != 0]
+        print(f"✅ TGA targets (agg emp×sku): {len(df_a)} แถว")
+        return df_a
 
-        ไม่กรองด้วยรายการ SKU จากประวัติขาย (L6M)
-        env: TGA_TABLE_NAME, TGA_COL_SALESMAN, TGA_COL_PRODUCT, TGA_COL_QUANTITY,
-        TGA_FILTER_BY_EFFECTIVE=1 เท่านั้นจึงกรอง YEAR/MONTH ที่ TGA_COL_EFFECTIVE (ค่าเริ่มต้น EFFECTIVEDATE)
+    def get_tga_target_salesman_granular(
+        self,
+        emp_list: list,
+        target_month: int,
+        target_year: int,
+    ) -> pd.DataFrame:
+        """
+        เป้าหมายจาก tga_target_salesman_next — **grain เต็ม** รวม SALESTYPE / DIVISIONCODE /
+        AREACODE / PROVINCECODE / WAREHOUSECODE พร้อม SUM(QUANTITYCASE)
+
+        เก็บทั้งแถว qty=0 เพื่อยึดความครบของ dimension เวลายิงเข้ากลับ Warehouse/Lakehouse
+        (สะสม cache จาก load_employees_payload → ใช้แตกบรรทัด export Excel TGA)
+
+        aggregate เป็น emp×sku ใช้ get_tga_target_salesman() (รวม qty ข้ามบรรทัด grain)
         """
         t = os.environ.get("TGA_TABLE_NAME", "tga_target_salesman_next").strip()
         c_emp = os.environ.get("TGA_COL_SALESMAN", "SALESMANCODE").strip()
@@ -1311,11 +1330,24 @@ ROW("{row_alias}", MAX('{table}'[{col}]))
         c_qty = os.environ.get("TGA_COL_QUANTITY", "QUANTITYCASE").strip()
         c_eff = os.environ.get("TGA_COL_EFFECTIVE", "EFFECTIVEDATE").strip()
         filter_period = os.environ.get("TGA_FILTER_BY_EFFECTIVE", "0").strip().lower() in (
-            "1", "true", "yes", "y",
+            "1",
+            "true",
+            "yes",
+            "y",
         )
 
+        empty_cols = [
+            "emp_id",
+            "sku",
+            "qty",
+            "salestype",
+            "divisioncode",
+            "areacode",
+            "provincecode",
+            "warehouse_code",
+        ]
         if not emp_list:
-            return pd.DataFrame(columns=["emp_id", "sku", "qty"])
+            return pd.DataFrame(columns=empty_cols)
 
         emp_str = ", ".join(f'"{str(e)}"' for e in emp_list)
 
@@ -1328,22 +1360,33 @@ ROW("{row_alias}", MAX('{table}'[{col}]))
                 f"MONTH('{t}'[{c_eff}]) = {tm}"
             )
 
-        _tga_log_suffix = (
+        dim_items = (
+            ("salestype", os.environ.get("LAKEHOUSE_COL_SALESTYPE", "SALESTYPE").strip()),
+            ("divisioncode", os.environ.get("LAKEHOUSE_COL_DIVISION", "DIVISIONCODE").strip()),
+            ("areacode", os.environ.get("LAKEHOUSE_COL_AREACODE", "AREACODE").strip()),
+            ("provincecode", os.environ.get("LAKEHOUSE_COL_PROVINCE", "PROVINCECODE").strip()),
+            ("warehouse_code", os.environ.get("LAKEHOUSE_COL_WAREHOUSE", "WAREHOUSECODE").strip()),
+        )
+
+        group_dim_lines = ",\n        ".join(f"'{t}'[{col}]" for _, col in dim_items)
+        group_cols = ",\n        ".join(
+            [f"'{t}'[{c_emp}]", f"'{t}'[{c_prod}]", group_dim_lines]
+        )
+        _suffix = (
             f", กรองงวดจาก {c_eff}"
             if filter_period
             else " — ไม่กรองวันที่ (ตารางเป็น snapshot เดือนปัจจุบัน)"
         )
         print(
-            f"📡 [{t}] ดึงเป้า TGA (emp={len(emp_list)}, "
-            f"QUANTITYCASE ต่อ SALESMANCODE×PRODUCTCODE{_tga_log_suffix})..."
+            f"📡 [{t}] ดึงเป้า TGA แบบ grain เต็ม (emp={len(emp_list)}, "
+            f"SALESMAN×PRODUCT×dim…{_suffix})..."
         )
 
         dax = f"""
 EVALUATE
 CALCULATETABLE(
     SUMMARIZECOLUMNS(
-        '{t}'[{c_emp}],
-        '{t}'[{c_prod}],
+        {group_cols},
         "target_qty", SUM('{t}'[{c_qty}])
     ),
     TREATAS({{{emp_str}}}, '{t}'[{c_emp}]){eff_filters}
@@ -1372,14 +1415,20 @@ CALCULATETABLE(
                     default="",
                 )
             ).strip()
+            if not emp or not sku:
+                continue
             qty = float(self._get(r, "[target_qty]", default=0) or 0)
-            if emp and sku and qty != 0:
-                records.append({"emp_id": emp, "sku": sku, "qty": qty})
+            rec = {
+                "emp_id": emp,
+                "sku": sku,
+                "qty": qty,
+            }
+            for alias, _col in dim_items:
+                rec[alias] = str(self._get(r, f"[{alias}]", alias, default="") or "").strip()
+            records.append(rec)
 
-        df = pd.DataFrame(records) if records else pd.DataFrame(
-            columns=["emp_id", "sku", "qty"]
-        )
-        print(f"✅ TGA targets: {len(df)} แถว (emp×sku)")
+        df = pd.DataFrame(records) if records else pd.DataFrame(columns=empty_cols)
+        print(f"✅ TGA targets (granular): {len(df)} แถว")
         return df
 
     def get_tga_lakehouse_dims_by_emp_sku(

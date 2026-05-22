@@ -11,6 +11,7 @@ from ..core.paths import (
     hist_calendar_year_cache_path,
     hist_ly_same_month_cache_path,
     hist_prev_month_cache_path,
+    tga_grain_cache_path,
 )
 from ..core.targets import load_target_csv
 from ..core.tga_period import enforce_tga_selection_matches_effective_window
@@ -179,6 +180,23 @@ def load_employees_payload(
 
     if use_legacy and df_sku_csv is not None and not regen_target:
         logger.info("ใช้ target_boxes.csv / target_sun.csv (USE_LEGACY_TARGET_CSV)")
+        try:
+            _gc = [
+                "emp_id",
+                "sku",
+                "qty",
+                "salestype",
+                "divisioncode",
+                "areacode",
+                "provincecode",
+                "warehouse_code",
+            ]
+            pd.DataFrame(columns=_gc).to_csv(
+                tga_grain_cache_path(sup_id, target_month, target_year),
+                index=False,
+            )
+        except Exception:
+            pass
         df_sku = df_sku_csv
         sku_list = df_sku["sku"].tolist()
         df_sun_csv = _df_sun_loaded
@@ -209,10 +227,48 @@ def load_employees_payload(
             sku_list = list(PRICE_FALLBACK.keys())
 
         df_tga = pd.DataFrame()
+        df_tga_granular = pd.DataFrame()
         try:
-            df_tga = fabric.get_tga_target_salesman(emp_list, target_month, target_year)
+            df_tga_granular = fabric.get_tga_target_salesman_granular(
+                emp_list, target_month, target_year
+            )
         except Exception as e:
-            logger.warning("get_tga_target_salesman error: %s — เป้าจะเป็น 0 ทั้งหมด", e)
+            logger.warning(
+                "get_tga_target_salesman_granular error: %s — เป้าจะเป็น 0 ทั้งหมด",
+                e,
+            )
+
+        grain_cols = [
+            "emp_id",
+            "sku",
+            "qty",
+            "salestype",
+            "divisioncode",
+            "areacode",
+            "provincecode",
+            "warehouse_code",
+        ]
+
+        try:
+            p_grain = tga_grain_cache_path(sup_id, target_month, target_year)
+            if df_tga_granular is None or df_tga_granular.empty:
+                pd.DataFrame(columns=grain_cols).to_csv(p_grain, index=False)
+            else:
+                df_tga_granular.to_csv(p_grain, index=False)
+            logger.info(
+                "tga grain cache: %s (%d rows)", p_grain, len(df_tga_granular)
+            )
+        except Exception as e:
+            logger.warning("tga grain cache write failed: %s", e)
+
+        if df_tga_granular is not None and not df_tga_granular.empty:
+            df_tga = (
+                df_tga_granular.groupby(["emp_id", "sku"], as_index=False)["qty"]
+                .sum()
+            )
+            df_tga = df_tga[df_tga["qty"] != 0]
+        else:
+            df_tga = pd.DataFrame(columns=["emp_id", "sku", "qty"])
 
         tga_skus: list[str] = []
         if df_tga is not None and not df_tga.empty:

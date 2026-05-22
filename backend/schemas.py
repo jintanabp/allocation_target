@@ -75,6 +75,11 @@ class LakehouseUploadRow(BaseModel):
     sku: str
     allocated_boxes: int = Field(ge=0)
     warehouse_code: str | None = None
+    # optional — ให้ครบฟิลด์ในอนาคตเมื่อ UI มี grain จาก TGA (ปัจจุบันระบบเติมจาก cache / Fabric)
+    salestype: str | None = None
+    divisioncode: str | None = None
+    areacode: str | None = None
+    provincecode: str | None = None
 
 
 class LakehouseUploadRequest(BaseModel):

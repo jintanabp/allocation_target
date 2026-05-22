@@ -36,6 +36,14 @@ def emp_cache_path(sup_id: str, month: int, year: int) -> str:
     return f"data/emp_cache_{safe_id(sup_id)}_{year}_{month:02d}.csv"
 
 
+def tga_grain_cache_path(sup_id: str, month: int, year: int) -> str:
+    """
+    เป้าหมายจาก tga_target_salesman_next — grain เต็ม (SALESMAN×PRODUCT×SALESTYPE×…)
+    ใช้ตอนส่งออก Excel/CSV เพื่อแยกบรรทัดตาม PROVINCECODE / AREACODE ฯลฯ ให้ตรงกับตาราง TGA
+    """
+    return f"data/tga_lines_{safe_id(sup_id)}_{year}_{month:02d}.csv"
+
+
 def result_path(sup_id: str) -> str:
     return f"data/final_allocation_{safe_id(sup_id)}.csv"
 

@@ -2857,7 +2857,8 @@ function showLakehouseUploadModal() {
       แถวทั้งหมด: <b>${total.toLocaleString("th-TH")}</b> (รวม QUANTITYCASE=0 จำนวน <b>${zeros.toLocaleString("th-TH")}</b> แถว — สำหรับทับเป้าเดิมที่ไม่ได้รับหีบ)<br>
       EFFECTIVEDATE: วันที่ 1 ของเดือนเป้า 00:00:00 (รูปแบบเดียวกับ UPDATEDATE) · USERCODE: <b>${userCode}</b>
       <div style="margin-top:10px;color:var(--text-3);font-size:12px;">
-        SALESTYPE / DIVISIONCODE ดึงจากตารางเป้า tga_target_salesman_next · วันที่เป็นข้อความ (ไม่มี AM/PM)
+        AREACODE / PROVINCECODE / SALESTYPE / DIVISIONCODE / WAREHOUSECODE ผูกจาก cache เป้างวดที่โหลดจาก
+        <code>tga_target_salesman_next</code> (ขณะเข้าหน้า Dashboard · ไฟล์ <code>tga_lines_…</code> บนเซิร์ฟเวอร์) · แถวเดียวกันหลาย province ใน TGA → ถูกแตกเป็นรายผลเกลี่ยตามสัดส่วนหีบจากเป้า
       </div>
     </div>
   `;
