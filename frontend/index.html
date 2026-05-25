@@ -571,8 +571,8 @@
               <button class="btn-dl" onclick="showExportModal()">↓ ดาวน์โหลด Excel</button>
               <button type="button" class="btn-dl btn-dl--disabled" id="lakehouseOpenBtn"
                 aria-disabled="true" disabled
-                title="บันทึก Excel รูปแบบ tga_target_salesman_next"
-                onclick="showLakehouseUploadModal()">↓ บันทึก Excel (TGA)</button>
+                title="ส่งผลการจัดสรรหีบเข้าระบบเป้าหมายของบริษัท (สภาพแวดล้อมทดสอบ UAT)"
+                onclick="showLakehouseUploadModal()">📤 ส่งเข้าระบบเป้า</button>
             </div>
           </div>
 
@@ -612,13 +612,14 @@
   </div>
 
   <!-- ─── LAKEHOUSE UPLOAD MODAL ─── -->
-  <div id="lakehouseModal" class="modal-overlay" style="display:none;" onclick="closeLakehouseModalOnBg(event)">
-    <div class="modal-card">
-      <div class="modal-title">↓ บันทึก Excel สำหรับ TGA / Lakehouse</div>
-      <div class="modal-body" id="lakehouseBody"></div>
-      <div class="modal-foot">
-        <button class="btn-run" id="lakehouseUploadBtn" onclick="doLakehouseUpload()">บันทึก Excel</button>
-        <button class="btn-logout" onclick="closeLakehouseUploadModal()">ยกเลิก</button>
+  <div id="lakehouseModal" class="modal-overlay" style="display:none;" onclick="closeLakehouseModalOnBg(event)" role="dialog" aria-modal="true" aria-labelledby="lakehouseModalTitle">
+    <div class="modal-card modal-card--lakehouse" onclick="event.stopPropagation()">
+      <div class="modal-title modal-title--lakehouse" id="lakehouseModalTitle">บันทึกเข้าระบบเป้าหมาย</div>
+      <div class="modal-body modal-body--lakehouse" id="lakehouseBody"></div>
+      <div class="modal-foot modal-foot--lakehouse">
+        <button class="btn-run" id="lakehouseUploadBtn" onclick="doLakehouseUpload()" type="button">ยืนยันการส่ง</button>
+        <button class="btn-dl" type="button" id="lakehouseDownloadBtn" onclick="doLakehouseDownloadXlsxOnly()">ดาวน์โหลดไฟล์ Excel เท่านั้น</button>
+        <button class="btn-logout" type="button" onclick="closeLakehouseUploadModal()">ยกเลิก</button>
       </div>
     </div>
   </div>

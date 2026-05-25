@@ -4,6 +4,7 @@ from fastapi.responses import Response
 from ..deps import ensure_supervisor_allowed, require_authenticated_user
 from ..schemas import LakehouseUploadRequest
 from ..services.lakehouse import export_allocations_excel, upload_allocations_to_lakehouse
+from ..services.targetsun_import import import_allocations_to_targetsun
 
 router = APIRouter(tags=["lakehouse"])
 
@@ -34,3 +35,16 @@ def upload_to_lakehouse(
 ):
     ensure_supervisor_allowed(user, req.sup_id)
     return upload_allocations_to_lakehouse(req)
+
+
+@router.post("/lakehouse/import-targetsun")
+def import_targetsun_from_allocations(
+    req: LakehouseUploadRequest,
+    user: dict = Depends(require_authenticated_user),
+):
+    """
+    สร้าง Excel รูปแบบ tga_target_salesman_next แล้ว POST ไปบริการ importTargetSalesmanNextFromExcel
+    (Oracle UAT/Prod ตามที่ service ของ SPC config ไว้ — ค่าเริ่มต้นชี้ UAT)
+    """
+    ensure_supervisor_allowed(user, req.sup_id)
+    return import_allocations_to_targetsun(req)

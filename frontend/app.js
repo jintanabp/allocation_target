@@ -2825,7 +2825,7 @@ function closeExportModal() { qs("#exportModal").style.display = "none"; }
 function closeModalOnBg(e) { if (e.target === qs("#exportModal")) closeExportModal(); }
 
 /* ══════════════════════════════════════════════
-   LAKEHOUSE / TGA CSV EXPORT
+   TargetSun — ส่ง TGA Excel เข้า SPC API + ดาวน์โหลดสำเนา
 ══════════════════════════════════════════════ */
 function syncLakehouseButton() {
   const btn = document.getElementById("lakehouseOpenBtn");
@@ -2849,17 +2849,60 @@ function showLakehouseUploadModal() {
   const total = S.allocations.length;
   const zeros = S.allocations.filter(a => (Number(a.allocated_boxes) || 0) === 0).length;
   const periodStr = MONTH_FULL_TH[S.targetMonth] + " " + (S.targetYear + 543);
+  const sup = escH(String(S.supId || "").trim() || "—");
   const userCode = escH(_lakehouseUserCode());
+  const zerosLine =
+    zeros > 0
+      ? `ในนี้มี <strong>${zeros.toLocaleString("th-TH")}</strong> รายการที่จำนวนหีบเป็น 0 เพื่อให้ระบบเป้าหมายหลักอัปเดตให้ตรงกับที่คุณจัดสรร`
+      : "";
+
   const body = `
-    <div style="line-height:1.75;">
-      บันทึกผลเกลี่ยหีบทีม <b>${escH(S.supId || "")}</b> งวด <b>${escH(periodStr)}</b> เป็นไฟล์ Excel (.xlsx)<br>
-      รูปแบบ: <code>PRODUCTCODE … USERCODE</code> (11 คอลัมน์ ตาม tga_target_salesman_next)<br>
-      แถวทั้งหมด: <b>${total.toLocaleString("th-TH")}</b> (รวม QUANTITYCASE=0 จำนวน <b>${zeros.toLocaleString("th-TH")}</b> แถว — สำหรับทับเป้าเดิมที่ไม่ได้รับหีบ)<br>
-      EFFECTIVEDATE: วันที่ 1 ของเดือนเป้า 00:00:00 (รูปแบบเดียวกับ UPDATEDATE) · USERCODE: <b>${userCode}</b>
-      <div style="margin-top:10px;color:var(--text-3);font-size:12px;">
-        AREACODE / PROVINCECODE / SALESTYPE / DIVISIONCODE / WAREHOUSECODE ผูกจาก cache เป้างวดที่โหลดจาก
-        <code>tga_target_salesman_next</code> (ขณะเข้าหน้า Dashboard · ไฟล์ <code>tga_lines_…</code> บนเซิร์ฟเวอร์) · แถวเดียวกันหลาย province ใน TGA → ถูกแตกเป็นรายผลเกลี่ยตามสัดส่วนหีบจากเป้า
+    <div class="lakehouse-modal">
+      <div class="lakehouse-banner" role="status">
+        <span class="lakehouse-banner__icon" aria-hidden="true">📋</span>
+        <div class="lakehouse-banner__text">
+          <strong>ส่งข้อมูลไปยังระบบเป้าหมาย (สภาพแวดล้อมทดสอบ UAT)</strong>
+          เมื่อกดปุ่มยืนยัน ผลที่คุณกระจายหีบไว้จะถูกส่งเข้าระบบหลักทันที ไม่ต้องแนบไฟล์เอง
+        </div>
       </div>
+
+      <div class="lakehouse-summary" aria-label="สรุปข้อมูลที่จะส่ง">
+        <div class="lakehouse-stat">
+          <span class="lakehouse-stat__label">หัวหน้าทีม</span>
+          <span class="lakehouse-stat__value">${sup}</span>
+        </div>
+        <div class="lakehouse-stat">
+          <span class="lakehouse-stat__label">งวดเป้าหมาย</span>
+          <span class="lakehouse-stat__value">${escH(periodStr)}</span>
+        </div>
+        <div class="lakehouse-stat">
+          <span class="lakehouse-stat__label">จำนวนรายการ</span>
+          <span class="lakehouse-stat__value">${total.toLocaleString("th-TH")}</span>
+          <span class="lakehouse-stat__sub">รายการ พนักงาน × สินค้า</span>
+        </div>
+      </div>
+
+      <p style="margin:0 0 8px;color:var(--text-1);font-weight:600;font-size:14px;">เกิดอะไรขึ้นถัดไป</p>
+      <ul class="lakehouse-what">
+        <li>ระบบรวบรวมตัวเลขหีบที่คุณยืนยันแล้วและส่งต่อเข้าระบบเป้าหมายของบริษัทโดยอัตโนมัติ</li>
+        <li>บันทึกชื่อรหัสผู้ใช้งาน <strong>${userCode}</strong> เพื่อใช้ตรวจสอบย้อนหลังว่าส่งจากใคร</li>
+        ${zerosLine ? `<li>${zerosLine}</li>` : ""}
+      </ul>
+
+      <div class="lakehouse-note">
+        ⏱ ระบบอาจใช้เวลาประมาณไม่กี่นาที — ห้ามปิดหน้าต่างหรือกดซ้ำจนกว่าจะมีข้อความสำเร็จหรือข้อความผิดพลาด
+      </div>
+
+      <details class="lakehouse-tech">
+        <summary>ข้อมูลเพิ่มสำหรับฝ่าย IT เท่านั้น</summary>
+        <div class="lakehouse-tech__body">
+          ฟิลด์พื้นที่ขาย เขต คลัง ฯลฯ ดึงจากข้อมูลเป้าของทีมนี้ตอนที่เข้ามาที่หน้าจัดสรร
+          (${zeros > 0 ? `รวม ${zeros.toLocaleString("th-TH")} แถวที่จำนวนหีบเป็น 0; ` : ""}
+          เส้นทาง API TargetSun และตารางเก็บข้อมูลถูกกำหนดโดยเซิร์ฟเวอร์บริษัท)<br><br>
+          <code>TGA_TARGET_SALESMAN_NEXT</code>
+          · <code>TARGETSUN_IMPORT_EXCEL_URL</code>
+        </div>
+      </details>
     </div>
   `;
   const el = document.getElementById("lakehouseBody");
@@ -2892,9 +2935,82 @@ function _lakehouseExportPayload() {
   };
 }
 
+function _formatApiErrorDetail(j) {
+  if (!j) return "";
+  const d = j.detail;
+  if (typeof d === "string") return d;
+  if (d && typeof d === "object") {
+    const parts = [];
+    if (typeof d.message === "string") parts.push(d.message);
+    if (typeof d.hint_th === "string") parts.push(d.hint_th);
+    if (parts.length) return parts.join(" — ");
+    if (typeof d.resultMsg === "string") return d.resultMsg;
+    try { return JSON.stringify(d).slice(0, 800); } catch (_) { return String(d); }
+  }
+  if (typeof j.message === "string") return j.message;
+  return "";
+}
+
 async function doLakehouseUpload() {
   const btn = document.getElementById("lakehouseUploadBtn");
-  if (btn) { btn.textContent = "กำลังสร้าง..."; btn.disabled = true; }
+  if (btn) { btn.textContent = "กำลังส่ง…"; btn.disabled = true; }
+  pushGlobalBusy("กำลังส่งข้อมูลเข้าระบบเป้าหมาย อาจใช้เวลาหลายนาที…");
+  try {
+    const res = await fetchWithTimeout(
+      `${API_BASE_URL}/lakehouse/import-targetsun`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(_lakehouseExportPayload()),
+      },
+      600000
+    );
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg = _formatApiErrorDetail(j) || `HTTP ${res.status}`;
+      throw new Error(msg);
+    }
+    const ts = j.targetsun || {};
+    if (ts.success === false) {
+      const why = ts.resultMsg || "import ไม่สำเร็จ";
+      const errList = Array.isArray(ts.result?.errors) ? ts.result.errors : [];
+      const errPreview = errList.slice(0, 3).map(e => `แถว ${e.rowNum}: ${e.message}`).join(" · ");
+      toast("❌ บันทึกเข้าระบบเป้าหมายไม่สำเร็จ: " + why + (errPreview ? " — " + errPreview : ""), "red");
+      return;
+    }
+    const r = ts.result || {};
+    const inserted = Number(r.inserted) || 0;
+    const updated = Number(r.updated) || 0;
+    const skipped = Number(r.skipped) || 0;
+    const rowsSent = Number(j.rows_sent) || 0;
+    let endpointHost = "";
+    try {
+      if (j.import_url) endpointHost = new URL(String(j.import_url)).host;
+    } catch (_) {}
+    closeLakehouseUploadModal();
+    toast(
+      `✅ บันทึกเข้าระบบแล้ว: เพิ่มใหม่ ${inserted.toLocaleString("th-TH")} · ปรับปรุง ${updated.toLocaleString("th-TH")} · ข้าม ${skipped.toLocaleString("th-TH")} รายการ (ส่ง ${rowsSent.toLocaleString("th-TH")} แถว)${endpointHost ? " → " + endpointHost : ""}`,
+      "green"
+    );
+    if (Array.isArray(r.errors) && r.errors.length) {
+      const ex = r.errors.slice(0, 5).map(e => `${e.rowNum}: ${e.message}`).join("\n");
+      _showInfoModal({
+        title: "แจ้งเตือนจากระบบ (บางรายการอาจถูกข้าม)",
+        bodyHtml: `<pre style="white-space:pre-wrap;font-size:12px;line-height:1.45;text-align:left;">${escH(ex)}${r.errors.length > 5 ? "\n…" : ""}</pre>`,
+      });
+    }
+  } catch (err) {
+    toast("❌ ส่งข้อมูลไม่สำเร็จ: " + (err?.message || String(err)), "red");
+  } finally {
+    popGlobalBusy();
+    if (btn) { btn.textContent = "ยืนยันการส่ง"; btn.disabled = false; }
+  }
+}
+
+/** ดาวน์โหลดสำเนา .xlsx อย่างเดียว (ไม่เข้า Oracle) — จากเดิม export-csv */
+async function doLakehouseDownloadXlsxOnly() {
+  const btn = document.getElementById("lakehouseDownloadBtn");
+  if (btn) { btn.disabled = true; }
   pushGlobalBusy("กำลังสร้างไฟล์ Excel...");
   try {
     const res = await fetchWithTimeout(
@@ -2907,9 +3023,8 @@ async function doLakehouseUpload() {
       180000
     );
     if (!res.ok) {
-      const j = await res.json().catch(() => ({}));
-      const msg = (j && (j.detail?.message || j.detail || j.message)) || `HTTP ${res.status}`;
-      throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+      const jd = await res.json().catch(() => ({}));
+      throw new Error(_formatApiErrorDetail(jd) || `HTTP ${res.status}`);
     }
     const blob = await res.blob();
     const cd = res.headers.get("Content-Disposition") || "";
@@ -2918,13 +3033,12 @@ async function doLakehouseUpload() {
     if (m) fname = m[1];
     dl(blob, fname);
     const rows = res.headers.get("X-Export-Rows");
-    closeLakehouseUploadModal();
-    toast(`✅ บันทึกไฟล์สำเร็จ: ${fname}${rows ? ` (${Number(rows).toLocaleString("th-TH")} แถว)` : ""}`, "green");
+    toast(`✅ ดาวน์โหลด: ${fname}${rows ? ` (${Number(rows).toLocaleString("th-TH")} แถว)` : ""}`, "green");
   } catch (err) {
-    toast("❌ บันทึกไฟล์ไม่สำเร็จ: " + (err?.message || String(err)), "red");
+    toast("❌ ดาวน์โหลดไม่สำเร็จ: " + (err?.message || String(err)), "red");
   } finally {
     popGlobalBusy();
-    if (btn) { btn.textContent = "บันทึก Excel"; btn.disabled = false; }
+    if (btn) { btn.disabled = false; }
   }
 }
 

@@ -2619,6 +2619,173 @@ body.is-login {
   height: 16px;
 }
 
+/* ── TargetSun / ส่งเข้าระบบเป้าหมาย modal (ภาษา user) ───────────────── */
+.modal-card--lakehouse {
+  max-width: 480px;
+}
+
+.modal-title--lakehouse {
+  margin-bottom: 12px;
+  line-height: 1.35;
+}
+
+.modal-body--lakehouse {
+  gap: 0;
+  padding-right: 4px;
+}
+
+.modal-foot--lakehouse {
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-start;
+}
+
+.lakehouse-modal {
+  font-size: 14px;
+  color: var(--text-2);
+  line-height: 1.55;
+}
+
+.lakehouse-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: var(--r-md);
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.08), rgba(14, 165, 233, 0.06));
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  margin-bottom: 18px;
+}
+
+.lakehouse-banner__icon {
+  font-size: 28px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.lakehouse-banner__text strong {
+  display: block;
+  font-size: 15px;
+  color: var(--text-1);
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.lakehouse-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+@media (max-width: 420px) {
+  .lakehouse-summary {
+    grid-template-columns: 1fr;
+  }
+}
+
+.lakehouse-stat {
+  background: var(--bg-main);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+  text-align: center;
+}
+
+.lakehouse-stat__label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+  margin-bottom: 6px;
+}
+
+.lakehouse-stat__value {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--accent);
+  line-height: 1.2;
+  word-break: break-word;
+}
+
+.lakehouse-stat__sub {
+  display: block;
+  font-size: 11px;
+  color: var(--text-3);
+  margin-top: 4px;
+}
+
+.lakehouse-what {
+  margin: 0 0 12px;
+  padding-left: 1.25rem;
+  color: var(--text-2);
+}
+
+.lakehouse-what li {
+  margin-bottom: 6px;
+}
+
+.lakehouse-note {
+  font-size: 13px;
+  color: var(--text-3);
+  padding: 10px 12px;
+  background: rgba(245, 158, 11, 0.08);
+  border-radius: var(--r-md);
+  border-left: 3px solid var(--amber);
+  margin-bottom: 14px;
+}
+
+.lakehouse-tech {
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  font-size: 12px;
+}
+
+.lakehouse-tech summary {
+  padding: 10px 14px;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text-3);
+  background: var(--bg-main);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  user-select: none;
+}
+
+.lakehouse-tech summary::-webkit-details-marker {
+  display: none;
+}
+
+.lakehouse-tech summary::after {
+  content: "▼";
+  font-size: 9px;
+  opacity: 0.6;
+}
+
+.lakehouse-tech[open] summary::after {
+  content: "▲";
+}
+
+.lakehouse-tech__body {
+  padding: 12px 14px;
+  color: var(--text-3);
+  line-height: 1.5;
+  border-top: 1px solid var(--border);
+}
+
+.lakehouse-tech__body code {
+  font-size: 11px;
+  background: rgba(0, 0, 0, 0.04);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
 /* ══════════════════════════════════════════════
    FOOTER
 ══════════════════════════════════════════════ */
