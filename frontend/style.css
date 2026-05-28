@@ -3572,6 +3572,11 @@ code {
   color: #fff;
 }
 .btn-bui.is-active:hover { background: var(--accent-hover); }
+.btn-bui--reset:hover {
+  background: var(--green-bg, #ecfdf5);
+  border-color: var(--green, #16a34a);
+  color: var(--green, #16a34a);
+}
 .btn-bui__icon { font-size: 14px; }
 .step2-toolbar__hint {
   font-size: 12px;
@@ -3670,6 +3675,7 @@ code {
 
 .neg-growth-card {
   margin-top: 14px;
+  scroll-margin-top: 80px;
   background: #FEF7E6;
   border: 1px solid #F5C977;
   border-left: 4px solid var(--amber);
@@ -3720,7 +3726,68 @@ code {
   box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.18);
 }
 .neg-growth-card__foot {
-  margin-top: 8px;
+  margin-top: 12px;
+}
+.neg-growth-card__unlock {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 2px solid #E67E22;
+  background: #FFF8EB;
+  box-shadow: 0 2px 8px rgba(180, 83, 9, 0.12);
+}
+.neg-growth-card__unlock--pending {
+  border-color: #D97706;
+  background: linear-gradient(135deg, #FFFBEB 0%, #FEF3C7 100%);
+}
+.neg-growth-card__unlock--ok {
+  border-color: var(--green, #16a34a);
+  background: linear-gradient(135deg, #F0FDF4 0%, #DCFCE7 100%);
+  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.12);
+}
+.neg-growth-card__unlock-icon {
+  font-size: 26px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.neg-growth-card__unlock-body {
+  flex: 1;
+  min-width: 0;
+}
+.neg-growth-card__unlock-title {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #92400E;
+  line-height: 1.45;
+}
+.neg-growth-card__unlock--ok .neg-growth-card__unlock-title {
+  color: #166534;
+}
+.neg-growth-card__unlock-sub {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #78350F;
+  line-height: 1.5;
+}
+.neg-growth-card__unlock--ok .neg-growth-card__unlock-sub {
+  color: #15803D;
+}
+.neg-growth-card__unlock-count {
+  display: inline-block;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(217, 119, 6, 0.15);
+  color: #B45309;
+}
+.neg-growth-card__unlock--ok .neg-growth-card__unlock-count {
+  background: rgba(22, 163, 74, 0.15);
+  color: #15803D;
 }
 .neg-growth-card__hint {
   font-size: 12px;

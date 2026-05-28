@@ -24,6 +24,7 @@ def export_lakehouse_csv(
             "Content-Disposition": f'attachment; filename="{out["filename"]}"',
             "X-Export-Rows": str(out["rows"]),
             "X-Export-Zero-Rows": str(out["zero_rows"]),
+            "X-Export-Dropped-Missing-Dims": str(out.get("dropped_missing_dims", 0)),
         },
     )
 

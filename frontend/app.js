@@ -79,6 +79,12 @@ function _friendlyMsg(raw) {
     .replace(/SALESMANCODE/gi, "รหัสพนักงาน")
     .replace(/PRODUCTCODE/gi, "รหัสสินค้า")
     .replace(/QUANTITYCASE/gi, "จำนวนหีบ")
+    .replace(/Optimize/gi, "กระจายหีบ")
+    .replace(/Optimization/gi, "การกระจายหีบ")
+    .replace(/snapshot/gi, "ข้อมูลที่บันทึกไว้")
+    .replace(/manual edits?/gi, "ตัวเลขที่แก้เอง")
+    .replace(/Export/gi, "ดาวน์โหลด")
+    .replace(/Model/gi, "สัดส่วน")
     .replace(/Fabric/gi, "ระบบเป้า Target Sun");
   // ลบคำใน () ที่อ้างชื่อ field ตรงๆ
   s = s.replace(/\(?\s*supervisor_target_boxes\s*=\s*0\s*\)?/gi, "");
@@ -112,17 +118,20 @@ function _ensureGlobalBusyCss() {
   document.head.appendChild(st);
 }
 
-function _setGlobalBusyOverlayVisible(visible, message) {
+function _setGlobalBusyOverlayVisible(visible, message, hint) {
   const id = "globalBusyOverlay";
   const existing = document.getElementById(id);
   if (!visible) {
     if (existing) existing.remove();
     return;
   }
-  const msg = message || "กำลังดำเนินการ...";
+  const msg = message || UX.busyDefault;
+  const hintText = hint != null ? hint : UX.busyHintDefault;
   if (existing) {
     const t = existing.querySelector("#globalBusyText");
+    const h = existing.querySelector("#globalBusyHint");
     if (t) t.textContent = msg;
+    if (h) h.textContent = hintText;
     return;
   }
   _ensureGlobalBusyCss();
@@ -145,14 +154,14 @@ function _setGlobalBusyOverlayVisible(visible, message) {
         <div class="global-busy-spinner" aria-hidden="true"></div>
         <div id="globalBusyText" class="global-busy-title"></div>
       </div>
-      <p class="global-busy-hint">
-        กรุณารอสักครู่ — ระบบกำลังเชื่อมต่อข้อมูลหรือประมวลผล เพื่อป้องกันการทำงานซ้ำ
-      </p>
+      <p id="globalBusyHint" class="global-busy-hint"></p>
     </div>
   `;
   document.body.appendChild(ov);
   const t = ov.querySelector("#globalBusyText");
+  const h = ov.querySelector("#globalBusyHint");
   if (t) t.textContent = msg;
+  if (h) h.textContent = hintText;
 }
 
 function _setControlsDisabled(disabled) {
@@ -187,10 +196,10 @@ function _setControlsDisabled(disabled) {
   });
 }
 
-function pushGlobalBusy(message) {
+function pushGlobalBusy(message, hint) {
   _globalBusyCount += 1;
   if (_globalBusyCount === 1) _setControlsDisabled(true);
-  _setGlobalBusyOverlayVisible(true, message);
+  _setGlobalBusyOverlayVisible(true, message, hint);
 }
 
 function popGlobalBusy() {
@@ -463,6 +472,48 @@ function fmt(n) {
 }
 const sumYellow = () => Object.values(S.yellow).reduce((a, b) => a + b, 0);
 
+/** Step 2: ส่วนต่างเป้าเงินรวมที่ยังกด «กระจายหีบ» ได้ (บาท) */
+const YELLOW_TOTAL_TOLERANCE_OK_BAHT = 10;
+const YELLOW_TOTAL_TOLERANCE_WARN_BAHT = 99;
+
+/** ข้อความที่ผู้ใช้เห็น (ไม่ใช่ศัพท์ dev) */
+const UX = {
+  busyDefault: "กำลังดำเนินการ…",
+  busyHintDefault: "กรุณารอสักครู่ — อย่ากดซ้ำหรือปิดหน้าต่างจนกว่าจะเสร็จ",
+  busyAllocate: "กำลังกระจายหีบตามเป้าที่ตั้งไว้…",
+  busyAllocateHint: "ขั้นตอนนี้อาจใช้เวลา 1–3 นาที กรุณาอย่าปิดหน้านี้",
+  busyLoadTeam: "กำลังโหลดข้อมูลทีมและเป้างวดนี้…",
+  busyLogin: "กำลังเข้าสู่ระบบและโหลดข้อมูล…",
+  busySendTarget: "กำลังส่งเข้า Target Sun…",
+  busySendTargetHint: "อาจใช้เวลาหลายนาที — อย่าปิดหน้าจอหรือกดส่งซ้ำ",
+  lakehouseSendBtn: "ส่งเข้า Target Sun",
+  busyExcel: "กำลังสร้างไฟล์ Excel…",
+  progSteps: [
+    "ตรวจสอบข้อมูลพนักงานและยอดขายย้อนหลัง",
+    "คำนวณสัดส่วนตามวิธีที่เลือก",
+    "แบ่งจำนวนหีบให้แต่ละคน",
+    "สรุปผลการกระจาย",
+  ],
+};
+
+function _strategyLabelTh(code) {
+  return (STRATEGY_LABELS[code] || {}).short || String(code || "");
+}
+
+function _strategySummaryTh(codes) {
+  const list = Array.isArray(codes) ? codes : [];
+  if (!list.length) return _strategyLabelTh("L3M");
+  if (list.length === 1) return _strategyLabelTh(list[0]);
+  return list.map(_strategyLabelTh).join(" · ");
+}
+
+function _userFacingError(err, fallback = "เกิดข้อผิดพลาด กรุณาลองอีกครั้ง") {
+  const raw = (err && err.message) ? String(err.message) : String(err || "");
+  const msg = _friendlyMsg(raw) || raw;
+  if (/^HTTP\s*\d+$/i.test(msg.trim())) return fallback;
+  return msg.replace(/^HTTP\s*\d+\s*[-–:]?\s*/i, "").trim() || fallback;
+}
+
 /**
  * หลังกรองสิทธิ ACC/backend — ใช้รายการป้ายจาก API + map by_manager เท่านั้น
  * (อย่านำทุก depend_on จาก rows ไปเป็น Manager เลือกในหน้า login เพราะจะดึง “หัวหน้า” ของ sup ที่ไม่ได้เป็น USERPL ของผู้ใช้)
@@ -673,7 +724,7 @@ async function switchSupervisorContext(newSupId) {
   const cur = String(S.supId ?? "").trim();
   if (!ns || ns === cur) return;
   if (S._hasUnsaved) {
-    const ok = window.confirm("มีการแก้ไขที่ยังไม่ได้บันทึก/Export — ต้องการสลับ Supervisor ต่อหรือไม่?");
+    const ok = window.confirm("มีการแก้ไขที่ยังไม่ได้บันทึกหรือดาวน์โหลด — ต้องการสลับ Supervisor ต่อหรือไม่?");
     if (!ok) {
       updateSupervisorSwitcherUI();
       return;
@@ -681,8 +732,8 @@ async function switchSupervisorContext(newSupId) {
   }
 
   const prevId = S.supId;
-  setSupervisorSwitchLoading(true, "กำลังโหลดข้อมูลทีมจาก Fabric…");
-  pushGlobalBusy("กำลังโหลดข้อมูลทีมจาก Fabric…");
+  setSupervisorSwitchLoading(true, "กำลังโหลดข้อมูลทีม…");
+  pushGlobalBusy(UX.busyLoadTeam);
   try {
     S.supId = ns;
     S.allocations = [];
@@ -1230,9 +1281,9 @@ async function handleLogin() {
       S.supId = pick.code;
     }
 
-    loginBtn.textContent = "กำลังเชื่อมต่อ Fabric...";
+    loginBtn.textContent = "กำลังเข้าสู่ระบบ…";
     loginBtn.disabled = true;
-    pushGlobalBusy("กำลังเชื่อมต่อ Fabric...");
+    pushGlobalBusy(UX.busyLogin);
     _didBusy = true;
 
     S.targetMonth = tm;
@@ -1362,7 +1413,7 @@ function _showLogoutModal() {
   );
   const draftNote = hasDraft
     ? `<div style="margin-top:8px;padding:8px 10px;background:var(--green-bg);border-radius:6px;border:1px solid var(--green-brd);font-size:12px;color:var(--green);">✓ ข้อมูลถูกบันทึกไว้ในเครื่องแล้ว — กลับมา Login ได้เลย</div>`
-    : `<div style="margin-top:8px;padding:8px 10px;background:var(--red-bg);border-radius:6px;border:1px solid var(--red-brd);font-size:12px;color:var(--red);">⚠️ ยังไม่มี draft ที่บันทึกไว้ — แนะนำให้กด Export Excel ก่อนออก</div>`;
+    : `<div style="margin-top:8px;padding:8px 10px;background:var(--red-bg);border-radius:6px;border:1px solid var(--red-brd);font-size:12px;color:var(--red);">⚠️ ยังไม่ได้บันทึกแบบร่าง — แนะนำให้ดาวน์โหลด Excel ก่อนออก</div>`;
 
   const modal = document.createElement("div");
   modal.id = "logoutModal";
@@ -1373,7 +1424,7 @@ function _showLogoutModal() {
       <div class="modal-title">⚠️ กลับไปเลือก Supervisor?</div>
       <div class="modal-body" style="font-size:13px; color:var(--text-2); line-height:1.7;">
         จะกลับไปหน้าเลือก Supervisor / เดือน-ปี — <b>ไม่ล็อกเอาต์บัญชี Microsoft</b><br/>
-        มีข้อมูลการกระจายหีบที่ยังไม่ได้ Export อยู่
+        มีผลการกระจายหีบที่ยังไม่ได้ดาวน์โหลดหรือส่งเข้าระบบ
         ${draftNote}
       </div>
       <div class="modal-foot">
@@ -1447,12 +1498,12 @@ async function loadData(supId, targetMonth, targetYear) {
 
       // Default error
       const printable = (typeof detail === "string") ? detail : (detail?.message || detail?.title || "ดึงข้อมูลไม่สำเร็จ");
-      showLoginError(`❌ ${escH(String(printable))} (HTTP ${res.status})`);
+      showLoginError(`❌ ${_userFacingError(printable, "โหลดข้อมูลไม่สำเร็จ")}`);
       return false;
     }
     const data = await res.json();
     if (!data.employees || !data.skus) {
-      showLoginError("❌ Response จาก backend ไม่ถูกต้อง");
+      showLoginError("❌ ระบบตอบกลับข้อมูลไม่ถูกต้อง — กรุณาลองใหม่หรือติดต่อ IT");
       return false;
     }
 
@@ -2109,6 +2160,49 @@ function unlockYellow(empId) {
   updateValidation();
 }
 
+function resetYellowToTargetSun() {
+  if (!S.employees || S.employees.length === 0) {
+    toast("ยังไม่มีรายชื่อพนักงาน — โหลดข้อมูล Step 1 ก่อน", "red");
+    return;
+  }
+  const differs = S.employees.filter(e => {
+    const y = Number(S.yellow[e.emp_id]) || 0;
+    const ts = Number(e.target_sun) || 0;
+    return Math.abs(y - ts) > 0.01;
+  });
+  if (differs.length === 0) {
+    toast("เป้าหมายที่กำหนดเองตรงกับ Target Sun อยู่แล้ว", "green");
+    return;
+  }
+  const n = differs.length;
+  if (
+    !window.confirm(
+      `รีเซ็ตเป้าหมายที่กำหนดเองให้เท่ากับเป้า Target Sun (${n} คน)?\n\nการล็อกเป้าจะถูกยกเลิก`
+    )
+  ) {
+    return;
+  }
+  S.yellowLocked = {};
+  S.employees.forEach(e => {
+    const base = Number(e.target_sun);
+    S.yellow[e.emp_id] = Number.isFinite(base) ? Math.max(0, base) : 0;
+  });
+  renderYellowTable();
+  updateValidation();
+  _updateNegGrowthReasonState();
+  if (S.allocations && S.allocations.length > 0) {
+    toast("⚠️ มีการปรับเป้าเงิน! กรุณากดปุ่ม «คำนวณใหม่» ด้านล่างเพื่อกระจายหีบให้ตรงกับเป้าเงินล่าสุด", "red");
+    const btn = qs("#runBtn");
+    if (btn) {
+      btn.classList.add("pulse-warn");
+      btn.textContent = "คำนวณใหม่ (เป้าเงินเปลี่ยน)";
+    }
+    S._hasUnsaved = true;
+  } else {
+    toast("รีเซ็ตเป้าเป็น Target Sun แล้ว — ยอดรวมควรตรงเป้ารวม", "green");
+  }
+}
+
 /* ══════════════════════════════════════════════
    VALIDATION
 ══════════════════════════════════════════════ */
@@ -2129,19 +2223,23 @@ function updateValidation() {
   fill.style.width = pct + "%";
   bar.classList.remove("ok", "err", "warn");
 
-  if (Math.abs(diff) <= 1.0) {
+  if (Math.abs(diff) <= YELLOW_TOTAL_TOLERANCE_OK_BAHT) {
     bar.classList.add("ok");
     icon.textContent = "✓";
-    text.textContent = "ยอดรวมตรงกับเป้ารวมพอดี — พร้อมกระจายหีบ";
+    text.textContent =
+      Math.abs(diff) < 0.01
+        ? "ยอดรวมตรงกับเป้ารวมพอดี — พร้อมกระจายหีบ"
+        : `ยอดรวมใกล้เป้ารวม (ส่วนต่าง ${baht(Math.abs(diff))} บาท) — พร้อมกระจายหีบ`;
     fill.style.background = "var(--green)";
     btn.disabled = false;
-    _updateNegGrowthReasonState();    // อาจ disabled กลับถ้ายังไม่ใส่เหตุผล
-  } else if (Math.abs(diff) < S.totalTarget * 0.005) {
+    _updateNegGrowthReasonState();
+  } else if (Math.abs(diff) <= YELLOW_TOTAL_TOLERANCE_WARN_BAHT) {
     bar.classList.add("warn");
     icon.textContent = "!";
-    text.textContent = `เกือบแล้ว! ยังต่างอยู่ ${baht(Math.abs(diff))} บาท`;
+    text.textContent = `ส่วนต่าง ${baht(Math.abs(diff))} บาท (ไม่เกิน ${YELLOW_TOTAL_TOLERANCE_WARN_BAHT} บาท) — กดกระจายหีบได้`;
     fill.style.background = "var(--amber)";
-    btn.disabled = true;
+    btn.disabled = false;
+    _updateNegGrowthReasonState();
   } else {
     bar.classList.add("err");
     icon.textContent = "×";
@@ -2175,7 +2273,7 @@ async function runOptimization() {
     .filter(a => a.is_edited)
     .map(a => ({ emp_id: a.emp_id, sku: a.sku, locked_boxes: a.allocated_boxes }));
 
-  pushGlobalBusy("กำลังคำนวณ/Optimize...");
+  pushGlobalBusy(UX.busyAllocate, UX.busyAllocateHint);
   const allocs = await _doOptimize(lockedEdits);
   popGlobalBusy();
   if (!allocs) return;
@@ -2184,12 +2282,10 @@ async function runOptimization() {
   autoRebalance(true); // เกลี่ยเศษหีบตกหล่น
 
   const selectedStrategies = _getSelectedStrategies();
-  const strategy = selectedStrategies.length > 1
-    ? `MIXED (${selectedStrategies.join("+")})`
-    : (selectedStrategies[0] || "L3M");
+  const strategyLabel = _strategySummaryTh(selectedStrategies);
   qs("#runEmoji").textContent = "✅";
-  qs("#runTitle").textContent = "จัดสรรหีบสำเร็จ";
-  qs("#runSub").textContent = `[${strategy}] กรองแบรนด์ · แก้ตัวเลข · Export`;
+  qs("#runTitle").textContent = "กระจายหีบสำเร็จ";
+  qs("#runSub").textContent = `วิธี: ${strategyLabel} — ตรวจผล แก้ตัวเลข หรือดาวน์โหลด Excel ได้`;
   btn.textContent = "คำนวณใหม่";
   btn.disabled = false;
 
@@ -2208,12 +2304,18 @@ async function runOptimization() {
 async function _doOptimize(lockedEdits = []) {
   const btn = qs("#runBtn");
   btn.disabled = true;
-  btn.textContent = "กำลังประมวลผล...";
-  qs("#runEmoji").textContent = "⚙️";
-  qs("#runTitle").textContent = "กำลังทำงาน...";
-  qs("#runSub").textContent = "กรุณารอสักครู่";
+  btn.textContent = "กำลังคำนวณ…";
+  qs("#runEmoji").textContent = "📊";
+  qs("#runTitle").textContent = "กำลังกระจายหีบ…";
+  qs("#runSub").textContent = "อาจใช้เวลาสักครู่ กรุณาอย่าปิดหน้านี้";
   qs("#progList").style.display = "flex";
   qs("#resultBlock").style.display = "none";
+
+  UX.progSteps.forEach((label, i) => {
+    const row = qs(`#prog${i + 1}`);
+    const span = row && row.querySelector("span:last-of-type");
+    if (span) span.textContent = label;
+  });
 
   const steps = ["prog1", "prog2", "prog3", "prog4"];
   const delays = [400, 800, 1600, 2800];
@@ -2259,7 +2361,7 @@ async function _doOptimize(lockedEdits = []) {
     );
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
-      throw new Error(j.detail || `HTTP ${res.status}`);
+      throw new Error(_userFacingError({ message: j.detail }, "กระจายหีบไม่สำเร็จ"));
     }
 
     const json = await res.json();
@@ -2304,11 +2406,11 @@ async function _doOptimize(lockedEdits = []) {
     return allocs;
 
   } catch (err) {
-    toast("❌ Optimization ล้มเหลว: " + err.message);
+    toast("❌ กระจายหีบไม่สำเร็จ: " + _userFacingError(err), "red");
     qs(`#${steps[steps.length - 1]}`).className = "prog-row";
-    qs("#runEmoji").textContent = "🤖";
-    qs("#runTitle").textContent = "พร้อมคำนวณ";
-    qs("#runSub").textContent = "ตรวจสอบยอดรวมก่อนกดเริ่ม";
+    qs("#runEmoji").textContent = "📊";
+    qs("#runTitle").textContent = "พร้อมกระจายหีบ";
+    qs("#runSub").textContent = "ตรวจสอบยอดรวมเป้าเงินก่อนกดเริ่มคำนวณ";
     btn.disabled = false;
     btn.textContent = "คำนวณใหม่";
     qs("#resultBlock").style.display = S.allocations.length > 0 ? "block" : "none";
@@ -2843,7 +2945,7 @@ function _lakehouseUserCode() {
 
 function showLakehouseUploadModal() {
   if (!S.allocations || S.allocations.length === 0) {
-    toast("ยังไม่มีผลลัพธ์ให้บันทึก (ต้องกดคำนวณ/Optimize ก่อน)", "red");
+    toast('ยังไม่มีผลลัพธ์ — กรุณากดปุ่ม "เริ่มคำนวณ" ก่อน', "red");
     return;
   }
   const matrix = _lakehouseAllocationsFullMatrix();
@@ -2854,52 +2956,50 @@ function showLakehouseUploadModal() {
   const userCode = escH(_lakehouseUserCode());
   const zerosLine =
     zeros > 0
-      ? `ในนี้มี <strong>${zeros.toLocaleString("th-TH")}</strong> รายการที่จำนวนหีบเป็น 0 เพื่อให้ระบบเป้าหมายหลักอัปเดตให้ตรงกับที่คุณจัดสรร`
+      ? `<li>มี <strong>${zeros.toLocaleString("th-TH")}</strong> รายการที่หีบเป็น 0 — ส่งเข้า DB เพื่อทับเป้าเดิมให้ยอดรวมตรงกับที่เกลี่ย</li>`
       : "";
 
   const body = `
     <div class="lakehouse-modal">
       <div class="lakehouse-banner" role="status">
-        <span class="lakehouse-banner__icon" aria-hidden="true">📋</span>
+        <span class="lakehouse-banner__icon" aria-hidden="true">📤</span>
         <div class="lakehouse-banner__text">
-          <strong>ส่งข้อมูลไปยังระบบเป้าหมาย (สภาพแวดล้อมทดสอบ UAT)</strong>
-          เมื่อกดปุ่มยืนยัน ผลที่คุณกระจายหีบไว้จะถูกส่งเข้าระบบหลักทันที ไม่ต้องแนบไฟล์เอง
+          <strong>ส่งผลการกระจายหีบเข้า Target Sun</strong>
+          กดปุ่มด้านล่างแล้วระบบจะส่งให้เอง — ไม่ต้องแนบไฟล์ Excel
         </div>
       </div>
 
-      <div class="lakehouse-summary" aria-label="สรุปข้อมูลที่จะส่ง">
+      <div class="lakehouse-summary" aria-label="สรุปก่อนส่ง">
         <div class="lakehouse-stat">
-          <span class="lakehouse-stat__label">หัวหน้าทีม</span>
+          <span class="lakehouse-stat__label">Supervisor</span>
           <span class="lakehouse-stat__value">${sup}</span>
         </div>
         <div class="lakehouse-stat">
-          <span class="lakehouse-stat__label">งวดเป้าหมาย</span>
+          <span class="lakehouse-stat__label">งวดเป้า</span>
           <span class="lakehouse-stat__value">${escH(periodStr)}</span>
         </div>
         <div class="lakehouse-stat">
-          <span class="lakehouse-stat__label">จำนวนรายการ</span>
+          <span class="lakehouse-stat__label">ข้อมูลที่ส่ง</span>
           <span class="lakehouse-stat__value">${total.toLocaleString("th-TH")}</span>
-          <span class="lakehouse-stat__sub">รายการ พนักงาน × สินค้า</span>
+          <span class="lakehouse-stat__sub">แถว (พนักงาน × สินค้า)</span>
         </div>
       </div>
 
-      <p style="margin:0 0 8px;color:var(--text-1);font-weight:600;font-size:14px;">เกิดอะไรขึ้นถัดไป</p>
       <ul class="lakehouse-what">
-        <li>ระบบรวบรวมตัวเลขหีบที่คุณยืนยันแล้วและส่งต่อเข้าระบบเป้าหมายของบริษัทโดยอัตโนมัติ</li>
-        <li>บันทึกชื่อรหัสผู้ใช้งาน <strong>${userCode}</strong> เพื่อใช้ตรวจสอบย้อนหลังว่าส่งจากใคร</li>
-        ${zerosLine ? `<li>${zerosLine}</li>` : ""}
+        <li>ส่งจำนวนหีบตามที่คุณยืนยันในตารางขั้นที่ 3</li>
+        <li>บันทึกผู้ส่งรหัส <strong>${userCode}</strong> ไว้ตรวจสอบภายหลัง</li>
+        ${zerosLine}
       </ul>
 
       <div class="lakehouse-note">
-        ⏱ ระบบอาจใช้เวลาประมาณไม่กี่นาที — ห้ามปิดหน้าต่างหรือกดซ้ำจนกว่าจะมีข้อความสำเร็จหรือข้อความผิดพลาด
+        ⏱ อาจใช้เวลาสักครู่ — อย่าปิดหน้าจอหรือกดส่งซ้ำจนกว่าจะขึ้นว่าสำเร็จหรือมีข้อผิดพลาด
       </div>
 
       <details class="lakehouse-tech">
-        <summary>ข้อมูลเพิ่มสำหรับฝ่าย IT เท่านั้น</summary>
+        <summary>รายละเอียดสำหรับ IT</summary>
         <div class="lakehouse-tech__body">
-          ฟิลด์พื้นที่ขาย เขต คลัง ฯลฯ ดึงจากข้อมูลเป้าของทีมนี้ตอนที่เข้ามาที่หน้าจัดสรร
-          (${zeros > 0 ? `รวม ${zeros.toLocaleString("th-TH")} แถวที่จำนวนหีบเป็น 0; ` : ""}
-          เส้นทาง API TargetSun และตารางเก็บข้อมูลถูกกำหนดโดยเซิร์ฟเวอร์บริษัท)<br><br>
+          สภาพแวดล้อมทดสอบ (UAT) · ข้อมูลเขต/คลังดึงจากเป้าทีมตอนเข้าหน้าจัดสรร
+          ${zeros > 0 ? ` · ส่งหีบ 0 จำนวน ${zeros.toLocaleString("th-TH")} แถว` : ""}<br><br>
           <code>TGA_TARGET_SALESMAN_NEXT</code>
           · <code>TARGETSUN_IMPORT_EXCEL_URL</code>
         </div>
@@ -2968,6 +3068,23 @@ function _lakehouseExportPayload() {
   };
 }
 
+/** แจ้งคู่พนักงาน×สินค้าที่ไม่มีเป้า grain ใน Target Sun ณ ตอนส่ง */
+function _showNotInTargetSunModal(count, rows) {
+  const n = Number(count) || 0;
+  if (n <= 0) return;
+  const list = Array.isArray(rows) ? rows.slice(0, 30) : [];
+  const sample = list.length
+    ? `<div style="margin-top:10px;max-height:200px;overflow:auto;font-size:12px;line-height:1.5;text-align:left;">${list
+        .map(r => `${escH(String(r.emp_id || ""))} × ${escH(String(r.sku || ""))} · หีบ ${Number(r.allocated_boxes) || 0}`)
+        .join("<br/>")}${n > list.length ? `<br/><span style="color:var(--text-2);">… และอีก ${(n - list.length).toLocaleString("th-TH")} คู่</span>` : ""}</div>`
+    : "";
+  _showInfoModal({
+    title: "ไม่ได้ส่งบางรายการ — ไม่มีใน Target Sun ณ ตอนนี้",
+    bodyHtml: `<p style="margin:0;text-align:left;line-height:1.6;">มี <strong>${n.toLocaleString("th-TH")}</strong> คู่พนักงาน×สินค้าที่<strong>ไม่มี SALESTYPE / DIVISION / AREACODE</strong> จากตารางเป้า TGA — ระบบจึงไม่ส่งเข้า Target Sun (ไม่เติมค่าเอง)</p>
+      <p style="margin:10px 0 0;text-align:left;line-height:1.6;color:var(--text-2);">ค่าเหล่านี้ดึงจากเป้า <strong>พนักงาน×สินค้า</strong> ตอนโหลดขั้นที่ 1 — ถ้าคู่ไม่อยู่ใน Target Sun งวดนี้จะส่งไม่ได้</p>${sample}`,
+  });
+}
+
 function _formatApiErrorDetail(j) {
   if (!j) return "";
   const d = j.detail;
@@ -2987,7 +3104,8 @@ function _formatApiErrorDetail(j) {
 async function doLakehouseUpload() {
   const btn = document.getElementById("lakehouseUploadBtn");
   if (btn) { btn.textContent = "กำลังส่ง…"; btn.disabled = true; }
-  pushGlobalBusy("กำลังส่งข้อมูลเข้าระบบเป้าหมาย อาจใช้เวลาหลายนาที…");
+  const uploadBtnLabel = UX.lakehouseSendBtn;
+  pushGlobalBusy(UX.busySendTarget, UX.busySendTargetHint);
   try {
     const res = await fetchWithTimeout(
       `${API_BASE_URL}/lakehouse/import-targetsun`,
@@ -3000,7 +3118,12 @@ async function doLakehouseUpload() {
     );
     const j = await res.json().catch(() => ({}));
     if (!res.ok) {
-      const msg = _formatApiErrorDetail(j) || `HTTP ${res.status}`;
+      const detail = j.detail;
+      if (detail && typeof detail === "object") {
+        const n = Number(detail.rows_not_in_targetsun_count) || 0;
+        if (n > 0) _showNotInTargetSunModal(n, detail.rows_not_in_targetsun);
+      }
+      const msg = _userFacingError(_formatApiErrorDetail(j), "ส่งข้อมูลไม่สำเร็จ");
       throw new Error(msg);
     }
     const ts = j.targetsun || {};
@@ -3008,7 +3131,7 @@ async function doLakehouseUpload() {
       const why = ts.resultMsg || "import ไม่สำเร็จ";
       const errList = Array.isArray(ts.result?.errors) ? ts.result.errors : [];
       const errPreview = errList.slice(0, 3).map(e => `แถว ${e.rowNum}: ${e.message}`).join(" · ");
-      toast("❌ บันทึกเข้าระบบเป้าหมายไม่สำเร็จ: " + why + (errPreview ? " — " + errPreview : ""), "red");
+      toast("❌ ส่งเข้า Target Sun ไม่สำเร็จ: " + why + (errPreview ? " — " + errPreview : ""), "red");
       return;
     }
     const r = ts.result || {};
@@ -3017,33 +3140,41 @@ async function doLakehouseUpload() {
     const skipped = Number(r.skipped) || 0;
     const rowsSent = Number(j.rows_sent) || 0;
     const zeroSent = Number(j.zero_rows_sent) || 0;
-    let endpointHost = "";
-    try {
-      if (j.import_url) endpointHost = new URL(String(j.import_url)).host;
-    } catch (_) {}
+    const droppedDims = Number(j.rows_not_in_targetsun_count ?? j.rows_dropped_missing_dims) || 0;
+    const notInTs = j.rows_not_in_targetsun;
     closeLakehouseUploadModal();
     toast(
-      `✅ บันทึกเข้าระบบแล้ว: เพิ่มใหม่ ${inserted.toLocaleString("th-TH")} · ปรับปรุง ${updated.toLocaleString("th-TH")} · ข้าม ${skipped.toLocaleString("th-TH")} รายการ (ส่ง ${rowsSent.toLocaleString("th-TH")} แถว)${endpointHost ? " → " + endpointHost : ""}`,
+      `✅ ส่งเข้า Target Sun แล้ว — เพิ่มใหม่ ${inserted.toLocaleString("th-TH")} · แก้ไข ${updated.toLocaleString("th-TH")} · ข้าม ${skipped.toLocaleString("th-TH")} (ส่ง ${rowsSent.toLocaleString("th-TH")} แถว)`,
       "green"
     );
+    _showNotInTargetSunModal(droppedDims, notInTs);
     if (Array.isArray(r.errors) && r.errors.length) {
-      const ex = r.errors.slice(0, 5).map(e => `${e.rowNum}: ${e.message}`).join("\n");
+      const ex = r.errors.slice(0, 8).map(e => `แถว ${e.rowNum}: ${e.message}`).join("\n");
+      const missingDims = r.errors.some(e =>
+        /Missing required fields.*SALESTYPE/i.test(String(e.message || ""))
+      );
       _showInfoModal({
-        title: "แจ้งเตือนจากระบบ (บางรายการอาจถูกข้าม)",
-        bodyHtml: `<pre style="white-space:pre-wrap;font-size:12px;line-height:1.45;text-align:left;">${escH(ex)}${r.errors.length > 5 ? "\n…" : ""}</pre>`,
+        title: missingDims
+          ? "บางแถว Target Sun ไม่รับ (ไม่มีเขต/พื้นที่ขาย)"
+          : "แจ้งเตือนจากระบบ (บางรายการอาจถูกข้าม)",
+        bodyHtml: missingDims
+          ? `<p style="margin:0 0 10px;text-align:left;line-height:1.6;">แถวเหล่านี้ในไฟล์ไม่มี SALESTYPE / DIVISION / AREA — Target Sun จึงข้าม (มักเป็นคู่ที่ไม่เคยมีเป้าใน TGA)</p>
+             <p style="margin:0 0 10px;text-align:left;line-height:1.6;color:var(--text-2);">แนะนำ: โหลดข้อมูล<strong>ขั้นที่ 1 ใหม่</strong> → กระจายหีบ → ส่งอีกครั้ง</p>
+             <pre style="white-space:pre-wrap;font-size:12px;line-height:1.45;text-align:left;margin:0;">${escH(ex)}${r.errors.length > 8 ? "\n…" : ""}</pre>`
+          : `<pre style="white-space:pre-wrap;font-size:12px;line-height:1.45;text-align:left;">${escH(ex)}${r.errors.length > 8 ? "\n…" : ""}</pre>`,
       });
     } else if (zeroSent > 0 && skipped > 0) {
       _showInfoModal({
         title: "หีบ 0 อาจยังไม่ถูกบันทึก",
-        bodyHtml: `<p style="margin:0 0 10px;text-align:left;line-height:1.5;">ส่งแถวที่จำนวนหีบเป็น <strong>0</strong> ไป ${zeroSent.toLocaleString("th-TH")} รายการ แต่ระบบเป้าหมาย <strong>ข้าม ${skipped.toLocaleString("th-TH")}</strong> รายการ</p>
-          <p style="margin:0;text-align:left;line-height:1.5;color:var(--text-2);">มักเกิดเมื่อ API ฝั่ง SPC ไม่ยอมอัปเดตค่า 0 (แถวเดิมใน Oracle ยังเป็น 1) — ลองดาวน์โหลด Excel ตรวจ key ให้ตรงกับ DB หรือแจ้งทีม SPC ให้ import รองรับ <code>QUANTITYCASE = 0</code></p>`,
+        bodyHtml: `<p style="margin:0 0 10px;text-align:left;line-height:1.5;">ส่งรายการหีบ <strong>0</strong> ไป ${zeroSent.toLocaleString("th-TH")} รายการ แต่ Target Sun <strong>ข้าม ${skipped.toLocaleString("th-TH")}</strong> รายการ</p>
+          <p style="margin:0;text-align:left;line-height:1.5;color:var(--text-2);">ถ้าเป้าใน Target Sun ยังไม่ตรง — ลองดาวน์โหลด Excel ตรวจสอบ หรือแจ้ง IT</p>`,
       });
     }
   } catch (err) {
-    toast("❌ ส่งข้อมูลไม่สำเร็จ: " + (err?.message || String(err)), "red");
+    toast("❌ ส่งข้อมูลไม่สำเร็จ: " + _userFacingError(err), "red");
   } finally {
     popGlobalBusy();
-    if (btn) { btn.textContent = "ยืนยันการส่ง"; btn.disabled = false; }
+    if (btn) { btn.textContent = uploadBtnLabel; btn.disabled = false; }
   }
 }
 
@@ -3051,7 +3182,7 @@ async function doLakehouseUpload() {
 async function doLakehouseDownloadXlsxOnly() {
   const btn = document.getElementById("lakehouseDownloadBtn");
   if (btn) { btn.disabled = true; }
-  pushGlobalBusy("กำลังสร้างไฟล์ Excel...");
+  pushGlobalBusy(UX.busyExcel);
   try {
     const res = await fetchWithTimeout(
       `${API_BASE_URL}/lakehouse/export-csv`,
@@ -3064,7 +3195,7 @@ async function doLakehouseDownloadXlsxOnly() {
     );
     if (!res.ok) {
       const jd = await res.json().catch(() => ({}));
-      throw new Error(_formatApiErrorDetail(jd) || `HTTP ${res.status}`);
+      throw new Error(_userFacingError(_formatApiErrorDetail(jd), "ดาวน์โหลดไม่สำเร็จ"));
     }
     const blob = await res.blob();
     const cd = res.headers.get("Content-Disposition") || "";
@@ -3074,16 +3205,28 @@ async function doLakehouseDownloadXlsxOnly() {
     dl(blob, fname);
     const rows = res.headers.get("X-Export-Rows");
     const zeroRows = res.headers.get("X-Export-Zero-Rows");
+    const droppedDims = res.headers.get("X-Export-Dropped-Missing-Dims");
+    const rowN = rows != null && rows !== "" ? Number(rows) : NaN;
+    if (!Number.isNaN(rowN) && rowN === 0) {
+      toast(
+        "❌ ไฟล์ว่าง — ไม่มีแถวในชีต TGA (ลองโหลดข้อมูลขั้นที่ 1 ใหม่ แล้วกระจายหีบอีกครั้ง)",
+        "red"
+      );
+      return;
+    }
     const zeroPart =
       zeroRows != null && zeroRows !== ""
         ? ` · หีบ 0 = ${Number(zeroRows).toLocaleString("th-TH")} แถว`
         : "";
+    if (droppedDims != null && Number(droppedDims) > 0) {
+      _showNotInTargetSunModal(Number(droppedDims), []);
+    }
     toast(
-      `✅ ดาวน์โหลด: ${fname}${rows ? ` (${Number(rows).toLocaleString("th-TH")} แถว${zeroPart})` : ""}`,
+      `✅ ดาวน์โหลด: ${fname}${rows ? ` (ชีต TGA ${Number(rows).toLocaleString("th-TH")} แถว${zeroPart})` : ""}`,
       "green"
     );
   } catch (err) {
-    toast("❌ ดาวน์โหลดไม่สำเร็จ: " + (err?.message || String(err)), "red");
+    toast("❌ ดาวน์โหลดไม่สำเร็จ: " + _userFacingError(err), "red");
   } finally {
     popGlobalBusy();
     if (btn) { btn.disabled = false; }
@@ -3097,7 +3240,7 @@ async function doExport() {
   const btn = qs("#dlBtn");
   if (btn) { btn.textContent = "กำลังสร้าง..."; btn.disabled = true; }
 
-  pushGlobalBusy("กำลังสร้างไฟล์ Excel...");
+  pushGlobalBusy(UX.busyExcel);
   try {
     const payload = {
       allocations: S.allocations.map(a => ({
@@ -3125,14 +3268,14 @@ async function doExport() {
       },
       120000
     );
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) throw new Error(_userFacingError(null, "สร้างไฟล์ไม่สำเร็จ"));
 
     const dlRes = await fetchWithTimeout(
       `${API_BASE_URL}/download/excel?sup_id=${S.supId}&t=${Date.now()}&brand=${encodeURIComponent(brand)}`,
       {},
       60000
     );
-    if (!dlRes.ok) throw new Error(`Download failed: HTTP ${dlRes.status}`);
+    if (!dlRes.ok) throw new Error(_userFacingError(null, "ดาวน์โหลดไฟล์ไม่สำเร็จ"));
     const blob = await dlRes.blob();
 
     const fname = brand === "ALL"
@@ -3140,12 +3283,12 @@ async function doExport() {
       : `Target_${S.supId}_${brand}_${MONTH_TH[S.targetMonth]}${S.targetYear}.xlsx`;
     dl(blob, fname);
     S._hasUnsaved = false;
-    toast(`✅ Export สำเร็จ: ${fname}`, "green");
+    toast(`✅ ดาวน์โหลดสำเร็จ: ${fname}`, "green");
   } catch (err) {
-    toast("❌ Export ไม่สำเร็จ: " + err.message);
+    toast("❌ ดาวน์โหลดไม่สำเร็จ: " + _userFacingError(err), "red");
   } finally {
     popGlobalBusy();
-    if (btn) { btn.textContent = "↓ Export Excel"; btn.disabled = false; }
+    if (btn) { btn.textContent = "↓ ดาวน์โหลด Excel"; btn.disabled = false; }
   }
 }
 
@@ -3221,7 +3364,7 @@ function saveDraft(silent = false) {
     if (!silent) toast("💾 บันทึกแบบร่างลงในเครื่องเรียบร้อยแล้ว\n(สามารถปิดเว็บแล้วกลับมาทำต่อได้)", "green");
   } catch (err) {
     // QuotaExceededError — พื้นที่ browser เต็ม (~5MB)
-    toast("⚠️ บันทึกแบบร่างไม่สำเร็จ: พื้นที่ browser เต็ม\nข้อมูลยังอยู่ในหน้าเว็บ แต่ถ้าปิดหน้าต่างจะหายนะ!\nกรุณา Export Excel ก่อนปิด", "red");
+    toast("⚠️ บันทึกแบบร่างไม่สำเร็จ: พื้นที่ browser เต็ม\nข้อมูลยังอยู่ในหน้าเว็บ แต่ถ้าปิดหน้าต่างจะหายนะ!\nกรุณาดาวน์โหลด Excel ก่อนปิด", "red");
     console.error("saveDraft QuotaExceeded:", err);
   }
 }
@@ -3304,7 +3447,7 @@ function checkAndLoadDraft() {
         syncStep3ResultFabricNote();
         qs("#runEmoji").textContent = "✅";
         qs("#runTitle").textContent = "โหลดแบบร่างสำเร็จ";
-        qs("#runSub").textContent = "กรองแบรนด์ · แก้ตัวเลข · Export";
+        qs("#runSub").textContent = "กรองแบรนด์ · แก้ตัวเลข · ดาวน์โหลด Excel";
         qs("#runBtn").textContent = "คำนวณใหม่";
         qs("#runBtn").disabled = false;
       }
@@ -3450,7 +3593,7 @@ function _renderFabricStep3Notices(changes) {
     return;
   }
   const inner = `
-    <div class="fabric-change-title">📡 เป้าจาก Fabric เปลี่ยนเมื่อเทียบกับครั้งล่าสุดที่บันทึก snapshot</div>
+    <div class="fabric-change-title">📡 เป้าจากระบบหลักเปลี่ยนเมื่อเทียบกับครั้งล่าสุดที่บันทึกไว้</div>
     <ul>${changes.map(c => `<li>${c}</li>`).join("")}</ul>
     <div style="font-size:12px;color:var(--text-2);margin-top:8px;">ช่องหีบที่แก้มือและล็อกไว้จะไม่ถูกเขียนทับ — หีบที่เพิ่มจากเป้าทีมจะเกลี่ยไปช่องที่ยังไม่ล็อกเมื่อโหลดแบบร่าง</div>`;
   const top = document.getElementById("fabricChangeStep3Notice");
@@ -3588,7 +3731,7 @@ function checkSnapshotChanges() {
   const timeStr = new Date(snap.ts).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" });
   const hasAlloc = S.allocations && S.allocations.length > 0;
   const reallocBtn = hasAlloc
-    ? `<button class="btn-realloc" onclick="runReAllocationKeepEdits()">🔄 กระจายหีบใหม่ (รักษา manual edits)</button>`
+    ? `<button class="btn-realloc" onclick="runReAllocationKeepEdits()">🔄 กระจายหีบใหม่ (คงตัวเลขที่แก้เอง)</button>`
     : `<span style="font-size:12px;color:var(--text-2);">ยังไม่มีผลการกระจาย — โหลดแบบร่างหรือกดเริ่มคำนวณเพื่อกระจายตามเป้าใหม่</span>`;
 
   const banner = document.createElement("div");
@@ -3598,7 +3741,7 @@ function checkSnapshotChanges() {
     <div class="change-banner-inner">
       <div class="change-banner-icon">⚠️</div>
       <div class="change-banner-body">
-        <div class="change-banner-title">พบการเปลี่ยนแปลงเป้าจาก Fabric เทียบกับ snapshot ล่าสุด (${timeStr})</div>
+        <div class="change-banner-title">เป้าจากระบบหลักเปลี่ยนเมื่อเทียบกับที่บันทึกไว้ล่าสุด (${timeStr})</div>
         <ul class="change-banner-list">
           ${changes.map(c => `<li>${c}</li>`).join("")}
         </ul>
@@ -3641,14 +3784,14 @@ async function runReAllocationKeepEdits() {
   await wait(200);
   qs("#runEmoji").textContent = "✅";
   qs("#runTitle").textContent = "กระจายหีบใหม่สำเร็จ";
-  qs("#runSub").textContent = `[${strategy}] manual edits ยังคงอยู่`;
+  qs("#runSub").textContent = `วิธี: ${_strategySummaryTh([strategy])} — ตัวเลขที่แก้เองยังคงอยู่`;
   qs("#runBtn").textContent = "คำนวณใหม่";
   qs("#runBtn").disabled = false;
   qs("#resultBlock").style.display = "block";
   renderResult(allocs);
   requestAnimationFrame(() => adjustResultStickyGap());
   qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
-  toast("✅ กระจายหีบใหม่สำเร็จ — manual edits ยังคงอยู่", "green");
+  toast("✅ กระจายหีบใหม่สำเร็จ — ตัวเลขที่แก้เองยังคงอยู่", "green");
   saveDraft(true);
 }
 /* ════════════════════════════════════════════════════════════════════════════
@@ -3922,8 +4065,10 @@ function _updateNegGrowthReasonState() {
   const wrap = document.getElementById("negGrowthNoteWrap");
   const list = document.getElementById("negGrowthList");
   const hint = document.getElementById("negGrowthHint");
+  const charCount = document.getElementById("negGrowthCharCount");
   const ta = document.getElementById("negGrowthReason");
   const runBtn = document.getElementById("runBtn");
+  const runSub = document.getElementById("runSub");
   if (!wrap || !list || !runBtn) return;
 
   const offenders = _negGrowthOffenders();
@@ -3931,6 +4076,10 @@ function _updateNegGrowthReasonState() {
 
   if (!needReason) {
     wrap.style.display = "none";
+    if (runSub && runSub.dataset.negGrowthLock === "1") {
+      runSub.textContent = "ตรวจสอบยอดรวมก่อนกดเริ่ม";
+      delete runSub.dataset.negGrowthLock;
+    }
     return;
   }
 
@@ -3943,24 +4092,46 @@ function _updateNegGrowthReasonState() {
   list.innerHTML = `พนักงานที่เป้าทำให้เติบโตติดลบ: ${names}${extra}`;
 
   const reason = (S.negGrowthReason || "").trim();
-  const valid = reason.length >= 8;
+  const len = reason.length;
+  const valid = len >= 8;
   if (ta && ta.value !== S.negGrowthReason) ta.value = S.negGrowthReason || "";
 
   if (hint) {
-    if (valid) {
-      hint.textContent = "✓ บันทึกเหตุผลแล้ว — สามารถกด \"เริ่มคำนวณ\" ได้";
-      hint.classList.add("is-ok");
-    } else {
-      hint.textContent = "⏳ กรอกเหตุผลอย่างน้อย 8 ตัวอักษร เพื่อปลดล็อกปุ่ม \"เริ่มคำนวณ\"";
-      hint.classList.remove("is-ok");
+    hint.classList.toggle("neg-growth-card__unlock--pending", !valid);
+    hint.classList.toggle("neg-growth-card__unlock--ok", valid);
+    const icon = hint.querySelector(".neg-growth-card__unlock-icon");
+    const title = hint.querySelector(".neg-growth-card__unlock-title");
+    const sub = hint.querySelector(".neg-growth-card__unlock-sub");
+    if (icon) icon.textContent = valid ? "✓" : "⏳";
+    if (title) {
+      title.textContent = valid
+        ? "กรอกเหตุผลครบแล้ว — กดปุ่ม «เริ่มคำนวณ» ด้านล่างได้"
+        : "กรอกเหตุผลอย่างน้อย 8 ตัวอักษร เพื่อปลดล็อกปุ่ม «เริ่มคำนวณ»";
     }
+    if (sub) {
+      sub.textContent = valid
+        ? "ระบบบันทึกเหตุผลไว้ส่งพร้อมการคำนวณ"
+        : "ปุ่ม «เริ่มคำนวณ» ใน Step 3 ยังกดไม่ได้จนกว่าจะกรอกครบ";
+    }
+  }
+  if (charCount) {
+    charCount.textContent = valid ? `ครบแล้ว (${len} ตัวอักษร)` : `${len} / 8 ตัวอักษร`;
   }
 
   if (!valid) {
     runBtn.disabled = true;
-    runBtn.title = "กรุณากรอกเหตุผลที่ตั้งเป้าให้เติบโตติดลบก่อน";
+    runBtn.title = "กรุณากรอกเหตุผลอย่างน้อย 8 ตัวอักษร (เป้าเติบโตติดลบ) ก่อนกดเริ่มคำนวณ";
+    if (runSub) {
+      runSub.textContent = "🔒 กรอกเหตุผลติดลบอย่างน้อย 8 ตัวอักษรก่อนกด «เริ่มคำนวณ»";
+      runSub.dataset.negGrowthLock = "1";
+    }
   } else {
     runBtn.removeAttribute("title");
+    if (runSub && runSub.dataset.negGrowthLock === "1") {
+      runSub.textContent = "ตรวจสอบยอดรวมก่อนกดเริ่ม";
+      delete runSub.dataset.negGrowthLock;
+    }
+    try { updateValidation(); } catch (_) {}
   }
 }
 

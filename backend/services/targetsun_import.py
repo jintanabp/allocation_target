@@ -42,7 +42,9 @@ def import_allocations_to_targetsun(req: LakehouseUploadRequest) -> dict:
         timeout = 600
     timeout = max(30, min(timeout, 3600))
 
-    content, fname, df = prepare_lakehouse_xlsx(req)
+    content, fname, df, dropped_dims, not_in_ts = prepare_lakehouse_xlsx(
+        req, drop_incomplete_rows=True
+    )
     nrow = int(len(df))
 
     logger.info(
@@ -159,6 +161,9 @@ def import_allocations_to_targetsun(req: LakehouseUploadRequest) -> dict:
         "upload_filename": fname,
         "rows_sent": nrow,
         "zero_rows_sent": int((df["QUANTITYCASE"] == 0).sum()) if "QUANTITYCASE" in df.columns else 0,
+        "rows_dropped_missing_dims": int(dropped_dims),
+        "rows_not_in_targetsun": not_in_ts,
+        "rows_not_in_targetsun_count": int(dropped_dims),
         "import_url": url,
         "http_status": int(r.status_code),
         "targetsun": body,

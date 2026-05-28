@@ -353,6 +353,11 @@
             <span class="btn-bui__icon" aria-hidden="true">➖</span>
             <span class="btn-bui__label">หักบิวเทรี่ยม</span>
           </button>
+          <button type="button" id="resetYellowBtn" class="btn-bui btn-bui--reset" onclick="resetYellowToTargetSun()"
+            title="ตั้งเป้าหมายที่กำหนดเองให้เท่ากับเป้า Target Sun ทุกคน">
+            <span class="btn-bui__icon" aria-hidden="true">↺</span>
+            <span class="btn-bui__label">รีเซ็ตเป็น Target Sun</span>
+          </button>
           <span class="step2-toolbar__hint" id="buiHint">กดเพื่อเปิดช่องกรอกยอดบิวเทรี่ยมที่ต้องหักจาก "ยอดขายเดือนเดียวกันปีที่แล้ว"</span>
         </div>
 
@@ -410,9 +415,17 @@
           <label class="neg-growth-card__label" for="negGrowthReason">เหตุผลที่ตั้งเป้าให้ติดลบ (จำเป็น)</label>
           <textarea id="negGrowthReason" class="neg-growth-card__textarea"
             placeholder="เช่น พนักงานลาคลอด / สินค้าหลักหยุดผลิตชั่วคราว / ปรับโครงสร้างทีม ฯลฯ"
+            aria-describedby="negGrowthHint"
             oninput="onNegGrowthReasonChange()"></textarea>
           <div class="neg-growth-card__foot">
-            <span id="negGrowthHint" class="neg-growth-card__hint">⏳ ใส่เหตุผลแล้วจะปลดล็อกปุ่ม "เริ่มคำนวณ" ให้อัตโนมัติ</span>
+            <div id="negGrowthHint" class="neg-growth-card__unlock neg-growth-card__unlock--pending" role="status">
+              <span class="neg-growth-card__unlock-icon" aria-hidden="true">⏳</span>
+              <div class="neg-growth-card__unlock-body">
+                <p class="neg-growth-card__unlock-title">กรอกเหตุผลอย่างน้อย 8 ตัวอักษร เพื่อปลดล็อกปุ่ม «เริ่มคำนวณ»</p>
+                <p class="neg-growth-card__unlock-sub">ปุ่มด้านล่าง Step 3 จะกดได้เมื่อกรอกครบ</p>
+                <span id="negGrowthCharCount" class="neg-growth-card__unlock-count">0 / 8 ตัวอักษร</span>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -529,8 +542,8 @@
           <div class="run-left">
             <div class="run-emoji" id="runEmoji">🤖</div>
             <div>
-              <div class="run-title" id="runTitle">พร้อมคำนวณ</div>
-              <div class="run-sub" id="runSub">ตรวจสอบยอดรวมก่อนกดเริ่ม</div>
+              <div class="run-title" id="runTitle">พร้อมกระจายหีบ</div>
+              <div class="run-sub" id="runSub">ตรวจสอบยอดรวมเป้าเงินก่อนกดเริ่มคำนวณ</div>
             </div>
           </div>
           <button class="btn-run" id="runBtn" onclick="runOptimization()" disabled>
@@ -539,10 +552,10 @@
         </div>
 
         <div class="prog-list" id="progList" style="display:none">
-          <div class="prog-row" id="prog1"><span class="prog-circle"></span><span>โหลดข้อมูลและประวัติ</span></div>
-          <div class="prog-row" id="prog2"><span class="prog-circle"></span><span>เตรียม Model</span></div>
-          <div class="prog-row" id="prog3"><span class="prog-circle"></span><span>กระจายหีบ</span></div>
-          <div class="prog-row" id="prog4"><span class="prog-circle"></span><span>สร้างไฟล์ Excel</span></div>
+          <div class="prog-row" id="prog1"><span class="prog-circle"></span><span>ตรวจสอบข้อมูลพนักงานและยอดขายย้อนหลัง</span></div>
+          <div class="prog-row" id="prog2"><span class="prog-circle"></span><span>คำนวณสัดส่วนตามวิธีที่เลือก</span></div>
+          <div class="prog-row" id="prog3"><span class="prog-circle"></span><span>แบ่งจำนวนหีบให้แต่ละคน</span></div>
+          <div class="prog-row" id="prog4"><span class="prog-circle"></span><span>สรุปผลการกระจาย</span></div>
         </div>
 
         <div class="result-block" id="resultBlock" style="display:none">
@@ -571,8 +584,8 @@
               <button class="btn-dl" onclick="showExportModal()">↓ ดาวน์โหลด Excel</button>
               <button type="button" class="btn-dl btn-dl--disabled" id="lakehouseOpenBtn"
                 aria-disabled="true" disabled
-                title="ส่งผลการจัดสรรหีบเข้าระบบเป้าหมายของบริษัท (สภาพแวดล้อมทดสอบ UAT)"
-                onclick="showLakehouseUploadModal()">📤 ส่งเข้าระบบเป้า</button>
+                title="ส่งผลการกระจายหีบเข้า Target Sun"
+                onclick="showLakehouseUploadModal()">📤 ส่งเข้า Target Sun</button>
             </div>
           </div>
 
@@ -602,10 +615,10 @@
   <!-- ─── EXPORT MODAL ─── -->
   <div id="exportModal" class="modal-overlay" style="display:none;" onclick="closeModalOnBg(event)">
     <div class="modal-card">
-      <div class="modal-title">📥 เลือกแบรนด์ที่ต้องการ Export</div>
+      <div class="modal-title">📥 เลือกแบรนด์ที่ต้องการดาวน์โหลด</div>
       <div class="modal-body" id="exportOpts"></div>
       <div class="modal-foot">
-        <button class="btn-run" onclick="doExport()">Export Excel</button>
+        <button class="btn-run" onclick="doExport()">ดาวน์โหลด Excel</button>
         <button class="btn-logout" onclick="closeExportModal()">ยกเลิก</button>
       </div>
     </div>
@@ -614,11 +627,11 @@
   <!-- ─── LAKEHOUSE UPLOAD MODAL ─── -->
   <div id="lakehouseModal" class="modal-overlay" style="display:none;" onclick="closeLakehouseModalOnBg(event)" role="dialog" aria-modal="true" aria-labelledby="lakehouseModalTitle">
     <div class="modal-card modal-card--lakehouse" onclick="event.stopPropagation()">
-      <div class="modal-title modal-title--lakehouse" id="lakehouseModalTitle">บันทึกเข้าระบบเป้าหมาย</div>
+      <div class="modal-title modal-title--lakehouse" id="lakehouseModalTitle">ส่งเข้า Target Sun</div>
       <div class="modal-body modal-body--lakehouse" id="lakehouseBody"></div>
       <div class="modal-foot modal-foot--lakehouse">
-        <button class="btn-run" id="lakehouseUploadBtn" onclick="doLakehouseUpload()" type="button">ยืนยันการส่ง</button>
-        <button class="btn-dl" type="button" id="lakehouseDownloadBtn" onclick="doLakehouseDownloadXlsxOnly()">ดาวน์โหลดไฟล์ Excel เท่านั้น</button>
+        <button class="btn-run" id="lakehouseUploadBtn" onclick="doLakehouseUpload()" type="button">ส่งเข้า Target Sun</button>
+        <button class="btn-dl" type="button" id="lakehouseDownloadBtn" onclick="doLakehouseDownloadXlsxOnly()">ดาวน์โหลด Excel อย่างเดียว</button>
         <button class="btn-logout" type="button" onclick="closeLakehouseUploadModal()">ยกเลิก</button>
       </div>
     </div>
