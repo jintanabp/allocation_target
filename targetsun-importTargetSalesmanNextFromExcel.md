@@ -137,6 +137,8 @@ Duplicate keys within the same file are skipped.
 | Key not in DB | **INSERT** all columns |
 | Key already exists | **UPDATE** only `QUANTITYCASE`, `EFFECTIVEDATE`, `UPDATEDATE`, `USERCODE` |
 
+**Important — zero quantity:** `QUANTITYCASE = 0` is a valid value (clear a target). Import logic must **not** treat `0` as empty/missing (e.g. PHP `empty(0)` is `true` and would skip the row). If skipped count is high while Excel contains zeros, fix the import service to run `UPDATE … SET QUANTITYCASE = 0` when the key matches.
+
 The entire batch runs in a single transaction — any error rolls back all changes.
 
 ---

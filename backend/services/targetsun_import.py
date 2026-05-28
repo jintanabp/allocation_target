@@ -158,6 +158,7 @@ def import_allocations_to_targetsun(req: LakehouseUploadRequest) -> dict:
     out = {
         "upload_filename": fname,
         "rows_sent": nrow,
+        "zero_rows_sent": int((df["QUANTITYCASE"] == 0).sum()) if "QUANTITYCASE" in df.columns else 0,
         "import_url": url,
         "http_status": int(r.status_code),
         "targetsun": body,

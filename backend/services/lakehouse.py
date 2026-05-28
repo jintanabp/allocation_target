@@ -339,6 +339,239 @@ def _expand_allocations_with_tga_grain(
     return pd.DataFrame(out), True
 
 
+def _team_emp_and_sku_lists(
+    df: pd.DataFrame,
+    sup_id: str,
+    target_month: int,
+    target_year: int,
+) -> tuple[list[str], list[str]]:
+    """รายชื่อพนักงาน/SKU ครบทีม — ไม่พึ่งแถวที่ OR engine ส่งมา (มีแต่หีบ > 0)"""
+    emps: set[str] = set()
+    skus: set[str] = set()
+    if not df.empty:
+        emps.update(str(e).strip() for e in df["emp_id"].unique() if str(e).strip())
+        skus.update(str(s).strip() for s in df["sku"].unique() if str(s).strip())
+
+    for path, emp_col, sku_col in (
+        ("data/target_sun.csv", "emp_id", None),
+        ("data/target_boxes.csv", None, "sku"),
+    ):
+        if not os.path.exists(path):
+            continue
+        try:
+            part = pd.read_csv(path, dtype=str)
+        except Exception:
+            continue
+        if emp_col and emp_col in part.columns:
+            emps.update(part[emp_col].astype(str).str.strip())
+        if sku_col and sku_col in part.columns:
+            skus.update(part[sku_col].astype(str).str.strip())
+
+    p = tga_grain_cache_path(sup_id, target_month, target_year)
+    if os.path.exists(p):
+        try:
+            dg = pd.read_csv(p, dtype=str, keep_default_na=False)
+            if "emp_id" in dg.columns:
+                emps.update(dg["emp_id"].astype(str).str.strip())
+            if "sku" in dg.columns:
+                skus.update(dg["sku"].astype(str).str.strip())
+        except Exception:
+            pass
+
+    emps.discard("")
+    skus.discard("")
+    return sorted(emps), sorted(skus)
+
+
+def _expand_to_team_full_matrix(
+    df: pd.DataFrame,
+    sup_id: str,
+    target_month: int,
+    target_year: int,
+) -> pd.DataFrame:
+    """
+    เติมทุกคู่ emp×sku ของทีมด้วย allocated_boxes=0 ถ้ายังไม่มีใน payload
+    (OR engine / draft เก่ามักส่งเฉพาะหีบ > 0 ทำให้ Excel ไม่มีแถว 0)
+    """
+    emps, skus = _team_emp_and_sku_lists(df, sup_id, target_month, target_year)
+    if not emps or not skus:
+        return df
+
+    wh_by_emp: dict[str, str] = {}
+    lookup: dict[tuple[str, str], int] = {}
+    for _, r in df.iterrows():
+        e = str(r["emp_id"]).strip()
+        sku = str(r["sku"]).strip()
+        if not e or not sku:
+            continue
+        wh = _cell_str(r.get("warehouse_code", ""))
+        if wh:
+            wh_by_emp[e] = wh
+        boxes = pd.to_numeric(r.get("allocated_boxes", 0), errors="coerce")
+        boxes = 0 if pd.isna(boxes) else int(round(float(boxes)))
+        key = (e, sku)
+        lookup[key] = lookup.get(key, 0) + boxes
+
+    rows: list[dict] = []
+    for e in emps:
+        for sku in skus:
+            rows.append(
+                {
+                    "emp_id": e,
+                    "sku": sku,
+                    "allocated_boxes": int(lookup.get((e, sku), 0)),
+                    "warehouse_code": wh_by_emp.get(e, ""),
+                }
+            )
+    out = pd.DataFrame(rows)
+    logger.info(
+        "lakehouse full matrix: %d emp × %d sku = %d rows (zeros=%d)",
+        len(emps),
+        len(skus),
+        len(out),
+        int((out["allocated_boxes"] == 0).sum()),
+    )
+    return out
+
+
+def _zero_sum_emp_sku_pairs(df: pd.DataFrame) -> set[tuple[str, str]]:
+    if df.empty:
+        return set()
+    gsum = df.groupby(["emp_id", "sku"], as_index=False)["allocated_boxes"].sum()
+    return {
+        (str(r.emp_id).strip(), str(r.sku).strip())
+        for _, r in gsum.iterrows()
+        if int(r.allocated_boxes) == 0
+    }
+
+
+def _load_tga_grain_frame(
+    sup_id: str,
+    target_month: int,
+    target_year: int,
+    emp_list: list[str],
+) -> pd.DataFrame:
+    """อ่าน grain จาก cache ขั้น Step 1; ถ้าไม่พอค่อยดึง Fabric สด"""
+    p = tga_grain_cache_path(sup_id, target_month, target_year)
+    if os.path.exists(p):
+        try:
+            dg = pd.read_csv(p, dtype=str, keep_default_na=False)
+            dg = _normalize_grain_dtype(dg)
+            if emp_list:
+                emps = {str(e).strip() for e in emp_list}
+                dg = dg[dg["emp_id"].isin(emps)]
+            if not dg.empty:
+                return dg
+        except Exception as e:
+            logger.warning("read tga grain cache for zero align: %s", e)
+    try:
+        fabric = FabricDAXConnector()
+        return fabric.get_tga_target_salesman_granular(emp_list, target_month, target_year)
+    except Exception as e:
+        logger.warning("fabric granular for zero align: %s", e)
+        return pd.DataFrame()
+
+
+def _align_zero_allocations_to_tga_grain(
+    df: pd.DataFrame,
+    sup_id: str,
+    target_month: int,
+    target_year: int,
+) -> pd.DataFrame:
+    """
+    คู่ emp×sku ที่หีบรวม = 0 ต้องส่งแถวที่ key ตรง Oracle (SALESTYPE+DIVISION+AREA+PROVINCE…)
+    มิฉะนั้น import จะ insert แถวใหม่ qty=0 แต่แถวเดิม qty=1 ยังค้าง
+    """
+    zero_pairs = _zero_sum_emp_sku_pairs(df)
+    if not zero_pairs:
+        return df
+
+    emp_list = sorted({e for e, _ in zero_pairs})
+    dg = _load_tga_grain_frame(sup_id, target_month, target_year, emp_list)
+    if dg.empty:
+        logger.warning(
+            "zero allocations: ไม่มี TGA grain สำหรับ %d คู่ emp×sku — "
+            "อาจอัปเดต Oracle ไม่ครบ (โหลด Step 1 ใหม่ก่อนส่ง)",
+            len(zero_pairs),
+        )
+        return df
+
+    dg = _normalize_grain_dtype(dg)
+    mask_keep = ~df.apply(
+        lambda r: (str(r["emp_id"]).strip(), str(r["sku"]).strip()) in zero_pairs,
+        axis=1,
+    )
+    kept = df[mask_keep].copy()
+    zero_rows: list[dict] = []
+    missing_grain: list[tuple[str, str]] = []
+
+    for e, sku in sorted(zero_pairs):
+        sub = dg[(dg["emp_id"] == e) & (dg["sku"] == sku)]
+        hint = df[(df["emp_id"] == e) & (df["sku"] == sku)]
+        wh_hint = _cell_str(hint.iloc[0].get("warehouse_code", "")) if not hint.empty else ""
+        if sub.empty:
+            missing_grain.append((e, sku))
+            if not hint.empty:
+                zero_rows.extend(hint.to_dict(orient="records"))
+            continue
+        for _, r in sub.iterrows():
+            zero_rows.append(
+                {
+                    "emp_id": e,
+                    "sku": sku,
+                    "allocated_boxes": 0,
+                    "salestype": _cell_str(r.get("salestype", "")),
+                    "divisioncode": _cell_str(r.get("divisioncode", "")),
+                    "areacode": _areacode_str(r.get("areacode", "")),
+                    "provincecode": _cell_str(r.get("provincecode", "")),
+                    "warehouse_code": _cell_str(r.get("warehouse_code", "")) or wh_hint,
+                }
+            )
+
+    if missing_grain:
+        logger.warning(
+            "zero allocations without TGA grain rows: %s",
+            missing_grain[:10],
+        )
+
+    if not zero_rows:
+        return df
+    return pd.concat([kept, pd.DataFrame(zero_rows)], ignore_index=True)
+
+
+def _ensure_zero_pairs_have_rows(df: pd.DataFrame, zero_pairs: set[tuple[str, str]]) -> pd.DataFrame:
+    """กันคู่ emp×sku ที่หีบ=0 หลุดจาก export เมื่อไม่มี grain ใน TGA"""
+    if not zero_pairs:
+        return df
+    present = {
+        (str(r["emp_id"]).strip(), str(r["sku"]).strip())
+        for _, r in df.iterrows()
+    }
+    extra: list[dict] = []
+    for e, sku in sorted(zero_pairs):
+        if (e, sku) in present:
+            continue
+        extra.append(
+            {
+                "emp_id": e,
+                "sku": sku,
+                "allocated_boxes": 0,
+                "salestype": "",
+                "divisioncode": "",
+                "areacode": "",
+                "provincecode": "",
+                "warehouse_code": "",
+            }
+        )
+    if not extra:
+        return df
+    logger.warning(
+        "added %d zero emp×sku rows missing after grain align",
+        len(extra),
+    )
+    return pd.concat([df, pd.DataFrame(extra)], ignore_index=True)
+
+
 def _enrich_emp_dimensions(
     df: pd.DataFrame,
     rows_raw: list[dict],
@@ -438,6 +671,14 @@ def _build_tga_upload_dataframe(req: LakehouseUploadRequest) -> pd.DataFrame:
     if df.empty:
         raise HTTPException(400, detail="ไม่มีแถว emp×sku ที่สมบูรณ์สำหรับส่งออก")
 
+    df = _expand_to_team_full_matrix(
+        df,
+        req.sup_id,
+        int(req.target_month),
+        int(req.target_year),
+    )
+    zero_pairs_full = _zero_sum_emp_sku_pairs(df)
+
     df_expand, grain_ok = _expand_allocations_with_tga_grain(
         df,
         req.sup_id,
@@ -445,6 +686,13 @@ def _build_tga_upload_dataframe(req: LakehouseUploadRequest) -> pd.DataFrame:
         int(req.target_year),
     )
     df = df_expand if grain_ok else df
+    df = _align_zero_allocations_to_tga_grain(
+        df,
+        req.sup_id,
+        int(req.target_month),
+        int(req.target_year),
+    )
+    df = _ensure_zero_pairs_have_rows(df, zero_pairs_full)
     df = _enrich_emp_dimensions(
         df, rows_raw, skip_emp_sku_dim_merge=bool(grain_ok)
     )

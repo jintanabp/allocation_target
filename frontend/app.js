@@ -2846,8 +2846,9 @@ function showLakehouseUploadModal() {
     toast("ยังไม่มีผลลัพธ์ให้บันทึก (ต้องกดคำนวณ/Optimize ก่อน)", "red");
     return;
   }
-  const total = S.allocations.length;
-  const zeros = S.allocations.filter(a => (Number(a.allocated_boxes) || 0) === 0).length;
+  const matrix = _lakehouseAllocationsFullMatrix();
+  const total = matrix.length;
+  const zeros = matrix.filter(a => (Number(a.allocated_boxes) || 0) === 0).length;
   const periodStr = MONTH_FULL_TH[S.targetMonth] + " " + (S.targetYear + 543);
   const sup = escH(String(S.supId || "").trim() || "—");
   const userCode = escH(_lakehouseUserCode());
@@ -2920,18 +2921,50 @@ function _empWarehouseForLakehouse(empId) {
   return wh != null && String(wh).trim() ? String(wh).trim() : null;
 }
 
+function _lakehouseAllocationsFullMatrix() {
+  /** ส่งครบทุก emp×sku ตามตาราง (รวม 0) — OR engine คืนเฉพาะหีบ > 0 แต่ Oracle ต้องได้แถว 0 เพื่อทับเป้าเดิม */
+  const emps = [
+    ...new Set(
+      (S.employees || [])
+        .map(e => String(e.emp_id || "").trim())
+        .filter(Boolean)
+    ),
+  ];
+  const skus = [
+    ...new Set(
+      (S.skus || [])
+        .map(s => String(s.sku || "").trim())
+        .filter(Boolean)
+    ),
+  ];
+  const lookup = new Map();
+  for (const a of S.allocations || []) {
+    const emp = String(a.emp_id || "").trim();
+    const sku = String(a.sku || "").trim();
+    if (emp && sku) lookup.set(`${emp}::${sku}`, a);
+  }
+  const out = [];
+  for (const emp of emps) {
+    for (const sku of skus) {
+      const a = lookup.get(`${emp}::${sku}`);
+      out.push({
+        emp_id: emp,
+        sku,
+        allocated_boxes: a ? (Number(a.allocated_boxes) || 0) : 0,
+        warehouse_code: _empWarehouseForLakehouse(emp),
+      });
+    }
+  }
+  return out;
+}
+
 function _lakehouseExportPayload() {
   return {
     sup_id: S.supId,
     target_month: S.targetMonth,
     target_year: S.targetYear,
     upload_user_code: _lakehouseUserCode(),
-    allocations: S.allocations.map(a => ({
-      emp_id: a.emp_id,
-      sku: a.sku,
-      allocated_boxes: Number(a.allocated_boxes) || 0,
-      warehouse_code: _empWarehouseForLakehouse(a.emp_id),
-    })),
+    allocations: _lakehouseAllocationsFullMatrix(),
   };
 }
 
@@ -2983,6 +3016,7 @@ async function doLakehouseUpload() {
     const updated = Number(r.updated) || 0;
     const skipped = Number(r.skipped) || 0;
     const rowsSent = Number(j.rows_sent) || 0;
+    const zeroSent = Number(j.zero_rows_sent) || 0;
     let endpointHost = "";
     try {
       if (j.import_url) endpointHost = new URL(String(j.import_url)).host;
@@ -2997,6 +3031,12 @@ async function doLakehouseUpload() {
       _showInfoModal({
         title: "แจ้งเตือนจากระบบ (บางรายการอาจถูกข้าม)",
         bodyHtml: `<pre style="white-space:pre-wrap;font-size:12px;line-height:1.45;text-align:left;">${escH(ex)}${r.errors.length > 5 ? "\n…" : ""}</pre>`,
+      });
+    } else if (zeroSent > 0 && skipped > 0) {
+      _showInfoModal({
+        title: "หีบ 0 อาจยังไม่ถูกบันทึก",
+        bodyHtml: `<p style="margin:0 0 10px;text-align:left;line-height:1.5;">ส่งแถวที่จำนวนหีบเป็น <strong>0</strong> ไป ${zeroSent.toLocaleString("th-TH")} รายการ แต่ระบบเป้าหมาย <strong>ข้าม ${skipped.toLocaleString("th-TH")}</strong> รายการ</p>
+          <p style="margin:0;text-align:left;line-height:1.5;color:var(--text-2);">มักเกิดเมื่อ API ฝั่ง SPC ไม่ยอมอัปเดตค่า 0 (แถวเดิมใน Oracle ยังเป็น 1) — ลองดาวน์โหลด Excel ตรวจ key ให้ตรงกับ DB หรือแจ้งทีม SPC ให้ import รองรับ <code>QUANTITYCASE = 0</code></p>`,
       });
     }
   } catch (err) {
@@ -3033,7 +3073,15 @@ async function doLakehouseDownloadXlsxOnly() {
     if (m) fname = m[1];
     dl(blob, fname);
     const rows = res.headers.get("X-Export-Rows");
-    toast(`✅ ดาวน์โหลด: ${fname}${rows ? ` (${Number(rows).toLocaleString("th-TH")} แถว)` : ""}`, "green");
+    const zeroRows = res.headers.get("X-Export-Zero-Rows");
+    const zeroPart =
+      zeroRows != null && zeroRows !== ""
+        ? ` · หีบ 0 = ${Number(zeroRows).toLocaleString("th-TH")} แถว`
+        : "";
+    toast(
+      `✅ ดาวน์โหลด: ${fname}${rows ? ` (${Number(rows).toLocaleString("th-TH")} แถว${zeroPart})` : ""}`,
+      "green"
+    );
   } catch (err) {
     toast("❌ ดาวน์โหลดไม่สำเร็จ: " + (err?.message || String(err)), "red");
   } finally {
