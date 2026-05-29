@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import Annotated
 
 from fastapi import Header, HTTPException
@@ -18,6 +19,7 @@ def require_authenticated_user(
     """
     if not auth_entra.auth_enabled():
         return unrestricted_user_context()
+    t0 = time.perf_counter()
     if not authorization or not authorization.lower().startswith("bearer "):
         logger.info("Entra auth: missing bearer token")
         raise HTTPException(
@@ -27,7 +29,11 @@ def require_authenticated_user(
     token = authorization[7:].strip()
     try:
         ident = auth_entra.verify_microsoft_identity(token)
-        return build_user_access_context(ident["email"])
+        ctx = build_user_access_context(ident["email"])
+        elapsed = time.perf_counter() - t0
+        if elapsed >= 0.3:
+            logger.info("Entra auth timing: %.2fs", elapsed)
+        return ctx
     except PermissionError as e:
         logger.info("Entra auth forbidden (ACC / role): %s", str(e))
         raise HTTPException(status_code=403, detail=str(e)) from None

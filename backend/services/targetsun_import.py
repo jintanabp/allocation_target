@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 
 import requests
 from fastapi import HTTPException
@@ -42,15 +43,20 @@ def import_allocations_to_targetsun(req: LakehouseUploadRequest) -> dict:
         timeout = 600
     timeout = max(30, min(timeout, 3600))
 
+    t0 = time.perf_counter()
+    logger.info("TargetSun import: start allocations_in=%d", len(req.allocations or []))
+
     content, fname, df, dropped_dims, not_in_ts = prepare_lakehouse_xlsx(
         req, drop_incomplete_rows=True
     )
+    t_build = time.perf_counter()
     nrow = int(len(df))
 
     logger.info(
-        "TargetSun import: POST %s (%d rows, multipart field=file)",
+        "TargetSun import: POST %s (%d rows, multipart field=file) [build=%.2fs]",
         url,
         nrow,
+        t_build - t0,
     )
 
     files = {
@@ -128,6 +134,16 @@ def import_allocations_to_targetsun(req: LakehouseUploadRequest) -> dict:
                 "hint_th": "ดู log บนเซิร์ฟเวอร์ allocation_target สำหรับรายละเอียด",
             },
         ) from e
+
+    t_post = time.perf_counter()
+    logger.info(
+        "TargetSun import timing: build_xlsx=%.2fs post_upstream=%.2fs total=%.2fs rows=%d http=%s",
+        t_build - t0,
+        t_post - t_build,
+        t_post - t0,
+        nrow,
+        r.status_code,
+    )
 
     ct = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
     text_head = (r.text or "")[:2000]

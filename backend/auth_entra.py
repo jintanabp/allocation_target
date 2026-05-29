@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
+import time
 from typing import Any
 
 import jwt
@@ -41,6 +43,35 @@ GRAPH_AUDIENCES = (
 )
 
 _UNVERIFIED_ALGS = ["RS256", "PS256", "ES256"]
+
+_JWK_CLIENTS: dict[str, PyJWKClient] = {}
+_JWK_CLIENTS_LOCK = threading.Lock()
+_JWKS_URIS_CACHE: dict[str, tuple[float, list[str]]] = {}
+_JWKS_URIS_LOCK = threading.Lock()
+_JWKS_URIS_TTL_SEC = int(os.environ.get("AZURE_AUTH_JWKS_URI_CACHE_SEC", "3600"))
+
+
+def _get_jwk_client(jwks_uri: str) -> PyJWKClient:
+    """PyJWKClient แบบ cache — อย่าดึง keys จาก Microsoft ทุก request"""
+    with _JWK_CLIENTS_LOCK:
+        client = _JWK_CLIENTS.get(jwks_uri)
+        if client is None:
+            client = PyJWKClient(jwks_uri, cache_keys=True, lifespan=3600)
+            _JWK_CLIENTS[jwks_uri] = client
+        return client
+
+
+def _candidate_jwks_uris_cached(tid: str, iss: str) -> list[str]:
+    cache_key = f"{tid}|{iss}"
+    now = time.time()
+    with _JWKS_URIS_LOCK:
+        hit = _JWKS_URIS_CACHE.get(cache_key)
+        if hit and (now - hit[0]) < _JWKS_URIS_TTL_SEC:
+            return list(hit[1])
+    uris = _candidate_jwks_uris(tid, iss)
+    with _JWKS_URIS_LOCK:
+        _JWKS_URIS_CACHE[cache_key] = (now, uris)
+    return uris
 
 
 def _unverified_payload(token: str) -> dict[str, Any]:
@@ -189,12 +220,12 @@ def _decode_microsoft_jwt_verify_signature(token: str) -> dict[str, Any]:
         )
 
     iss = str(claims.get("iss") or "").strip()
-    uris = _candidate_jwks_uris(tid, iss)
+    uris = _candidate_jwks_uris_cached(tid, iss)
     last_err: Exception | None = None
 
     for jwks_uri in uris:
         try:
-            client = PyJWKClient(jwks_uri, cache_keys=False)
+            client = _get_jwk_client(jwks_uri)
             sk = client.get_signing_key_from_jwt(token)
             payload = jwt.decode(
                 token,

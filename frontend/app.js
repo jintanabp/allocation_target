@@ -2948,7 +2948,7 @@ function showLakehouseUploadModal() {
     toast('ยังไม่มีผลลัพธ์ — กรุณากดปุ่ม "เริ่มคำนวณ" ก่อน', "red");
     return;
   }
-  const matrix = _lakehouseAllocationsFullMatrix();
+  const matrix = _lakehouseAllocationsFromStep3();
   const total = matrix.length;
   const zeros = matrix.filter(a => (Number(a.allocated_boxes) || 0) === 0).length;
   const periodStr = MONTH_FULL_TH[S.targetMonth] + " " + (S.targetYear + 543);
@@ -2981,7 +2981,7 @@ function showLakehouseUploadModal() {
         <div class="lakehouse-stat">
           <span class="lakehouse-stat__label">ข้อมูลที่ส่ง</span>
           <span class="lakehouse-stat__value">${total.toLocaleString("th-TH")}</span>
-          <span class="lakehouse-stat__sub">แถว (พนักงาน × สินค้า)</span>
+          <span class="lakehouse-stat__sub">จากผลขั้นที่ 3 เท่านั้น</span>
         </div>
       </div>
 
@@ -3021,39 +3021,19 @@ function _empWarehouseForLakehouse(empId) {
   return wh != null && String(wh).trim() ? String(wh).trim() : null;
 }
 
-function _lakehouseAllocationsFullMatrix() {
-  /** ส่งครบทุก emp×sku ตามตาราง (รวม 0) — OR engine คืนเฉพาะหีบ > 0 แต่ Oracle ต้องได้แถว 0 เพื่อทับเป้าเดิม */
-  const emps = [
-    ...new Set(
-      (S.employees || [])
-        .map(e => String(e.emp_id || "").trim())
-        .filter(Boolean)
-    ),
-  ];
-  const skus = [
-    ...new Set(
-      (S.skus || [])
-        .map(s => String(s.sku || "").trim())
-        .filter(Boolean)
-    ),
-  ];
-  const lookup = new Map();
+/** ส่งเฉพาะแถวจากขั้นที่ 3 (กระจายหีบแล้ว) — ไม่ขยายพนักงาน/สินค้าทั้งทีมที่ไม่มีในผลลัพธ์ */
+function _lakehouseAllocationsFromStep3() {
+  const out = [];
   for (const a of S.allocations || []) {
     const emp = String(a.emp_id || "").trim();
     const sku = String(a.sku || "").trim();
-    if (emp && sku) lookup.set(`${emp}::${sku}`, a);
-  }
-  const out = [];
-  for (const emp of emps) {
-    for (const sku of skus) {
-      const a = lookup.get(`${emp}::${sku}`);
-      out.push({
-        emp_id: emp,
-        sku,
-        allocated_boxes: a ? (Number(a.allocated_boxes) || 0) : 0,
-        warehouse_code: _empWarehouseForLakehouse(emp),
-      });
-    }
+    if (!emp || !sku) continue;
+    out.push({
+      emp_id: emp,
+      sku,
+      allocated_boxes: Number(a.allocated_boxes) || 0,
+      warehouse_code: _empWarehouseForLakehouse(emp),
+    });
   }
   return out;
 }
@@ -3064,7 +3044,7 @@ function _lakehouseExportPayload() {
     target_month: S.targetMonth,
     target_year: S.targetYear,
     upload_user_code: _lakehouseUserCode(),
-    allocations: _lakehouseAllocationsFullMatrix(),
+    allocations: _lakehouseAllocationsFromStep3(),
   };
 }
 
