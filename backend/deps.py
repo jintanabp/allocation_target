@@ -5,7 +5,11 @@ from typing import Annotated
 from fastapi import Header, HTTPException
 
 from . import auth_entra
-from .services.access_control import build_user_access_context, unrestricted_user_context
+from .services.access_control import (
+    build_user_access_context,
+    unrestricted_user_context,
+    user_can_import_targetsun,
+)
 
 logger = logging.getLogger("target_allocation")
 
@@ -40,6 +44,19 @@ def require_authenticated_user(
     except ValueError as e:
         logger.info("Entra auth: invalid token: %s", str(e))
         raise HTTPException(status_code=401, detail=str(e)) from None
+
+
+def ensure_targetsun_import_allowed(user: dict) -> None:
+    """ส่งเข้า Target Sun — admin หรืออีเมลใน config/acc_local_test.json เท่านั้น"""
+    if user_can_import_targetsun(user):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            "บัญชีนี้ยังไม่มีสิทธิ์ส่งเข้า Target Sun "
+            "(เฉพาะผู้ดูแลระบบและรายชื่อใน config/acc_local_test.json)"
+        ),
+    )
 
 
 def ensure_supervisor_allowed(user: dict, sup_id: str) -> None:

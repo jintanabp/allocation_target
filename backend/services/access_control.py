@@ -66,6 +66,62 @@ def parse_allocation_admin_emails() -> set[str]:
     return out
 
 
+def _repo_root() -> str:
+    return os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+def _targetsun_allowlist_json_path() -> str:
+    """ไฟล์รายชื่ออีเมลที่ส่ง Target Sun ได้ (นอกเหนือ admin) — ค่าเริ่มต้น config/acc_local_test.json"""
+    raw = (os.environ.get("ACC_USER_CONTROL_DEV_JSON") or "").strip()
+    if raw:
+        p = os.path.normpath(os.path.abspath(raw))
+        if os.path.isfile(p):
+            return p
+    return os.path.join(_repo_root(), "config", "acc_local_test.json")
+
+
+def load_targetsun_allowlist_emails() -> set[str]:
+    """
+    อีเมลจาก config/acc_local_test.json (หรือ path ใน ACC_USER_CONTROL_DEV_JSON ถ้ามีไฟล์)
+    ใช้คู่กับ ALLOCATION_ADMIN_EMAILS สำหรับ POST /lakehouse/import-targetsun
+    """
+    path = _targetsun_allowlist_json_path()
+    if not os.path.isfile(path):
+        logger.info("TargetSun allowlist: ไม่พบไฟล์ %s — เฉพาะ ALLOCATION_ADMIN_EMAILS ส่งได้", path)
+        return set()
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        logger.warning("TargetSun allowlist: อ่าน %s ไม่ได้: %s", path, e)
+        return set()
+    if not isinstance(data, list):
+        logger.warning("TargetSun allowlist: คาด array ของ {email, userpl} ใน %s", path)
+        return set()
+    out: set[str] = set()
+    for row in data:
+        if not isinstance(row, dict):
+            continue
+        em = normalized_email(row.get("email") or row.get("EMAIL"))
+        if "@" in em:
+            out.add(em)
+    return out
+
+
+def user_can_import_targetsun(user: dict[str, Any]) -> bool:
+    """ส่งเข้า Target Sun ได้: ปิด auth / admin / อีเมลใน acc_local_test.json"""
+    if user.get("auth_disabled"):
+        return True
+    if user.get("acc_admin_full_access"):
+        return True
+    email = normalized_email(user.get("email"))
+    if not email:
+        return False
+    if email in parse_allocation_admin_emails():
+        return True
+    return email in load_targetsun_allowlist_emails()
+
+
 def _rows_for_email(acc_rows: list[dict], email: str) -> list[dict]:
     ne = normalized_email(email)
     return [r for r in acc_rows if normalized_email(r.get("email")) == ne]
@@ -299,6 +355,7 @@ def unrestricted_user_context() -> dict[str, Any]:
         "auth_disabled": True,
         "email": None,
         "allowed_supervisor_codes": None,
+        "can_import_targetsun": True,
     }
 
 
@@ -321,6 +378,7 @@ def build_user_access_context(email: str) -> dict[str, Any]:
             "allowed_supervisor_codes": None,
             "userpls_supervisor_pick": set(),
             "userpls_manager_pick": set(),
+            "can_import_targetsun": True,
         }
 
     acc_rows_base = load_acc_rows()
@@ -348,13 +406,15 @@ def build_user_access_context(email: str) -> dict[str, Any]:
             "ตรวจสอบ USERPL ใน ACC_USER_CONTROL ให้ตรงกับรหัสในระบบ"
         )
 
-    return {
+    ctx = {
         "auth_disabled": False,
         "email": ne,
         "allowed_supervisor_codes": allowed,
         "userpls_supervisor_pick": sup_pick,
         "userpls_manager_pick": mgr_pick,
     }
+    ctx["can_import_targetsun"] = user_can_import_targetsun(ctx)
+    return ctx
 
 
 def filter_managers_payload_for_user(full: dict, user: dict[str, Any]) -> dict:

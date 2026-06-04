@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import RedirectResponse
 
 from ..deps import require_authenticated_user
-from ..services.access_control import filter_managers_payload_for_user
+from ..services.access_control import filter_managers_payload_for_user, user_can_import_targetsun
 from ..services.managers import load_full_managers_payload
 
 logger = logging.getLogger("target_allocation")
@@ -24,5 +24,8 @@ def get_managers(user: dict = Depends(require_authenticated_user)):
     os.makedirs("data", exist_ok=True)
     full = load_full_managers_payload()
     if user.get("auth_disabled"):
-        return full
-    return filter_managers_payload_for_user(full, user)
+        out = dict(full)
+    else:
+        out = dict(filter_managers_payload_for_user(full, user))
+    out["can_import_targetsun"] = user_can_import_targetsun(user)
+    return out

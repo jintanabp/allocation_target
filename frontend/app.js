@@ -297,6 +297,7 @@ async function initEntraAuth() {
   if (block) block.style.display = "flex";
 
   if (!AUTH_CONFIG.authRequired) {
+    S.canImportTargetSun = true;
     if (hintEl) {
       if (AUTH_CONFIG._fetchError) {
         hintEl.textContent =
@@ -310,6 +311,7 @@ async function initEntraAuth() {
     if (formBlock) formBlock.classList.remove("login-form-disabled");
     return;
   }
+  S.canImportTargetSun = false;
 
   const Msal = typeof msal !== "undefined" ? msal : window.msal;
   if (!Msal?.PublicClientApplication) {
@@ -457,6 +459,8 @@ let S = {
   negGrowthReason: "",
   /** brand → strategy map สำหรับโหมดเลือกหลายวิธี */
   brandStrategyMap: {},
+  /** ส่งเข้า Target Sun ได้หรือไม่ (จาก GET /managers → can_import_targetsun) */
+  canImportTargetSun: true,
 };
 
 /** DOM / format helpers — ต้องอยู่ก่อนโค้ดที่เรียกใช้ (อย่าวางไว้ท้ายไฟล์เพราะเสี่ยงอ้างก่อนประกาศ) */
@@ -1178,6 +1182,10 @@ async function loadManagers() {
     }
     if (res.ok) {
       const data = await res.json();
+      if (typeof data.can_import_targetsun === "boolean") {
+        S.canImportTargetSun = data.can_import_targetsun;
+      }
+      syncLakehouseButton();
       const rows = Array.isArray(data.rows) ? data.rows : [];
       let list = [];
       const filteredByAcc =
@@ -2933,9 +2941,18 @@ function syncLakehouseButton() {
   const btn = document.getElementById("lakehouseOpenBtn");
   if (!btn) return;
   const has = Array.isArray(S.allocations) && S.allocations.length > 0;
-  btn.disabled = !has;
-  btn.classList.toggle("btn-dl--disabled", !has);
-  btn.setAttribute("aria-disabled", has ? "false" : "true");
+  const allowed = S.canImportTargetSun !== false;
+  const on = has && allowed;
+  btn.disabled = !on;
+  btn.classList.toggle("btn-dl--disabled", !on);
+  btn.setAttribute("aria-disabled", on ? "false" : "true");
+  if (!allowed) {
+    btn.title = "เฉพาะผู้ที่ได้รับอนุญาตเท่านั้น (ดู config/acc_local_test.json หรือผู้ดูแลระบบ)";
+  } else if (!has) {
+    btn.title = "ส่งผลการกระจายหีบเข้า Target Sun — ต้องมีผลขั้นที่ 3 ก่อน";
+  } else {
+    btn.title = "ส่งผลการกระจายหีบเข้า Target Sun";
+  }
 }
 
 function _lakehouseUserCode() {
@@ -2944,6 +2961,10 @@ function _lakehouseUserCode() {
 }
 
 function showLakehouseUploadModal() {
+  if (S.canImportTargetSun === false) {
+    toast("บัญชีนี้ยังไม่มีสิทธิ์ส่งเข้า Target Sun — ติดต่อผู้ดูแลระบบ", "red");
+    return;
+  }
   if (!S.allocations || S.allocations.length === 0) {
     toast('ยังไม่มีผลลัพธ์ — กรุณากดปุ่ม "เริ่มคำนวณ" ก่อน', "red");
     return;
@@ -3098,6 +3119,11 @@ async function doLakehouseUpload() {
     );
     const j = await res.json().catch(() => ({}));
     if (!res.ok) {
+      if (res.status === 403) {
+        S.canImportTargetSun = false;
+        syncLakehouseButton();
+        closeLakehouseUploadModal();
+      }
       const detail = j.detail;
       if (detail && typeof detail === "object") {
         const n = Number(detail.rows_not_in_targetsun_count) || 0;

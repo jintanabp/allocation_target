@@ -1,7 +1,11 @@
 from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 
-from ..deps import ensure_supervisor_allowed, require_authenticated_user
+from ..deps import (
+    ensure_supervisor_allowed,
+    ensure_targetsun_import_allowed,
+    require_authenticated_user,
+)
 from ..schemas import LakehouseUploadRequest
 from ..services.lakehouse import export_allocations_excel, upload_allocations_to_lakehouse
 from ..services.targetsun_import import import_allocations_to_targetsun
@@ -48,4 +52,5 @@ def import_targetsun_from_allocations(
     (Oracle UAT/Prod ตามที่ service ของ SPC config ไว้ — ค่าเริ่มต้นชี้ UAT)
     """
     ensure_supervisor_allowed(user, req.sup_id)
+    ensure_targetsun_import_allowed(user)
     return import_allocations_to_targetsun(req)
