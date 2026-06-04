@@ -14,7 +14,10 @@ from ..core.paths import (
     tga_grain_cache_path,
 )
 from ..core.targets import load_target_csv
-from ..core.tga_period import enforce_tga_selection_matches_effective_window
+from ..core.tga_period import (
+    enforce_tga_has_targets_for_period,
+    enforce_tga_selection_matches_effective_window,
+)
 from ..fabric_dax_connector import FabricDAXConnector
 
 logger = logging.getLogger("target_allocation")
@@ -177,6 +180,8 @@ def load_employees_payload(
     )
     df_sku_csv, _df_sun_loaded = load_target_csv()
     emp_with_tga_set: set[str] | None = None
+    df_tga_granular: pd.DataFrame | None = None
+    df_tga: pd.DataFrame | None = None
 
     if use_legacy and df_sku_csv is not None and not regen_target:
         logger.info("ใช้ target_boxes.csv / target_sun.csv (USE_LEGACY_TARGET_CSV)")
@@ -553,6 +558,23 @@ def load_employees_payload(
             }
         )
 
+    tga_period_status = "ok"
+    if not use_legacy and fabric is not None:
+        total_sup_boxes = 0
+        if "supervisor_target_boxes" in df_sku.columns:
+            total_sup_boxes = int(
+                pd.to_numeric(df_sku["supervisor_target_boxes"], errors="coerce")
+                .fillna(0)
+                .sum()
+            )
+        enforce_tga_has_targets_for_period(
+            fabric,
+            target_month,
+            target_year,
+            df_tga,
+            total_sup_boxes,
+        )
+
     if sku_warnings:
         logger.info("reconciliation warnings: %d รายการ", len(sku_warnings))
 
@@ -576,6 +598,7 @@ def load_employees_payload(
         "employees": _clean(df_emp),
         "skus": _clean(df_sku),
         "sku_warnings": sku_warnings,
+        "tga_period_status": tga_period_status,
         "supervisor_name": sup_name,
     }
 

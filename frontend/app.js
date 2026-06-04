@@ -1094,6 +1094,43 @@ function getNextMonthPeriod() {
   return { month: m, year: y };
 }
 
+/** งวดที่ต้องทำ = เดือนถัดจากวันนี้ (สอดคล้อง backend is_expected_work_period) */
+function isExpectedWorkPeriod(month, year) {
+  const exp = getNextMonthPeriod();
+  return Number(month) === exp.month && Number(year) === exp.year;
+}
+
+function _hideLoginError() {
+  const el = document.getElementById("loginError");
+  if (!el) return;
+  el.style.display = "none";
+  el.innerHTML = "";
+}
+
+/** ไม่มีเป้าในงวด — modal เท่านั้น (ไม่แสดงกล่องแดงใต้ปุ่ม login) */
+function _showTgaPeriodEmptyModal(targetMonth, targetYear, detail) {
+  _hideLoginError();
+  const periodStr = MONTH_FULL_TH[targetMonth] + " " + (targetYear + 543);
+  const work =
+    (detail?.is_expected_work_period ?? isExpectedWorkPeriod(targetMonth, targetYear))
+    || detail?.tga_period_status === "not_updated";
+  const title = detail?.title || (work ? "ระบบยังไม่อัปเดตเป้า" : "ไม่มีข้อมูลเป้างวดนี้");
+  let message = detail?.message;
+  if (!message) {
+    message = work
+      ? `ระบบยังไม่อัปเดตเป้าสำหรับงวด ${periodStr} — กรุณารอ HQ อัปเดตเป้าเข้าระบบ\nหรือเลือกงวดก่อนหน้าที่มีข้อมูลแล้ว`
+      : `ไม่พบเป้าหีบของงวด ${periodStr} ในระบบเป้า Target Sun`;
+  }
+  const bodyHtml = `<div style="line-height:1.75;color:var(--text-2);">${
+    String(message).split("\n").map(line => escH(line)).join("<br/>")
+  }</div>`;
+  _showInfoModal({
+    title: `⏳ ${title}`,
+    bodyHtml,
+    secondaryLabel: "รับทราบ",
+  });
+}
+
 /** งวดเริ่มต้นบนหน้า login — เดือนถัดจากวันนี้ (ไม่จำค่าใน localStorage) */
 function ensureLoginPeriodDefault() {
   try {
@@ -1437,10 +1474,11 @@ function _doLogout() {
     yellowLocked: {}, skuWarnings: [],
     buiDeductions: {}, buiColumnOpen: false, negGrowthReason: "", brandStrategyMap: {},
   };
-  // ลบ banners ทั้งหมดที่อาจค้างจาก session ก่อน
-  ["skuWarningBanner", "changeBanner", "logoutModal", "draftModal"].forEach(id => {
+  dismissAllToasts();
+  ["logoutModal", "draftModal"].forEach(id => {
     document.getElementById(id)?.remove();
   });
+  _clearDashboardNotices();
   document.getElementById("dashboardView").style.display = "none";
   document.getElementById("loginView").style.display = "block";
   document.body.classList.add("is-login");
@@ -1520,6 +1558,12 @@ async function loadData(supId, targetMonth, targetYear) {
       let j = null;
       try { j = await res.json(); detail = j.detail || detail; } catch (_) { j = null; }
 
+      // ไม่มีเป้าในงวดที่เลือก (กรอง EFFECTIVEDATE แล้วว่าง)
+      if (res.status === 409 && detail && typeof detail === "object" && detail.code === "TGA_PERIOD_EMPTY") {
+        _showTgaPeriodEmptyModal(targetMonth, targetYear, detail);
+        return false;
+      }
+
       // Friendly handling: งวดที่เลือกไม่ตรงกับ snapshot ของ TGA (EFFECTIVEDATE)
       if (res.status === 409 && detail && typeof detail === "object" && detail.code === "TGA_EFFECTIVE_WINDOW") {
         const sug = detail.suggested || {};
@@ -1583,13 +1627,17 @@ async function loadData(supId, targetMonth, targetYear) {
       (a, s) => a + (Number(s.price_per_box) || 0) * (Number(s.supervisor_target_boxes) || 0), 0
     );
     S.skuWarnings = data.sku_warnings || [];
+    S.tgaPeriodStatus = data.tga_period_status || "ok";
     if (S.totalTarget === 0) {
-      S.skuWarnings = [{
-        type: "zero_total",
-        sku: "",
-        brand: "",
-        message: "เป้ารวมเท่ากับ 0 บาท — ระบบยังไม่พบเป้าหีบของงวดนี้ในระบบเป้า Target Sun กรุณาแจ้งทีม IT เพื่อให้อัปเดตเป้าก่อน",
-      }, ...S.skuWarnings];
+      const periodWarn = (data.sku_warnings || []).find(
+        w => w.type === "tga_period_not_updated" || w.type === "tga_period_no_data"
+      );
+      _showTgaPeriodEmptyModal(targetMonth, targetYear, {
+        is_expected_work_period: isExpectedWorkPeriod(targetMonth, targetYear),
+        message: periodWarn?.message,
+        tga_period_status: data.tga_period_status,
+      });
+      return false;
     }
     S.yellow = {};
     // ค่าเริ่มต้น Step 2: เท่ากับ Target Sun (ให้ผู้ใช้ปรับเอง)
@@ -1642,6 +1690,8 @@ function _showSkuWarnings() {
   const excludedNoTga = warnings.filter(w => w.type === "employees_excluded_no_tga");
   const noTgaSku    = warnings.filter(w => w.type === "no_tga_sku");
   const zeroTotal   = warnings.filter(w => w.type === "zero_total");
+  const tgaNotUpdated = warnings.filter(w => w.type === "tga_period_not_updated");
+  const tgaNoData = warnings.filter(w => w.type === "tga_period_no_data");
 
   const banner = document.createElement("div");
   banner.id = "skuWarningBanner";
@@ -1653,6 +1703,18 @@ function _showSkuWarnings() {
     <div class="change-banner-body">
       <div class="change-banner-title">พบข้อมูลที่ควรตรวจสอบก่อนเริ่มกระจายเป้า</div>
       <ul class="change-banner-list">`;
+
+  if (tgaNotUpdated.length > 0) {
+    html += `<li><strong style="color:var(--amber)">⏳ ยังไม่มีการอัปเดตเป้างวดนี้</strong><br>`;
+    html += tgaNotUpdated.map(w => escH(_friendlyMsg(w.message))).join("<br>");
+    html += `</li>`;
+  }
+
+  if (tgaNoData.length > 0) {
+    html += `<li><strong style="color:var(--amber)">📭 ไม่มีข้อมูลเป้างวดนี้</strong><br>`;
+    html += tgaNoData.map(w => escH(_friendlyMsg(w.message))).join("<br>");
+    html += `</li>`;
+  }
 
   if (zeroTotal.length > 0) {
     html += `<li><strong style="color:var(--amber)">⚠️ เป้ารวม 0 บาท</strong><br>`;
@@ -3432,8 +3494,74 @@ function dl(blob, name) {
   a.click(); URL.revokeObjectURL(a.href);
 }
 
+function dismissAllToasts() {
+  document.querySelectorAll("[data-app-toast]").forEach(el => el.remove());
+}
+
+/** ลบแบนเนอร์และข้อความแจ้งเตือนบน Dashboard */
+function _clearDashboardNotices() {
+  ["skuWarningBanner", "changeBanner"].forEach(id => {
+    document.getElementById(id)?.remove();
+  });
+  if (typeof _clearFabricStep3Notices === "function") {
+    _clearFabricStep3Notices();
+  }
+  dismissAllToasts();
+}
+
+function _resetRunCardToDefault() {
+  const emoji = qs("#runEmoji");
+  const title = qs("#runTitle");
+  const sub = qs("#runSub");
+  const btn = qs("#runBtn");
+  if (emoji) emoji.textContent = "🤖";
+  if (title) title.textContent = "พร้อมกระจายหีบ";
+  if (sub) sub.textContent = "ตรวจสอบยอดรวมเป้าเงินก่อนกดเริ่มคำนวณ";
+  if (btn) {
+    btn.textContent = "เริ่มคำนวณ";
+    btn.classList.remove("pulse-warn");
+  }
+}
+
+/** กด「เริ่มใหม่」ใน modal แบบร่าง — ลบแบบร่าง + รีเซ็ตหน้าจอ + ลบ noti */
+function _discardDraftStartFresh() {
+  _removeDraftKeysBothLocals();
+  S.allocations = [];
+  S.yellowLocked = {};
+  S._hasUnsaved = false;
+  if (S.employees && S.employees.length) {
+    S.employees.forEach(e => {
+      const base = Number(e.target_sun);
+      S.yellow[e.emp_id] = Number.isFinite(base) ? Math.max(0, base) : 0;
+    });
+  }
+  _undoStack = [];
+  _setUndoEnabled();
+  _clearDashboardNotices();
+  const rb = document.getElementById("resultBlock");
+  if (rb) rb.style.display = "none";
+  const pl = document.getElementById("progList");
+  if (pl) pl.style.display = "none";
+  _resetRunCardToDefault();
+  try {
+    _saveAllocationSnapshot();
+  } catch (_) {
+    /* ignore */
+  }
+  checkSnapshotChanges();
+  renderYellowTable();
+  updateValidation();
+  _updateNegGrowthReasonState();
+  _renderBrandStrategyPanel();
+  syncLakehouseButton();
+  if (typeof syncStep3ResultFabricNote === "function") {
+    syncStep3ResultFabricNote();
+  }
+}
+
 function toast(msg, type = "red") {
   const el = document.createElement("div");
+  el.setAttribute("data-app-toast", "1");
   // ใช้ textContent แทน innerHTML กัน XSS จาก error message ของ API
   msg.split("\n").forEach((line, i) => {
     if (i > 0) el.appendChild(document.createElement("br"));
@@ -3599,7 +3727,7 @@ function checkAndLoadDraft() {
     },
     () => {
       // ผู้ใช้กด "เริ่มใหม่"
-      _removeDraftKeysBothLocals();
+      _discardDraftStartFresh();
     }
     );
   } catch (err) {

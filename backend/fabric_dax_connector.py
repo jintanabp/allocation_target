@@ -19,6 +19,7 @@ import logging
 
 # โหลด .env เมื่อ import โมดูลโดยตรง (เช่นเทส) — main.py ก็โหลดก่อน import อยู่แล้ว
 from .load_env import load_project_dotenv
+from .core.tga_period import tga_filter_by_selected_period
 
 load_project_dotenv()
 
@@ -1329,12 +1330,7 @@ ROW("{row_alias}", MAX('{table}'[{col}]))
         c_prod = os.environ.get("TGA_COL_PRODUCT", "PRODUCTCODE").strip()
         c_qty = os.environ.get("TGA_COL_QUANTITY", "QUANTITYCASE").strip()
         c_eff = os.environ.get("TGA_COL_EFFECTIVE", "EFFECTIVEDATE").strip()
-        filter_period = os.environ.get("TGA_FILTER_BY_EFFECTIVE", "0").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-            "y",
-        )
+        filter_period = tga_filter_by_selected_period()
 
         empty_cols = [
             "emp_id",
