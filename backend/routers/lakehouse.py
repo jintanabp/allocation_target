@@ -8,7 +8,11 @@ from ..deps import (
 )
 from ..schemas import LakehouseUploadRequest
 from ..services.lakehouse import export_allocations_excel, upload_allocations_to_lakehouse
-from ..services.targetsun_import import import_allocations_to_targetsun
+from ..services.targetsun_import import (
+    import_allocations_to_targetsun,
+    import_prepared_targetsun,
+    prepare_targetsun_import,
+)
 
 router = APIRouter(tags=["lakehouse"])
 
@@ -42,15 +46,29 @@ def upload_to_lakehouse(
     return upload_allocations_to_lakehouse(req)
 
 
+@router.post("/lakehouse/prepare-targetsun")
+def prepare_targetsun_from_allocations(
+    req: LakehouseUploadRequest,
+    user: dict = Depends(require_authenticated_user),
+):
+    """ขั้นที่ 1: สร้าง Excel TGA เก็บชั่วคราว — คืน prepare_token สำหรับขั้นส่ง"""
+    ensure_supervisor_allowed(user, req.sup_id)
+    ensure_targetsun_import_allowed(user)
+    return prepare_targetsun_import(req)
+
+
 @router.post("/lakehouse/import-targetsun")
 def import_targetsun_from_allocations(
     req: LakehouseUploadRequest,
     user: dict = Depends(require_authenticated_user),
 ):
     """
-    สร้าง Excel รูปแบบ tga_target_salesman_next แล้ว POST ไปบริการ importTargetSalesmanNextFromExcel
-    (Oracle UAT/Prod ตามที่ service ของ SPC config ไว้ — ค่าเริ่มต้นชี้ UAT)
+    ส่งเข้า importTargetSalesmanNextFromExcel
+    - มี prepare_token: POST ไฟล์ที่เตรียมแล้ว (ขั้นที่ 2)
+    - ไม่มี: สร้าง Excel + POST ในคำขอเดียว (เดิม)
     """
     ensure_supervisor_allowed(user, req.sup_id)
     ensure_targetsun_import_allowed(user)
+    if (req.prepare_token or "").strip():
+        return import_prepared_targetsun(req)
     return import_allocations_to_targetsun(req)

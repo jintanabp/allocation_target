@@ -7,9 +7,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
+import uuid
+from pathlib import Path
 
 import requests
 from fastapi import HTTPException
@@ -24,13 +27,159 @@ _DEFAULT_UAT_URL = (
     "https://spcuatws.sahapat.com/spc/targetsun/importTargetSalesmanNextFromExcel"
 )
 
+_PREPARE_DIR = Path("data/ts_prepare")
+_PREPARE_TTL_SEC = 30 * 60
 
-def import_allocations_to_targetsun(req: LakehouseUploadRequest) -> dict:
-    """
-    สร้าง .xlsx เหมือน export แล้ว POST multipart field `file` ไปยัง importTargetSalesmanNextFromExcel
-    คืนค่าเป็น dict สำหรับส่ง JSON ให้ frontend (รวมผลจาก TargetSun เดิม)
-    """
-    url = (os.environ.get("TARGETSUN_IMPORT_EXCEL_URL") or _DEFAULT_UAT_URL).strip()
+
+def _prepare_dir() -> Path:
+    d = _PREPARE_DIR
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _cleanup_stale_prepare_files() -> None:
+    cutoff = time.time() - _PREPARE_TTL_SEC
+    try:
+        for meta_path in _prepare_dir().glob("*.json"):
+            try:
+                if meta_path.stat().st_mtime < cutoff:
+                    token = meta_path.stem
+                    xlsx = _prepare_dir() / f"{token}.xlsx"
+                    meta_path.unlink(missing_ok=True)
+                    xlsx.unlink(missing_ok=True)
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
+def _save_prepare_bundle(
+    token: str,
+    *,
+    content: bytes,
+    fname: str,
+    sup_id: str,
+    nrow: int,
+    zero_rows: int,
+    dropped_dims: int,
+    not_in_ts: list,
+    upload_user_code: str | None,
+) -> None:
+    _prepare_dir()
+    (_prepare_dir() / f"{token}.xlsx").write_bytes(content)
+    meta = {
+        "filename": fname,
+        "sup_id": sup_id.strip().upper(),
+        "rows_sent": nrow,
+        "zero_rows_sent": zero_rows,
+        "rows_dropped_missing_dims": dropped_dims,
+        "rows_not_in_targetsun": not_in_ts,
+        "rows_not_in_targetsun_count": dropped_dims,
+        "upload_user_code": upload_user_code,
+        "created_at": time.time(),
+    }
+    (_prepare_dir() / f"{token}.json").write_text(
+        json.dumps(meta, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _load_prepare_bundle(token: str, sup_id: str) -> tuple[bytes, str, dict]:
+    tok = (token or "").strip()
+    if not tok or "/" in tok or "\\" in tok or ".." in tok:
+        raise HTTPException(400, detail="prepare_token ไม่ถูกต้อง")
+    meta_path = _prepare_dir() / f"{tok}.json"
+    xlsx_path = _prepare_dir() / f"{tok}.xlsx"
+    if not meta_path.is_file() or not xlsx_path.is_file():
+        raise HTTPException(
+            404,
+            detail="ไม่พบไฟล์ที่เตรียมไว้ — อาจหมดอายุ กรุณากดส่งใหม่อีกครั้ง",
+        )
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        raise HTTPException(500, detail="อ่านข้อมูลเตรียมส่งไม่สำเร็จ") from e
+    created = float(meta.get("created_at") or 0)
+    if created and (time.time() - created) > _PREPARE_TTL_SEC:
+        meta_path.unlink(missing_ok=True)
+        xlsx_path.unlink(missing_ok=True)
+        raise HTTPException(
+            404,
+            detail="ไฟล์เตรียมส่งหมดอายุแล้ว — กรุณากดส่งใหม่อีกครั้ง",
+        )
+    expected_sup = str(meta.get("sup_id") or "").strip().upper()
+    got_sup = str(sup_id or "").strip().upper()
+    if expected_sup and got_sup and expected_sup != got_sup:
+        raise HTTPException(403, detail="prepare_token ไม่ตรงกับ Supervisor ที่เลือก")
+    try:
+        content = xlsx_path.read_bytes()
+    except OSError as e:
+        raise HTTPException(500, detail="อ่านไฟล์ Excel ที่เตรียมไว้ไม่สำเร็จ") from e
+    fname = str(meta.get("filename") or "targetsun_upload.xlsx")
+    return content, fname, meta
+
+
+def _delete_prepare_bundle(token: str) -> None:
+    tok = (token or "").strip()
+    if not tok:
+        return
+    (_prepare_dir() / f"{tok}.json").unlink(missing_ok=True)
+    (_prepare_dir() / f"{tok}.xlsx").unlink(missing_ok=True)
+
+
+def prepare_targetsun_import(req: LakehouseUploadRequest) -> dict:
+    """ขั้นที่ 1: สร้าง Excel TGA และเก็บชั่วคราวบน server"""
+    _cleanup_stale_prepare_files()
+    if not (req.allocations or []):
+        raise HTTPException(400, detail="ไม่มีข้อมูลผลกระจายหีบให้ส่ง")
+
+    t0 = time.perf_counter()
+    content, fname, df, dropped_dims, not_in_ts = prepare_lakehouse_xlsx(
+        req, drop_incomplete_rows=True
+    )
+    nrow = int(len(df))
+    zero_rows = int((df["QUANTITYCASE"] == 0).sum()) if "QUANTITYCASE" in df.columns else 0
+    token = uuid.uuid4().hex
+    _save_prepare_bundle(
+        token,
+        content=content,
+        fname=fname,
+        sup_id=req.sup_id,
+        nrow=nrow,
+        zero_rows=zero_rows,
+        dropped_dims=int(dropped_dims),
+        not_in_ts=not_in_ts,
+        upload_user_code=req.upload_user_code,
+    )
+    logger.info(
+        "TargetSun prepare: token=%s rows=%d build=%.2fs",
+        token[:8],
+        nrow,
+        time.perf_counter() - t0,
+    )
+    return {
+        "prepare_token": token,
+        "upload_filename": fname,
+        "rows_sent": nrow,
+        "zero_rows_sent": zero_rows,
+        "rows_dropped_missing_dims": int(dropped_dims),
+        "rows_not_in_targetsun": not_in_ts,
+        "rows_not_in_targetsun_count": int(dropped_dims),
+        "step": "prepare",
+    }
+
+
+def _post_targetsun_multipart(
+    content: bytes,
+    fname: str,
+    *,
+    nrow: int,
+    zero_rows: int,
+    dropped_dims: int,
+    not_in_ts: list,
+    import_url: str | None = None,
+) -> dict:
+    url = (import_url or os.environ.get("TARGETSUN_IMPORT_EXCEL_URL") or _DEFAULT_UAT_URL).strip()
     if not url:
         raise HTTPException(
             500,
@@ -43,22 +192,6 @@ def import_allocations_to_targetsun(req: LakehouseUploadRequest) -> dict:
         timeout = 600
     timeout = max(30, min(timeout, 3600))
 
-    t0 = time.perf_counter()
-    logger.info("TargetSun import: start allocations_in=%d", len(req.allocations or []))
-
-    content, fname, df, dropped_dims, not_in_ts = prepare_lakehouse_xlsx(
-        req, drop_incomplete_rows=True
-    )
-    t_build = time.perf_counter()
-    nrow = int(len(df))
-
-    logger.info(
-        "TargetSun import: POST %s (%d rows, multipart field=file) [build=%.2fs]",
-        url,
-        nrow,
-        t_build - t0,
-    )
-
     files = {
         "file": (
             fname,
@@ -69,7 +202,6 @@ def import_allocations_to_targetsun(req: LakehouseUploadRequest) -> dict:
     headers: dict[str, str] = {}
     auth_raw = (os.environ.get("TARGETSUN_IMPORT_AUTH_HEADER") or "").strip()
     if auth_raw:
-        # ตัวอย่าง: "Bearer xxx" หรือส่งทั้งบรรทัดที่ API ต้องการ
         headers["Authorization"] = auth_raw if " " in auth_raw else f"Bearer {auth_raw}"
 
     verify_ssl = os.environ.get("TARGETSUN_IMPORT_VERIFY_SSL", "1").strip().lower() not in (
@@ -78,6 +210,9 @@ def import_allocations_to_targetsun(req: LakehouseUploadRequest) -> dict:
         "no",
         "off",
     )
+
+    t0 = time.perf_counter()
+    logger.info("TargetSun import: POST %s (%d rows)", url, nrow)
 
     try:
         r = requests.post(
@@ -135,12 +270,9 @@ def import_allocations_to_targetsun(req: LakehouseUploadRequest) -> dict:
             },
         ) from e
 
-    t_post = time.perf_counter()
     logger.info(
-        "TargetSun import timing: build_xlsx=%.2fs post_upstream=%.2fs total=%.2fs rows=%d http=%s",
-        t_build - t0,
-        t_post - t_build,
-        t_post - t0,
+        "TargetSun import timing: post_upstream=%.2fs rows=%d http=%s",
+        time.perf_counter() - t0,
         nrow,
         r.status_code,
     )
@@ -176,13 +308,14 @@ def import_allocations_to_targetsun(req: LakehouseUploadRequest) -> dict:
     out = {
         "upload_filename": fname,
         "rows_sent": nrow,
-        "zero_rows_sent": int((df["QUANTITYCASE"] == 0).sum()) if "QUANTITYCASE" in df.columns else 0,
+        "zero_rows_sent": int(zero_rows),
         "rows_dropped_missing_dims": int(dropped_dims),
         "rows_not_in_targetsun": not_in_ts,
         "rows_not_in_targetsun_count": int(dropped_dims),
         "import_url": url,
         "http_status": int(r.status_code),
         "targetsun": body,
+        "step": "import",
     }
 
     if r.status_code >= 400:
@@ -211,4 +344,81 @@ def import_allocations_to_targetsun(req: LakehouseUploadRequest) -> dict:
             "TargetSun import declined: resultMsg=%s", body.get("resultMsg")
         )
 
+    return out
+
+
+def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
+    """ขั้นที่ 2: POST ไฟล์ที่เตรียมไว้แล้ว"""
+    token = (req.prepare_token or "").strip()
+    if not token:
+        raise HTTPException(400, detail="ไม่มี prepare_token")
+    content, fname, meta = _load_prepare_bundle(token, req.sup_id)
+    nrow = int(meta.get("rows_sent") or 0)
+    zero_rows = int(meta.get("zero_rows_sent") or 0)
+    dropped_dims = int(meta.get("rows_dropped_missing_dims") or 0)
+    not_in_ts = meta.get("rows_not_in_targetsun") or []
+
+    try:
+        out = _post_targetsun_multipart(
+            content,
+            fname,
+            nrow=nrow,
+            zero_rows=zero_rows,
+            dropped_dims=dropped_dims,
+            not_in_ts=not_in_ts if isinstance(not_in_ts, list) else [],
+        )
+    finally:
+        _delete_prepare_bundle(token)
+
+    out["prepare_token"] = token
+    return out
+
+
+def import_allocations_to_targetsun(req: LakehouseUploadRequest) -> dict:
+    """
+    สร้าง .xlsx แล้ว POST ในคำขอเดียว (backward compatible)
+    หรือใช้ prepare_token จาก prepare_targetsun_import
+    """
+    if (req.prepare_token or "").strip():
+        return import_prepared_targetsun(req)
+
+    url = (os.environ.get("TARGETSUN_IMPORT_EXCEL_URL") or _DEFAULT_UAT_URL).strip()
+    if not url:
+        raise HTTPException(
+            500,
+            detail="ยังไม่ได้ตั้งค่า TARGETSUN_IMPORT_EXCEL_URL",
+        )
+
+    t0 = time.perf_counter()
+    logger.info("TargetSun import: start allocations_in=%d", len(req.allocations or []))
+
+    content, fname, df, dropped_dims, not_in_ts = prepare_lakehouse_xlsx(
+        req, drop_incomplete_rows=True
+    )
+    t_build = time.perf_counter()
+    nrow = int(len(df))
+    zero_rows = int((df["QUANTITYCASE"] == 0).sum()) if "QUANTITYCASE" in df.columns else 0
+
+    logger.info(
+        "TargetSun import: build done (%d rows) [build=%.2fs]",
+        nrow,
+        t_build - t0,
+    )
+
+    out = _post_targetsun_multipart(
+        content,
+        fname,
+        nrow=nrow,
+        zero_rows=zero_rows,
+        dropped_dims=int(dropped_dims),
+        not_in_ts=not_in_ts,
+        import_url=url,
+    )
+    logger.info(
+        "TargetSun import timing: build_xlsx=%.2fs post_upstream=%.2fs total=%.2fs rows=%d",
+        t_build - t0,
+        time.perf_counter() - t_build,
+        time.perf_counter() - t0,
+        nrow,
+    )
     return out

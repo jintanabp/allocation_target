@@ -118,7 +118,19 @@ function _ensureGlobalBusyCss() {
   document.head.appendChild(st);
 }
 
-function _setGlobalBusyOverlayVisible(visible, message, hint) {
+function _updateGlobalBusyProgressDom(percent) {
+  const ov = document.getElementById("globalBusyOverlay");
+  if (!ov) return;
+  const wrap = ov.querySelector("#globalBusyProgressWrap");
+  const fill = ov.querySelector("#globalBusyProgressFill");
+  const pctEl = ov.querySelector("#globalBusyProgressPct");
+  const pct = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+  if (wrap) wrap.style.display = percent == null ? "none" : "block";
+  if (fill) fill.style.width = `${pct}%`;
+  if (pctEl) pctEl.textContent = `${pct}%`;
+}
+
+function _setGlobalBusyOverlayVisible(visible, message, hint, percent) {
   const id = "globalBusyOverlay";
   const existing = document.getElementById(id);
   if (!visible) {
@@ -132,6 +144,7 @@ function _setGlobalBusyOverlayVisible(visible, message, hint) {
     const h = existing.querySelector("#globalBusyHint");
     if (t) t.textContent = msg;
     if (h) h.textContent = hintText;
+    _updateGlobalBusyProgressDom(percent);
     return;
   }
   _ensureGlobalBusyCss();
@@ -155,6 +168,15 @@ function _setGlobalBusyOverlayVisible(visible, message, hint) {
         <div id="globalBusyText" class="global-busy-title"></div>
       </div>
       <p id="globalBusyHint" class="global-busy-hint"></p>
+      <div id="globalBusyProgressWrap" class="global-busy-progress-wrap" style="display:none;">
+        <div class="global-busy-progress-meta">
+          <span>ความคืบหน้า</span>
+          <span id="globalBusyProgressPct" class="global-busy-progress-pct">0%</span>
+        </div>
+        <div class="global-busy-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div id="globalBusyProgressFill" class="global-busy-progress-fill"></div>
+        </div>
+      </div>
     </div>
   `;
   document.body.appendChild(ov);
@@ -162,6 +184,38 @@ function _setGlobalBusyOverlayVisible(visible, message, hint) {
   const h = ov.querySelector("#globalBusyHint");
   if (t) t.textContent = msg;
   if (h) h.textContent = hintText;
+  _updateGlobalBusyProgressDom(percent);
+}
+
+/** อัปเดตข้อความ + แถบ % (ใช้ตอนส่ง Target Sun 2 ขั้น) */
+function setGlobalBusyProgress(percent, message, hint) {
+  if (_globalBusyCount === 0) {
+    pushGlobalBusy(message, hint);
+  } else {
+    _setGlobalBusyOverlayVisible(true, message, hint, percent);
+  }
+  _updateGlobalBusyProgressDom(percent);
+}
+
+let _targetSunProgressTimer = null;
+
+function _clearTargetSunProgressTimer() {
+  if (_targetSunProgressTimer != null) {
+    clearInterval(_targetSunProgressTimer);
+    _targetSunProgressTimer = null;
+  }
+}
+
+/** ค่อยๆ เพิ่ม % ระหว่างรอขั้นที่ 2 (สูงสุด maxPct) */
+function _startTargetSunProgressCreep(fromPct, maxPct, message, hint) {
+  _clearTargetSunProgressTimer();
+  let p = fromPct;
+  _targetSunProgressTimer = setInterval(() => {
+    if (p < maxPct) {
+      p = Math.min(maxPct, p + 1);
+      setGlobalBusyProgress(p, message, hint);
+    }
+  }, 450);
 }
 
 function _setControlsDisabled(disabled) {
@@ -199,10 +253,11 @@ function _setControlsDisabled(disabled) {
 function pushGlobalBusy(message, hint) {
   _globalBusyCount += 1;
   if (_globalBusyCount === 1) _setControlsDisabled(true);
-  _setGlobalBusyOverlayVisible(true, message, hint);
+  _setGlobalBusyOverlayVisible(true, message, hint, null);
 }
 
 function popGlobalBusy() {
+  _clearTargetSunProgressTimer();
   _globalBusyCount = Math.max(0, _globalBusyCount - 1);
   if (_globalBusyCount === 0) {
     _setGlobalBusyOverlayVisible(false);
@@ -490,6 +545,8 @@ const UX = {
   busyLogin: "กำลังเข้าสู่ระบบและโหลดข้อมูล…",
   busySendTarget: "กำลังส่งเข้า Target Sun…",
   busySendTargetHint: "อาจใช้เวลาหลายนาที — อย่าปิดหน้าจอหรือกดส่งซ้ำ",
+  busySendStep1: "ขั้นที่ 1/2 — กำลังเตรียมไฟล์ Excel…",
+  busySendStep2: "ขั้นที่ 2/2 — กำลังส่งเข้า Target Sun…",
   lakehouseSendBtn: "ส่งเข้า Target Sun",
   busyExcel: "กำลังสร้างไฟล์ Excel…",
   progSteps: [
@@ -3102,79 +3159,151 @@ function _formatApiErrorDetail(j) {
   return "";
 }
 
+function _handleTargetSunImportResponse(res, j) {
+  if (!res.ok) {
+    if (res.status === 403) {
+      S.canImportTargetSun = false;
+      syncLakehouseButton();
+      closeLakehouseUploadModal();
+    }
+    const detail = j.detail;
+    if (detail && typeof detail === "object") {
+      const n = Number(detail.rows_not_in_targetsun_count) || 0;
+      if (n > 0) _showNotInTargetSunModal(n, detail.rows_not_in_targetsun);
+    }
+    const msg = _userFacingError(_formatApiErrorDetail(j), "ส่งข้อมูลไม่สำเร็จ");
+    throw new Error(msg);
+  }
+  const ts = j.targetsun || {};
+  if (ts.success === false) {
+    const why = ts.resultMsg || "import ไม่สำเร็จ";
+    const errList = Array.isArray(ts.result?.errors) ? ts.result.errors : [];
+    const errPreview = errList.slice(0, 3).map(e => `แถว ${e.rowNum}: ${e.message}`).join(" · ");
+    toast("❌ ส่งเข้า Target Sun ไม่สำเร็จ: " + why + (errPreview ? " — " + errPreview : ""), "red");
+    return false;
+  }
+  const r = ts.result || {};
+  const inserted = Number(r.inserted) || 0;
+  const updated = Number(r.updated) || 0;
+  const skipped = Number(r.skipped) || 0;
+  const rowsSent = Number(j.rows_sent) || 0;
+  const zeroSent = Number(j.zero_rows_sent) || 0;
+  const droppedDims = Number(j.rows_not_in_targetsun_count ?? j.rows_dropped_missing_dims) || 0;
+  const notInTs = j.rows_not_in_targetsun;
+  closeLakehouseUploadModal();
+  toast(
+    `✅ ส่งเข้า Target Sun แล้ว — เพิ่มใหม่ ${inserted.toLocaleString("th-TH")} · แก้ไข ${updated.toLocaleString("th-TH")} · ข้าม ${skipped.toLocaleString("th-TH")} (ส่ง ${rowsSent.toLocaleString("th-TH")} แถว)`,
+    "green"
+  );
+  _showNotInTargetSunModal(droppedDims, notInTs);
+  if (Array.isArray(r.errors) && r.errors.length) {
+    const ex = r.errors.slice(0, 8).map(e => `แถว ${e.rowNum}: ${e.message}`).join("\n");
+    const missingDims = r.errors.some(e =>
+      /Missing required fields.*SALESTYPE/i.test(String(e.message || ""))
+    );
+    _showInfoModal({
+      title: missingDims
+        ? "บางแถว Target Sun ไม่รับ (ไม่มีเขต/พื้นที่ขาย)"
+        : "แจ้งเตือนจากระบบ (บางรายการอาจถูกข้าม)",
+      bodyHtml: missingDims
+        ? `<p style="margin:0 0 10px;text-align:left;line-height:1.6;">แถวเหล่านี้ในไฟล์ไม่มี SALESTYPE / DIVISION / AREA — Target Sun จึงข้าม (มักเป็นคู่ที่ไม่เคยมีเป้าใน TGA)</p>
+             <p style="margin:0 0 10px;text-align:left;line-height:1.6;color:var(--text-2);">แนะนำ: โหลดข้อมูล<strong>ขั้นที่ 1 ใหม่</strong> → กระจายหีบ → ส่งอีกครั้ง</p>
+             <pre style="white-space:pre-wrap;font-size:12px;line-height:1.45;text-align:left;margin:0;">${escH(ex)}${r.errors.length > 8 ? "\n…" : ""}</pre>`
+        : `<pre style="white-space:pre-wrap;font-size:12px;line-height:1.45;text-align:left;">${escH(ex)}${r.errors.length > 8 ? "\n…" : ""}</pre>`,
+    });
+  } else if (zeroSent > 0 && skipped > 0) {
+    _showInfoModal({
+      title: "หีบ 0 อาจยังไม่ถูกบันทึก",
+      bodyHtml: `<p style="margin:0 0 10px;text-align:left;line-height:1.5;">ส่งรายการหีบ <strong>0</strong> ไป ${zeroSent.toLocaleString("th-TH")} รายการ แต่ Target Sun <strong>ข้าม ${skipped.toLocaleString("th-TH")}</strong> รายการ</p>
+        <p style="margin:0;text-align:left;line-height:1.5;color:var(--text-2);">ถ้าเป้าใน Target Sun ยังไม่ตรง — ลองดาวน์โหลด Excel ตรวจสอบ หรือแจ้ง IT</p>`,
+    });
+  }
+  return true;
+}
+
+/** server เก่าที่ยังไม่มี POST /lakehouse/prepare-targetsun จะได้ 405 จาก StaticFiles */
+function _targetSunPrepareUnsupported(status) {
+  return status === 405 || status === 404;
+}
+
+async function _fetchTargetSunImport(body) {
+  const res = await fetchWithTimeout(
+    `${API_BASE_URL}/lakehouse/import-targetsun`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    600000
+  );
+  const j = await res.json().catch(() => ({}));
+  return { res, j };
+}
+
+/** ส่งครั้งเดียว (backend รุ่นเก่า — สร้าง Excel + POST ในคำขอเดียว) */
+async function _importTargetSunLegacy(basePayload) {
+  setGlobalBusyProgress(12, UX.busySendTarget, "server ยังไม่มีขั้นเตรียมแยก — ส่งแบบเดิม…");
+  _startTargetSunProgressCreep(18, 88, UX.busySendTarget, UX.busySendTargetHint);
+  const { res, j } = await _fetchTargetSunImport(basePayload);
+  _clearTargetSunProgressTimer();
+  setGlobalBusyProgress(95, "กำลังสรุปผล…", UX.busySendTargetHint);
+  if (_handleTargetSunImportResponse(res, j)) {
+    setGlobalBusyProgress(100, "ส่งเข้า Target Sun เสร็จแล้ว", "");
+  }
+}
+
 async function doLakehouseUpload() {
   const btn = document.getElementById("lakehouseUploadBtn");
   if (btn) { btn.textContent = "กำลังส่ง…"; btn.disabled = true; }
   const uploadBtnLabel = UX.lakehouseSendBtn;
-  pushGlobalBusy(UX.busySendTarget, UX.busySendTargetHint);
+  const basePayload = _lakehouseExportPayload();
+  pushGlobalBusy(UX.busySendStep1, UX.busySendTargetHint);
+  setGlobalBusyProgress(5, UX.busySendStep1, UX.busySendTargetHint);
   try {
-    const res = await fetchWithTimeout(
-      `${API_BASE_URL}/lakehouse/import-targetsun`,
+    setGlobalBusyProgress(8, UX.busySendStep1, UX.busySendTargetHint);
+    const prepRes = await fetchWithTimeout(
+      `${API_BASE_URL}/lakehouse/prepare-targetsun`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(_lakehouseExportPayload()),
+        body: JSON.stringify(basePayload),
       },
       600000
     );
-    const j = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      if (res.status === 403) {
-        S.canImportTargetSun = false;
-        syncLakehouseButton();
-        closeLakehouseUploadModal();
-      }
-      const detail = j.detail;
+    const prep = await prepRes.json().catch(() => ({}));
+
+    if (_targetSunPrepareUnsupported(prepRes.status)) {
+      await _importTargetSunLegacy(basePayload);
+      return;
+    }
+
+    if (!prepRes.ok) {
+      const detail = prep.detail;
       if (detail && typeof detail === "object") {
         const n = Number(detail.rows_not_in_targetsun_count) || 0;
         if (n > 0) _showNotInTargetSunModal(n, detail.rows_not_in_targetsun);
       }
-      const msg = _userFacingError(_formatApiErrorDetail(j), "ส่งข้อมูลไม่สำเร็จ");
-      throw new Error(msg);
+      throw new Error(_userFacingError(_formatApiErrorDetail(prep), "เตรียมไฟล์ไม่สำเร็จ"));
     }
-    const ts = j.targetsun || {};
-    if (ts.success === false) {
-      const why = ts.resultMsg || "import ไม่สำเร็จ";
-      const errList = Array.isArray(ts.result?.errors) ? ts.result.errors : [];
-      const errPreview = errList.slice(0, 3).map(e => `แถว ${e.rowNum}: ${e.message}`).join(" · ");
-      toast("❌ ส่งเข้า Target Sun ไม่สำเร็จ: " + why + (errPreview ? " — " + errPreview : ""), "red");
-      return;
-    }
-    const r = ts.result || {};
-    const inserted = Number(r.inserted) || 0;
-    const updated = Number(r.updated) || 0;
-    const skipped = Number(r.skipped) || 0;
-    const rowsSent = Number(j.rows_sent) || 0;
-    const zeroSent = Number(j.zero_rows_sent) || 0;
-    const droppedDims = Number(j.rows_not_in_targetsun_count ?? j.rows_dropped_missing_dims) || 0;
-    const notInTs = j.rows_not_in_targetsun;
-    closeLakehouseUploadModal();
-    toast(
-      `✅ ส่งเข้า Target Sun แล้ว — เพิ่มใหม่ ${inserted.toLocaleString("th-TH")} · แก้ไข ${updated.toLocaleString("th-TH")} · ข้าม ${skipped.toLocaleString("th-TH")} (ส่ง ${rowsSent.toLocaleString("th-TH")} แถว)`,
-      "green"
-    );
-    _showNotInTargetSunModal(droppedDims, notInTs);
-    if (Array.isArray(r.errors) && r.errors.length) {
-      const ex = r.errors.slice(0, 8).map(e => `แถว ${e.rowNum}: ${e.message}`).join("\n");
-      const missingDims = r.errors.some(e =>
-        /Missing required fields.*SALESTYPE/i.test(String(e.message || ""))
-      );
-      _showInfoModal({
-        title: missingDims
-          ? "บางแถว Target Sun ไม่รับ (ไม่มีเขต/พื้นที่ขาย)"
-          : "แจ้งเตือนจากระบบ (บางรายการอาจถูกข้าม)",
-        bodyHtml: missingDims
-          ? `<p style="margin:0 0 10px;text-align:left;line-height:1.6;">แถวเหล่านี้ในไฟล์ไม่มี SALESTYPE / DIVISION / AREA — Target Sun จึงข้าม (มักเป็นคู่ที่ไม่เคยมีเป้าใน TGA)</p>
-             <p style="margin:0 0 10px;text-align:left;line-height:1.6;color:var(--text-2);">แนะนำ: โหลดข้อมูล<strong>ขั้นที่ 1 ใหม่</strong> → กระจายหีบ → ส่งอีกครั้ง</p>
-             <pre style="white-space:pre-wrap;font-size:12px;line-height:1.45;text-align:left;margin:0;">${escH(ex)}${r.errors.length > 8 ? "\n…" : ""}</pre>`
-          : `<pre style="white-space:pre-wrap;font-size:12px;line-height:1.45;text-align:left;">${escH(ex)}${r.errors.length > 8 ? "\n…" : ""}</pre>`,
-      });
-    } else if (zeroSent > 0 && skipped > 0) {
-      _showInfoModal({
-        title: "หีบ 0 อาจยังไม่ถูกบันทึก",
-        bodyHtml: `<p style="margin:0 0 10px;text-align:left;line-height:1.5;">ส่งรายการหีบ <strong>0</strong> ไป ${zeroSent.toLocaleString("th-TH")} รายการ แต่ Target Sun <strong>ข้าม ${skipped.toLocaleString("th-TH")}</strong> รายการ</p>
-          <p style="margin:0;text-align:left;line-height:1.5;color:var(--text-2);">ถ้าเป้าใน Target Sun ยังไม่ตรง — ลองดาวน์โหลด Excel ตรวจสอบ หรือแจ้ง IT</p>`,
-      });
+    const token = prep.prepare_token;
+    if (!token) throw new Error("เตรียมไฟล์ไม่สำเร็จ — ไม่ได้ prepare_token จาก server");
+
+    setGlobalBusyProgress(50, UX.busySendStep2, UX.busySendTargetHint);
+    _startTargetSunProgressCreep(52, 88, UX.busySendStep2, UX.busySendTargetHint);
+
+    const importBody = {
+      sup_id: basePayload.sup_id,
+      target_month: basePayload.target_month,
+      target_year: basePayload.target_year,
+      upload_user_code: basePayload.upload_user_code,
+      allocations: [],
+      prepare_token: token,
+    };
+    const { res, j } = await _fetchTargetSunImport(importBody);
+    _clearTargetSunProgressTimer();
+    setGlobalBusyProgress(95, "กำลังสรุปผล…", UX.busySendTargetHint);
+    if (_handleTargetSunImportResponse(res, j)) {
+      setGlobalBusyProgress(100, "ส่งเข้า Target Sun เสร็จแล้ว", "");
     }
   } catch (err) {
     toast("❌ ส่งข้อมูลไม่สำเร็จ: " + _userFacingError(err), "red");
@@ -3801,12 +3930,27 @@ async function runReAllocationKeepEdits() {
   saveDraft(true);
 }
 /* ════════════════════════════════════════════════════════════════════════════
-   USER MANUAL MODAL — คู่มือการใช้งานทีละขั้นตอน (added 2026-05-12)
+   USER MANUAL MODAL — คู่มือการใช้งานทีละขั้นตอน
 ════════════════════════════════════════════════════════════════════════════ */
 const MANUAL_STEPS = [
   {
+    title: "เข้าสู่ระบบ",
+    desc: "กด <strong>ล็อกอินด้วย Microsoft</strong> แล้วเลือก <strong>ผู้รับผิดชอบ (Supervisor / Manager)</strong> และ <strong>งวดเดือนที่จะกระจายเป้า</strong> (ค่าเริ่มต้นมักเป็นเดือนถัดจากวันนี้) จากนั้นกด <strong>เข้าสู่ระบบ Dashboard</strong> — ระบบจะดึงเป้าและประวัติจากข้อมูลกลางอัตโนมัติ <strong>ไม่ต้องอัปโหลดไฟล์ Excel</strong>",
+    tips: "💡 รอรายชื่อ Supervisor โหลดเสร็จก่อนกดเข้าระบบ · ถ้าไม่มีสิทธิ์ให้ติดต่อ IT",
+    art: `<svg viewBox="0 0 220 160" xmlns="http://www.w3.org/2000/svg">
+      <rect x="14" y="16" width="192" height="32" rx="8" fill="#FFFFFF" stroke="#E2E8F0"/>
+      <text x="28" y="36" font-family="Sarabun" font-size="11" font-weight="700" fill="#0F172A">Microsoft ล็อกอิน</text>
+      <rect x="14" y="56" width="192" height="28" rx="6" fill="#F8FAFC" stroke="#E2E8F0"/>
+      <text x="22" y="74" font-family="Sarabun" font-size="10" fill="#475569">Supervisor / Manager ▾</text>
+      <rect x="14" y="90" width="92" height="28" rx="6" fill="#F8FAFC" stroke="#E2E8F0"/>
+      <text x="22" y="108" font-family="Sarabun" font-size="10" fill="#475569">เดือน / ปี ▾</text>
+      <rect x="14" y="124" width="192" height="28" rx="8" fill="#4F46E5"/>
+      <text x="40" y="142" font-family="Sarabun" font-size="12" font-weight="700" fill="#FFFFFF">เข้าสู่ระบบ Dashboard</text>
+    </svg>`
+  },
+  {
     title: "ดูข้อมูลตั้งต้น (ขั้นที่ 1)",
-    desc: "เมื่อเข้าระบบจะพบ <strong>เป้ารวม</strong> และตารางข้อมูลตั้งต้นของพนักงานและ SKU ในงวดที่เลือก ใช้ตรวจว่าเป้าและรายชื่อทีมตรงกับที่คาดไว้",
+    desc: "เมื่อเข้าระบบจะพบ <strong>เป้ารวม</strong> และตารางพนักงาน + SKU ของงวดที่เลือก (ดึงจากระบบเป้ากลาง) ใช้แท็บ <strong>เทียบเฉลี่ย 3 เดือน</strong> / <strong>เทียบปีที่แล้ว</strong> และจัดกลุ่ม SKU เป็น <strong>ราย SKU · แบรนด์ · Section</strong> เพื่อตรวจความถูกต้อง",
     tips: "💡 หากเป้ารวมไม่ตรง ให้กดลิงก์ <strong>“ติดต่อ IT”</strong> ใต้ช่องเป้ารวม",
     art: `<svg viewBox="0 0 220 160" xmlns="http://www.w3.org/2000/svg">
       <rect x="14" y="14" width="192" height="36" rx="8" fill="#EEF2FF" stroke="#C7D2FE"/>
@@ -3826,9 +3970,9 @@ const MANUAL_STEPS = [
     </svg>`
   },
   {
-    title: "ปรับเป้าหมายรายพนักงาน (ขั้นที่ 2)",
-    desc: "ในช่อง <strong>เป้าหมายที่กำหนดเอง</strong> สามารถพิมพ์ตัวเลขเพื่อปรับเป้าของแต่ละคนได้ ระบบจะคำนวณ <strong>% เติบโต</strong> และ <strong>สัดส่วน</strong> ให้อัตโนมัติ ยอดรวมของทุกคนต้อง <strong>เท่ากับเป้ารวมพอดี</strong> จึงจะกระจายหีบได้",
-    tips: "💡 หากปรับลดให้คนใดคนหนึ่ง อย่าลืมเพิ่มให้พนักงานอีกคนเพื่อให้ผลรวมยังเท่าเดิม",
+    title: "ปรับเป้าหมายรายพนักงาน (ขั้นที่ 2 — ไม่บังคับ)",
+    desc: "ขั้นนี้ <strong>ข้ามได้</strong> — ค่าเริ่มต้นเท่า <strong>เป้า Target Sun</strong> ในช่อง <strong>เป้าหมายที่กำหนดเอง</strong> สามารถพิมพ์ปรับรายคนได้ ระบบคำนวณ <strong>% เติบโต</strong> ให้อัตโนมัติ ยอดรวมควร <strong>ใกล้เป้ารวม</strong> (ต่างไม่เกินประมาณ 10 บาท จึงพร้อมกระจายหีบ)",
+    tips: "💡 ปุ่ม <strong>รีเซ็ตเป็น Target Sun</strong> คืนค่าเป้าที่กำหนดเอง · หากปรับลดคนหนึ่ง อย่าลืมเพิ่มให้คนอื่นเพื่อให้ผลรวมยังใกล้เป้ารวม",
     art: `<svg viewBox="0 0 220 160" xmlns="http://www.w3.org/2000/svg">
       <rect x="14" y="12" width="192" height="22" rx="6" fill="#F8FAFC" stroke="#E2E8F0"/>
       <text x="22" y="27" font-family="Sarabun" font-size="11" fill="#475569">พนักงาน A — เป้า</text>
@@ -3888,8 +4032,8 @@ const MANUAL_STEPS = [
   },
   {
     title: "เลือกวิธีกระจายหีบ (ขั้นที่ 3)",
-    desc: "เลือกได้ <strong>มากกว่า 1 วิธี</strong> ตามที่เหมาะกับแต่ละแบรนด์ — หากเลือกหลายวิธี ระบบจะให้กำหนดว่า <strong>แบรนด์ไหนใช้วิธีไหน</strong> เช่น แบรนด์ A ใช้ค่าเฉลี่ย 3 เดือน · แบรนด์ B ใช้ปีที่แล้ว",
-    tips: "💡 เลือกแค่วิธีเดียวก็ได้ ระบบจะใช้วิธีนั้นกับทุกแบรนด์",
+    desc: "เลือกได้ <strong>มากกว่า 1 วิธี</strong> (เช่น <strong>เฉลี่ย 3 เดือน</strong>, <strong>6 เดือน</strong>, <strong>เดือนเดียวกันปีที่แล้ว</strong>, <strong>ผลักดันพนักงาน</strong>) — ถ้าเลือกหลายวิธี ให้กำหนด <strong>แบรนด์ → วิธี</strong> ด้านล่าง มีตัวเลือก <strong>บังคับอย่างน้อย 1 หีบต่อ SKU</strong> และ <strong>SKU ใหม่แบ่งเท่ากัน</strong> ตามต้องการ",
+    tips: "💡 เลือกวิธีเดียวก็ใช้กับทุกแบรนด์ได้ · กด <strong>เริ่มคำนวณ</strong> (เสร็จแล้วเป็น <strong>คำนวณใหม่</strong>)",
     art: `<svg viewBox="0 0 220 160" xmlns="http://www.w3.org/2000/svg">
       <rect x="12" y="10" width="60" height="28" rx="8" fill="#EEF2FF" stroke="#C7D2FE"/>
       <text x="22" y="28" font-family="Sarabun" font-size="11" font-weight="700" fill="#4F46E5">✓ 3M</text>
@@ -3911,27 +4055,23 @@ const MANUAL_STEPS = [
     </svg>`
   },
   {
-    title: "เริ่มคำนวณและบันทึกผล",
-    desc: "กดปุ่ม <strong>“เริ่มคำนวณ”</strong> เพื่อให้ระบบกระจายหีบลงรายพนักงาน เมื่อเสร็จแล้ว สามารถ <strong>แก้ตัวเลขด้วยมือ</strong>, <strong>บันทึกร่าง</strong>, หรือ <strong>ดาวน์โหลด Excel</strong> ได้ทันที",
-    tips: "💡 เลขสีน้ำเงินคลิกแก้ได้ · ยอดเงินรวมรายพนักงานจะอัปเดตอัตโนมัติ",
+    title: "ผลลัพธ์ · Excel · ส่งเข้า Target Sun",
+    desc: "หลัง <strong>เริ่มคำนวณ</strong> แก้จำนวนหีบในตารางได้ (ตัวเลขสีน้ำเงิน) จากนั้นเลือก: <strong>บันทึกร่าง</strong> (เก็บในเบราว์เซอร์) · <strong>↓ ดาวน์โหลด Excel</strong> (สรุปผลรายแบรนด์) · <strong>📤 ส่งเข้า Target Sun</strong> (ระบบสร้างไฟล์และส่งให้อัตโนมัติ — ไม่ต้องแนบไฟล์) หรือใน modal เลือก <strong>ดาวน์โหลด Excel อย่างเดียว</strong> รูปแบบ TGA",
+    tips: "💡 ส่งเฉพาะผลขั้นที่ 3 · ปุ่มส่งเป็นสีเทาถ้าไม่มีสิทธิ์หรือยังไม่คำนวณ · คู่ที่ไม่มีข้อมูลใน Target Sun จะไม่ถูกส่งและมีแจ้งเตือน",
     art: `<svg viewBox="0 0 220 160" xmlns="http://www.w3.org/2000/svg">
-      <rect x="20" y="16" width="180" height="36" rx="10" fill="#4F46E5"/>
-      <text x="56" y="40" font-family="Sarabun" font-size="15" font-weight="700" fill="#FFFFFF">▶ เริ่มคำนวณ</text>
-      <rect x="14" y="62" width="192" height="84" rx="8" fill="#FFFFFF" stroke="#E2E8F0"/>
-      <text x="22" y="80" font-family="Sarabun" font-size="11" fill="#475569">พนักงาน A</text>
-      <rect x="100" y="68" width="36" height="14" rx="4" fill="#EEF2FF"/>
-      <text x="108" y="79" font-family="Sarabun" font-size="11" font-weight="700" fill="#4F46E5">42</text>
-      <rect x="140" y="68" width="36" height="14" rx="4" fill="#FFFFFF" stroke="#E2E8F0"/>
-      <text x="148" y="79" font-family="Sarabun" font-size="11" fill="#0F172A">18</text>
-      <text x="22" y="102" font-family="Sarabun" font-size="11" fill="#475569">พนักงาน B</text>
-      <rect x="100" y="90" width="36" height="14" rx="4" fill="#FFFFFF" stroke="#E2E8F0"/>
-      <text x="112" y="101" font-family="Sarabun" font-size="11" fill="#0F172A">35</text>
-      <rect x="140" y="90" width="36" height="14" rx="4" fill="#EEF2FF"/>
-      <text x="152" y="101" font-family="Sarabun" font-size="11" font-weight="700" fill="#4F46E5">24</text>
-      <rect x="22" y="116" width="80" height="22" rx="6" fill="#ECFDF5" stroke="#6EE7B7"/>
-      <text x="32" y="131" font-family="Sarabun" font-size="11" font-weight="700" fill="#059669">💾 บันทึกร่าง</text>
-      <rect x="110" y="116" width="86" height="22" rx="6" fill="#EEF2FF" stroke="#C7D2FE"/>
-      <text x="120" y="131" font-family="Sarabun" font-size="11" font-weight="700" fill="#4F46E5">↓ Excel</text>
+      <rect x="14" y="12" width="192" height="52" rx="8" fill="#FFFFFF" stroke="#E2E8F0"/>
+      <text x="22" y="30" font-family="Sarabun" font-size="11" fill="#475569">ผลกระจายหีบ — แก้เลขได้</text>
+      <rect x="22" y="38" width="40" height="14" rx="4" fill="#EEF2FF"/>
+      <text x="30" y="48" font-family="Sarabun" font-size="10" font-weight="700" fill="#4F46E5">42</text>
+      <rect x="14" y="72" width="58" height="22" rx="6" fill="#ECFDF5" stroke="#6EE7B7"/>
+      <text x="20" y="87" font-family="Sarabun" font-size="9" font-weight="700" fill="#059669">บันทึกร่าง</text>
+      <rect x="78" y="72" width="58" height="22" rx="6" fill="#EEF2FF" stroke="#C7D2FE"/>
+      <text x="86" y="87" font-family="Sarabun" font-size="9" font-weight="700" fill="#4F46E5">↓ Excel</text>
+      <rect x="142" y="72" width="64" height="22" rx="6" fill="#4F46E5"/>
+      <text x="148" y="87" font-family="Sarabun" font-size="9" font-weight="700" fill="#FFFFFF">ส่ง Target Sun</text>
+      <rect x="14" y="102" width="192" height="46" rx="8" fill="#F8FAFF" stroke="#C7D2FE"/>
+      <text x="22" y="120" font-family="Sarabun" font-size="10" fill="#475569">Modal: ส่งเข้า Target Sun</text>
+      <text x="22" y="136" font-family="Sarabun" font-size="10" fill="#94A3B8">หรือ ดาวน์โหลด Excel อย่างเดียว (TGA)</text>
     </svg>`
   },
 ];
