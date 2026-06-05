@@ -21,6 +21,42 @@ def _norm_sku(s) -> str:
     return str(s).strip() if s is not None else ""
 
 
+def _expand_full_allocation_matrix(
+    df_out: pd.DataFrame,
+    df_emp_targets: pd.DataFrame,
+    df_sku: pd.DataFrame,
+) -> pd.DataFrame:
+    """เติมคู่ emp×sku ที่หีบ = 0 — ให้ส่ง Target Sun ทับเป้าเดิมใน DB ได้ครบ"""
+    emps = [
+        str(e).strip()
+        for e in df_emp_targets["emp_id"].tolist()
+        if str(e).strip()
+    ]
+    skus = [_norm_sku(s) for s in df_sku["sku"].tolist() if _norm_sku(s)]
+    if not emps or not skus:
+        return df_out
+
+    full = pd.MultiIndex.from_product([emps, skus], names=["emp_id", "sku"]).to_frame(
+        index=False
+    )
+    if df_out is None or df_out.empty:
+        full["allocated_boxes"] = 0
+        return full
+
+    out = df_out.copy()
+    out["emp_id"] = out["emp_id"].astype(str).str.strip()
+    out["sku"] = out["sku"].map(_norm_sku)
+    merged = full.merge(
+        out[["emp_id", "sku", "allocated_boxes"]],
+        on=["emp_id", "sku"],
+        how="left",
+    )
+    merged["allocated_boxes"] = (
+        pd.to_numeric(merged["allocated_boxes"], errors="coerce").fillna(0).astype(int)
+    )
+    return merged
+
+
 def _skus_zero_team_hist(df_hist: pd.DataFrame, sku_list: list) -> frozenset[str]:
     """
     SKU ที่รวมยอดหีบในประวัติช่วงที่ใช้เกลี่ย (df_hist) = 0 ทั้งทีม
@@ -112,7 +148,7 @@ def allocate_boxes(
             skip_balance_skus=skip_balance_skus,
         )
 
-    return df_out
+    return _expand_full_allocation_matrix(df_out, df_emp_targets, df_sku)
 
 # ── Cap multiplier: คนใดคนหนึ่งจะได้หีบสูงสุดไม่เกิน CAP_MULTIPLIER × ค่าเฉลี่ย
 # ค่า 3.0 หมายความว่าถ้าค่าเฉลี่ยคือ 10 หีบ คนที่ประวัติสูงที่สุดจะได้ไม่เกิน 30 หีบ

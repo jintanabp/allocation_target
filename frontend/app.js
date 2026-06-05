@@ -3161,19 +3161,32 @@ function _empWarehouseForLakehouse(empId) {
   return wh != null && String(wh).trim() ? String(wh).trim() : null;
 }
 
-/** ส่งเฉพาะแถวจากขั้นที่ 3 (กระจายหีบแล้ว) — ไม่ขยายพนักงาน/สินค้าทั้งทีมที่ไม่มีในผลลัพธ์ */
+/** ส่งผลขั้นที่ 3 ครบทุกคู่ emp×sku รวมหีบ 0 — เพื่อทับเป้าเดิมใน Target Sun */
 function _lakehouseAllocationsFromStep3() {
-  const out = [];
+  const byKey = new Map();
   for (const a of S.allocations || []) {
     const emp = String(a.emp_id || "").trim();
     const sku = String(a.sku || "").trim();
     if (!emp || !sku) continue;
-    out.push({
+    byKey.set(`${emp}::${sku}`, {
       emp_id: emp,
       sku,
       allocated_boxes: Number(a.allocated_boxes) || 0,
       warehouse_code: _empWarehouseForLakehouse(emp),
     });
+  }
+
+  const emps = [...new Set((S.allocations || []).map(a => String(a.emp_id || "").trim()).filter(Boolean))];
+  const skus = [...new Set((S.allocations || []).map(a => String(a.sku || "").trim()).filter(Boolean))];
+  const out = [];
+  for (const emp of emps) {
+    const wh = _empWarehouseForLakehouse(emp);
+    for (const sku of skus) {
+      const key = `${emp}::${sku}`;
+      out.push(
+        byKey.get(key) || { emp_id: emp, sku, allocated_boxes: 0, warehouse_code: wh }
+      );
+    }
   }
   return out;
 }
