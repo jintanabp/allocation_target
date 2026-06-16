@@ -1688,7 +1688,7 @@ function _showSkuWarnings() {
   const empMismatch = warnings.filter(w => w.type === "emp_mismatch");
   const noTgaEmp    = warnings.filter(w => w.type === "no_tga_employee");
   const excludedNoTga = warnings.filter(w => w.type === "employees_excluded_no_tga");
-  const noTgaSku    = warnings.filter(w => w.type === "no_tga_sku");
+  const soldOnlyExcluded = warnings.filter(w => w.type === "sold_only_skus_excluded");
   const zeroTotal   = warnings.filter(w => w.type === "zero_total");
   const tgaNotUpdated = warnings.filter(w => w.type === "tga_period_not_updated");
   const tgaNoData = warnings.filter(w => w.type === "tga_period_no_data");
@@ -1758,9 +1758,9 @@ function _showSkuWarnings() {
     html += `</li>`;
   }
 
-  if (noTgaSku.length > 0) {
-    html += `<li><strong>SKU ที่ทีมเคยขายแต่ไม่มีเป้าหีบในงวดนี้</strong><br>`;
-    html += noTgaSku.map(w => escH(_friendlyMsg(w.message))).join("<br>");
+  if (soldOnlyExcluded.length > 0) {
+    html += `<li><strong style="color:var(--accent)">ℹ️ SKU ที่เคยขายแต่ไม่มีเป้างวดนี้</strong><br>`;
+    html += soldOnlyExcluded.map(w => escH(_friendlyMsg(w.message))).join("<br>");
     html += `</li>`;
   }
 
@@ -3161,7 +3161,17 @@ function _empWarehouseForLakehouse(empId) {
   return wh != null && String(wh).trim() ? String(wh).trim() : null;
 }
 
-/** ส่งผลขั้นที่ 3 ครบทุกคู่ emp×sku รวมหีบ 0 — เพื่อทับเป้าเดิมใน Target Sun */
+/** SKU ที่มีเป้าหีบใน Target Sun งวดนี้ (supervisor_target_boxes > 0) */
+function _lakehouseTargetSkus() {
+  const fromDashboard = (S.skus || [])
+    .filter(s => (Number(s.supervisor_target_boxes) || 0) > 0)
+    .map(s => String(s.sku || "").trim())
+    .filter(Boolean);
+  if (fromDashboard.length > 0) return [...new Set(fromDashboard)].sort();
+  return [...new Set((S.allocations || []).map(a => String(a.sku || "").trim()).filter(Boolean))].sort();
+}
+
+/** ส่งเฉพาะ SKU ที่มีเป้า TGA — ครบทุกคู่ emp×sku รวมหีบ 0 เพื่อทับเป้าเดิมใน DB */
 function _lakehouseAllocationsFromStep3() {
   const byKey = new Map();
   for (const a of S.allocations || []) {
@@ -3177,7 +3187,7 @@ function _lakehouseAllocationsFromStep3() {
   }
 
   const emps = [...new Set((S.allocations || []).map(a => String(a.emp_id || "").trim()).filter(Boolean))];
-  const skus = [...new Set((S.allocations || []).map(a => String(a.sku || "").trim()).filter(Boolean))];
+  const skus = _lakehouseTargetSkus();
   const out = [];
   for (const emp of emps) {
     const wh = _empWarehouseForLakehouse(emp);

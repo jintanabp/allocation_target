@@ -58,6 +58,20 @@ def run_optimization_service(
     if df_sku is None:
         raise HTTPException(500, detail="ไม่พบ target_boxes.csv กรุณาโหลดหน้า Dashboard ก่อน")
 
+    df_sku = df_sku.copy()
+    df_sku["supervisor_target_boxes"] = pd.to_numeric(
+        df_sku["supervisor_target_boxes"], errors="coerce"
+    ).fillna(0)
+    df_sku = df_sku[df_sku["supervisor_target_boxes"] > 0].copy()
+    if df_sku.empty:
+        raise HTTPException(
+            400,
+            detail=(
+                "ไม่มี SKU ที่มีเป้าหีบใน Target Sun งวดนี้ — "
+                "กรุณาโหลดข้อมูล Dashboard ใหม่"
+            ),
+        )
+
     df_all_targets = pd.DataFrame([t.model_dump() for t in req.yellowTargets])
     if df_all_targets.empty:
         raise HTTPException(400, detail="ไม่มีเป้าเหลือง (yellowTargets) — โหลดข้อมูล Dashboard ก่อน")

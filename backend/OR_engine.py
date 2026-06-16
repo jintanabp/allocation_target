@@ -2,9 +2,9 @@
 OR_engine.py — Target Box Allocation Engine
 ────────────────────────────────────────────
 Strategies:
-  L3M   — proportional ตามยอดขายย้อนหลัง 3 เดือน (fast, stable) — ต้องส่ง df_hist จาก cache 3 เดือน
-  L6M   — proportional ตามยอดขายย้อนหลัง 6 เดือน (smoother baseline) — ต้องส่ง df_hist จาก cache 6 เดือน
-  LY    — proportional ตามยอดขายเดือนเดียวกันปีที่แล้ว (emp×sku) — ต้องส่ง df_hist จาก cache hist_lysm_
+  L3M   — proportional ตามยอดขายย้อนหลัง 3 เดือน (ไม่ปรับเป้าเงินรายคน — ใช้ LP ถ้าต้องการ)
+  L6M   — proportional ตามยอดขายย้อนหลัง 6 เดือน
+  LY    — proportional ตามยอดขายเดือนเดียวกันปีที่แล้ว (emp×sku)
   EVEN  — เกลี่ยเท่ากันทุกคน (fair distribution)
   PUSH  — ผลักดันคนขายน้อย (inverse ratio)
   LP    — Linear Programming ตาม yellow_target (revenue-optimal, slow)
@@ -12,7 +12,6 @@ Strategies:
 
 import pandas as pd
 import logging
-import os
 
 logger = logging.getLogger("target_allocation.OR")
 
@@ -21,18 +20,34 @@ def _norm_sku(s) -> str:
     return str(s).strip() if s is not None else ""
 
 
+def _skus_with_target_boxes(df_sku: pd.DataFrame) -> list[str]:
+    """SKU ที่มีเป้าหีบหัวหน้า > 0 — ใช้เกลี่ยและส่ง Target Sun"""
+    if df_sku is None or df_sku.empty or "sku" not in df_sku.columns:
+        return []
+    boxes = pd.to_numeric(
+        df_sku.get("supervisor_target_boxes", 0), errors="coerce"
+    ).fillna(0)
+    return [
+        _norm_sku(s)
+        for s, b in zip(df_sku["sku"].tolist(), boxes.tolist())
+        if _norm_sku(s) and int(b) > 0
+    ]
+
+
 def _expand_full_allocation_matrix(
     df_out: pd.DataFrame,
     df_emp_targets: pd.DataFrame,
     df_sku: pd.DataFrame,
 ) -> pd.DataFrame:
-    """เติมคู่ emp×sku ที่หีบ = 0 — ให้ส่ง Target Sun ทับเป้าเดิมใน DB ได้ครบ"""
+    """เติมคู่ emp×sku ที่หีบ = 0 — เฉพาะ SKU ที่มีเป้า TGA (ส่งทับเป้าเดิมใน DB)"""
     emps = [
         str(e).strip()
         for e in df_emp_targets["emp_id"].tolist()
         if str(e).strip()
     ]
-    skus = [_norm_sku(s) for s in df_sku["sku"].tolist() if _norm_sku(s)]
+    skus = _skus_with_target_boxes(df_sku)
+    if not skus and df_sku is not None and not df_sku.empty:
+        skus = [_norm_sku(s) for s in df_sku["sku"].tolist() if _norm_sku(s)]
     if not emps or not skus:
         return df_out
 
@@ -121,14 +136,12 @@ def allocate_boxes(
     # ถ้า custom strategy ส่ง cap_multiplier มา ให้ใช้ค่านั้นแทน default
     effective_cap = cap_multiplier if cap_multiplier is not None else _CAP_MULTIPLIER
 
-    # ห้าม greedy ย้ายหีบของ SKU เหล่านี้ — ไม่งั้นเป้าเงินจะดึงหีบไปมาแม้ตอนแรกแบ่งเท่าแล้ว
-    skip_balance_skus = even_skus if even_new_products else None
-
     if strategy == "LP":
         df_out = _lp_optimize(
             df_emp_targets, df_sku, df_hist, force_min_one, locked_map, even_skus=even_skus
         )
     else:
+        # L3M/L6M/LY/EVEN/PUSH: กระจายตามประวัติ/วิธีที่เลือก — ไม่ปรับหีบเพื่อเข้าเป้าเงินรายคน
         df_out = _proportional(
             df_emp_targets,
             df_sku,
@@ -139,14 +152,6 @@ def allocate_boxes(
             effective_cap,
             even_skus=even_skus,
         )
-        df_out = _greedy_revenue_balancer(
-            df_out,
-            df_emp_targets,
-            df_sku,
-            locked_map,
-            force_min_one=force_min_one,
-            skip_balance_skus=skip_balance_skus,
-        )
 
     return _expand_full_allocation_matrix(df_out, df_emp_targets, df_sku)
 
@@ -154,6 +159,8 @@ def allocate_boxes(
 # ค่า 3.0 หมายความว่าถ้าค่าเฉลี่ยคือ 10 หีบ คนที่ประวัติสูงที่สุดจะได้ไม่เกิน 30 หีบ
 # ป้องกัน outlier กองหีบใส่คนเดียวจนผิดสัดส่วนอย่างในรูปตัวอย่าง
 _CAP_MULTIPLIER = 3.0
+# LP: น้ำหนักยึดผล proportional (ประวัติ) — ค่าสูง = ไม่ให้เป้าเงินแทรกแซงมาก
+_LP_HIST_ANCHOR = 0.75
 
 def _cap_and_redistribute(raw: dict, total: int, cap_multiplier: float = None) -> dict:
     """
@@ -423,8 +430,7 @@ def _lp_optimize(
     prob = pulp.LpProblem("BoxAllocation_LP", pulp.LpMinimize)
 
     # ── Anchor ให้ LP ใกล้ baseline จากประวัติขาย (ลดการกระจายแปลกๆ) ──
-    # ค่า 0.0 = ปิด anchor (LP แบบเดิม), ค่า ~0.05–0.30 แนะนำ
-    lp_anchor = float(os.environ.get("LP_HIST_ANCHOR", "0.15") or 0.15)
+    lp_anchor = _LP_HIST_ANCHOR
     df_base = _proportional(
         df_emp_targets, df_sku, df_hist, "L3M", force_min_one, locked_map, even_skus=even_skus
     )

@@ -182,6 +182,7 @@ def load_employees_payload(
     emp_with_tga_set: set[str] | None = None
     df_tga_granular: pd.DataFrame | None = None
     df_tga: pd.DataFrame | None = None
+    sold_only_excluded = 0
 
     if use_legacy and df_sku_csv is not None and not regen_target:
         logger.info("ใช้ target_boxes.csv / target_sun.csv (USE_LEGACY_TARGET_CSV)")
@@ -220,16 +221,14 @@ def load_employees_payload(
         enforce_tga_selection_matches_effective_window(
             fabric, target_month, target_year
         )
+        sold_skus: list[str] = []
         try:
-            sku_list = fabric.get_skus_sold_by_team(
+            sold_skus = fabric.get_skus_sold_by_team(
                 emp_list, target_month, target_year, n_months=6
             )
         except Exception as e:
-            logger.warning("get_skus_sold_by_team error: %s → fallback SKUs", e)
-            sku_list = list(PRICE_FALLBACK.keys())
-
-        if not sku_list:
-            sku_list = list(PRICE_FALLBACK.keys())
+            logger.warning("get_skus_sold_by_team error: %s", e)
+            sold_skus = []
 
         df_tga = pd.DataFrame()
         df_tga_granular = pd.DataFrame()
@@ -280,13 +279,17 @@ def load_employees_payload(
             tga_skus = (
                 df_tga["sku"].dropna().astype(str).str.strip().unique().tolist()
             )
-        seen_sku: set[str] = set()
-        sku_union: list[str] = []
-        for s in sku_list + tga_skus:
-            s = str(s).strip()
-            if s and s not in seen_sku:
-                seen_sku.add(s)
-                sku_union.append(s)
+        # แสดง/เกลี่ย/ส่ง Target Sun เฉพาะ SKU ที่มีเป้า TGA งวดนี้
+        # ประวัติขาย (sold_skus) ใช้แค่เป็นน้ำหนักกระจายหีบ — ไม่รวมใน sku_union
+        sku_union = list(dict.fromkeys(str(s).strip() for s in tga_skus if str(s).strip()))
+        sold_only_excluded = len(set(sold_skus) - set(sku_union)) if sold_skus else 0
+        if sold_only_excluded:
+            logger.info(
+                "SKU ที่เคยขายแต่ไม่มีเป้า TGA งวดนี้ (ไม่แสดง/ไม่เกลี่ย): %d",
+                sold_only_excluded,
+            )
+        if not sku_union:
+            logger.warning("ไม่มี SKU ที่มีเป้า TGA ในงวดที่เลือก")
 
         df_sku_base = pd.DataFrame()
         try:
@@ -512,26 +515,19 @@ def load_employees_payload(
             }
         )
 
-    if not use_legacy and emp_with_tga_set is not None:
-        zero_skus = [
-            str(r["sku"]).strip()
-            for _, r in df_sku.iterrows()
-            if int(r.get("supervisor_target_boxes", 0) or 0) == 0
-        ]
-        if zero_skus:
-            preview = ", ".join(zero_skus[:20])
-            more = f" และอีก {len(zero_skus) - 20} SKU" if len(zero_skus) > 20 else ""
-            sku_warnings.append(
-                {
-                    "type": "no_tga_sku",
-                    "sku": "",
-                    "brand": "",
-                    "message": (
-                        f"มี {len(zero_skus)} SKU ที่ทีมเคยขายแต่ไม่มีเป้าหีบใน TGA งวดนี้ "
-                        f"(supervisor_target_boxes = 0): {preview}{more}"
-                    ),
-                }
-            )
+    if not use_legacy and sold_only_excluded > 0:
+        sku_warnings.append(
+            {
+                "type": "sold_only_skus_excluded",
+                "sku": "",
+                "brand": "",
+                "message": (
+                    f"มี {sold_only_excluded} SKU ที่ทีมเคยขายใน 6 เดือนย้อนหลัง "
+                    "แต่ไม่มีเป้าใน Target Sun งวดนี้ — ไม่แสดงใน Dashboard และไม่ส่งเข้า Target Sun "
+                    "(ใช้ประวัติขายเป็นน้ำหนักกระจายหีบเท่านั้น)"
+                ),
+            }
+        )
 
     if use_legacy and df_sun_csv is not None and not df_sun_csv.empty:
         sun_emp_ids = set(df_sun_csv["emp_id"].astype(str).str.strip())
