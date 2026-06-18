@@ -519,6 +519,44 @@
           </div>
 
           <div class="strategy-options-block">
+            <div class="strategy-balance-row" id="histBalancePanel">
+              <div class="hist-balance-head">
+                <span class="hist-balance-head__icon" aria-hidden="true">⚖️</span>
+                <div class="hist-balance-head__text">
+                  <div class="strategy-check-title">หลังแบ่งหีบแล้ว อยากให้มูลค่ารวมต่อคนใกล้เป้าเงินแค่ไหน?</div>
+                  <p class="strategy-balance-lead">
+                    แบ่งหีบตามวิธีด้านบนก่อน แล้วปรับให้ใกล้เป้าเงินในขั้นเดียวกัน (ยอมคลาด ±1,000 บ./คน)
+                    · ใช้กับ L3M / L6M / LY
+                  </p>
+                </div>
+              </div>
+              <div class="strategy-pills hist-balance-pills" role="radiogroup" aria-label="ความสำคัญของเป้าเงินรายคน">
+                <label class="s-pill hist-balance-option">
+                  <input type="radio" name="histBalanceMode" value="hist">
+                  <span class="s-pill-icon">📊</span>
+                  <span class="s-pill-text">
+                    <span class="s-pill-name">เน้นยอดขาย</span>
+                    <span class="s-pill-desc">สัดส่วนหีบตามประวัติมากที่สุด</span>
+                  </span>
+                </label>
+                <label class="s-pill hist-balance-option active">
+                  <input type="radio" name="histBalanceMode" value="balanced" checked>
+                  <span class="s-pill-icon">⚖️</span>
+                  <span class="s-pill-text">
+                    <span class="s-pill-name">สมดุล <span class="hist-balance-badge">แนะนำ</span></span>
+                    <span class="s-pill-desc">ประวัติ + เป้าเงินใกล้เคียงกัน</span>
+                  </span>
+                </label>
+                <label class="s-pill hist-balance-option">
+                  <input type="radio" name="histBalanceMode" value="money">
+                  <span class="s-pill-icon">💰</span>
+                  <span class="s-pill-text">
+                    <span class="s-pill-name">เน้นเป้าเงิน</span>
+                    <span class="s-pill-desc">มูลค่ารวมต่อคนใกล้เป้าเหลืองมากขึ้น</span>
+                  </span>
+                </label>
+              </div>
+            </div>
             <label class="strategy-check-row">
               <input type="checkbox" id="forceMinOneBox" class="strategy-check-input">
               <span class="strategy-check-body">
@@ -553,7 +591,7 @@
 
         <div class="prog-list" id="progList" style="display:none">
           <div class="prog-row" id="prog1"><span class="prog-circle"></span><span>ตรวจสอบข้อมูลพนักงานและยอดขายย้อนหลัง</span></div>
-          <div class="prog-row" id="prog2"><span class="prog-circle"></span><span>คำนวณสัดส่วนตามวิธีที่เลือก</span></div>
+          <div class="prog-row" id="prog2"><span class="prog-circle"></span><span>คำนวณสัดส่วนตามวิธีที่เลือก + ปรับมูลค่าใกล้เป้าเงิน</span></div>
           <div class="prog-row" id="prog3"><span class="prog-circle"></span><span>แบ่งจำนวนหีบให้แต่ละคน</span></div>
           <div class="prog-row" id="prog4"><span class="prog-circle"></span><span>สรุปผลการกระจาย</span></div>
         </div>

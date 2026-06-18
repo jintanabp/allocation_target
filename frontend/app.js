@@ -962,6 +962,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       r.closest(".s-pill").classList.add("active");
     });
   });
+  syncHistBalancePanel();
 
   // beforeunload — เตือนเมื่อปิดหน้าต่างหรือรีเฟรช และมี allocation ที่ยังไม่ได้ export/save
   window.addEventListener("beforeunload", e => {
@@ -2474,6 +2475,8 @@ async function _doOptimize(lockedEdits = []) {
         Object.entries(S.buiDeductions || {}).filter(([, v]) => Number(v) > 0)
       ),
       neg_growth_reason: (S.negGrowthReason || "").trim() || null,
+      hist_balance: _histBalancePayload(),
+      revenue_tolerance_baht: _revenueTolerancePayload(),
     };
 
     const url = `${API_BASE_URL}/optimize?sup_id=${S.supId}&target_month=${S.targetMonth}&target_year=${S.targetYear}`;
@@ -4456,6 +4459,33 @@ function _getSelectedStrategies() {
     .map(i => i.value);
 }
 
+const _HIST_BALANCE_LP_STRATEGIES = new Set(["L3M", "L6M", "LY", "LP"]);
+const _HIST_BALANCE_MODE_VALUES = { hist: 0.85, balanced: 0.5, money: 0.15 };
+
+function syncHistBalancePanel() {
+  const panel = document.getElementById("histBalancePanel");
+  if (!panel) return;
+  const selected = _getSelectedStrategies();
+  panel.style.display = selected.some(s => _HIST_BALANCE_LP_STRATEGIES.has(s)) ? "" : "none";
+  syncHistBalancePillActive();
+}
+
+function syncHistBalancePillActive() {
+  document.querySelectorAll(".hist-balance-option").forEach(label => {
+    const input = label.querySelector('input[name="histBalanceMode"]');
+    label.classList.toggle("active", Boolean(input?.checked));
+  });
+}
+
+function _histBalancePayload() {
+  const mode = document.querySelector('input[name="histBalanceMode"]:checked')?.value || "balanced";
+  return _HIST_BALANCE_MODE_VALUES[mode] ?? 0.5;
+}
+
+function _revenueTolerancePayload() {
+  return 1000;
+}
+
 function _getAllBrands() {
   const set = new Set();
   (S.skus || []).forEach(s => {
@@ -4544,6 +4574,10 @@ function _brandMappingComplete() {
 // hook checkbox change to update active pill styling + brand panel + run gating
 document.addEventListener("change", (e) => {
   const t = e.target;
+  if (t && t.matches && t.matches('input[name="histBalanceMode"]')) {
+    syncHistBalancePillActive();
+    return;
+  }
   if (t && t.matches && t.matches('input[name="strategy"]')) {
     const pill = t.closest(".s-pill");
     if (pill) pill.classList.toggle("active", t.checked);
@@ -4556,6 +4590,7 @@ document.addEventListener("change", (e) => {
       }
     }
     _renderBrandStrategyPanel();
+    syncHistBalancePanel();
   }
 });
 

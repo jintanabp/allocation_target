@@ -25,6 +25,10 @@ class OptimizeRequest(BaseModel):
     new_products_even: bool = False
     locked_edits: list[LockedEditInput] = []
     cap_multiplier: float | None = None  # Custom strategy override (1.5-5.0)
+    """0=เน้นเป้าเงิน, 1=เน้นประวัติ — ใช้กับ L3M/L6M/LY (LP ร่วม baseline+เป้าเงิน)"""
+    hist_balance: float = Field(default=0.5, ge=0.0, le=1.0)
+    """ยอมให้มูลค่ารวมต่อคนคลาดเป้าเงินได้ไม่เกินกี่บาท (soft penalty ใน LP)"""
+    revenue_tolerance_baht: float = Field(default=1000.0, ge=0.0)
     # Multi-strategy support
     brand_strategy_map: dict[str, str] = Field(default_factory=dict)
     bui_deductions: dict[str, float] = Field(default_factory=dict)

@@ -252,6 +252,8 @@ def run_optimization_service(
                 cap_multiplier=req.cap_multiplier,
                 even_new_products=bool(req.new_products_even),
                 new_product_skus=new_skus_grp if req.new_products_even else None,
+                hist_balance=float(req.hist_balance),
+                revenue_tolerance_baht=float(req.revenue_tolerance_baht),
             )
             alloc_parts.append(df_alloc_grp)
         df_allocation = (
@@ -270,6 +272,8 @@ def run_optimization_service(
             cap_multiplier=req.cap_multiplier,
             even_new_products=bool(req.new_products_even),
             new_product_skus=new_skus_cy_ly if req.new_products_even else None,
+            hist_balance=float(req.hist_balance),
+            revenue_tolerance_baht=float(req.revenue_tolerance_baht),
         )
 
     # log meta จาก Step 2

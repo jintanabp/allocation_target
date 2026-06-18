@@ -2,12 +2,12 @@
 OR_engine.py — Target Box Allocation Engine
 ────────────────────────────────────────────
 Strategies:
-  L3M   — proportional ตามยอดขายย้อนหลัง 3 เดือน (ไม่ปรับเป้าเงินรายคน — ใช้ LP ถ้าต้องการ)
-  L6M   — proportional ตามยอดขายย้อนหลัง 6 เดือน
-  LY    — proportional ตามยอดขายเดือนเดียวกันปีที่แล้ว (emp×sku)
-  EVEN  — เกลี่ยเท่ากันทุกคน (fair distribution)
-  PUSH  — ผลักดันคนขายน้อย (inverse ratio)
-  LP    — Linear Programming ตาม yellow_target (revenue-optimal, slow)
+  L3M   — LP: baseline 3M + ปรับมูลค่ารายคน (tolerance ±1,000 บ.) พร้อมกัน
+  L6M   — LP: baseline 6M + ปรับมูลค่ารายคน
+  LY    — LP: baseline LY + ปรับมูลค่ารายคน
+  EVEN  — เกลี่ยเท่ากันทุกคน (proportional อย่างเดียว)
+  PUSH  — ผลักดันคนขายน้อย (proportional อย่างเดียว)
+  LP    — LP ตาม yellow_target (baseline L3M, ปรับได้ด้วย hist_balance)
 """
 
 import pandas as pd
@@ -96,6 +96,8 @@ def allocate_boxes(
     cap_multiplier: float = None,  # override _CAP_MULTIPLIER (Custom strategy)
     even_new_products: bool = False,
     new_product_skus: set | frozenset | None = None,
+    hist_balance: float = 0.5,
+    revenue_tolerance_baht: float = 1000.0,
 ) -> pd.DataFrame:
     strategy = strategy.upper()
     valid = ("L3M", "L6M", "LY", "EVEN", "PUSH", "LP")
@@ -135,13 +137,25 @@ def allocate_boxes(
 
     # ถ้า custom strategy ส่ง cap_multiplier มา ให้ใช้ค่านั้นแทน default
     effective_cap = cap_multiplier if cap_multiplier is not None else _CAP_MULTIPLIER
+    hb = max(0.0, min(1.0, float(hist_balance if hist_balance is not None else 0.5)))
+    rev_tol = max(0.0, float(revenue_tolerance_baht if revenue_tolerance_baht is not None else 1000.0))
 
-    if strategy == "LP":
+    _LP_STRATEGIES = frozenset({"L3M", "L6M", "LY", "LP"})
+    if strategy in _LP_STRATEGIES:
+        baseline = strategy if strategy in ("L3M", "L6M", "LY") else "L3M"
         df_out = _lp_optimize(
-            df_emp_targets, df_sku, df_hist, force_min_one, locked_map, even_skus=even_skus
+            df_emp_targets,
+            df_sku,
+            df_hist,
+            force_min_one,
+            locked_map,
+            even_skus=even_skus,
+            baseline_strategy=baseline,
+            hist_balance=hb,
+            revenue_tolerance_baht=rev_tol,
+            cap_multiplier=effective_cap,
         )
     else:
-        # L3M/L6M/LY/EVEN/PUSH: กระจายตามประวัติ/วิธีที่เลือก — ไม่ปรับหีบเพื่อเข้าเป้าเงินรายคน
         df_out = _proportional(
             df_emp_targets,
             df_sku,
@@ -156,11 +170,17 @@ def allocate_boxes(
     return _expand_full_allocation_matrix(df_out, df_emp_targets, df_sku)
 
 # ── Cap multiplier: คนใดคนหนึ่งจะได้หีบสูงสุดไม่เกิน CAP_MULTIPLIER × ค่าเฉลี่ย
-# ค่า 3.0 หมายความว่าถ้าค่าเฉลี่ยคือ 10 หีบ คนที่ประวัติสูงที่สุดจะได้ไม่เกิน 30 หีบ
-# ป้องกัน outlier กองหีบใส่คนเดียวจนผิดสัดส่วนอย่างในรูปตัวอย่าง
 _CAP_MULTIPLIER = 3.0
-# LP: น้ำหนักยึดผล proportional (ประวัติ) — ค่าสูง = ไม่ให้เป้าเงินแทรกแซงมาก
-_LP_HIST_ANCHOR = 0.75
+_DEFAULT_REVENUE_TOLERANCE_BAHT = 1000.0
+
+
+def _lp_weights_from_balance(hist_balance: float) -> tuple[float, float, float]:
+    """คืน (shortfall_weight, excess_weight, hist_anchor) จาก slider 0=เงิน … 1=ประวัติ"""
+    hb = max(0.0, min(1.0, float(hist_balance)))
+    hist_anchor = 0.2 + hb * 1.8
+    shortfall_w = 2.5 - hb * 2.0
+    excess_w = 1.875 - hb * 1.5
+    return shortfall_w, excess_w, hist_anchor
 
 def _cap_and_redistribute(raw: dict, total: int, cap_multiplier: float = None) -> dict:
     """
@@ -413,67 +433,132 @@ def _lp_optimize(
     force_min_one=False,
     locked_map=None,
     even_skus: frozenset | None = None,
+    *,
+    baseline_strategy: str = "L3M",
+    hist_balance: float = 0.5,
+    revenue_tolerance_baht: float = _DEFAULT_REVENUE_TOLERANCE_BAHT,
+    cap_multiplier=None,
 ):
     locked_map = locked_map or {}
     even_skus = even_skus or frozenset()
-    try: import pulp
-    except ImportError: return _proportional(
-        df_emp_targets, df_sku, df_hist, "L3M", force_min_one, locked_map, even_skus=even_skus
-    )
+    baseline_strategy = (baseline_strategy or "L3M").upper()
+    if baseline_strategy not in ("L3M", "L6M", "LY", "EVEN", "PUSH"):
+        baseline_strategy = "L3M"
 
-    employees    = df_emp_targets["emp_id"].tolist()
-    skus         = df_sku["sku"].tolist()
-    target_rev   = dict(zip(df_emp_targets["emp_id"], df_emp_targets["yellow_target"]))
+    def _fallback_prop():
+        return _proportional(
+            df_emp_targets,
+            df_sku,
+            df_hist,
+            baseline_strategy,
+            force_min_one,
+            locked_map,
+            cap_multiplier,
+            even_skus=even_skus,
+        )
+
+    try:
+        import pulp
+    except ImportError:
+        logger.warning("pulp not installed → fallback proportional %s", baseline_strategy)
+        return _fallback_prop()
+
+    employees = df_emp_targets["emp_id"].tolist()
+    skus = df_sku["sku"].tolist()
+    target_rev = dict(zip(df_emp_targets["emp_id"], df_emp_targets["yellow_target"]))
     target_boxes = dict(zip(df_sku["sku"], df_sku["supervisor_target_boxes"]))
-    sku_prices   = dict(zip(df_sku["sku"], df_sku["price_per_box"]))
+    sku_prices = dict(zip(df_sku["sku"], df_sku["price_per_box"]))
 
-    prob = pulp.LpProblem("BoxAllocation_LP", pulp.LpMinimize)
+    try:
+        total_possible_rev = float(
+            sum(
+                float(sku_prices.get(s, 0) or 0) * float(target_boxes.get(s, 0) or 0)
+                for s in sku_prices
+            )
+        )
+    except Exception:
+        total_possible_rev = 0.0
+    total_target_rev = float(sum(float(target_rev.get(e, 0) or 0) for e in employees))
+    if total_possible_rev > 0 and total_target_rev > 0:
+        scale = total_possible_rev / total_target_rev
+        target_rev = {e: float(target_rev.get(e, 0) or 0) * scale for e in employees}
 
-    # ── Anchor ให้ LP ใกล้ baseline จากประวัติขาย (ลดการกระจายแปลกๆ) ──
-    lp_anchor = _LP_HIST_ANCHOR
+    shortfall_w, excess_w, lp_anchor = _lp_weights_from_balance(hist_balance)
+    tol = max(0.0, float(revenue_tolerance_baht or 0))
+
     df_base = _proportional(
-        df_emp_targets, df_sku, df_hist, "L3M", force_min_one, locked_map, even_skus=even_skus
+        df_emp_targets,
+        df_sku,
+        df_hist,
+        baseline_strategy,
+        force_min_one,
+        locked_map,
+        cap_multiplier,
+        even_skus=even_skus,
     )
-    base_map = {}
+    base_map: dict[tuple[str, str], int] = {}
     if df_base is not None and not df_base.empty:
         for _, r in df_base.iterrows():
             base_map[(str(r["emp_id"]), str(r["sku"]))] = int(r["allocated_boxes"])
+
+    logger.info(
+        "LP optimize: baseline=%s hist_balance=%.2f anchor=%.2f rev_tol=%.0f sf_w=%.2f",
+        baseline_strategy,
+        hist_balance,
+        lp_anchor,
+        tol,
+        shortfall_w,
+    )
+
+    prob = pulp.LpProblem("BoxAllocation_LP", pulp.LpMinimize)
 
     x = {}
     dpos = {}
     dneg = {}
     for emp in employees:
         for sku in skus:
-            # 🔴 ถ้าช่องนี้โดนล็อกไว้ ให้ Fix ค่าไปเลย
             if (emp, sku) in locked_map:
                 val = locked_map[(emp, sku)]
-                x[(emp, sku)] = pulp.LpVariable(f"x_{emp}_{sku}", lowBound=val, upBound=val, cat="Integer")
+                x[(emp, sku)] = pulp.LpVariable(
+                    f"x_{emp}_{sku}", lowBound=val, upBound=val, cat="Integer"
+                )
             else:
                 min_box = 1 if force_min_one and int(target_boxes[sku]) >= len(employees) else 0
-                x[(emp, sku)] = pulp.LpVariable(f"x_{emp}_{sku}", lowBound=min_box, cat="Integer")
-                # |x - base| linearization (ใช้เฉพาะที่ไม่ล็อก)
+                x[(emp, sku)] = pulp.LpVariable(
+                    f"x_{emp}_{sku}", lowBound=min_box, cat="Integer"
+                )
                 dpos[(emp, sku)] = pulp.LpVariable(f"dp_{emp}_{sku}", lowBound=0, cat="Continuous")
                 dneg[(emp, sku)] = pulp.LpVariable(f"dn_{emp}_{sku}", lowBound=0, cat="Continuous")
 
     shortfall = pulp.LpVariable.dicts("sf", employees, lowBound=0, cat="Continuous")
-    excess    = pulp.LpVariable.dicts("ex", employees, lowBound=0, cat="Continuous")
+    excess = pulp.LpVariable.dicts("ex", employees, lowBound=0, cat="Continuous")
+    sf_pen = pulp.LpVariable.dicts("sfp", employees, lowBound=0, cat="Continuous")
+    ex_pen = pulp.LpVariable.dicts("exp", employees, lowBound=0, cat="Continuous")
 
-    # Objective: เข้าเป้าเงิน + ไม่แกว่งจาก baseline
     anchor_term = 0
     if lp_anchor > 0 and dpos:
         anchor_term = pulp.lpSum(
             (dpos[(e, s)] + dneg[(e, s)]) * float(sku_prices.get(s, 0) or 0) * lp_anchor
             for (e, s) in dpos.keys()
         )
-    prob += pulp.lpSum(shortfall[e] * 2 + excess[e] * 1.5 for e in employees) + anchor_term
+    prob += (
+        pulp.lpSum(shortfall_w * sf_pen[e] + excess_w * ex_pen[e] for e in employees)
+        + anchor_term
+    )
 
     for sku in skus:
         prob += pulp.lpSum(x[(e, sku)] for e in employees) == int(target_boxes[sku])
 
     for emp in employees:
-        prob += pulp.lpSum(x[(emp, s)] * sku_prices[s] for s in skus) + shortfall[emp] - excess[emp] == target_rev[emp]
+        prob += (
+            pulp.lpSum(x[(emp, s)] * sku_prices[s] for s in skus)
+            + shortfall[emp]
+            - excess[emp]
+            == target_rev[emp]
+        )
+        prob += sf_pen[emp] >= shortfall[emp] - tol
+        prob += ex_pen[emp] >= excess[emp] - tol
 
-    # Anchor constraints: x - base = dpos - dneg
     if lp_anchor > 0 and dpos:
         for emp in employees:
             for sku in skus:
@@ -486,20 +571,21 @@ def _lp_optimize(
     try:
         prob.solve(pulp.PULP_CBC_CMD(msg=False, timeLimit=time_limit))
     except Exception as e:
-        # CBC solver ไม่พร้อม (solver binary หาย, permission error ฯลฯ) — fallback ทันที
-        logger.warning("LP solver error: %s → fallback to L3M", e)
-        return _proportional(
-            df_emp_targets, df_sku, df_hist, "L3M", force_min_one, locked_map, even_skus=even_skus
-        )
+        logger.warning("LP solver error: %s → fallback %s", e, baseline_strategy)
+        return _fallback_prop()
 
-    # "Optimal" เท่านั้นที่เชื่อถือได้ — "Not Solved" (time-limit hit) และสถานะอื่น fallback หมด
     if pulp.LpStatus[prob.status] != "Optimal":
-        logger.warning("LP status=%s → fallback to L3M", pulp.LpStatus[prob.status])
-        return _proportional(
-            df_emp_targets, df_sku, df_hist, "L3M", force_min_one, locked_map, even_skus=even_skus
-        )
+        logger.warning("LP status=%s → fallback %s", pulp.LpStatus[prob.status], baseline_strategy)
+        return _fallback_prop()
 
-    results = [{"emp_id": emp, "sku": sku, "allocated_boxes": int(round(x[(emp, sku)].varValue))} for emp in employees for sku in skus if x[(emp, sku)].varValue is not None and x[(emp, sku)].varValue > 0.5]
-    return pd.DataFrame(results) if results else _proportional(
-        df_emp_targets, df_sku, df_hist, "L3M", force_min_one, locked_map, even_skus=even_skus
-    )
+    results = [
+        {
+            "emp_id": emp,
+            "sku": sku,
+            "allocated_boxes": int(round(x[(emp, sku)].varValue)),
+        }
+        for emp in employees
+        for sku in skus
+        if x[(emp, sku)].varValue is not None and x[(emp, sku)].varValue > 0.5
+    ]
+    return pd.DataFrame(results) if results else _fallback_prop()
