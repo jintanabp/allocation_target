@@ -2,9 +2,9 @@
 OR_engine.py — Target Box Allocation Engine
 ────────────────────────────────────────────
 Strategies:
-  L3M   — LP: baseline 3M + ปรับมูลค่ารายคน (tolerance ±1,000 บ.) พร้อมกัน
-  L6M   — LP: baseline 6M + ปรับมูลค่ารายคน
-  LY    — LP: baseline LY + ปรับมูลค่ารายคน
+  L3M   — LP: baseline 3M + ปรับมูลค่ารายคน (tolerance ±1,000 บ.) ภายในรั้ว ±20% ต่อ SKU
+  L6M   — LP: baseline 6M + ปรับมูลค่ารายคน (รั้ว ±20%)
+  LY    — LP: baseline LY + ปรับมูลค่ารายคน (รั้ว ±20%)
   EVEN  — เกลี่ยเท่ากันทุกคน (proportional อย่างเดียว)
   PUSH  — ผลักดันคนขายน้อย (proportional อย่างเดียว)
   LP    — LP ตาม yellow_target (baseline L3M, ปรับได้ด้วย hist_balance)
@@ -61,14 +61,18 @@ def _expand_full_allocation_matrix(
     out = df_out.copy()
     out["emp_id"] = out["emp_id"].astype(str).str.strip()
     out["sku"] = out["sku"].map(_norm_sku)
-    merged = full.merge(
-        out[["emp_id", "sku", "allocated_boxes"]],
-        on=["emp_id", "sku"],
-        how="left",
-    )
+    extra_cols = [c for c in out.columns if c not in ("emp_id", "sku", "allocated_boxes")]
+    merge_cols = ["emp_id", "sku", "allocated_boxes"] + extra_cols
+    merged = full.merge(out[merge_cols], on=["emp_id", "sku"], how="left")
     merged["allocated_boxes"] = (
         pd.to_numeric(merged["allocated_boxes"], errors="coerce").fillna(0).astype(int)
     )
+    for col in extra_cols:
+        if col in merged.columns:
+            if merged[col].dtype == object or col == "hist_dev_status":
+                merged[col] = merged[col].fillna("")
+            else:
+                merged[col] = pd.to_numeric(merged[col], errors="coerce").fillna(0)
     return merged
 
 
@@ -96,7 +100,7 @@ def allocate_boxes(
     cap_multiplier: float = None,  # override _CAP_MULTIPLIER (Custom strategy)
     even_new_products: bool = False,
     new_product_skus: set | frozenset | None = None,
-    hist_balance: float = 0.5,
+    hist_balance: float = 0.85,
     revenue_tolerance_baht: float = 1000.0,
 ) -> pd.DataFrame:
     strategy = strategy.upper()
@@ -137,12 +141,24 @@ def allocate_boxes(
 
     # ถ้า custom strategy ส่ง cap_multiplier มา ให้ใช้ค่านั้นแทน default
     effective_cap = cap_multiplier if cap_multiplier is not None else _CAP_MULTIPLIER
-    hb = max(0.0, min(1.0, float(hist_balance if hist_balance is not None else 0.5)))
+    hb = max(0.0, min(1.0, float(hist_balance if hist_balance is not None else 0.85)))
     rev_tol = max(0.0, float(revenue_tolerance_baht if revenue_tolerance_baht is not None else 1000.0))
 
     _LP_STRATEGIES = frozenset({"L3M", "L6M", "LY", "LP"})
+    base_map: dict[tuple[str, str], int] = {}
     if strategy in _LP_STRATEGIES:
         baseline = strategy if strategy in ("L3M", "L6M", "LY") else "L3M"
+        df_base = _proportional(
+            df_emp_targets,
+            df_sku,
+            df_hist,
+            baseline,
+            force_min_one,
+            locked_map,
+            effective_cap,
+            even_skus=even_skus,
+        )
+        base_map = _baseline_map_from_df(df_base, df_emp_targets, df_sku)
         df_out = _lp_optimize(
             df_emp_targets,
             df_sku,
@@ -154,6 +170,8 @@ def allocate_boxes(
             hist_balance=hb,
             revenue_tolerance_baht=rev_tol,
             cap_multiplier=effective_cap,
+            base_map=base_map,
+            hist_band_pct=_DEFAULT_HIST_BAND_PCT,
         )
     else:
         df_out = _proportional(
@@ -167,11 +185,108 @@ def allocate_boxes(
             even_skus=even_skus,
         )
 
-    return _expand_full_allocation_matrix(df_out, df_emp_targets, df_sku)
+    df_expanded = _expand_full_allocation_matrix(df_out, df_emp_targets, df_sku)
+    if not base_map:
+        prop_strat = strategy if strategy in ("L3M", "L6M", "LY", "EVEN", "PUSH") else "L3M"
+        df_base = _proportional(
+            df_emp_targets,
+            df_sku,
+            df_hist,
+            prop_strat,
+            force_min_one,
+            locked_map,
+            effective_cap,
+            even_skus=even_skus,
+        )
+        base_map = _baseline_map_from_df(df_base, df_emp_targets, df_sku)
+    if base_map:
+        df_expanded = _annotate_hist_deviation(
+            df_expanded,
+            base_map,
+            band_pct=_DEFAULT_HIST_BAND_PCT,
+            even_skus=even_skus,
+        )
+    return df_expanded
 
 # ── Cap multiplier: คนใดคนหนึ่งจะได้หีบสูงสุดไม่เกิน CAP_MULTIPLIER × ค่าเฉลี่ย
 _CAP_MULTIPLIER = 3.0
 _DEFAULT_REVENUE_TOLERANCE_BAHT = 1000.0
+_DEFAULT_HIST_BAND_PCT = 0.20
+
+
+def _baseline_map_from_df(
+    df_base: pd.DataFrame,
+    df_emp_targets: pd.DataFrame,
+    df_sku: pd.DataFrame,
+) -> dict[tuple[str, str], int]:
+    """baseline หีบต่อ (emp, sku) จาก proportional — ใช้รั้ว ±% และ flag UI"""
+    emps = [str(e).strip() for e in df_emp_targets["emp_id"].tolist() if str(e).strip()]
+    skus = _skus_with_target_boxes(df_sku)
+    base_map: dict[tuple[str, str], int] = {(e, s): 0 for e in emps for s in skus}
+    if df_base is not None and not df_base.empty:
+        for _, r in df_base.iterrows():
+            key = (str(r["emp_id"]).strip(), _norm_sku(r["sku"]))
+            if key in base_map:
+                base_map[key] = int(r["allocated_boxes"])
+    return base_map
+
+
+def _hist_band_int_bounds(base: int, band_pct: float, var_min: int = 0) -> tuple[int, int]:
+    """คืน (lo, hi) หีบ integer ที่อนุญาต ไม่เกิน ±band_pct จาก baseline"""
+    import math
+
+    base = max(0, int(base))
+    bp = max(0.0, min(1.0, float(band_pct)))
+    if base <= 0:
+        return max(var_min, 0), max(var_min, 0)
+    lo = max(var_min, int(math.floor(base * (1.0 - bp))))
+    hi = max(lo, int(math.ceil(base * (1.0 + bp))))
+    return lo, hi
+
+
+def _annotate_hist_deviation(
+    df: pd.DataFrame,
+    base_map: dict[tuple[str, str], int],
+    *,
+    band_pct: float = _DEFAULT_HIST_BAND_PCT,
+    even_skus: frozenset | None = None,
+) -> pd.DataFrame:
+    """
+    เพิ่ม baseline_boxes, hist_dev_pct, hist_dev_status
+    status: ok | near | far | "" (ไม่ใช้ flag — baseline 0 / สินค้าเกลี่ย)
+    """
+    even_skus = even_skus or frozenset()
+    band_pct = max(0.0, min(1.0, float(band_pct)))
+    band_pct100 = band_pct * 100.0
+    near_threshold = band_pct100 * 0.75
+
+    out = df.copy()
+    baselines = []
+    pcts = []
+    statuses = []
+    for _, r in out.iterrows():
+        emp = str(r["emp_id"]).strip()
+        sku = _norm_sku(r["sku"])
+        alloc = int(pd.to_numeric(r.get("allocated_boxes", 0), errors="coerce") or 0)
+        base = int(base_map.get((emp, sku), 0))
+        baselines.append(base)
+        if sku in even_skus or base <= 0:
+            pcts.append(None)
+            statuses.append("")
+            continue
+        pct = round((alloc - base) / base * 100.0, 1)
+        pcts.append(pct)
+        abs_pct = abs(pct)
+        if abs_pct > band_pct100 + 0.5:
+            statuses.append("far")
+        elif abs_pct >= near_threshold:
+            statuses.append("near")
+        else:
+            statuses.append("ok")
+    out["baseline_boxes"] = baselines
+    out["hist_dev_pct"] = pd.array(pcts, dtype=object)
+    out["hist_dev_status"] = statuses
+    return out
 
 
 def _lp_weights_from_balance(hist_balance: float) -> tuple[float, float, float]:
@@ -435,9 +550,11 @@ def _lp_optimize(
     even_skus: frozenset | None = None,
     *,
     baseline_strategy: str = "L3M",
-    hist_balance: float = 0.5,
+    hist_balance: float = 0.85,
     revenue_tolerance_baht: float = _DEFAULT_REVENUE_TOLERANCE_BAHT,
     cap_multiplier=None,
+    base_map: dict[tuple[str, str], int] | None = None,
+    hist_band_pct: float = _DEFAULT_HIST_BAND_PCT,
 ):
     locked_map = locked_map or {}
     even_skus = even_skus or frozenset()
@@ -485,29 +602,31 @@ def _lp_optimize(
 
     shortfall_w, excess_w, lp_anchor = _lp_weights_from_balance(hist_balance)
     tol = max(0.0, float(revenue_tolerance_baht or 0))
+    band_pct = max(0.0, min(1.0, float(hist_band_pct if hist_band_pct is not None else _DEFAULT_HIST_BAND_PCT)))
 
-    df_base = _proportional(
-        df_emp_targets,
-        df_sku,
-        df_hist,
-        baseline_strategy,
-        force_min_one,
-        locked_map,
-        cap_multiplier,
-        even_skus=even_skus,
-    )
-    base_map: dict[tuple[str, str], int] = {}
-    if df_base is not None and not df_base.empty:
-        for _, r in df_base.iterrows():
-            base_map[(str(r["emp_id"]), str(r["sku"]))] = int(r["allocated_boxes"])
+    if base_map is None:
+        df_base = _proportional(
+            df_emp_targets,
+            df_sku,
+            df_hist,
+            baseline_strategy,
+            force_min_one,
+            locked_map,
+            cap_multiplier,
+            even_skus=even_skus,
+        )
+        base_map = _baseline_map_from_df(df_base, df_emp_targets, df_sku)
+    else:
+        df_base = None
 
     logger.info(
-        "LP optimize: baseline=%s hist_balance=%.2f anchor=%.2f rev_tol=%.0f sf_w=%.2f",
+        "LP optimize: baseline=%s hist_balance=%.2f anchor=%.2f rev_tol=%.0f sf_w=%.2f band=%.0f%%",
         baseline_strategy,
         hist_balance,
         lp_anchor,
         tol,
         shortfall_w,
+        band_pct * 100,
     )
 
     prob = pulp.LpProblem("BoxAllocation_LP", pulp.LpMinimize)
@@ -529,6 +648,23 @@ def _lp_optimize(
                 )
                 dpos[(emp, sku)] = pulp.LpVariable(f"dp_{emp}_{sku}", lowBound=0, cat="Continuous")
                 dneg[(emp, sku)] = pulp.LpVariable(f"dn_{emp}_{sku}", lowBound=0, cat="Continuous")
+
+    # รั้ว ±band_pct จาก baseline proportional (ยกเว้น locked / SKU เกลี่ย)
+    if band_pct > 0 and base_map:
+        for emp in employees:
+            for sku in skus:
+                if (emp, sku) in locked_map:
+                    continue
+                sku_key = _norm_sku(sku)
+                if sku_key in even_skus:
+                    continue
+                base = int(base_map.get((str(emp).strip(), sku_key), 0))
+                if base <= 0:
+                    continue
+                min_box = 1 if force_min_one and int(target_boxes[sku]) >= len(employees) else 0
+                lo, hi = _hist_band_int_bounds(base, band_pct, min_box)
+                prob += x[(emp, sku)] >= lo
+                prob += x[(emp, sku)] <= hi
 
     shortfall = pulp.LpVariable.dicts("sf", employees, lowBound=0, cat="Continuous")
     excess = pulp.LpVariable.dicts("ex", employees, lowBound=0, cat="Continuous")
@@ -564,18 +700,23 @@ def _lp_optimize(
             for sku in skus:
                 if (emp, sku) in locked_map:
                     continue
-                base = int(base_map.get((str(emp), str(sku)), 0))
+                base = int(base_map.get((str(emp).strip(), _norm_sku(sku)), 0))
                 prob += x[(emp, sku)] - base == dpos[(emp, sku)] - dneg[(emp, sku)]
 
     time_limit = min(60, max(15, (len(employees) * len(skus)) // 8))
     try:
         prob.solve(pulp.PULP_CBC_CMD(msg=False, timeLimit=time_limit))
     except Exception as e:
-        logger.warning("LP solver error: %s → fallback %s", e, baseline_strategy)
+        logger.warning("LP solver error: %s → fallback proportional %s", e, baseline_strategy)
         return _fallback_prop()
 
     if pulp.LpStatus[prob.status] != "Optimal":
-        logger.warning("LP status=%s → fallback %s", pulp.LpStatus[prob.status], baseline_strategy)
+        logger.warning(
+            "LP status=%s (hist band ±%.0f%%) → fallback proportional %s",
+            pulp.LpStatus[prob.status],
+            band_pct * 100,
+            baseline_strategy,
+        )
         return _fallback_prop()
 
     results = [

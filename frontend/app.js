@@ -488,6 +488,8 @@ let S = {
   /** 3 หรือ 6 — ตรงกับ cache ที่ใช้ตอน optimize (แสดงคำว่าเฉลี่ย 3M/6M) */
   histWindowMonths: 3,
   activeBrand: "ALL",
+  /** null | "near" | "far" — กรองคอลัมน์ SKU ในตารางผลตามสัญลักษณ์ ◆ / ⚠ */
+  histDevFilter: null,
   targetMonth: null,
   targetYear: null,
   supId: null,
@@ -870,6 +872,9 @@ function _pushUndoState(reason = "") {
       hist_avg: Number(a.hist_avg) || 0,
       hist_ly_same_month: Number(a.hist_ly_same_month) || 0,
       hist_prev_month: Number(a.hist_prev_month) || 0,
+      baseline_boxes: Number(a.baseline_boxes) || 0,
+      hist_dev_pct: a.hist_dev_pct == null ? null : Number(a.hist_dev_pct),
+      hist_dev_status: a.hist_dev_status || "",
     })),
   };
   _undoStack.push(snap);
@@ -962,7 +967,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       r.closest(".s-pill").classList.add("active");
     });
   });
-  syncHistBalancePanel();
+  syncHistAllocNote();
 
   // beforeunload — เตือนเมื่อปิดหน้าต่างหรือรีเฟรช และมี allocation ที่ยังไม่ได้ export/save
   window.addEventListener("beforeunload", e => {
@@ -1461,7 +1466,7 @@ function _doLogout() {
   S = {
     employees: [], skus: [], totalTarget: 0, yellow: {}, allocations: [],
     histWindowMonths: 3,
-    activeBrand: "ALL", targetMonth: null, targetYear: null, supId: null,
+    activeBrand: "ALL", histDevFilter: null, targetMonth: null, targetYear: null, supId: null,
     supervisorName: "",
     managers: keepManagers,
     loginRole: null,
@@ -2418,6 +2423,7 @@ async function runOptimization() {
   btn.disabled = false;
 
   S.activeBrand = "ALL";
+  S.histDevFilter = null;
   buildBrandTabs(allocs);
   qs("#resultBlock").style.display = "block";
   renderResult(allocs);
@@ -2579,6 +2585,7 @@ function switchBrand(brand) {
    RESULT TABLE
 ══════════════════════════════════════════════ */
 function renderResult(allocs) {
+  if (allocs?.length) _recomputeAllHistDev(allocs);
   const isFiltered = S.activeBrand !== "ALL";
   // ใช้สำหรับ CSS เว้นพื้นที่ด้านขวา กันคอลัมน์ sticky ทับคอลัมน์อื่น
   document.getElementById("resultBlock")?.classList.toggle("brand-filtered", isFiltered);
@@ -2604,6 +2611,14 @@ function renderResult(allocs) {
   else if (sortMode === "qty") skusObjArr.sort((a, b) => b.totalQty - a.totalQty);
   else if (sortMode === "price_desc") skusObjArr.sort((a, b) => (_skuPriceMap[b.sku] ?? 0) - (_skuPriceMap[a.sku] ?? 0));
 
+  if (S.histDevFilter === "near" || S.histDevFilter === "far") {
+    const skuSet = new Set();
+    for (const a of filtered) {
+      if (a.hist_dev_status === S.histDevFilter) skuSet.add(a.sku);
+    }
+    skusObjArr = skusObjArr.filter(o => skuSet.has(o.sku));
+  }
+
   const skus = skusObjArr.map(o => o.sku);
   const emps = [...new Set(allocs.map(a => a.emp_id))];
 
@@ -2611,17 +2626,27 @@ function renderResult(allocs) {
   const lkHistRoll = {};
   const lkHistLy = {};
   const lkHistPrev = {};
+  const lkBaseline = {};
+  const lkHistDev = {};
   for (const a of allocs) {
     if (!lk[a.emp_id]) {
       lk[a.emp_id] = {};
       lkHistRoll[a.emp_id] = {};
       lkHistLy[a.emp_id] = {};
       lkHistPrev[a.emp_id] = {};
+      lkBaseline[a.emp_id] = {};
+      lkHistDev[a.emp_id] = {};
     }
     lk[a.emp_id][a.sku] = a.allocated_boxes || 0;
     lkHistRoll[a.emp_id][a.sku] = a.hist_avg || 0;
     lkHistLy[a.emp_id][a.sku] = Number(a.hist_ly_same_month) || 0;
     lkHistPrev[a.emp_id][a.sku] = Number(a.hist_prev_month) || 0;
+    lkBaseline[a.emp_id][a.sku] = Number(a.baseline_boxes) || 0;
+    lkHistDev[a.emp_id][a.sku] = {
+      status: a.hist_dev_status || "",
+      pct: a.hist_dev_pct == null ? null : Number(a.hist_dev_pct),
+      baseline: Number(a.baseline_boxes) || 0,
+    };
   }
   /** 1 = LY เดือนเดียวกันปีก่อนเป็นฐาน, 3/6 = ค่าเฉลี่ยหีบจาก cache rolling */
   const hmRoll = S.histWindowMonths === 6 ? 6 : S.histWindowMonths === 1 ? 1 : 3;
@@ -2731,13 +2756,18 @@ function renderResult(allocs) {
       const hText = `<div class="hist-sub"><div>${lineRoll}</div><div>${linePrev}</div>${lineLyDiv}</div>`;
 
       const colorClass = _editedSet.has(`${emp}::${s}`) ? "is-edited" : "";
+      const dev = lkHistDev[emp]?.[s] || { status: "", pct: null, baseline: 0 };
+      const flagHtml = _histDevFlagHtml(dev.status, dev.pct, dev.baseline);
+      const devLineHtml = _histDevLineHtml(dev.status, dev.pct, dev.baseline);
 
       rowHtml += `<td class="r result-cell" style="vertical-align:top;">
-        <div class="result-box-num ${colorClass}" contenteditable="true"
-          data-emp="${emp}" data-sku="${s}" onblur="onResultEdit(this)"
-          onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
-          onpaste="event.preventDefault();document.execCommand('insertText',false,parseInt(event.clipboardData.getData('text').replace(/,/g,''))||0)"
-        >${b}</div>${hText}</td>`;
+        <div class="result-box-wrap">
+          <div class="result-box-num ${colorClass}" contenteditable="true"
+            data-emp="${emp}" data-sku="${s}" onblur="onResultEdit(this)"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+            onpaste="event.preventDefault();document.execCommand('insertText',false,parseInt(event.clipboardData.getData('text').replace(/,/g,''))||0)"
+          >${b}</div>${flagHtml}
+        </div>${devLineHtml}${hText}</td>`;
     });
 
     // gap ก่อนคอลัมน์รวมยอด เพื่อไม่ให้ sticky ไปทับข้อมูล SKU
@@ -2762,6 +2792,7 @@ function renderResult(allocs) {
   }).join("");
 
   renderResultFooter(skus, skuTotals, emps);
+  _renderHistDevSummary(allocs, skus.length);
   syncStep3ResultFabricNote();
   syncLakehouseButton();
   requestAnimationFrame(() => adjustResultStickyGap());
@@ -2932,13 +2963,17 @@ function onResultEdit(el) {
   if (alloc) {
     alloc.allocated_boxes = val;
     alloc.is_edited = true;
+    _applyHistDevToAlloc(alloc, val);
   } else {
     const skuInfo = S.skus.find(x => x.sku === sku) || {};
-    S.allocations.push({
+    const row = {
       emp_id: emp, sku, allocated_boxes: val, hist_avg: 0, hist_ly_same_month: 0, hist_prev_month: 0,
       price_per_box: Number(skuInfo.price_per_box) || 0, brand_name_thai: skuInfo.brand_name_thai || "",
-      brand_name_english: skuInfo.brand_name_english || "", product_name_thai: skuInfo.product_name_thai || "", is_edited: true
-    });
+      brand_name_english: skuInfo.brand_name_english || "", product_name_thai: skuInfo.product_name_thai || "",
+      baseline_boxes: 0, hist_dev_pct: null, hist_dev_status: "", is_edited: true,
+    };
+    _applyHistDevToAlloc(row, val);
+    S.allocations.push(row);
   }
 
   // Debounce 250ms — ป้องกัน renderResult ยิงทุก blur เมื่อแก้หลายช่องต่อเนื่องเร็วๆ
@@ -4089,8 +4124,18 @@ async function runReAllocationKeepEdits() {
 const MANUAL_STEPS = [
   {
     title: "เข้าสู่ระบบ",
-    desc: "กด <strong>ล็อกอินด้วย Microsoft</strong> แล้วเลือก <strong>ผู้รับผิดชอบ (Supervisor / Manager)</strong> และ <strong>งวดเดือนที่จะกระจายเป้า</strong> (ค่าเริ่มต้นมักเป็นเดือนถัดจากวันนี้) จากนั้นกด <strong>เข้าสู่ระบบ Dashboard</strong> — ระบบจะดึงเป้าและประวัติจากข้อมูลกลางอัตโนมัติ <strong>ไม่ต้องอัปโหลดไฟล์ Excel</strong>",
-    tips: "💡 รอรายชื่อ Supervisor โหลดเสร็จก่อนกดเข้าระบบ · ถ้าไม่มีสิทธิ์ให้ติดต่อ IT",
+    desc: `<ul class="manual-list">
+<li>(แนะนำ) กด <strong>อ่านคู่มือก่อนใช้งาน</strong> บนการ์ด — มีป้าย <strong>แนะนำ</strong> · อ่านได้ก่อนล็อกอิน</li>
+<li>กด <strong>ล็อกอินด้วย Microsoft</strong> — ใช้บัญชีองค์กร</li>
+<li>รอ dropdown <strong>ผู้รับผิดชอบ (Supervisor / Manager)</strong> โหลดเสร็จ</li>
+<li>เลือกรหัสทีมและ <strong>งวดเดือน</strong> ที่จะกระจายเป้า<br><span class="manual-muted">(ค่าเริ่มต้นมักเป็นเดือนถัดจากวันนี้)</span></li>
+<li>กด <strong>เข้าสู่ระบบ Dashboard</strong></li>
+</ul>
+<p class="manual-note">ระบบดึงเป้าและประวัติจากข้อมูลกลางอัตโนมัติ — <strong>ไม่ต้องอัปโหลด Excel</strong></p>`,
+    tips: `<ul class="manual-list">
+<li>💡 มุมขวาบนมีปุ่ม <strong>คู่มือ</strong> ตลอดเวลา (หลังเข้า Dashboard)</li>
+<li>Dropdown Supervisor ว่าง — กด ↻ รีเฟรช หรือติดต่อ IT</li>
+</ul>`,
     art: `<svg viewBox="0 0 220 160" xmlns="http://www.w3.org/2000/svg">
       <rect x="14" y="16" width="192" height="32" rx="8" fill="#FFFFFF" stroke="#E2E8F0"/>
       <text x="28" y="36" font-family="Sarabun" font-size="11" font-weight="700" fill="#0F172A">Microsoft ล็อกอิน</text>
@@ -4104,8 +4149,18 @@ const MANUAL_STEPS = [
   },
   {
     title: "ดูข้อมูลตั้งต้น (ขั้นที่ 1)",
-    desc: "เมื่อเข้าระบบจะพบ <strong>เป้ารวม</strong> และตารางพนักงาน + SKU ของงวดที่เลือก (ดึงจากระบบเป้ากลาง) ใช้แท็บ <strong>เทียบเฉลี่ย 3 เดือน</strong> / <strong>เทียบปีที่แล้ว</strong> และจัดกลุ่ม SKU เป็น <strong>ราย SKU · แบรนด์ · Section</strong> เพื่อตรวจความถูกต้อง",
-    tips: "💡 หากเป้ารวมไม่ตรง ให้กดลิงก์ <strong>“ติดต่อ IT”</strong> ใต้ช่องเป้ารวม",
+    desc: `<ul class="manual-list">
+<li>ดู <strong>เป้ารวม</strong> ด้านบน — ยอดเงินรวมของงวดที่เลือก</li>
+<li>ตรวจตาราง <strong>พนักงาน</strong> — รหัส S/M, ชื่อ, เป้าเริ่มต้น</li>
+<li>ตรวจตาราง <strong>SKU (เป้าหีบ)</strong> — รหัสสินค้า, แบรนด์, จำนวนหีบเป้ารวมต่อ SKU</li>
+<li>สลับแท็บ <strong>เทียบเฉลี่ย 3 เดือน</strong> / <strong>เทียบปีที่แล้ว</strong></li>
+<li>จัดกลุ่ม SKU เป็น <strong>ราย SKU · แบรนด์ · Section</strong></li>
+</ul>
+<p class="manual-note">ควรเห็นเป้ารวมเป็นตัวเลขชัดเจน และ SKU ที่มีเป้าหีบ &gt; 0</p>`,
+    tips: `<ul class="manual-list">
+<li>💡 เป้ารวมผิดหรือว่าง — กด <strong>ติดต่อ IT</strong> ใต้ช่องเป้ารวม</li>
+<li>SKU ไม่ครบ — ตรวจว่าเลือกงวดถูกต้อง · โหลดหน้าใหม่ (F5)</li>
+</ul>`,
     art: `<svg viewBox="0 0 220 160" xmlns="http://www.w3.org/2000/svg">
       <rect x="14" y="14" width="192" height="36" rx="8" fill="#EEF2FF" stroke="#C7D2FE"/>
       <text x="28" y="38" font-family="Sarabun" font-size="13" font-weight="700" fill="#4F46E5">เป้ารวม 12,000,000 ฿</text>
@@ -4125,8 +4180,23 @@ const MANUAL_STEPS = [
   },
   {
     title: "ปรับเป้าหมายรายพนักงาน (ขั้นที่ 2 — ไม่บังคับ)",
-    desc: "ขั้นนี้ <strong>ข้ามได้</strong> — ค่าเริ่มต้นเท่า <strong>เป้า Target Sun</strong> ในช่อง <strong>เป้าหมายที่กำหนดเอง</strong> สามารถพิมพ์ปรับรายคนได้ ระบบคำนวณ <strong>% เติบโต</strong> ให้อัตโนมัติ ยอดรวมควร <strong>ใกล้เป้ารวม</strong> (ต่างไม่เกินประมาณ 10 บาท จึงพร้อมกระจายหีบ)",
-    tips: "💡 ปุ่ม <strong>รีเซ็ตเป็น Target Sun</strong> คืนค่าเป้าที่กำหนดเอง · หากปรับลดคนหนึ่ง อย่าลืมเพิ่มให้คนอื่นเพื่อให้ผลรวมยังใกล้เป้ารวม",
+    desc: `<p class="manual-lead">ขั้นนี้ <strong>ข้ามได้</strong> — ใช้เป้า Target Sun ตามที่ระบบดึงมา</p>
+<ul class="manual-list">
+<li>ดูคอลัมน์ <strong>เป้าหมายที่กำหนดเอง</strong> — ค่าเริ่มต้นเท่าเป้า Target Sun</li>
+<li>คลิกช่องแล้วพิมพ์ปรับเป้าเงินรายคน (ถ้าต้องการ)</li>
+<li>ระบบคำนวณ <strong>% เติบโต</strong> ให้อัตโนมัติ</li>
+<li>ตรวจ <strong>ยอดรวมเป้าที่กำหนดเอง</strong> ด้านล่าง — ควรใกล้เป้ารวม</li>
+</ul>
+<p class="manual-lead" style="margin-top:10px;">เกณฑ์ยอดรวม</p>
+<ul class="manual-list">
+<li>ต่างไม่เกิน ~10 บาท — พร้อมกด <strong>เริ่มคำนวณ</strong></li>
+<li>ไม่เกิน ~99 บาท — แจ้งเตือน แต่ยังคำนวณได้</li>
+<li>มากกว่านั้น — ปุ่มเริ่มคำนวณปิด</li>
+</ul>`,
+    tips: `<ul class="manual-list">
+<li>💡 <strong>รีเซ็ตเป็น Target Sun</strong> — คืนค่าเป้าที่กำหนดเองทุกคน</li>
+<li>หากปรับลดคนหนึ่ง ควรเพิ่มให้คนอื่นเพื่อให้ผลรวมยังใกล้เป้ารวม</li>
+</ul>`,
     art: `<svg viewBox="0 0 220 160" xmlns="http://www.w3.org/2000/svg">
       <rect x="14" y="12" width="192" height="22" rx="6" fill="#F8FAFC" stroke="#E2E8F0"/>
       <text x="22" y="27" font-family="Sarabun" font-size="11" fill="#475569">พนักงาน A — เป้า</text>
@@ -4147,8 +4217,14 @@ const MANUAL_STEPS = [
   },
   {
     title: "กรณีตั้งเป้าให้เติบโตติดลบ",
-    desc: "ถ้าตัวเลขที่ตั้งให้พนักงานทำให้ <strong>การเติบโตติดลบ</strong> (เป้าน้อยกว่ายอดเดือนเดียวกันปีที่แล้ว) ระบบจะขอให้กรอก <strong>เหตุผล</strong> ก่อน เพื่อเก็บประวัติว่าทำไมจึงต้องลดเป้า",
-    tips: "ℹ️ หากเป้าที่ใส่ <strong>เท่ากับเป้า Target Sun</strong> แล้วการเติบโตติดลบ ไม่ต้องกรอกเหตุผล",
+    desc: `<ul class="manual-list">
+<li>ถ้าเป้าที่ตั้งทำให้ <strong>การเติบโตติดลบ</strong></li>
+<li>(เป้าน้อยกว่ายอดเดือนเดียวกันปีที่แล้ว)</li>
+<li>ระบบจะขอให้กรอก <strong>เหตุผล</strong> อย่างน้อย 8 ตัวอักษร ก่อนคำนวณ</li>
+</ul>`,
+    tips: `<ul class="manual-list">
+<li>ℹ️ หากเป้าที่ใส่ <strong>เท่ากับเป้า Target Sun</strong> แล้วการเติบโตติดลบ — ไม่ต้องกรอกเหตุผล</li>
+</ul>`,
     art: `<svg viewBox="0 0 220 160" xmlns="http://www.w3.org/2000/svg">
       <rect x="12" y="12" width="196" height="46" rx="8" fill="#FEF7E6" stroke="#F5C977"/>
       <text x="24" y="32" font-family="Sarabun" font-size="13" font-weight="700" fill="#7C4A00">⚠️ พบเป้าที่เติบโตติดลบ</text>
@@ -4164,8 +4240,14 @@ const MANUAL_STEPS = [
   },
   {
     title: "หักบิวเทรี่ยม (ถ้ามี)",
-    desc: "หากเดือนเดียวกันปีที่แล้วมี <strong>ยอดบิวเทรี่ยม</strong> ที่ไม่ควรนำมาใช้คำนวณการเติบโต ให้กดปุ่ม <strong>“หักบิวเทรี่ยม”</strong> เพื่อเปิดช่องกรอกตัวเลขที่ต้องหักออก ระบบจะใช้ยอด <strong>หลังหัก</strong> เป็นฐานคำนวณ %เติบโต",
-    tips: "💡 ใส่เฉพาะพนักงานที่ต้องหัก คนอื่นปล่อยว่างได้",
+    desc: `<ul class="manual-list">
+<li>ถ้าเดือนเดียวกันปีที่แล้วมี <strong>ยอดบิวเทรี่ยม</strong> ที่ไม่ควรใช้คำนวณ % เติบโต</li>
+<li>กดปุ่ม <strong>“หักบิวเทรี่ยม”</strong> แล้วกรอกตัวเลขที่ต้องหัก</li>
+<li>ระบบใช้ยอด <strong>หลังหัก</strong> เป็นฐานคำนวณ % เติบโต</li>
+</ul>`,
+    tips: `<ul class="manual-list">
+<li>💡 ใส่เฉพาะพนักงานที่ต้องหัก — คนอื่นปล่อยว่างได้</li>
+</ul>`,
     art: `<svg viewBox="0 0 220 160" xmlns="http://www.w3.org/2000/svg">
       <rect x="12" y="14" width="100" height="30" rx="14" fill="#4F46E5"/>
       <text x="28" y="34" font-family="Sarabun" font-size="12" font-weight="700" fill="#FFFFFF">➖ หักบิวเทรี่ยม</text>
@@ -4186,8 +4268,18 @@ const MANUAL_STEPS = [
   },
   {
     title: "เลือกวิธีกระจายหีบ (ขั้นที่ 3)",
-    desc: "เลือกได้ <strong>มากกว่า 1 วิธี</strong> (เช่น <strong>เฉลี่ย 3 เดือน</strong>, <strong>6 เดือน</strong>, <strong>เดือนเดียวกันปีที่แล้ว</strong>, <strong>ผลักดันพนักงาน</strong>) — ถ้าเลือกหลายวิธี ให้กำหนด <strong>แบรนด์ → วิธี</strong> ด้านล่าง มีตัวเลือก <strong>บังคับอย่างน้อย 1 หีบต่อ SKU</strong> และ <strong>SKU ใหม่แบ่งเท่ากัน</strong> ตามต้องการ",
-    tips: "💡 เลือกวิธีเดียวก็ใช้กับทุกแบรนด์ได้ · กด <strong>เริ่มคำนวณ</strong> (เสร็จแล้วเป็น <strong>คำนวณใหม่</strong>)",
+    desc: `<ul class="manual-list">
+<li>เลือกได้ <strong>มากกว่า 1 วิธี</strong> — L3M, L6M, LY, ผลักดันพนักงาน (PUSH)</li>
+<li>ถ้าเลือกหลายวิธี — กำหนด <strong>แบรนด์ → วิธี</strong> ใน panel ด้านล่าง</li>
+<li>แบ่งหีบตามประวัติ แล้วปรับเป้าเงินรายคน (±1,000 บ.)</li>
+<li>หีบต่อ (คน × SKU) ไม่เกิน <strong>±20% จากประวัติเก่า</strong></li>
+<li>กด <strong>เริ่มคำนวณ</strong> — รอ progress 4 ขั้น · เสร็จแล้วปุ่มเป็น <strong>คำนวณใหม่</strong></li>
+</ul>
+<p class="manual-note">หลังคำนวณ ดูแถบ <strong>📐 หีบ vs ประวัติเก่า (±20%)</strong> เหนือตารางผล — กดกรอง ◆ / ⚠ ได้ (ขั้นถัดไป)</p>`,
+    tips: `<ul class="manual-list">
+<li>💡 มีตัวเลือก <strong>บังคับอย่างน้อย 1 หีบต่อ SKU</strong> และ <strong>SKU ใหม่แบ่งเท่ากัน</strong></li>
+<li>จากนั้นกด <strong>เริ่มคำนวณ</strong></li>
+</ul>`,
     art: `<svg viewBox="0 0 220 160" xmlns="http://www.w3.org/2000/svg">
       <rect x="12" y="10" width="60" height="28" rx="8" fill="#EEF2FF" stroke="#C7D2FE"/>
       <text x="22" y="28" font-family="Sarabun" font-size="11" font-weight="700" fill="#4F46E5">✓ 3M</text>
@@ -4204,14 +4296,68 @@ const MANUAL_STEPS = [
       <text x="30" y="114" font-family="Sarabun" font-size="11" fill="#0F172A">แบรนด์ B</text>
       <text x="150" y="114" font-family="Sarabun" font-size="11" font-weight="700" fill="#4F46E5">LY ▾</text>
       <rect x="22" y="124" width="176" height="20" rx="5" fill="#FFFFFF" stroke="#E2E8F0"/>
-      <text x="30" y="138" font-family="Sarabun" font-size="11" fill="#0F172A">แบรนด์ C</text>
-      <text x="150" y="138" font-family="Sarabun" font-size="11" font-weight="700" fill="#4F46E5">3M ▾</text>
+      <text x="30" y="138" font-family="Sarabun" font-size="11" fill="#0F172A">±20% จากประวัติเก่า</text>
     </svg>`
   },
   {
-    title: "ผลลัพธ์ · Excel · ส่งเข้า Target Sun",
-    desc: "หลัง <strong>เริ่มคำนวณ</strong> แก้จำนวนหีบในตารางได้ (ตัวเลขสีน้ำเงิน) จากนั้นเลือก: <strong>บันทึกร่าง</strong> (เก็บในเบราว์เซอร์) · <strong>↓ ดาวน์โหลด Excel</strong> (สรุปผลรายแบรนด์) · <strong>📤 ส่งเข้า Target Sun</strong> (ระบบสร้างไฟล์และส่งให้อัตโนมัติ — ไม่ต้องแนบไฟล์) หรือใน modal เลือก <strong>ดาวน์โหลด Excel อย่างเดียว</strong> รูปแบบ TGA",
-    tips: "💡 ส่งเฉพาะผลขั้นที่ 3 · ปุ่มส่งเป็นสีเทาถ้าไม่มีสิทธิ์หรือยังไม่คำนวณ · คู่ที่ไม่มีข้อมูลใน Target Sun จะไม่ถูกส่งและมีแจ้งเตือน",
+    title: "อ่านตารางผลและสัญลักษณ์ ◆ / ⚠",
+    desc: `<p class="manual-lead">บล็อก <strong>ผลลัพธ์การกระจายหีบ</strong> — มีแถบควบคุม แถบกรอง และตาราง</p>
+<p class="manual-lead" style="margin-top:10px;">แถบควบคุม</p>
+<ul class="manual-list">
+<li><strong>เรียงตาม</strong> รหัสสินค้า / แบรนด์ / จำนวนหีบ / ราคา</li>
+<li><strong>ทุกแบรนด์</strong> — กรองดูเฉพาะแบรนด์หนึ่ง</li>
+<li><strong>บันทึกร่าง · Undo · Excel · ส่ง Target Sun</strong></li>
+</ul>
+<p class="manual-lead" style="margin-top:12px;">แถบ 📐 หีบ vs ประวัติเก่า (±20%)</p>
+<ul class="manual-list">
+<li>แสดง <strong>ทุกครั้ง</strong> หลังคำนวณ — อยู่เหนือตาราง</li>
+<li>กดปุ่ม <strong>◆</strong> — กรองเฉพาะ SKU ที่อยู่ในช่วง ±20% ของประวัติเก่า</li>
+<li>กดปุ่ม <strong>⚠</strong> — กรอง SKU ที่เกินช่วง ±20% (มักจากแก้มือ)</li>
+<li>ตัวเลขเป็น 0 — ปุ่มกดไม่ได้ · ทั้งคู่เป็น 0 = ปกติหลังคำนวณ</li>
+<li>คลิกซ้ำหรือ <strong>แสดงทั้งหมด</strong> — ยกเลิกกรอง</li>
+</ul>
+<p class="manual-lead" style="margin-top:12px;">ในตาราง</p>
+<ul class="manual-list">
+<li><strong>ตัวเลขสีน้ำเงิน</strong> — จำนวนหีบ (คลิกแก้ได้)</li>
+<li><strong>ข้อความใต้ตัวเลข</strong> — ประวัติยอดขาย</li>
+<li><strong>คอลัมน์ขวาสุด</strong> — มูลค่ารวม · ✓ ใกล้เป้าเมื่อห่างไม่เกิน ±1,000 บ.</li>
+<li><strong>แถวล่าง</strong> — เป้ารวม (หีบ) vs รวมที่จัดสรร (ควร ✓ ทุก SKU ก่อนส่ง)</li>
+</ul>`,
+    tips: `<ul class="manual-list">
+<li>↩️ <strong>Undo</strong> — ย้อนการแก้ล่าสุด · สัญลักษณ์ ◆/⚠ อัปเดตอัตโนมัติ</li>
+<li>💾 <strong>บันทึกร่าง</strong> — เก็บในเบราว์เซอร์ (ยังไม่ใช่การส่ง Target Sun)</li>
+<li>กรอง ⚠ แล้วตารางว่าง — ลองเปลี่ยนเป็น <strong>ทุกแบรนด์</strong></li>
+</ul>`,
+    art: `<svg viewBox="0 0 220 160" xmlns="http://www.w3.org/2000/svg">
+      <rect x="14" y="8" width="192" height="28" rx="6" fill="#EEF2FF" stroke="#C7D2FE"/>
+      <text x="22" y="26" font-family="Sarabun" font-size="9" font-weight="700" fill="#4338CA">📐 หีบ vs ประวัติเก่า ±20%</text>
+      <rect x="22" y="42" width="78" height="18" rx="5" fill="#FFFBEB" stroke="#FCD34D"/>
+      <text x="28" y="54" font-family="Sarabun" font-size="8" fill="#B45309">◆ 12</text>
+      <rect x="106" y="42" width="78" height="18" rx="5" fill="#FEE2E2" stroke="#FCA5A5"/>
+      <text x="112" y="54" font-family="Sarabun" font-size="8" fill="#B91C1C">⚠ 3</text>
+      <rect x="14" y="68" width="70" height="36" rx="6" fill="#FFFFFF" stroke="#E2E8F0"/>
+      <text x="22" y="86" font-family="Sarabun" font-size="14" font-weight="700" fill="#4F46E5">529</text>
+      <text x="54" y="86" font-family="Sarabun" font-size="10" fill="#B45309">◆</text>
+      <rect x="92" y="68" width="114" height="36" rx="6" fill="#ECFDF5" stroke="#6EE7B7"/>
+      <text x="100" y="90" font-family="Sarabun" font-size="10" fill="#059669">✓ รวมหีบต่อ SKU ตรงเป้า</text>
+      <rect x="14" y="112" width="192" height="40" rx="6" fill="#F8FAFC" stroke="#E2E8F0"/>
+      <text x="22" y="130" font-family="Sarabun" font-size="9" fill="#475569">คลิก ◆ / ⚠ เพื่อกรอง SKU</text>
+      <text x="22" y="144" font-family="Sarabun" font-size="9" fill="#94A3B8">ก่อนส่ง Target Sun</text>
+    </svg>`
+  },
+  {
+    title: "Excel · ส่งเข้า Target Sun",
+    desc: `<p class="manual-lead">จากตารางผล เลือกได้ดังนี้</p>
+<ul class="manual-list">
+<li><strong>↓ ดาวน์โหลด Excel</strong> — สรุปผลรายแบรนด์</li>
+<li><strong>📤 ส่งเข้า Target Sun</strong> — ระบบสร้างไฟล์และส่งให้อัตโนมัติ (ไม่ต้องแนบไฟล์)</li>
+<li>ใน modal ยังเลือก <strong>ดาวน์โหลด Excel อย่างเดียว</strong> รูปแบบ TGA ได้</li>
+</ul>`,
+    tips: `<ul class="manual-list">
+<li>💡 ก่อนส่ง: แถวล่าง ✓ ทุก SKU · กดกรอง <strong>⚠</strong> ถ้าแก้มือ</li>
+<li>ส่งเฉพาะผลหลังคำนวณ · ปุ่มส่งเป็นสีเทา ถ้ายังไม่คำนวณหรือไม่มีสิทธิ์</li>
+<li>สินค้าที่ไม่มีใน Target Sun จะไม่ถูกส่ง — ระบบแจ้งจำนวนให้ใน modal</li>
+</ul>`,
     art: `<svg viewBox="0 0 220 160" xmlns="http://www.w3.org/2000/svg">
       <rect x="14" y="12" width="192" height="52" rx="8" fill="#FFFFFF" stroke="#E2E8F0"/>
       <text x="22" y="30" font-family="Sarabun" font-size="11" fill="#475569">ผลกระจายหีบ — แก้เลขได้</text>
@@ -4460,26 +4606,143 @@ function _getSelectedStrategies() {
 }
 
 const _HIST_BALANCE_LP_STRATEGIES = new Set(["L3M", "L6M", "LY", "LP"]);
-const _HIST_BALANCE_MODE_VALUES = { hist: 0.85, balanced: 0.5, money: 0.15 };
+/** ค่าคงที่ — UI ไม่ให้เลือกแล้ว; ช่วง ±20% เป็นตัวจำกัดหลัก */
+const _DEFAULT_HIST_BALANCE = 0.85;
+const _HIST_BAND_PCT = 20;
 
-function syncHistBalancePanel() {
-  const panel = document.getElementById("histBalancePanel");
-  if (!panel) return;
+function syncHistAllocNote() {
+  const note = document.getElementById("histAllocNote");
+  if (!note) return;
   const selected = _getSelectedStrategies();
-  panel.style.display = selected.some(s => _HIST_BALANCE_LP_STRATEGIES.has(s)) ? "" : "none";
-  syncHistBalancePillActive();
-}
-
-function syncHistBalancePillActive() {
-  document.querySelectorAll(".hist-balance-option").forEach(label => {
-    const input = label.querySelector('input[name="histBalanceMode"]');
-    label.classList.toggle("active", Boolean(input?.checked));
-  });
+  note.style.display = selected.some(s => _HIST_BALANCE_LP_STRATEGIES.has(s)) ? "" : "none";
 }
 
 function _histBalancePayload() {
-  const mode = document.querySelector('input[name="histBalanceMode"]:checked')?.value || "balanced";
-  return _HIST_BALANCE_MODE_VALUES[mode] ?? 0.5;
+  return _DEFAULT_HIST_BALANCE;
+}
+
+function _computeHistDevStatus(allocated, baseline) {
+  const base = Number(baseline) || 0;
+  const alloc = Number(allocated) || 0;
+  if (base <= 0) return { status: "", pct: null, baseline: base };
+  const pct = Math.round((alloc - base) / base * 1000) / 10;
+  const absPct = Math.abs(pct);
+  if (absPct > _HIST_BAND_PCT + 0.5) return { status: "far", pct, baseline: base };
+  if (absPct >= _HIST_BAND_PCT * 0.75) return { status: "near", pct, baseline: base };
+  return { status: "ok", pct, baseline: base };
+}
+
+function _applyHistDevToAlloc(alloc, allocatedBoxes) {
+  const base = Number(alloc.baseline_boxes) || 0;
+  const dev = _computeHistDevStatus(allocatedBoxes, base);
+  alloc.hist_dev_pct = dev.pct;
+  alloc.hist_dev_status = dev.status;
+}
+
+function _recomputeAllHistDev(allocs) {
+  for (const a of allocs || []) {
+    _applyHistDevToAlloc(a, Number(a.allocated_boxes) || 0);
+  }
+}
+
+function _histDevFlagHtml(status, pct, baseline) {
+  if (!status || status === "ok") return "";
+  const word = pct > 0 ? "เกิน" : "ขาด";
+  const absPct = Math.abs(Number(pct) || 0);
+  if (status === "far") {
+    return `<span class="hist-dev-flag hist-dev-far" title="เบี่ยงจากประวัติเก่า ${word} ${absPct}% (${baseline} หีบ) — เกินช่วง ±${_HIST_BAND_PCT}% ของประวัติเก่า">⚠</span>`;
+  }
+  return `<span class="hist-dev-flag hist-dev-near" title="อยู่ในช่วง ±${_HIST_BAND_PCT}% ของประวัติเก่า — ${word}ประวัติ ${absPct}% (${baseline} หีบ)">◆</span>`;
+}
+
+function _histDevLineHtml(status, pct, baseline) {
+  if (!status || status === "ok") return "";
+  const word = pct > 0 ? "เกิน" : "ขาด";
+  const absPct = Math.abs(Number(pct) || 0);
+  const cls = status === "far" ? "hist-dev-far-text" : "hist-dev-near-text";
+  const label = status === "far"
+    ? `⚠ เกินช่วง ±${_HIST_BAND_PCT}% ของประวัติเก่า`
+    : `◆ อยู่ในช่วง ±${_HIST_BAND_PCT}% ของประวัติเก่า`;
+  return `<div class="hist-dev-line ${cls}" title="ประวัติเก่า ${baseline} หีบ · ${word} ${absPct}%">${label}</div>`;
+}
+
+function setHistDevFilter(status) {
+  if (status !== "near" && status !== "far") {
+    S.histDevFilter = null;
+  } else if (S.histDevFilter === status) {
+    S.histDevFilter = null;
+  } else {
+    S.histDevFilter = status;
+  }
+  if (S.allocations?.length) renderResult(S.allocations);
+}
+
+function _histDevCounts(allocs) {
+  let near = 0;
+  let far = 0;
+  for (const a of allocs || []) {
+    if (a.hist_dev_status === "near") near++;
+    if (a.hist_dev_status === "far") far++;
+  }
+  return { near, far };
+}
+
+function _renderHistDevSummary(allocs, visibleSkuCount) {
+  const el = qs("#histDevSummary");
+  if (!el) return;
+  if (!allocs || allocs.length === 0) {
+    el.style.display = "none";
+    el.innerHTML = "";
+    S.histDevFilter = null;
+    return;
+  }
+  const { near, far } = _histDevCounts(allocs);
+  if (near === 0 && far === 0) S.histDevFilter = null;
+
+  el.style.display = "";
+  const active = S.histDevFilter;
+  const tone = far > 0 ? "hist-dev-bar--bad" : near > 0 ? "hist-dev-bar--warn" : "hist-dev-bar--neutral";
+
+  const filterHint = active
+    ? `<span class="hist-dev-bar__active">กำลังกรอง SKU ที่มี ${active === "far" ? "⚠" : "◆"} · <button type="button" class="hist-dev-bar__clear" onclick="setHistDevFilter(null)">แสดงทั้งหมด</button></span>`
+    : `<span class="hist-dev-bar__hint">คลิกปุ่มเพื่อกรองเฉพาะ SKU ที่มีสัญลักษณ์นั้นในตาราง</span>`;
+
+  const okNote =
+    near === 0 && far === 0
+      ? `<div class="hist-dev-bar__ok">✓ ไม่พบช่องที่มี ◆ หรือ ⚠ — หีบสอดคล้องประวัติเก่าภายใน ±20% (ปกติหลังคำนวณ)</div>`
+      : "";
+
+  const emptyNote =
+    active && visibleSkuCount === 0
+      ? `<div class="hist-dev-bar__empty">ไม่พบ SKU ที่ตรงเงื่อนไขในมุมมองปัจจุบัน — ลองเปลี่ยนแบรนด์หรือกดแสดงทั้งหมด</div>`
+      : "";
+
+  const nearDisabled = near === 0;
+  const farDisabled = far === 0;
+
+  el.className = `hist-dev-bar ${tone}`;
+  el.innerHTML = `
+    <div class="hist-dev-bar__head">
+      <span class="hist-dev-bar__title">📐 หีบ vs ประวัติเก่า (±${_HIST_BAND_PCT}%)</span>
+      ${filterHint}
+    </div>
+    <div class="hist-dev-bar__filters">
+      <button type="button" class="hist-dev-filter hist-dev-filter--near${active === "near" ? " is-active" : ""}${nearDisabled ? " is-disabled" : ""}"
+        ${nearDisabled ? "disabled" : `onclick="setHistDevFilter('near')"`}
+        aria-pressed="${active === "near"}" title="${nearDisabled ? "ไม่มีช่อง ◆ ในผลนี้" : "กรอง SKU ที่มี ◆"}">
+        <span class="hist-dev-flag hist-dev-near" aria-hidden="true">◆</span>
+        <span class="hist-dev-filter__label">อยู่ในช่วง ±${_HIST_BAND_PCT}% ของประวัติเก่า</span>
+        <span class="hist-dev-filter__count">${near.toLocaleString("th-TH")}</span>
+      </button>
+      <button type="button" class="hist-dev-filter hist-dev-filter--far${active === "far" ? " is-active" : ""}${farDisabled ? " is-disabled" : ""}"
+        ${farDisabled ? "disabled" : `onclick="setHistDevFilter('far')"`}
+        aria-pressed="${active === "far"}" title="${farDisabled ? "ไม่มีช่อง ⚠ ในผลนี้" : "กรอง SKU ที่มี ⚠"}">
+        <span class="hist-dev-flag hist-dev-far" aria-hidden="true">⚠</span>
+        <span class="hist-dev-filter__label">เกินช่วง ±${_HIST_BAND_PCT}% ของประวัติเก่า</span>
+        <span class="hist-dev-filter__count">${far.toLocaleString("th-TH")}</span>
+      </button>
+    </div>
+    ${okNote}${emptyNote}`;
 }
 
 function _revenueTolerancePayload() {
@@ -4574,10 +4837,6 @@ function _brandMappingComplete() {
 // hook checkbox change to update active pill styling + brand panel + run gating
 document.addEventListener("change", (e) => {
   const t = e.target;
-  if (t && t.matches && t.matches('input[name="histBalanceMode"]')) {
-    syncHistBalancePillActive();
-    return;
-  }
   if (t && t.matches && t.matches('input[name="strategy"]')) {
     const pill = t.closest(".s-pill");
     if (pill) pill.classList.toggle("active", t.checked);
@@ -4590,7 +4849,7 @@ document.addEventListener("change", (e) => {
       }
     }
     _renderBrandStrategyPanel();
-    syncHistBalancePanel();
+    syncHistAllocNote();
   }
 });
 

@@ -9,7 +9,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Instrument+Serif:ital@0;1&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=202605124" />
+  <link rel="stylesheet" href="style.css?v=202605134" />
 </head>
 
 <body>
@@ -48,6 +48,7 @@
               <div class="pt"><span class="dot"></span>ดึงเป้าจากข้อมูลกลางอัตโนมัติ</div>
               <div class="pt"><span class="dot"></span>ย้อนหลัง 3 เดือน / 6 เดือน / เทียบปีที่แล้ว</div>
               <div class="pt"><span class="dot"></span>บันทึกแบบร่างและรักษาการแก้ไขด้วยมือ</div>
+              <div class="pt"><span class="dot"></span>มีคู่มือทีละขั้น — อ่านได้ก่อนล็อกอิน</div>
             </div>
           </div>
         </aside>
@@ -61,6 +62,23 @@
                 <div class="login-sub2">เข้าใช้งานด้วยบัญชี Microsoft และเลือกผู้รับผิดชอบ / งวดเป้า</div>
               </div>
             </div>
+
+            <button type="button" class="login-manual-cta" onclick="showManualModal()"
+              aria-label="เปิดคู่มือการใช้งานทีละขั้นตอน">
+              <span class="login-manual-cta__icon" aria-hidden="true">📖</span>
+              <span class="login-manual-cta__body">
+                <span class="login-manual-cta__head">
+                  <span class="login-manual-cta__title">อ่านคู่มือก่อนใช้งาน</span>
+                  <span class="login-manual-cta__badge">แนะนำ</span>
+                </span>
+                <span class="login-manual-cta__meta">
+                  <span class="login-manual-cta__chip">9 ขั้นตอน</span>
+                  <span class="login-manual-cta__chip">~4 นาที</span>
+                  <span class="login-manual-cta__chip">อ่านได้ก่อนล็อกอิน</span>
+                </span>
+              </span>
+              <span class="login-manual-cta__arrow" aria-hidden="true">→</span>
+            </button>
 
             <div id="msAuthBlock" class="ms-auth-block" style="display: none;" aria-live="polite">
               <button type="button" id="msLoginBtn" class="btn-ms">ล็อกอินด้วย Microsoft</button>
@@ -145,14 +163,15 @@
       </div>
     </div>
 
+    <!-- คู่มือ — แสดงทั้งหน้า Login และ Dashboard -->
+    <button type="button" id="openManualBtn" class="btn-manual btn-manual--floating" onclick="showManualModal()"
+      title="ดูคู่มือการใช้งานทีละขั้นตอน">
+      <span class="btn-manual__icon" aria-hidden="true">📖</span>
+      <span class="btn-manual__text">คู่มือ</span>
+    </button>
+
     <!-- ─── DASHBOARD VIEW ─── -->
     <div id="dashboardView" style="display:none;">
-
-      <button type="button" id="openManualBtn" class="btn-manual btn-manual--floating" onclick="showManualModal()"
-        title="ดูคู่มือการใช้งานทีละขั้นตอน">
-        <span class="btn-manual__icon" aria-hidden="true">📖</span>
-        <span class="btn-manual__text">คู่มือ</span>
-      </button>
 
       <div class="page-header">
         <div class="page-header-top">
@@ -519,43 +538,10 @@
           </div>
 
           <div class="strategy-options-block">
-            <div class="strategy-balance-row" id="histBalancePanel">
-              <div class="hist-balance-head">
-                <span class="hist-balance-head__icon" aria-hidden="true">⚖️</span>
-                <div class="hist-balance-head__text">
-                  <div class="strategy-check-title">หลังแบ่งหีบแล้ว ต้องการให้มูลค่ารวมต่อคนใกล้เป้าเงินแค่ไหน?</div>
-                  <p class="strategy-balance-lead">
-                    แบ่งหีบตามวิธีที่เลือก และปรับให้ใกล้เป้าเงิน (±1,000 บ./คน)
-                  </p>
-                </div>
-              </div>
-              <div class="strategy-pills hist-balance-pills" role="radiogroup" aria-label="ความสำคัญของเป้าเงินรายคน">
-                <label class="s-pill hist-balance-option">
-                  <input type="radio" name="histBalanceMode" value="hist">
-                  <span class="s-pill-icon">📊</span>
-                  <span class="s-pill-text">
-                    <span class="s-pill-name">เน้นยอดขาย</span>
-                    <span class="s-pill-desc">สัดส่วนหีบตามประวัติมากที่สุด</span>
-                  </span>
-                </label>
-                <label class="s-pill hist-balance-option active">
-                  <input type="radio" name="histBalanceMode" value="balanced" checked>
-                  <span class="s-pill-icon">⚖️</span>
-                  <span class="s-pill-text">
-                    <span class="s-pill-name">สมดุล <span class="hist-balance-badge">แนะนำ</span></span>
-                    <span class="s-pill-desc">ประวัติ + เป้าเงินใกล้เคียงกัน</span>
-                  </span>
-                </label>
-                <label class="s-pill hist-balance-option">
-                  <input type="radio" name="histBalanceMode" value="money">
-                  <span class="s-pill-icon">💰</span>
-                  <span class="s-pill-text">
-                    <span class="s-pill-name">เน้นเป้าเงิน</span>
-                    <span class="s-pill-desc">มูลค่ารวมต่อคนใกล้เป้าที่กำหนดไว้มากขึ้น</span>
-                  </span>
-                </label>
-              </div>
-            </div>
+            <p class="strategy-hist-note" id="histAllocNote">
+              วิธี L3M / L6M / LY: แบ่งหีบตามสัดส่วนที่ระบบคำนวณจากวิธีที่เลือก แล้วปรับมูลค่ารายคนให้ใกล้เป้าเงิน (±1,000 บ.)
+              โดยหีบต่อ SKU ต่อคนไม่เกิน <strong>±20%</strong> จากสัดส่วนนั้น — ดูแถบ ◆ / ⚠ เหนือตารางผล (กดกรอง SKU ได้)
+            </p>
             <label class="strategy-check-row">
               <input type="checkbox" id="forceMinOneBox" class="strategy-check-input">
               <span class="strategy-check-body">
@@ -626,6 +612,8 @@
             </div>
           </div>
 
+          <div id="histDevSummary" class="hist-dev-bar" style="display:none;" aria-live="polite"></div>
+
           <div id="step3ResultTargetNote" class="fabric-change-inline" style="display:none;margin-bottom:12px;" aria-live="polite"></div>
 
           <!-- brand summary bar (แสดงเมื่อ filter) -->
@@ -681,7 +669,7 @@
         <div>
           <div class="manual-eyebrow">คู่มือใช้งาน</div>
           <div class="manual-title" id="manualModalTitle">ระบบกระจายเป้าหมายยอดขาย</div>
-          <div class="manual-sub">อ่านทีละขั้นตอน — 7 หัวข้อ · ใช้เวลาประมาณ 3 นาที</div>
+          <div class="manual-sub">อ่านทีละขั้นตอน — 9 หัวข้อ · ใช้เวลาประมาณ 4 นาที</div>
         </div>
         <button type="button" class="manual-close" onclick="closeManualModal()" aria-label="ปิด">✕</button>
       </div>
@@ -693,6 +681,7 @@
       <div class="manual-body" id="manualBody"></div>
 
       <div class="manual-foot">
+        <a href="user-manual-th.html" target="_blank" rel="noopener" class="manual-full-link">📄 ฉบับเต็ม (พิมพ์ PDF)</a>
         <button type="button" class="btn-manual-step btn-manual-step--ghost" id="manualPrevBtn" onclick="manualPrev()">← ก่อนหน้า</button>
         <div class="manual-dots" id="manualDots"></div>
         <button type="button" class="btn-manual-step" id="manualNextBtn" onclick="manualNext()">ถัดไป →</button>
@@ -706,7 +695,7 @@
 
   <!-- ใช้ไฟล์ในโปรเจกต์ — เครือข่ายองค์กรมักบล็อก alcdn.msauth.net ทำให้ msal ไม่โหลด -->
   <script src="vendor/msal-browser.min.js"></script>
-  <script src="app.js?v=202605299"></script>
+  <script src="app.js?v=202605133"></script>
 </body>
 
 </html>
