@@ -4131,7 +4131,7 @@ const MANUAL_STEPS = [
 <li>เลือกรหัสทีมและ <strong>งวดเดือน</strong> ที่จะกระจายเป้า<br><span class="manual-muted">(ค่าเริ่มต้นมักเป็นเดือนถัดจากวันนี้)</span></li>
 <li>กด <strong>เข้าสู่ระบบ Dashboard</strong></li>
 </ul>
-<p class="manual-note">ระบบดึงเป้าและประวัติจากข้อมูลกลางอัตโนมัติ — <strong>ไม่ต้องอัปโหลด Excel</strong></p>`,
+<p class="manual-note">ระบบดึงข้อมูลจากข้อมูลกลางอัตโนมัติ</p>`,
     tips: `<ul class="manual-list">
 <li>💡 มุมขวาบนมีปุ่ม <strong>คู่มือ</strong> ตลอดเวลา (หลังเข้า Dashboard)</li>
 <li>Dropdown Supervisor ว่าง — กด ↻ รีเฟรช หรือติดต่อ IT</li>

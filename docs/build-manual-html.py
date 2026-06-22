@@ -4,17 +4,28 @@ from __future__ import annotations
 
 import html
 import re
+import shutil
 import sys
 from pathlib import Path
 
 DOCS = Path(__file__).resolve().parent
 MD_PATH = DOCS / "user-manual-th.md"
+IMAGES_SRC = DOCS / "images"
 OUT_PATHS = (
     DOCS / "user-manual-th.html",
     DOCS.parent / "frontend" / "user-manual-th.html",
 )
+FRONTEND_IMAGES = DOCS.parent / "frontend" / "manual-images"
 
-INLINE_RE = re.compile(r"\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`")
+IMG_RE = re.compile(r"^!\[(.*?)\]\((.+?)\)$")
+INLINE_RE = re.compile(r"\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\)")
+
+
+def render_image(alt: str, src: str) -> str:
+    alt_esc = html.escape(alt)
+    src_esc = html.escape(src)
+    cap = f"<figcaption>{alt_esc}</figcaption>" if alt else ""
+    return f'<figure class="shot"><img src="{src_esc}" alt="{alt_esc}" loading="lazy">{cap}</figure>'
 
 
 def inline_md(text: str) -> str:
@@ -28,6 +39,11 @@ def inline_md(text: str) -> str:
             out.append(f"<em>{html.escape(m.group(2))}</em>")
         elif m.group(3):
             out.append(f"<code>{html.escape(m.group(3))}</code>")
+        elif m.group(4):
+            out.append(
+                f'<a href="{html.escape(m.group(5))}" target="_blank" rel="noopener">'
+                f"{html.escape(m.group(4))}</a>"
+            )
         pos = m.end()
     out.append(html.escape(text[pos:]))
     return "".join(out)
@@ -121,6 +137,13 @@ def md_to_body(md: str) -> tuple[str, list[tuple[str, str]]]:
             if tbl:
                 out.append(tbl)
                 continue
+
+        img_m = IMG_RE.match(stripped)
+        if img_m:
+            flush_list()
+            out.append(render_image(img_m.group(1).strip(), img_m.group(2).strip()))
+            i += 1
+            continue
 
         m = re.match(r"^(#{1,3})\s+(.+)$", stripped)
         if m:
@@ -265,20 +288,25 @@ article {
   color: var(--accent);
 }
 .hero .lead { margin: 0; color: var(--muted); font-size: 16px; }
-.hero .meta {
-  margin-top: 12px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+figure.shot {
+  margin: 16px 0 22px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #f8fafc;
+  box-shadow: 0 6px 24px rgba(15,23,42,.08);
 }
-.chip {
-  font-size: 12px;
-  font-weight: 600;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: var(--accent-bg);
-  color: var(--accent);
-  border: 1px solid #c7d2fe;
+figure.shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+figure.shot figcaption {
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+  background: #fff;
 }
 .print-bar {
   grid-column: 1 / -1;
@@ -317,6 +345,8 @@ h3 {
   color: #334155;
 }
 p { margin: 0 0 12px; }
+article a { color: var(--accent); word-break: break-all; }
+article a:hover { text-decoration: underline; }
 ul, ol { margin: 0 0 14px; padding-left: 22px; }
 li { margin-bottom: 6px; }
 strong { color: #1e293b; }
@@ -385,7 +415,7 @@ hr { border: none; border-top: 1px dashed var(--border); margin: 24px 0; }
   .layout { display: block; max-width: none; padding: 0; }
   article { box-shadow: none; border: none; padding: 0; }
   h2 { page-break-after: avoid; }
-  .table-wrap, .faq { page-break-inside: avoid; }
+  .table-wrap, .faq, figure.shot { page-break-inside: avoid; }
 }
 """
 
@@ -412,12 +442,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <article>
       <header class="hero">
         <h1>คู่มือการใช้งาน Target Allocation</h1>
-        <p class="lead">ระบบกระจายเป้าหมายยอดขาย (หีบ) ให้พนักงานขายรายคน</p>
-        <div class="meta">
-          <span class="chip">Supervisor / Manager</span>
-          <span class="chip">9 ขั้นในแอป</span>
-          <span class="chip">~4 นาที</span>
-        </div>
+        <p class="lead">ระบบกระจายเป้าหมาย (หีบ) ให้พนักงานขายรายคน</p>
       </header>
       {body}
     </article>
@@ -447,8 +472,16 @@ def main() -> int:
     toc_links = "\n".join(f'<li><a href="#{sid}">{html.escape(label)}</a></li>' for sid, label in toc)
     page = HTML_TEMPLATE.format(css=CSS, toc_links=toc_links, body=body)
     for out_path in OUT_PATHS:
-        out_path.write_text(page, encoding="utf-8")
+        html_out = page
+        if out_path.parent.name == "frontend":
+            html_out = html_out.replace('src="images/', 'src="manual-images/')
+        out_path.write_text(html_out, encoding="utf-8")
         print(f"Wrote {out_path}")
+    if IMAGES_SRC.is_dir():
+        if FRONTEND_IMAGES.exists():
+            shutil.rmtree(FRONTEND_IMAGES)
+        shutil.copytree(IMAGES_SRC, FRONTEND_IMAGES)
+        print(f"Copied images -> {FRONTEND_IMAGES}")
     return 0
 
 

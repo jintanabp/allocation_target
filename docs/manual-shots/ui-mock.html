@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Manual screenshot mock</title>
+  <link rel="stylesheet" href="../../frontend/style.css?v=202605134" />
+  <link rel="stylesheet" href="shot.css" />
+  <script>
+    document.documentElement.dataset.step = new URLSearchParams(location.search).get("step") || "2";
+  </script>
+</head>
+<body class="shot-page">
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand"><span class="brand-dot"></span><span class="brand-name">Target Allocation</span></div>
+      <div class="topbar-actions">
+        <div class="topbar-total">เป้ารวม <strong>12,450,000</strong></div>
+        <div class="topbar-period"><span>ก.ค. 2569</span></div>
+        <button class="btn-logout" type="button">กลับเลือก Supervisor</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="page">
+    <section class="step-section" data-shot="2">
+      <div class="step-label-row">
+        <span class="step-num">1</span>
+        <div>
+          <h2 class="step-title">ข้อมูลตั้งต้น</h2>
+          <p class="step-desc">ประวัติการขาย และ เป้าหมายของเดือนที่เลือก</p>
+        </div>
+      </div>
+      <div class="step1-target-hero">
+        <div class="step1-target-hero__line1">
+          <span class="step1-target-hero__label">เป้ารวม</span>
+          <span class="step1-target-hero__amount">12,450,000</span>
+          <span class="step1-target-hero__period">ก.ค. 2569</span>
+        </div>
+      </div>
+      <div class="two-col two-col--step1">
+        <div class="panel">
+          <div class="panel-head panel-head--stack">
+            <div class="panel-head__row">
+              <span class="panel-icon">👤</span>
+              <span class="panel-title">เป้าหมายตั้งต้นรายพนักงาน</span>
+              <span class="panel-count">3 คน</span>
+            </div>
+            <div class="emp-view-tabs">
+              <button type="button" class="emp-view-tab emp-view-tab--active">เทียบเฉลี่ย 3 เดือน</button>
+              <button type="button" class="emp-view-tab">เทียบปีที่แล้ว</button>
+            </div>
+          </div>
+          <div class="panel-scroll panel-scroll--emp">
+            <table class="tbl tbl--emp-step1">
+              <thead><tr><th>พนักงาน</th><th class="r">เป้า (บาท)</th><th class="r">เฉลี่ย 3 เดือนย้อนหลัง</th><th class="r">% เติบโต</th></tr></thead>
+              <tbody>
+                <tr><td>S001 · สมชาย ใจดี</td><td class="r">4,150,000</td><td class="r">3,980,000</td><td class="r">+4.3%</td></tr>
+                <tr><td>S002 · สมหญิง รักงาน</td><td class="r">4,100,000</td><td class="r">4,020,000</td><td class="r">+2.0%</td></tr>
+                <tr><td>S003 · วิชัย ขยัน</td><td class="r">4,200,000</td><td class="r">3,850,000</td><td class="r">+9.1%</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head panel-head--stack">
+            <div class="sku-panel-meta">
+              <div class="sku-meta-line">SKU ที่มีเป้าหีบ · 24 รายการ</div>
+              <div class="sku-meta-line sku-meta-line--controls">
+                <span class="sku-meta-label">จัดกลุ่ม</span>
+                <div class="sec1-view-wrap">
+                  <button class="sec1-view-btn sec1-view-active" type="button">ราย SKU</button>
+                  <button class="sec1-view-btn" type="button">แบรนด์</button>
+                  <button class="sec1-view-btn" type="button">Section</button>
+                </div>
+              </div>
+            </div>
+            <div class="panel-head__row panel-head__row--tight">
+              <span class="panel-icon">📦</span>
+              <span class="panel-title">เป้าหีบรวม</span>
+            </div>
+          </div>
+          <div class="panel-scroll panel-scroll--sku">
+            <table class="tbl tbl--sku-step1">
+              <thead><tr><th>สินค้า</th><th>แบรนด์</th><th>Section</th><th class="r">ราคา/หีบ</th><th class="r">เป้าหีบ</th><th class="r">มูลค่า</th></tr></thead>
+              <tbody>
+                <tr><td>208405</td><td>Brand A</td><td>Sec 1</td><td class="r">1,250</td><td class="r">820</td><td class="r">1,025,000</td></tr>
+                <tr><td>301122</td><td>Brand A</td><td>Sec 1</td><td class="r">980</td><td class="r">640</td><td class="r">627,200</td></tr>
+                <tr><td>445901</td><td>Brand B</td><td>Sec 2</td><td class="r">1,480</td><td class="r">510</td><td class="r">754,800</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="step-section" data-shot="3">
+      <div class="step-label-row">
+        <span class="step-num">2</span>
+        <div>
+          <h2 class="step-title">กำหนดเป้าหมาย <span class="step-title-optional">(optional)</span></h2>
+          <p class="step-desc">คลิกแก้เป้าเป็นจำนวนเงินรายพนักงานในช่องที่กำหนดได้</p>
+        </div>
+      </div>
+      <div class="panel-scroll">
+        <table class="tbl editor-tbl tbl--step2-main">
+          <thead>
+            <tr>
+              <th>พนักงาน</th>
+              <th class="r">เป้า Target Sun</th>
+              <th class="r">เป้าหมายที่กำหนดเอง</th>
+              <th class="r">ยอดขายเดือนเดียวกันปีที่แล้ว</th>
+              <th class="r">% เติบโต</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>S001 · สมชาย</td><td class="r">4,150,000</td><td class="r"><span style="color:var(--accent);font-weight:700;">4,150,000</span></td><td class="r">3,920,000</td><td class="r">+5.9%</td></tr>
+            <tr><td>S002 · สมหญิง</td><td class="r">4,100,000</td><td class="r"><span style="color:var(--accent);font-weight:700;">4,120,000</span></td><td class="r">4,000,000</td><td class="r">+3.0%</td></tr>
+            <tr><td>S003 · วิชัย</td><td class="r">4,200,000</td><td class="r"><span style="color:var(--accent);font-weight:700;">4,180,000</span></td><td class="r">3,800,000</td><td class="r">+10.0%</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <table class="tbl editor-tbl tbl--step2-totals" style="margin-top:8px;">
+        <tbody>
+          <tr><td class="tfoot-label" colspan="2">รวมเป้าที่กำหนดเอง</td><td class="r tfoot-val" style="color:var(--green);">12,450,000</td><td colspan="2"></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="step-section" data-shot="4">
+      <div class="step-label-row">
+        <span class="step-num">3</span>
+        <div><h2 class="step-title">กระจายหีบ</h2></div>
+      </div>
+      <div class="strategy-wrap">
+        <div class="strategy-wrap__head">
+          <div class="field-label strategy-wrap__label">วิธีกระจายหีบ</div>
+          <div class="strategy-wrap__multi-hint"><span class="strategy-multi-badge">เลือกได้มากกว่า 1 วิธี</span></div>
+        </div>
+        <div class="strategy-pills">
+          <label class="s-pill active"><input type="checkbox" checked><span class="s-pill-icon">📊</span><div><div class="s-pill-name">ยอดขายเฉลี่ย 3 เดือนย้อนหลัง</div></div></label>
+          <label class="s-pill"><input type="checkbox"><span class="s-pill-icon">📈</span><div><div class="s-pill-name">ยอดขายเฉลี่ย 6 เดือนย้อนหลัง</div></div></label>
+          <label class="s-pill"><input type="checkbox"><span class="s-pill-icon">📅</span><div><div class="s-pill-name">เดือนเดียวกันปีที่แล้ว</div></div></label>
+        </div>
+        <div class="strategy-options-block">
+          <label class="strategy-check-row"><input type="checkbox" class="strategy-check-input"><span class="strategy-check-body"><span class="strategy-check-title">บังคับให้ทุกคนได้อย่างน้อย 1 หีบ (ต่อ SKU)</span></span></label>
+        </div>
+      </div>
+      <div class="run-card">
+        <div class="run-left"><div class="run-emoji">🤖</div><div><div class="run-title">พร้อมกระจายหีบ</div><div class="run-sub">ตรวจสอบยอดรวมเป้าเงินก่อนกดเริ่มคำนวณ</div></div></div>
+        <button class="btn-run" type="button">เริ่มคำนวณ</button>
+      </div>
+    </section>
+
+    <section class="step-section" data-shot="5">
+      <div class="result-block" style="display:block;">
+        <div class="result-head">
+          <div class="result-title">ผลลัพธ์การกระจายหีบ</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <select class="field-select" style="min-width:140px;padding:6px 12px;height:auto;"><option>เรียงตาม รหัสสินค้า</option></select>
+            <select class="field-select" style="min-width:180px;padding:6px 12px;height:auto;font-weight:600;color:var(--accent);border-color:var(--accent-brd);background:var(--accent-bg);"><option>ทุกแบรนด์ (ทั้งหมด)</option></select>
+            <button class="btn-dl" type="button">💾 บันทึกร่าง</button>
+            <button class="btn-dl" type="button">↓ ดาวน์โหลด Excel</button>
+            <button class="btn-dl" type="button">📤 ส่งเข้า Target Sun</button>
+          </div>
+        </div>
+        <div class="hist-dev-bar hist-dev-bar--warn">
+          <div class="hist-dev-bar__head">
+            <span class="hist-dev-bar__title">📐 หีบ vs ประวัติเก่า (±20%)</span>
+            <span class="hist-dev-bar__hint">คลิกเพื่อกรอง SKU ในตาราง</span>
+          </div>
+          <div class="hist-dev-bar__filters">
+            <button type="button" class="hist-dev-filter hist-dev-filter--near"><span class="hist-dev-filter__icon">◆</span><span class="hist-dev-filter__label">อยู่ในช่วง ±20%</span><span class="hist-dev-filter__count">18</span></button>
+            <button type="button" class="hist-dev-filter hist-dev-filter--far"><span class="hist-dev-filter__icon">⚠</span><span class="hist-dev-filter__label">เกินช่วง ±20%</span><span class="hist-dev-filter__count">2</span></button>
+          </div>
+        </div>
+        <div class="tbl-scroll">
+          <table class="tbl result-tbl">
+            <thead>
+              <tr>
+                <th>พนักงาน</th>
+                <th class="r">208405<br><small>Brand A · 1,250</small></th>
+                <th class="r">301122<br><small>Brand A · 980</small></th>
+                <th class="r sticky-col">รวมหีบ</th>
+                <th class="r sticky-col">มูลค่ารวม</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>S001 · สมชาย</td>
+                <td class="r"><span class="mock-cell-edit">285</span><span class="mock-flag">◆</span><div class="mock-hist">3M: 280 · LM: 90</div></td>
+                <td class="r"><span class="mock-cell-edit">210</span><div class="mock-hist">3M: 205 · LM: 68</div></td>
+                <td class="r">495</td>
+                <td class="r">562,050 <small style="color:var(--green);">✓ ใกล้เป้า</small></td>
+              </tr>
+              <tr>
+                <td>S002 · สมหญิง</td>
+                <td class="r"><span class="mock-cell-edit">268</span><div class="mock-hist">3M: 260 · LM: 88</div></td>
+                <td class="r"><span class="mock-cell-edit">198</span><span class="mock-flag">⚠</span><div class="mock-hist">3M: 220 · LM: 72</div></td>
+                <td class="r">466</td>
+                <td class="r">529,140</td>
+              </tr>
+              <tr>
+                <td>S003 · วิชัย</td>
+                <td class="r"><span class="mock-cell-edit">267</span><div class="mock-hist">3M: 280 · LM: 92</div></td>
+                <td class="r"><span class="mock-cell-edit">232</span><div class="mock-hist">3M: 215 · LM: 70</div></td>
+                <td class="r">499</td>
+                <td class="r">561,260</td>
+              </tr>
+            </tbody>
+            <tfoot>
+              <tr><td>เป้ารวม (หีบ)</td><td class="r">820 ✓</td><td class="r">640 ✓</td><td colspan="2"></td></tr>
+              <tr><td>รวมพื้นที่จัดสรร</td><td class="r">820 ✓</td><td class="r">640 ✓</td><td colspan="2"></td></tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="step-section" data-shot="6">
+      <div class="result-block" style="display:block;">
+        <div class="result-head">
+          <div class="result-title">ผลลัพธ์การกระจายหีบ</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn-dl" type="button">↓ ดาวน์โหลด Excel</button>
+            <button class="btn-dl" type="button" style="background:var(--accent);color:#fff;border-color:var(--accent);">📤 ส่งเข้า Target Sun</button>
+          </div>
+        </div>
+      </div>
+      <div class="export-shot">
+        <div class="export-shot__title">ส่งผลเข้า Target Sun</div>
+        <div class="export-shot__actions">
+          <button class="btn-dl" type="button">↓ ดาวน์โหลด Excel</button>
+          <button class="btn-dl" type="button" style="background:var(--accent);color:#fff;border-color:var(--accent);">📤 ส่งเข้า Target Sun</button>
+        </div>
+        <div class="modal-mock">
+          <div class="modal-mock__opt">📤 ส่งเข้า Target Sun — ระบบสร้างไฟล์และส่งให้อัตโนมัติ</div>
+          <div class="modal-mock__opt" style="border-color:var(--border-md);font-weight:500;">↓ ดาวน์โหลด Excel อย่างเดียว (รูปแบบ TGA)</div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    (function () {
+      var step = document.documentElement.dataset.step;
+      document.querySelectorAll("[data-shot]").forEach(function (el) {
+        el.style.display = el.dataset.shot === step ? "block" : "none";
+      });
+    })();
+  </script>
+</body>
+</html>

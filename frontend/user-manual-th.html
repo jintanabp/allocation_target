@@ -81,20 +81,25 @@ article {
   color: var(--accent);
 }
 .hero .lead { margin: 0; color: var(--muted); font-size: 16px; }
-.hero .meta {
-  margin-top: 12px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+figure.shot {
+  margin: 16px 0 22px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #f8fafc;
+  box-shadow: 0 6px 24px rgba(15,23,42,.08);
 }
-.chip {
-  font-size: 12px;
-  font-weight: 600;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: var(--accent-bg);
-  color: var(--accent);
-  border: 1px solid #c7d2fe;
+figure.shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+figure.shot figcaption {
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+  background: #fff;
 }
 .print-bar {
   grid-column: 1 / -1;
@@ -133,6 +138,8 @@ h3 {
   color: #334155;
 }
 p { margin: 0 0 12px; }
+article a { color: var(--accent); word-break: break-all; }
+article a:hover { text-decoration: underline; }
 ul, ol { margin: 0 0 14px; padding-left: 22px; }
 li { margin-bottom: 6px; }
 strong { color: #1e293b; }
@@ -201,7 +208,7 @@ hr { border: none; border-top: 1px dashed var(--border); margin: 24px 0; }
   .layout { display: block; max-width: none; padding: 0; }
   article { box-shadow: none; border: none; padding: 0; }
   h2 { page-break-after: avoid; }
-  .table-wrap, .faq { page-break-inside: avoid; }
+  .table-wrap, .faq, figure.shot { page-break-inside: avoid; }
 }
 </style>
 </head>
@@ -214,234 +221,140 @@ hr { border: none; border-top: 1px dashed var(--border); margin: 24px 0; }
     <nav class="toc" aria-label="สารบัญ">
       <h2>สารบัญ</h2>
       <ol>
-        <li><a href="#1-แอปนี้ทำอะไร">แอปนี้ทำอะไร</a></li>
-<li><a href="#2-ก่อนเริ่มใช้งาน">ก่อนเริ่มใช้งาน</a></li>
-<li><a href="#3-เข้าสู่ระบบ">เข้าสู่ระบบ</a></li>
-<li><a href="#4-ขั้นที่-1-ข้อมูลตั้งต้น">ขั้นที่ 1 — ข้อมูลตั้งต้น</a></li>
-<li><a href="#5-ขั้นที่-2-กำหนดเป้าหมาย-ไม่บังคับ">ขั้นที่ 2 — กำหนดเป้าหมาย (ไม่บังคับ)</a></li>
-<li><a href="#6-ขั้นที่-3-กระจายหีบ">ขั้นที่ 3 — กระจายหีบ</a></li>
-<li><a href="#7-อ่านตารางผลลัพธ์">อ่านตารางผลลัพธ์</a></li>
-<li><a href="#8-ส่งผล-excel-และ-target-sun">ส่งผล — Excel และ Target Sun</a></li>
-<li><a href="#9-คำถามที่พบบ่อย-faq">คำถามที่พบบ่อย (FAQ)</a></li>
-<li><a href="#10-คำศัพท์สั้น-ๆ">คำศัพท์สั้น ๆ</a></li>
+        <li><a href="#1-เข้าสู่ระบบ">เข้าสู่ระบบ</a></li>
+<li><a href="#2-ขั้นที่-1-ข้อมูลตั้งต้น">ขั้นที่ 1: ข้อมูลตั้งต้น</a></li>
+<li><a href="#3-ขั้นที่-2-กำหนดเป้าหมาย-ไม่บังคับ">ขั้นที่ 2: กำหนดเป้าหมาย (ไม่บังคับ)</a></li>
+<li><a href="#4-ขั้นที่-3-กระจายหีบ">ขั้นที่ 3: กระจายหีบ</a></li>
+<li><a href="#5-อ่านตารางผลลัพธ์">อ่านตารางผลลัพธ์</a></li>
+<li><a href="#6-ส่งผล-excel-และ-target-sun">ส่งผล (Excel และ Target Sun)</a></li>
       </ol>
     </nav>
     <article>
       <header class="hero">
         <h1>คู่มือการใช้งาน Target Allocation</h1>
-        <p class="lead">ระบบกระจายเป้าหมายยอดขาย (หีบ) ให้พนักงานขายรายคน</p>
-        <div class="meta">
-          <span class="chip">Supervisor / Manager</span>
-          <span class="chip">9 ขั้นในแอป</span>
-          <span class="chip">~4 นาที</span>
-        </div>
+        <p class="lead">ระบบกระจายเป้าหมาย (หีบ) ให้พนักงานขายรายคน</p>
       </header>
-      <p>เอกสารนี้เขียนสำหรับ Supervisor / Manager ที่ใช้งานแอปบนเบราว์เซอร์  
-อ่านตามลำดับแล้วทำตามได้ทีละขั้น — ไม่ต้องอัปโหลดไฟล์ Excel เอง ระบบดึงข้อมูลจากข้อมูลกลางอัตโนมัติ</p><h3 id="1-แอปนี้ทำอะไร">1. แอปนี้ทำอะไร</h3>
-<p>Target Allocation ช่วย <strong>แบ่งจำนวนหีบ (เป้าหมายยอดขาย)</strong> ของแต่ละสินค้า (SKU) ให้พนักงานในทีม โดยอิงจาก:</p>
+      <p>ทำตามลำดับด้านล่างทีละขั้น ระบบดึงข้อมูลจากข้อมูลกลางอัตโนมัติ</p><h3 id="1-เข้าสู่ระบบ">1. เข้าสู่ระบบ</h3>
 <ul>
-<li><strong>ประวัติการขายย้อนหลัง</strong> — ใครขาย SKU นั้นเยอะ ได้หีบ SKU นั้นเยอะ</li>
-<li><strong>เป้าเงินรายคน</strong> — มูลค่ารวมต่อคนควรใกล้เป้าที่กำหนด (ยอมคลาดประมาณ ±1,000 บาท/คน)</li>
-</ul>
-<p><strong>ลำดับการใช้งาน (4 ขั้นหลัก):</strong></p>
-<ul>
-<li><strong>ข้อมูลตั้งต้น</strong> — ดูเป้ารวม พนักงาน และ SKU ของงวด</li>
-<li><strong>กำหนดเป้าหมาย</strong> <em>(ข้ามได้)</em> — ปรับเป้าเงินรายคนถ้าต้องการ</li>
-<li><strong>กระจายหีบ</strong> — เลือกวิธีแบ่ง แล้วกดคำนวณ</li>
-<li><strong>ส่งผล</strong> — ดาวน์โหลด Excel หรือส่งเข้า Target Sun</li>
-</ul>
-<hr>
-<h3 id="2-ก่อนเริ่มใช้งาน">2. ก่อนเริ่มใช้งาน</h3>
-<h4 id="สิ่งที่ต้องมี">สิ่งที่ต้องมี</h4>
-<div class="table-wrap"><table>
-<thead><tr><th>รายการ</th><th>รายละเอียด</th></tr></thead>
-<tbody>
-<tr><td>URL แอป</td><td>ได้จากทีม IT / หัวหน้างาน (เปิดบน Chrome หรือ Edge แนะนำ)</td></tr>
-<tr><td>บัญชี Microsoft</td><td>อีเมลองค์กรที่ลงทะเบียนในระบบสิทธิ์แล้ว</td></tr>
-<tr><td>สิทธิ์ Supervisor</td><td>รหัสทีมที่คุณดูแลได้ — แสดงใน dropdown หลังล็อกอิน</td></tr>
-<tr><td>ข้อมูลเป้างวด</td><td>ระบบเป้ากลาง (TGA / Target Sun) ต้องมีเป้าหีบและเป้าเงินของงวดที่เลือก</td></tr>
-</tbody></table></div>
-<h4 id="สิ่งที่ไม่ต้องทำ">สิ่งที่ไม่ต้องทำ</h4>
-<ul>
-<li>ไม่ต้องอัปโหลดไฟล์ Excel เป้าหมาย</li>
-<li>ไม่ต้องติดตั้งโปรแกรมบนเครื่อง — ใช้ผ่านเบราว์เซอร์อย่างเดียว</li>
-</ul>
-<h4 id="อ่านคู่มือก่อนล็อกอิน-แนะนำ">อ่านคู่มือก่อนล็อกอิน (แนะนำ)</h4>
-<p>บนหน้า <strong>เข้าสู่ระบบ</strong> มีปุ่ม <strong>อ่านคู่มือก่อนใช้งาน</strong> (ป้าย <strong>แนะนำ</strong>) — กดได้ก่อนล็อกอิน · สรุป 9 ขั้น ~4 นาที</p>
-<p>หลังเข้า Dashboard ยังมีปุ่ม <strong>คู่มือ</strong> มุมขวาบนตลอดเวลา</p>
-<hr>
-<h3 id="3-เข้าสู่ระบบ">3. เข้าสู่ระบบ</h3>
-<h4 id="ทำอย่างไร">ทำอย่างไร</h4>
-<ul>
-<li>เปิด URL แอปที่ทีมแจ้ง</li>
-<li>(แนะนำ) กด <strong>อ่านคู่มือก่อนใช้งาน</strong> บนการ์ดเข้าสู่ระบบ — อ่านได้ก่อนล็อกอิน · หรือกดปุ่ม <strong>คู่มือ</strong> มุมขวาบน</li>
-<li>กด <strong>ล็อกอินด้วย Microsoft</strong> — ใช้บัญชีองค์กร</li>
+<li>เปิด URL แอป: <a href="https://spc-ai.sahapat.com/allocation_target/" target="_blank" rel="noopener">https://spc-ai.sahapat.com/allocation_target/</a></li>
+<li>(แนะนำ) กด <strong>อ่านคู่มือก่อนใช้งาน</strong> บนการ์ดเข้าสู่ระบบ (อ่านได้ก่อนล็อกอิน) หรือกดปุ่ม <strong>คู่มือ</strong> มุมขวาบน</li>
+<li>กด <strong>ล็อกอินด้วย Microsoft</strong> ด้วยบัญชีองค์กร</li>
 <li>รอ dropdown <strong>ผู้รับผิดชอบ (Supervisor / Manager)</strong> โหลดเสร็จ</li>
 <li>เลือกรหัสทีมที่ต้องการกระจายเป้า</li>
 <li>เลือก <strong>งวดเดือนที่จะกระจายเป้า</strong> (ค่าเริ่มต้นมักเป็นเดือนถัดจากวันนี้)</li>
 <li>กด <strong>เข้าสู่ระบบ Dashboard</strong></li>
 </ul>
-<h4 id="ควรเห็นอะไร">ควรเห็นอะไร</h4>
-<ul>
-<li>หน้า Dashboard โหลดข้อมูล — อาจใช้เวลาสักครู่</li>
-<li>แถบบนแสดงชื่อแอป และปุ่ม <strong>กลับเลือก Supervisor</strong> / <strong>ออกจากระบบ</strong></li>
-</ul>
-<h4 id="ถ้าไม่ตรง">ถ้าไม่ตรง</h4>
-<div class="table-wrap"><table>
-<thead><tr><th>ปัญหา</th><th>แนวทาง</th></tr></thead>
-<tbody>
-<tr><td>Dropdown Supervisor ว่าง</td><td>กด <strong>↻ รีเฟรชรายการ</strong> หรือติดต่อ IT ตรวจสิทธิ์ ACC</td></tr>
-<tr><td>ล็อกอินไม่ได้</td><td>ตรวจว่าใช้อีเมลองค์กร · ติดต่อ IT เรื่อง Redirect URI</td></tr>
-<tr><td>ไม่เห็นทีมที่ต้องการ</td><td>สิทธิ์อาจจำกัดตาม ACC — ติดต่อหัวหน้าหรือ IT</td></tr>
-</tbody></table></div>
+<figure class="shot"><img src="manual-images/01-login.png" alt="หน้าเข้าสู่ระบบ, ล็อกอิน Microsoft และเลือก Supervisor / งวด" loading="lazy"><figcaption>หน้าเข้าสู่ระบบ, ล็อกอิน Microsoft และเลือก Supervisor / งวด</figcaption></figure>
 <hr>
-<h3 id="4-ขั้นที่-1-ข้อมูลตั้งต้น">4. ขั้นที่ 1 — ข้อมูลตั้งต้น</h3>
-<h4 id="ทำอย่างไร">ทำอย่างไร</h4>
+<h3 id="2-ขั้นที่-1-ข้อมูลตั้งต้น">2. ขั้นที่ 1: ข้อมูลตั้งต้น</h3>
 <ul>
-<li>ดู <strong>เป้ารวม</strong> ด้านบน — ยอดเงินรวมของงวดที่เลือก</li>
-<li>ตรวจตาราง <strong>พนักงาน</strong> — รหัส S/M, ชื่อ, เป้าเริ่มต้น</li>
-<li>ตรวจตาราง <strong>SKU (เป้าหีบ)</strong> — รหัสสินค้า, แบรนด์, จำนวนหีบเป้ารวมต่อ SKU</li>
+<li>ดู <strong>เป้ารวม</strong> ด้านบน (ยอดเงินรวมของงวดที่เลือก)</li>
+<li>ตรวจตาราง <strong>พนักงาน</strong>: รหัส S/M, ชื่อ, เป้าเริ่มต้น</li>
+<li>ตรวจตาราง <strong>SKU (เป้าหีบ)</strong>: รหัสสินค้า, แบรนด์, จำนวนหีบเป้ารวมต่อ SKU</li>
 <li>สลับแท็บ <strong>เทียบเฉลี่ย 3 เดือน</strong> / <strong>เทียบปีที่แล้ว</strong> เพื่อดูบริบทเป้า</li>
 <li>จัดกลุ่ม SKU เป็น <strong>ราย SKU · แบรนด์ · Section</strong> ตามต้องการตรวจ</li>
 </ul>
-<h4 id="ควรเห็นอะไร">ควรเห็นอะไร</h4>
-<ul>
-<li>เป้ารวมเป็นตัวเลขชัดเจน (ไม่ใช่ &quot;—&quot;)</li>
-<li>มีรายชื่อพนักงานและ SKU ที่มีเป้าหีบ &gt; 0</li>
-</ul>
-<h4 id="ถ้าไม่ตรง">ถ้าไม่ตรง</h4>
-<ul>
-<li><strong>เป้ารวมผิดหรือว่าง</strong> — กดลิงก์ <strong>ติดต่อ IT</strong> ใต้เป้ารวม</li>
-<li><strong>SKU ไม่ครบ</strong> — ตรวจว่าเลือกงวดถูกต้อง · โหลดหน้าใหม่ (F5)</li>
-</ul>
+<figure class="shot"><img src="manual-images/02-step1-data.png" alt="ขั้นที่ 1, เป้ารวม ตารางพนักงาน และ SKU" loading="lazy"><figcaption>ขั้นที่ 1, เป้ารวม ตารางพนักงาน และ SKU</figcaption></figure>
 <hr>
-<h3 id="5-ขั้นที่-2-กำหนดเป้าหมาย-ไม่บังคับ">5. ขั้นที่ 2 — กำหนดเป้าหมาย (ไม่บังคับ)</h3>
-<p>ขั้นนี้ <strong>ข้ามได้</strong> — ถ้าใช้เป้า Target Sun ตามที่ระบบดึงมาโดยไม่แก้</p>
-<h4 id="ทำอย่างไร">ทำอย่างไร</h4>
+<h3 id="3-ขั้นที่-2-กำหนดเป้าหมาย-ไม่บังคับ">3. ขั้นที่ 2: กำหนดเป้าหมาย (ไม่บังคับ)</h3>
+<p>ขั้นนี้ <strong>ข้ามได้</strong> ถ้าใช้เป้า Target Sun ตามที่ระบบดึงมาโดยไม่แก้</p>
 <ul>
-<li>ดูคอลัมน์ <strong>เป้าหมายที่กำหนดเอง</strong> — ค่าเริ่มต้นเท่าเป้า Target Sun</li>
+<li>ดูคอลัมน์ <strong>เป้าหมายที่กำหนดเอง</strong> (ค่าเริ่มต้นเท่าเป้า Target Sun)</li>
 <li>คลิกช่องแล้วพิมพ์ปรับเป้าเงินรายคน (ถ้าต้องการ)</li>
 <li>ระบบคำนวณ <strong>% เติบโต</strong> ให้อัตโนมัติ</li>
-<li>ตรวจ <strong>ยอดรวมเป้าที่กำหนดเอง</strong> ด้านล่าง — ควรใกล้เป้ารวม</li>
+<li>ตรวจ <strong>ยอดรวมเป้าที่กำหนดเอง</strong> ด้านล่าง ควรใกล้เป้ารวม</li>
 </ul>
-<h4 id="เกณฑ์ยอดรวม">เกณฑ์ยอดรวม</h4>
+<p><strong>เกณฑ์ยอดรวม</strong></p>
 <div class="table-wrap"><table>
 <thead><tr><th>ส่วนต่างจากเป้ารวม</th><th>ความหมาย</th></tr></thead>
 <tbody>
-<tr><td>ไม่เกิน ~10 บาท</td><td>พร้อมกด <strong>เริ่มคำนวณ</strong> (ขั้น 3)</td></tr>
+<tr><td>ไม่เกิน ~10 บาท</td><td>พร้อมกด <strong>เริ่มคำนวณ</strong> (ขั้น 4)</td></tr>
 <tr><td>ไม่เกิน ~99 บาท</td><td>แจ้งเตือน แต่ยังกดคำนวณได้</td></tr>
-<tr><td>มากกว่านั้น</td><td>ปุ่ม <strong>เริ่มคำนวณ</strong> ปิด — ต้องปรับให้รวมใกล้เป้ารวม</td></tr>
+<tr><td>มากกว่านั้น</td><td>ปุ่ม <strong>เริ่มคำนวณ</strong> ปิด ต้องปรับให้รวมใกล้เป้ารวม</td></tr>
 </tbody></table></div>
-<h4 id="ตัวเลือกเพิ่ม">ตัวเลือกเพิ่ม</h4>
+<p><strong>ตัวเลือกเพิ่ม</strong></p>
 <ul>
-<li><strong>รีเซ็ตเป็น Target Sun</strong> — คืนค่าเป้าที่กำหนดเองทุกคน</li>
-<li><strong>หักบิวเทรี่ยม</strong> — เปิดช่องหักยอดจากยอดปีที่แล้วก่อนคิด % เติบโต (ใส่เฉพาะคนที่ต้องหัก)</li>
+<li><strong>รีเซ็ตเป็น Target Sun</strong>: คืนค่าเป้าที่กำหนดเองทุกคน</li>
+<li><strong>หักบิวเทรี่ยม</strong>: เปิดช่องหักยอดจากยอดปีที่แล้วก่อนคิด % เติบโต (ใส่เฉพาะคนที่ต้องหัก)</li>
 </ul>
-<h4 id="กรณีเติบโตติดลบ">กรณีเติบโตติดลบ</h4>
-<p>ถ้าเป้าที่ตั้งทำให้ <strong>% เติบโตติดลบ</strong> (เป้าน้อยกว่ายอดเดือนเดียวกันปีที่แล้ว) ระบบจะขอ <strong>เหตุผล</strong> อย่างน้อย 8 ตัวอักษร ก่อนกดคำนวณ</p>
-<blockquote class="note">ถ้าเป้าเท่า Target Sun แล้วเติบโตติดลบอยู่ดี — ไม่ต้องกรอกเหตุผล</blockquote>
-<h4 id="ถ้าปรับเป้าเงิน">ถ้าปรับเป้าเงิน</h4>
-<ul>
-<li>ถ้าลดเป้าคนหนึ่ง ควร <strong>เพิ่มให้คนอื่น</strong> เพื่อให้ผลรวมยังใกล้เป้ารวม</li>
-<li>เป้าเงินที่ตั้งต่ำกว่าที่ประวัติ×ราคาสะท้อน อาจทำให้หลังคำนวณ <strong>มูลค่ารวมต่อคนยังเกิน/ขาดเป้า</strong> แม้หีบต่อ SKU จะถูกจำกัด ±20% แล้ว — เป็นเรื่องปกติ ควรตรวจว่าเป้าเงินสมเหตุสมผล</li>
-</ul>
+<p><strong>กรณีเติบโตติดลบ</strong></p>
+<p>ถ้าเป้าที่ตั้งทำให้ <strong>% เติบโตติดลบ</strong> ระบบจะขอ <strong>เหตุผล</strong> อย่างน้อย 8 ตัวอักษร ก่อนกดคำนวณ</p>
+<p>(ถ้าเป้าเท่า Target Sun แล้วเติบโตติดลบอยู่ดี ไม่ต้องกรอกเหตุผล)</p>
+<figure class="shot"><img src="manual-images/03-step2-target.png" alt="ขั้นที่ 2, ปรับเป้าเงินรายคนและยอดรวม" loading="lazy"><figcaption>ขั้นที่ 2, ปรับเป้าเงินรายคนและยอดรวม</figcaption></figure>
 <hr>
-<h3 id="6-ขั้นที่-3-กระจายหีบ">6. ขั้นที่ 3 — กระจายหีบ</h3>
+<h3 id="4-ขั้นที่-3-กระจายหีบ">4. ขั้นที่ 3: กระจายหีบ</h3>
 <h4 id="เลือกวิธีกระจาย">เลือกวิธีกระจาย</h4>
 <p>เลือกได้ <strong>มากกว่า 1 วิธี</strong> (ติ๊กการ์ดด้านบน):</p>
 <div class="table-wrap"><table>
 <thead><tr><th>วิธี</th><th>ความหมาย</th></tr></thead>
 <tbody>
-<tr><td><strong>ยอดขายเฉลี่ย 3 เดือนย้อนหลัง (L3M)</strong></td><td>แบ่งตามสัดส่วนยอด 3 เดือน — ค่าเริ่มต้น</td></tr>
+<tr><td><strong>ยอดขายเฉลี่ย 3 เดือนย้อนหลัง (L3M)</strong></td><td>แบ่งตามสัดส่วนยอด 3 เดือน (ค่าเริ่มต้น)</td></tr>
 <tr><td><strong>ยอดขายเฉลี่ย 6 เดือนย้อนหลัง (L6M)</strong></td><td>แบ่งตามสัดส่วนยอด 6 เดือน</td></tr>
 <tr><td><strong>เดือนเดียวกันปีที่แล้ว (LY)</strong></td><td>แบ่งตามยอดเดือนเดียวกันปีก่อน</td></tr>
-<tr><td><strong>ผลักดันพนักงาน (PUSH)</strong></td><td>เน้นคนที่ขายน้อย — ได้สัดส่วนมากขึ้น</td></tr>
+<tr><td><strong>ผลักดันพนักงาน (PUSH)</strong></td><td>เน้นคนที่ขายน้อย ได้สัดส่วนมากขึ้น</td></tr>
 </tbody></table></div>
-<p>ถ้าเลือก <strong>หลายวิธี</strong> — กำหนด <strong>แบรนด์ → วิธี</strong> ใน panel ด้านล่าง</p>
+<p>ถ้าเลือก <strong>หลายวิธี</strong> ให้กำหนด <strong>แบรนด์ → วิธี</strong> ในกล่องด้านล่าง</p>
 <h4 id="ตัวเลือกเพิ่ม-checkbox">ตัวเลือกเพิ่ม (checkbox)</h4>
 <ul>
-<li><strong>บังคับให้ทุกคนได้อย่างน้อย 1 หีบ (ต่อ SKU)</strong> — เมื่อเป้าหีบ SKU นั้น ≥ จำนวนพนักงาน</li>
-<li><strong>SKU ใหม่แบ่งเท่ากัน</strong> — SKU ที่ทั้งทีมไม่มียอด 12 เดือน แบ่งเท่าทุกคน</li>
+<li><strong>บังคับให้ทุกคนได้อย่างน้อย 1 หีบ (ต่อ SKU)</strong>: เมื่อเป้าหีบ SKU นั้น ≥ จำนวนพนักงาน</li>
+<li><strong>SKU ใหม่แบ่งเท่ากัน</strong>: SKU ที่ทั้งทีมไม่มียอด 12 เดือน แบ่งเท่าทุกคน</li>
 </ul>
-<h4 id="หลักการคำนวณ-l3m-l6m-ly">หลักการคำนวณ (L3M / L6M / LY)</h4>
-<p>ระบบทำงานดังนี้:</p>
-<ul>
-<li><strong>คำนวณสัดส่วนหีบ</strong> ตามวิธีที่เลือก (เช่น ใครขาย SKU 208405 มาก ได้หีบ SKU นั้นมาก)</li>
-<li><strong>จำกัดการปรับ</strong> — หีบต่อ (คน × SKU) ไม่เกิน <strong>±20% จากประวัติเก่า</strong> (สัดส่วนที่ระบบคำนวณตามวิธีที่เลือก)</li>
-<li><strong>ปรับเป้าเงินรายคน</strong> — ภายในช่วง ±20% นั้น พยายามให้มูลค่ารวมต่อคนใกล้เป้า (ยอมคลาด ±1,000 บ./คน)</li>
-</ul>
-<p>หลังคำนวณ ดูแถบ <strong>📐 หีบ vs ประวัติเก่า (±20%)</strong> เหนือตารางผล — กดกรอง SKU ที่มี ◆ / ⚠ ได้ (รายละเอียดในขั้น 7)</p>
-<p><strong>ตัวอย่าง:</strong> ถ้าสัดส่วนที่คำนวณให้ S003 ได้ 500 หีบของ SKU หนึ่ง — ระบบจะให้ได้ประมาณ <strong>400–600 หีบ</strong> (ไม่ใช่หลักหน่วยถ้าประวัติเป็นหลักร้อย)</p>
-<h4 id="ทำอย่างไร">ทำอย่างไร</h4>
+<h4 id="กดคำนวณ">กดคำนวณ</h4>
 <ul>
 <li>เลือกวิธีกระจาย (และแบรนด์→วิธี ถ้าเลือกหลายวิธี)</li>
 <li>ติ๊ก checkbox ตามต้องการ</li>
 <li>ตรวจว่ายอดรวมเป้าเงินขั้น 2 พร้อม (ปุ่ม <strong>เริ่มคำนวณ</strong> เปิด)</li>
-<li>กด <strong>เริ่มคำนวณ</strong> — รอ progress 4 ขั้น</li>
+<li>กด <strong>เริ่มคำนวณ</strong> แล้วรอ progress 4 ขั้น</li>
 <li>เมื่อเสร็จ ปุ่มเปลี่ยนเป็น <strong>คำนวณใหม่</strong> (ใช้เมื่อเปลี่ยนวิธีหรือแก้เป้า)</li>
 </ul>
+<figure class="shot"><img src="manual-images/04-step3-allocate.png" alt="ขั้นที่ 3, เลือกวิธีกระจายและกดเริ่มคำนวณ" loading="lazy"><figcaption>ขั้นที่ 3, เลือกวิธีกระจายและกดเริ่มคำนวณ</figcaption></figure>
 <hr>
-<h3 id="7-อ่านตารางผลลัพธ์">7. อ่านตารางผลลัพธ์</h3>
-<p>หลังคำนวณ จะเห็นบล็อก <strong>ผลลัพธ์การกระจายหีบ</strong> พร้อมตัวเลือกเรียง / กรองแบรนด์ และตารางด้านล่าง</p>
-<h4 id="แถบควบคุม-เหนือตาราง">แถบควบคุม (เหนือตาราง)</h4>
-<div class="table-wrap"><table>
-<thead><tr><th>ตัวเลือก</th><th>ใช้ทำอะไร</th></tr></thead>
-<tbody>
-<tr><td><strong>เรียงตาม รหัสสินค้า / แบรนด์ / จำนวนหีบ / ราคา</strong></td><td>จัดลำดับคอลัมน์ SKU</td></tr>
-<tr><td><strong>ทุกแบรนด์ (ทั้งหมด)</strong></td><td>กรองดูเฉพาะแบรนด์หนึ่ง</td></tr>
-<tr><td><strong>บันทึกร่าง · Undo · Excel · ส่ง Target Sun</strong></td><td>เก็บผล / ย้อนแก้ / ส่งออก</td></tr>
-</tbody></table></div>
-<h4 id="แถบ-หีบ-vs-ประวัติเก่า-20">แถบ 📐 หีบ vs ประวัติเก่า (±20%)</h4>
-<p>แถบนี้อยู่ <strong>ใต้ปุ่มควบคุม เหนือตาราง</strong> — แสดงทุกครั้งหลังคำนวณ</p>
-<div class="table-wrap"><table>
-<thead><tr><th>ปุ่ม</th><th>ความหมาย</th><th>การใช้งาน</th></tr></thead>
-<tbody>
-<tr><td><strong>◆ … (ตัวเลข)</strong></td><td>จำนวนช่องที่ <strong>อยู่ในช่วง ±20% ของประวัติเก่า</strong></td><td><strong>คลิก</strong> เพื่อแสดงเฉพาะคอลัมน์ SKU ที่มี ◆ · คลิกซ้ำหรือ <strong>แสดงทั้งหมด</strong> เพื่อยกเลิกกรอง</td></tr>
-<tr><td><strong>⚠ … (ตัวเลข)</strong></td><td>จำนวนช่องที่ <strong>เกินช่วง ±20% ของประวัติเก่า</strong></td><td><strong>คลิก</strong> เพื่อแสดงเฉพาะ SKU ที่มี ⚠ (มักจากการแก้มือ)</td></tr>
-</tbody></table></div>
+<h3 id="5-อ่านตารางผลลัพธ์">5. อ่านตารางผลลัพธ์</h3>
+<p>หลังกด <strong>เริ่มคำนวณ</strong> จะเห็นส่วน <strong>ผลลัพธ์การกระจายหีบ</strong> อ่านจาก<strong>บนลงล่าง</strong>ตามลำดับนี้</p>
+<h4 id="1-ปุ่มด้านบนตาราง">1) ปุ่มด้านบนตาราง</h4>
 <ul>
-<li>ถ้าตัวเลขเป็น <strong>0</strong> ปุ่มจะกดไม่ได้</li>
-<li>ถ้า <strong>ทั้ง ◆ และ ⚠ เป็น 0</strong> จะขึ้นข้อความ ✓ <em>ไม่พบช่องที่มี ◆ หรือ ⚠ — หีบสอดคล้องประวัติเก่าภายใน ±20%</em> (ปกติหลังคำนวณ)</li>
-<li>กรองทำงานร่วมกับ <strong>แบรนด์ที่เลือก</strong> ได้ — ถ้าไม่เจอ SKU ในมุมมองนั้น ให้เปลี่ยนแบรนด์หรือกดแสดงทั้งหมด</li>
+<li><strong>เรียงตาม</strong> รหัสสินค้า / แบรนด์ / จำนวนหีบ / ราคา</li>
+<li><strong>เลือกแบรนด์</strong> ดูเฉพาะแบรนด์หนึ่ง หรือทุกแบรนด์</li>
+<li><strong>💾 บันทึกร่าง</strong> เก็บผลไว้ในเครื่อง · <strong>↩️ Undo</strong> ย้อนการแก้ล่าสุด · <strong>↓ Excel</strong> · <strong>📤 ส่ง Target Sun</strong></li>
 </ul>
-<h4 id="โครงสร้างตาราง">โครงสร้างตาราง</h4>
+<h4 id="2-แถบ-หีบ-vs-ประวัติเก่า-20">2) แถบ 📐 หีบ vs ประวัติเก่า (±20%)</h4>
+<p>อยู่<strong>ใต้ปุ่มด้านบน เหนือตาราง</strong> มี 2 ปุ่ม:</p>
+<ul>
+<li><strong>◆ (ตัวเลข)</strong> กดแล้วเห็นเฉพาะ SKU ที่หีบยังอยู่ในช่วง ±20% ของประวัติเก่า</li>
+<li><strong>⚠ (ตัวเลข)</strong> กดแล้วเห็นเฉพาะ SKU ที่เกินช่วง ±20% (มักเกิดหลังแก้ตัวเลขเอง)</li>
+</ul>
+<p>กดปุ่มเดิมอีกครั้ง หรือกด <strong>แสดงทั้งหมด</strong> เพื่อยกเลิกกรอง · ถ้าตัวเลขเป็น 0 ปุ่มจะกดไม่ได้</p>
+<h4 id="3-ตารางหีบ">3) ตารางหีบ</h4>
 <div class="table-wrap"><table>
-<thead><tr><th>ส่วน</th><th>ความหมาย</th></tr></thead>
+<thead><tr><th>ดูตรงไหน</th><th>หมายความว่า</th></tr></thead>
 <tbody>
-<tr><td><strong>แถว</strong></td><td>พนักงาน (S001, S002, …)</td></tr>
-<tr><td><strong>คอลัมน์</strong></td><td>SKU แต่ละตัว — หัวคอลัมน์มีรหัส, แบรนด์, ราค/หีบ</td></tr>
-<tr><td><strong>ตัวเลขสีน้ำเงิน (ใหญ่)</strong></td><td>จำนวนหีบที่ได้ — <strong>คลิกแก้ได้</strong></td></tr>
-<tr><td><strong>ข้อความสีเทาใต้ตัวเลข</strong></td><td>ประวัติ: เฉลี่ย 3M, เดือนที่แล้ว, เดือนเดียวกันปีก่อน</td></tr>
-<tr><td><strong>คอลัมน์ขวาสุด</strong></td><td>รวมหีบ + <strong>มูลค่ารวม</strong> ทุกแบรนด์</td></tr>
+<tr><td><strong>แถว</strong></td><td>พนักงานแต่ละคน</td></tr>
+<tr><td><strong>คอลัมน์</strong></td><td>SKU แต่ละตัว (หัวคอลัมน์มีรหัสสินค้า แบรนด์ ราค/หีบ)</td></tr>
+<tr><td><strong>ตัวเลขสีน้ำเงิน</strong></td><td>จำนวนหีบที่ได้ <strong>คลิกแล้วแก้ได้</strong></td></tr>
+<tr><td><strong>ตัวเลขสีเทาใต้ลงมา</strong></td><td>ประวัติยอดขาย (เฉลี่ย 3 เดือน, เดือนที่แล้ว, ปีที่แล้ว)</td></tr>
+<tr><td><strong>คอลัมน์ขวาสุด</strong></td><td>รวมหีบและมูลค่ารวมของคนนั้น</td></tr>
 </tbody></table></div>
-<h4 id="มูลค่ารวมต่อคน-คอลัมน์ขวา">มูลค่ารวมต่อคน (คอลัมน์ขวา)</h4>
+<p><strong>สัญลักษณ์ ◆ และ ⚠</strong> (ในเซลล์หรือที่หัวคอลัมน์)</p>
 <ul>
-<li><strong>✓ ใกล้เป้า</strong> — ห่างจากเป้าเงินไม่เกิน ±1,000 บ.</li>
-<li><strong>ขาด / เกิน X บาท</strong> — ยังห่างจากเป้าเงินมากกว่า ±1,000 บ.</li>
+<li><strong>◆</strong> หีบยังอยู่ในช่วง ±20% ของประวัติเก่า (ปกติหลังระบบคำนวณ)</li>
+<li><strong>⚠</strong> หีบเกินช่วง ±20% (มักหลังแก้มือ)</li>
 </ul>
-<blockquote class="note">บางคนอาจยังเกิน/ขาดเป้าเงินมาก แม้หีบต่อ SKU อยู่ใน ±20% แล้ว — มักหมายความว่า <strong>เป้าเงินที่ตั้ง (ขั้น 2) ไม่สอดคล้องกับประวัติ×ราคา</strong> ไม่ใช่ข้อผิดพลาดของระบบ</blockquote>
-<h4 id="สัญลักษณ์-และ">สัญลักษณ์ ◆ และ ⚠</h4>
-<div class="table-wrap"><table>
-<thead><tr><th>สัญลักษณ์</th><th>ความหมาย</th><th>ควรทำอย่างไร</th></tr></thead>
-<tbody>
-<tr><td><strong>◆</strong> (ส้ม)</td><td><strong>อยู่ในช่วง ±20% ของประวัติเก่า</strong> — แสดงในเซลล์และในแถบกรองด้านบน</td><td>ปกติเมื่อระบบปรับให้เป้าเงินใกล้ขึ้น — ไม่ต้องแก้ถ้ายอมรับได้</td></tr>
-<tr><td><strong>⚠</strong> (แดง)</td><td><strong>เกินช่วง ±20% ของประวัติเก่า</strong></td><td>มักเกิดจาก <strong>การแก้ตัวเลขเอง</strong> — กดกรอง ⚠ ในแถบด้านบนเพื่อดู SKU ที่เกี่ยวข้อง</td></tr>
-</tbody></table></div>
-<p>สัญลักษณ์จะอัปเดตอัตโนมัติเมื่อแก้หีบหรือระบบเกลี่ยส่วนต่างหีบ</p>
-<h4 id="แถวล่างตาราง">แถวล่างตาราง</h4>
+<p><strong>มูลค่ารวมต่อคน</strong> (คอลัมน์ขวา): <strong>✓ ใกล้เป้า</strong> = ห่างจากเป้าเงินไม่เกิน 1,000 บ. · ถ้า <strong>ขาด/เกิน X บาท</strong> = ยังห่างจากเป้าเงินมาก</p>
+<h4 id="4-แถวล่างสุดของตาราง">4) แถวล่างสุดของตาราง</h4>
 <ul>
-<li><strong>เป้ารวม (หีบ)</strong> — เป้าหีบรวมต่อ SKU จากหัวหน้า</li>
-<li><strong>รวมพื้นที่จัดสรร</strong> — ผลรวมหีบที่แบ่งให้พนักงาน</li>
-<li><strong>เครื่องหมาย ✓ สีเขียว</strong> — รวมหีบตรงเป้า SKU นั้น (ควรเป็น ✓ ทุกคอลัมน์ก่อนส่ง Target Sun)</li>
+<li><strong>เป้ารวม (หีบ)</strong> = เป้าหีบที่หัวหน้ากำหนดต่อ SKU</li>
+<li><strong>รวมพื้นที่จัดสรร</strong> = หีบที่แบ่งให้พนักงานรวมกัน</li>
+<li>ควรเห็น <strong>✓ สีเขียว</strong> ทุกคอลัมน์ (รวมหีบตรงเป้า) ก่อนส่ง Target Sun</li>
 </ul>
-<h4 id="แก้ไขและ-undo">แก้ไขและ Undo</h4>
+<h4 id="5-แก้หีบด้วยมือ">5) แก้หีบด้วยมือ</h4>
 <ul>
-<li><strong>แก้หีบ</strong> — คลิกตัวเลขสีน้ำเงิน พิมพ์จำนวนใหม่ แล้วคลิกนอกช่อง</li>
-<li><strong>↩️ Undo</strong> — ย้อนการแก้ล่าสุด</li>
-<li><strong>💾 บันทึกร่าง</strong> — เก็บผลในเบราว์เซอร์ (ไม่แทนการส่ง Target Sun)</li>
+<li>คลิกตัวเลขสีน้ำเงิน → พิมพ์จำนวนใหม่ → คลิกนอกช่อง</li>
+<li>กด <strong>↩️ Undo</strong> ถ้าต้องการย้อน</li>
+<li>กด <strong>💾 บันทึกร่าง</strong> เก็บไว้ในเครื่อง (ยังไม่ใช่การส่งเข้า Target Sun)</li>
 </ul>
+<figure class="shot"><img src="manual-images/05-result-table.png" alt="ตารางผลลัพธ์, แถบกรอง ◆ / ⚠ และตารางหีบ" loading="lazy"><figcaption>ตารางผลลัพธ์, แถบกรอง ◆ / ⚠ และตารางหีบ</figcaption></figure>
 <hr>
-<h3 id="8-ส่งผล-excel-และ-target-sun">8. ส่งผล — Excel และ Target Sun</h3>
+<h3 id="6-ส่งผล-excel-และ-target-sun">6. ส่งผล (Excel และ Target Sun)</h3>
 <h4 id="ดาวน์โหลด-excel-สรุปผล-dashboard">ดาวน์โหลด Excel (สรุปผล Dashboard)</h4>
 <ul>
 <li>กด <strong>↓ ดาวน์โหลด Excel</strong></li>
@@ -451,8 +364,8 @@ hr { border: none; border-top: 1px dashed var(--border); margin: 24px 0; }
 <h4 id="ส่งเข้า-target-sun">ส่งเข้า Target Sun</h4>
 <ul>
 <li>กด <strong>📤 ส่งเข้า Target Sun</strong></li>
-<li>ใน modal เลือก <strong>ส่งเข้า Target Sun</strong> — ระบบสร้างไฟล์และส่งให้อัตโนมัติ (ไม่ต้องแนบไฟล์)</li>
-<li>หรือเลือก <strong>ดาวน์โหลด Excel อย่างเดียว</strong> — รูปแบบ TGA สำหรับส่งด้วยตนเอง</li>
+<li>จะมี<strong>หน้าต่างยืนยันขึ้นมา</strong> ให้เลือก <strong>ส่งเข้า Target Sun</strong> ระบบสร้างไฟล์และส่งให้อัตโนมัติ (ไม่ต้องแนบไฟล์)</li>
+<li>หรือเลือก <strong>ดาวน์โหลด Excel อย่างเดียว</strong> รูปแบบ TGA สำหรับส่งด้วยตนเอง</li>
 </ul>
 <h4 id="ก่อนส่ง-ควรตรวจ">ก่อนส่ง ควรตรวจ</h4>
 <ul>
@@ -460,58 +373,8 @@ hr { border: none; border-top: 1px dashed var(--border); margin: 24px 0; }
 <li>[ ] แถวล่าง <strong>รวมพื้นที่จัดสรร</strong> ตรง <strong>เป้ารวม (หีบ)</strong> ทุก SKU (✓)</li>
 <li>[ ] แก้มือแล้วกดกรอง <strong>⚠</strong> ในแถบด้านบน ตรวจ SKU ที่เกินช่วง ±20%</li>
 </ul>
-<h4 id="ใครกดส่งได้">ใครกดส่งได้</h4>
-<div class="table-wrap"><table>
-<thead><tr><th>ผู้ใช้</th><th>ส่ง Target Sun</th></tr></thead>
-<tbody>
-<tr><td>อีเมลในรายชื่อที่ IT กำหนด (admin / allowlist)</td><td>ได้</td></tr>
-<tr><td>ผู้ใช้ทั่วไปที่ล็อกอินได้</td><td>กระจายหีบได้ · ปุ่มส่งอาจเป็นสีเทา</td></tr>
-</tbody></table></div>
-<h4 id="สินค้าที่ไม่ถูกส่ง">สินค้าที่ไม่ถูกส่ง</h4>
-<p>สินค้าที่ไม่มีใน Target Sun จะไม่ถูกส่ง — ระบบแจ้งจำนวนให้ใน modal หลังส่ง</p>
-<hr>
-<h3 id="9-คำถามที่พบบ่อย-faq">9. คำถามที่พบบ่อย (FAQ)</h3>
-<div class="faq"><p class="faq-q"><strong>ถาม: ไม่เห็นแถบ ◆ / ⚠ หรือตัวเลขเป็น 0 ทั้งคู่?</strong></p><p class="faq-a">ปกติหลังคำนวณ — หีบอยู่ใน ±20% ของประวัติเก่า · แถบยังแสดงอยู่เหนือตารางพร้อมข้อความ ✓ · ถ้าแก้หีบมือแล้วเกิน ±20% ตัวเลข ⚠ จะขึ้นและกดกรองได้</p></div>
-<div class="faq"><p class="faq-q"><strong>ถาม: กดกรอง ◆ / ⚠ แล้วตารางว่าง?</strong></p><p class="faq-a">ลองเปลี่ยนจากแบรนด์เดียวเป็น <strong>ทุกแบรนด์</strong> หรือกด <strong>แสดงทั้งหมด</strong> ในแถบกรอง</p></div>
-<div class="faq"><p class="faq-q"><strong>ถาม: ต้องทำขั้น 2 ทุกครั้งไหม?</strong></p><p class="faq-a">ไม่ — ข้ามได้ ใช้เป้า Target Sun ตามที่ระบบดึงมา</p></div>
-<div class="faq"><p class="faq-q"><strong>ถาม: ทำไมหีบไม่ตรงกับเฉลี่ย 3M ในเซลล์พอดี?</strong></p><p class="faq-a">ระบบแบ่งตามสัดส่วน 3M เป็นหลัก แต่อาจปรับภายใน ±20% เพื่อให้เป้าเงินรายคนใกล้ขึ้น — ดูสัญลักษณ์ ◆</p></div>
-<div class="faq"><p class="faq-q"><strong>ถาม: ◆ เยอะ ผิดปกติไหม?</strong></p><p class="faq-a">ไม่จำเป็นผิด — แปลว่าหีบยังอยู่ในช่วง ±20% ของประวัติเก่า แต่ระบบปรับเพื่อเป้าเงิน ถ้ายอมรับได้ไม่ต้องแก้</p></div>
-<div class="faq"><p class="faq-q"><strong>ถาม: เห็น ⚠ หลังแก้มือ ทำอย่างไร?</strong></p><p class="faq-a">ถ้าแก้ตั้งใจ — ไม่เป็นไร แต่ควรตรวจว่าผลรวมหีบต่อ SKU ยังตรงเป้า (แถวล่าง ✓)</p></div>
-<div class="faq"><p class="faq-q"><strong>ถาม: เป้าเงินบางคนยังเกิน/ขาดมาก ทั้งที่ ◆ แล้ว?</strong></p><p class="faq-a">เป้าเงินขั้น 2 อาจไม่สอดคล้องกับประวัติ×ราคา — ตรวจ/ปรับเป้าเงินรายคน หรือยอมรับว่าทั้งสองอย่างพร้อมกันไม่ได้</p></div>
-<div class="faq"><p class="faq-q"><strong>ถาม: กดเริ่มคำนวณไม่ได้</strong></p><p class="faq-a">ตรวจยอดรวมเป้าเงินขั้น 2 ใกล้เป้ารวมหรือไม่ · กรอกเหตุผลเติบโตติดลบ (ถ้าระบบขอ)</p></div>
-<div class="faq"><p class="faq-q"><strong>ถาม: เป้ารวมขั้น 1 ผิด</strong></p><p class="faq-a">กด <strong>ติดต่อ IT</strong> — อย่าบังคับคำนวณด้วยเป้าที่ผิด</p></div>
-<div class="faq"><p class="faq-q"><strong>ถาม: ปุ่มส่ง Target Sun สีเทา</strong></p><p class="faq-a">ยังไม่คำนวณ · หรือไม่มีสิทธิส่ง — ติดต่อ IT</p></div>
-<div class="faq"><p class="faq-q"><strong>ถาม: ส่งแล้ว error / timeout</strong></p><p class="faq-a">ลองใหม่ · ติดต่อ IT ถ้า UAT/เครือข่ายมีปัญหา</p></div>
-<div class="faq"><p class="faq-q"><strong>ถาม: บันทึกร่าง vs ส่ง Target Sun ต่างกันอย่างไร?</strong></p><p class="faq-a">บันทึกร่างเก็บในเบราว์เซอร์เครื่องนี้เท่านั้น — ส่ง Target Sun คือส่งเข้าระบบเป้าจริง</p></div>
-<div class="faq"><p class="faq-q"><strong>ถาม: เปลี่ยน Supervisor / งวด ทำอย่างไร?</strong></p><p class="faq-a">กด <strong>กลับเลือก Supervisor</strong> ที่แถบบน แล้วเลือกใหม่</p></div>
-<div class="faq"><p class="faq-q"><strong>ถาม: คู่มือในแอปอยู่ที่ไหน?</strong></p><p class="faq-a">หน้า Login — ปุ่ม <strong>อ่านคู่มือก่อนใช้งาน</strong> บนการ์ดเข้าสู่ระบบ (อ่านได้ก่อนล็อกอิน) · มุมขวาบนมีปุ่ม <strong>คู่มือ</strong> ตลอดเวลา — สรุปสั้น 9 ขั้น</p></div>
-<hr>
-<h3 id="10-คำศัพท์สั้น-ๆ">10. คำศัพท์สั้น ๆ</h3>
-<div class="table-wrap"><table>
-<thead><tr><th>คำ</th><th>ความหมาย</th></tr></thead>
-<tbody>
-<tr><td><strong>Supervisor / Manager</strong></td><td>รหัสผู้รับผิดชอบทีมขาย — เลือกตอนล็อกอิน</td></tr>
-<tr><td><strong>SKU</strong></td><td>รหัสสินค้า — แต่ละคอลัมน์ในตารางผล</td></tr>
-<tr><td><strong>หีบ</strong></td><td>หน่วยเป้าหมายยอดขายที่แบ่งให้พนักงาน</td></tr>
-<tr><td><strong>เป้ารวม</strong></td><td>ยอดเงินเป้ารวมของทีมในงวด</td></tr>
-<tr><td><strong>เป้า Target Sun / เป้าที่กำหนดเอง</strong></td><td>เป้าเงินรายคนจากระบบ หรือที่ปรับในขั้น 2</td></tr>
-<tr><td><strong>L3M / L6M / LY</strong></td><td>วิธีแบ่งตามประวัติ 3 เดือน / 6 เดือน / เดือนเดียวกันปีก่อน</td></tr>
-<tr><td><strong>ช่วง ±20% / ประวัติเก่า</strong></td><td>หีบต่อ (คน×SKU) เปรียบเทียบกับสัดส่วนที่ระบบคำนวณจากประวัติ — ไม่เกิน ±20% (ยกเว้นแก้มือจนเกิน → ⚠)</td></tr>
-<tr><td><strong>◆</strong></td><td>อยู่ในช่วง ±20% ของประวัติเก่า</td></tr>
-<tr><td><strong>⚠</strong></td><td>เกินช่วง ±20% ของประวัติเก่า — มักจากการแก้มือ</td></tr>
-<tr><td><strong>Target Sun</strong></td><td>ระบบเป้ายอดขายกลาง — ปลายทางหลังกระจายหีบ</td></tr>
-</tbody></table></div>
-<hr>
-<h3 id="แปลงเป็น-pdf">แปลงเป็น PDF</h3>
-<ul>
-<li>เปิดไฟล์นี้ใน <strong>Microsoft Word</strong> (File → Open → เลือก <code>.md</code>) หรือใช้ <strong>VS Code / Cursor</strong> แล้ว export</li>
-<li>ปรับฟอนต์เป็น <strong>Sarabun</strong> ขนาด 11–12 pt ถ้าต้องการ</li>
-<li><strong>Save as PDF</strong></li>
-</ul>
-<p>หรือใช้ Pandoc (ถ้ามีติดตั้ง):</p>
-<pre><code>pandoc docs/user-manual-th.md -o user-manual-th.pdf --pdf-engine=xelatex -V mainfont=&quot;Sarabun&quot;</code></pre>
-<hr>
-<p class="footer-note">Target Allocation · อัปเดตตาม UI ปัจจุบัน (คู่มือบน Login · แถบกรอง ◆ / ⚠ · ช่วง ±20% ของประวัติเก่า)</p>
+<p>สินค้าที่ไม่มีใน Target Sun จะไม่ถูกส่ง ระบบแจ้งจำนวนใน<strong>หน้าต่างแจ้งผล</strong>หลังส่ง</p>
+<figure class="shot"><img src="manual-images/06-export.png" alt="ส่งผล, ดาวน์โหลด Excel และส่งเข้า Target Sun" loading="lazy"><figcaption>ส่งผล, ดาวน์โหลด Excel และส่งเข้า Target Sun</figcaption></figure>
     </article>
   </div>
 </body>
