@@ -516,6 +516,14 @@ let S = {
   negGrowthReason: "",
   /** brand → strategy map สำหรับโหมดเลือกหลายวิธี */
   brandStrategyMap: {},
+  /** ทดลอง 80/20 — ปุ่มแยก (default ปิด = วิธีเดิม) */
+  tieredTrialMode: false,
+  /** จากผล optimize ล่าสุด — ใช้แสดง badge / แบนเนอร์ */
+  optimizeTieredActive: false,
+  tierFlexSkus: new Set(),
+  tierStrictSkuCount: 0,
+  /** สเกลเป้าเงินที่ backend ใช้ (มูลค่าหีบรวม ÷ sum เป้าเหลือง) */
+  revenueScale: 1,
   /** ส่งเข้า Target Sun ได้หรือไม่ (จาก GET /managers → can_import_targetsun) */
   canImportTargetSun: true,
 };
@@ -1428,6 +1436,7 @@ async function handleLogin() {
       _setUndoEnabled();
       updateSupervisorSwitcherUI();
       _bindSupervisorSwitchOnce();
+      _syncTieredTrialBtn();
     } catch (err) {
       console.error("RENDER ERROR:", err);
       alert("Render error: " + err.message);
@@ -1479,6 +1488,8 @@ function _doLogout() {
     _managerSet: keepLoginMeta._managerSet,
     yellowLocked: {}, skuWarnings: [],
     buiDeductions: {}, buiColumnOpen: false, negGrowthReason: "", brandStrategyMap: {},
+    tieredTrialMode: false, optimizeTieredActive: false, tierFlexSkus: new Set(), tierStrictSkuCount: 0,
+    revenueScale: 1,
   };
   dismissAllToasts();
   ["logoutModal", "draftModal"].forEach(id => {
@@ -1947,6 +1958,17 @@ function _skuNewBadgeHtml(sku) {
     return `<span class="badge-new" title="SKU นี้ถูกจัดเป็นสินค้าใหม่และถูกกระจายเท่ากัน">NEW</span>`;
   }
   return "";
+}
+
+function _skuTierBadgeHtml(sku) {
+  if (!S.optimizeTieredActive) return "";
+  const key = String(sku || "").trim();
+  if (!key) return "";
+  const flex = S.tierFlexSkus;
+  if (flex && typeof flex.has === "function" && flex.has(key)) {
+    return `<span class="tiered-badge tiered-badge--flex" title="SKU หลัก (~80% มูลค่าเป้าหีบ) — ปรับเงินได้กว้างกว่า">หลัก</span>`;
+  }
+  return `<span class="tiered-badge tiered-badge--strict" title="SKU รอง — ยึดสัดส่วนประวัติแน่น (±8%)">รอง</span>`;
 }
 
 function _skuLineValue(s) {
@@ -2481,8 +2503,10 @@ async function _doOptimize(lockedEdits = []) {
         Object.entries(S.buiDeductions || {}).filter(([, v]) => Number(v) > 0)
       ),
       neg_growth_reason: (S.negGrowthReason || "").trim() || null,
-      hist_balance: _histBalancePayload(),
+      hist_balance: S.tieredTrialMode ? 0.35 : _histBalancePayload(),
       revenue_tolerance_baht: _revenueTolerancePayload(),
+      tiered_allocation: !!S.tieredTrialMode,
+      tier_pct: 0.80,
     };
 
     const url = `${API_BASE_URL}/optimize?sup_id=${S.supId}&target_month=${S.targetMonth}&target_year=${S.targetYear}`;
@@ -2510,6 +2534,13 @@ async function _doOptimize(lockedEdits = []) {
     }
     S.newProductsEvenMode = String(json.new_products_even_mode || "off");
     S.newProductSkus = new Set(Array.isArray(json.new_product_skus) ? json.new_product_skus.map(x => String(x).trim()) : []);
+    S.optimizeTieredActive = !!json.tiered_allocation;
+    S.tierFlexSkus = new Set(
+      Array.isArray(json.tier_flex_skus) ? json.tier_flex_skus.map(x => String(x).trim()) : []
+    );
+    S.tierStrictSkuCount = Number(json.tier_strict_sku_count) || 0;
+    const rs = Number(json.revenue_scale);
+    S.revenueScale = Number.isFinite(rs) && rs > 0 ? rs : 1;
     const allocs = json.allocations;
     allocs.forEach(a => { a.is_edited = false; });
 
@@ -2671,8 +2702,9 @@ function renderResult(allocs) {
     const info = S.skus.find(x => x.sku === s) || {};
     const price = _skuPriceMap[s] ?? 0;
     const newBadge = _skuNewBadgeHtml(s);
+    const tierBadge = _skuTierBadgeHtml(s);
     headerHtml += `<th class="r sku-th">` +
-      `<div class="sku-th-code">${s} ${newBadge}</div>` +
+      `<div class="sku-th-code">${s} ${newBadge}${tierBadge}</div>` +
       `<div class="sku-th-brand">${info.brand_name_thai || info.brand_name_english || ""}</div>` +
       `<div class="sku-th-price">${fmt(price)} <span class="muted">บาท/หีบ</span></div>` +
       `</th>`;
@@ -2725,7 +2757,7 @@ function renderResult(allocs) {
 
     const { grandBoxes = 0, grandValue = 0, brandBoxes = 0, brandValue = 0 } = _empTotals[emp] || {};
 
-    const yellowTarget = S.yellow[emp] || 0;
+    const yellowTarget = _effectiveYellowTarget(emp);
     const deviation = grandValue - yellowTarget;
     const devAbs = Math.abs(deviation);
     const deviationOk = devAbs <= 1000;
@@ -2794,6 +2826,13 @@ function renderResult(allocs) {
   renderResultFooter(skus, skuTotals, emps);
   _renderHistDevSummary(allocs, skus.length);
   syncStep3ResultFabricNote();
+  syncStep3TieredNote();
+  const scaleNoteHost = document.getElementById("step3RevenueScaleNote");
+  if (scaleNoteHost) {
+    const html = _revenueScaleNoteHtml();
+    scaleNoteHost.innerHTML = html;
+    scaleNoteHost.style.display = html ? "block" : "none";
+  }
   syncLakehouseButton();
   requestAnimationFrame(() => adjustResultStickyGap());
 }
@@ -2877,6 +2916,23 @@ function syncStep3ResultFabricNote() {
     dst.innerHTML = "";
     dst.style.display = "none";
   }
+}
+
+/** แบนเนอร์ผลลัพธ์เมื่อใช้โหมดทดลอง 80/20 */
+function syncStep3TieredNote() {
+  const el = document.getElementById("step3TieredNote");
+  if (!el) return;
+  if (!S.optimizeTieredActive || !S.allocations?.length) {
+    el.innerHTML = "";
+    el.style.display = "none";
+    return;
+  }
+  const flexN = S.tierFlexSkus?.size || 0;
+  const strictN = S.tierStrictSkuCount || Math.max(0, (S.skus?.length || 0) - flexN);
+  el.innerHTML =
+    `<strong>🧪 โหมดทดลอง 80/20</strong> — SKU หลัก <b>${flexN}</b> รายการ (~80% มูลค่าเป้าหีบ) ปรับเงินได้ (±35%) · ` +
+    `SKU รอง <b>${strictN}</b> รายการ ยึดประวัติแน่น (±12%) · ระบบสลับหีบ SKU หลักเพื่อให้ใกล้เป้าเงิน ±1,000 บ.`;
+  el.style.display = "block";
 }
 
 // 🔴 ตรึงคอลัมน์ S/M กับ W/H ไว้ด้วยกัน ไม่ให้ตารางเบี้ยว 
@@ -3567,6 +3623,12 @@ function _clearDashboardNotices() {
   if (typeof _clearFabricStep3Notices === "function") {
     _clearFabricStep3Notices();
   }
+  const tierNote = document.getElementById("step3TieredNote");
+  if (tierNote) {
+    tierNote.innerHTML = "";
+    tierNote.style.display = "none";
+  }
+  if (typeof _syncTieredTrialBtn === "function") _syncTieredTrialBtn();
   dismissAllToasts();
 }
 
@@ -4466,6 +4528,27 @@ function toggleBuiColumn() {
   _updateNegGrowthReasonState();
 }
 
+/* ════════════════════════════════════════════════════════════════════════════
+   STEP 3 — ทดลอง 80/20 (ปุ่มแยก)
+════════════════════════════════════════════════════════════════════════════ */
+function _syncTieredTrialBtn() {
+  const btn = document.getElementById("tieredTrialBtn");
+  if (!btn) return;
+  btn.classList.toggle("is-active", !!S.tieredTrialMode);
+  btn.setAttribute("aria-pressed", String(!!S.tieredTrialMode));
+}
+
+function toggleTieredTrial() {
+  S.tieredTrialMode = !S.tieredTrialMode;
+  _syncTieredTrialBtn();
+  const hint = document.querySelector(".tiered-trial-hint");
+  if (hint) {
+    hint.textContent = S.tieredTrialMode
+      ? "เปิดอยู่ — ครั้งถัดไปที่กดคำนวณจะใช้ SKU หลัก/รอง · ปิดเพื่อกลับวิธีเดิม (±20% ทุก SKU)"
+      : "ปิด = วิธีเดิม (รั้ว ±20% ทุก SKU) · เปิด = SKU หลัก ~80% มูลค่าเป้าหีบปรับเงินได้ (±35%) · SKU รองยึดประวัติแน่น (±12%)";
+  }
+}
+
 function onBuiChange(input) {
   const emp = input.dataset.emp;
   const val = Math.max(0, parseFloat(String(input.value).replace(/,/g, "")) || 0);
@@ -4747,6 +4830,32 @@ function _renderHistDevSummary(allocs, visibleSkuCount) {
 
 function _revenueTolerancePayload() {
   return 1000;
+}
+
+/** เป้าเงินที่ระบบใช้จริงต่อคน (สเกลให้สอดคล้องมูลค่าหีบรวม) */
+function _revenueScaleFactor() {
+  const api = Number(S.revenueScale);
+  if (Number.isFinite(api) && api > 0) return api;
+  const totalPossible = (S.skus || []).reduce(
+    (a, s) => a + (Number(s.supervisor_target_boxes) || 0) * (Number(s.price_per_box) || 0),
+    0
+  );
+  const totalYellow = Object.values(S.yellow || {}).reduce((a, v) => a + (Number(v) || 0), 0);
+  return totalPossible > 0 && totalYellow > 0 ? totalPossible / totalYellow : 1;
+}
+
+function _effectiveYellowTarget(emp) {
+  const raw = Number(S.yellow[emp]) || 0;
+  const scale = _revenueScaleFactor();
+  return raw > 0 ? raw * scale : 0;
+}
+
+function _revenueScaleNoteHtml() {
+  const scale = _revenueScaleFactor();
+  if (!Number.isFinite(scale) || Math.abs(scale - 1) < 0.005) return "";
+  const pct = Math.round((scale - 1) * 1000) / 10;
+  const word = pct > 0 ? "สูงกว่า" : "ต่ำกว่า";
+  return `<div class="revenue-scale-note">เป้าเงินรวมจาก Target Sun ${word}มูลค่าหีบรวม ~${Math.abs(pct)}% — ระบบปรับสเกลเป้าต่อคนอัตโนมัติก่อนจัดสรร (×${scale.toFixed(4)})</div>`;
 }
 
 function _getAllBrands() {

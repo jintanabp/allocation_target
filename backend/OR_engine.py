@@ -15,6 +15,39 @@ import logging
 
 logger = logging.getLogger("target_allocation.OR")
 
+# ── Cap / band constants
+_CAP_MULTIPLIER = 3.0
+_DEFAULT_REVENUE_TOLERANCE_BAHT = 1000.0
+_DEFAULT_HIST_BAND_PCT = 0.20
+_TIER_DEFAULT_PCT = 0.80
+_TIER_FLEX_BAND_PCT = 0.35
+_TIER_STRICT_BAND_PCT = 0.12
+_TIER_FLEX_ANCHOR_MULT = 0.35
+_TIER_STRICT_ANCHOR_MULT = 3.5
+_TIER_LP_HIST_BALANCE = 0.35
+
+
+def _revenue_scale_factor(
+    df_emp_targets: pd.DataFrame,
+    df_sku: pd.DataFrame,
+) -> float:
+    """สเกลเป้าเงินให้ sum(yellow) สอดคล้องมูลค่าหีบรวมที่จัดสรรได้"""
+    try:
+        prices = pd.to_numeric(df_sku.get("price_per_box", 0), errors="coerce").fillna(0)
+        boxes = pd.to_numeric(df_sku.get("supervisor_target_boxes", 0), errors="coerce").fillna(0)
+        total_possible = float((prices * boxes).sum())
+    except Exception:
+        total_possible = 0.0
+    try:
+        total_yellow = float(
+            pd.to_numeric(df_emp_targets.get("yellow_target", 0), errors="coerce").fillna(0).sum()
+        )
+    except Exception:
+        total_yellow = 0.0
+    if total_possible > 0 and total_yellow > 0:
+        return total_possible / total_yellow
+    return 1.0
+
 
 def _norm_sku(s) -> str:
     return str(s).strip() if s is not None else ""
@@ -102,6 +135,8 @@ def allocate_boxes(
     new_product_skus: set | frozenset | None = None,
     hist_balance: float = 0.85,
     revenue_tolerance_baht: float = 1000.0,
+    tiered_allocation: bool = False,
+    tier_pct: float = _TIER_DEFAULT_PCT,
 ) -> pd.DataFrame:
     strategy = strategy.upper()
     valid = ("L3M", "L6M", "LY", "EVEN", "PUSH", "LP")
@@ -142,7 +177,20 @@ def allocate_boxes(
     # ถ้า custom strategy ส่ง cap_multiplier มา ให้ใช้ค่านั้นแทน default
     effective_cap = cap_multiplier if cap_multiplier is not None else _CAP_MULTIPLIER
     hb = max(0.0, min(1.0, float(hist_balance if hist_balance is not None else 0.85)))
+    if tiered_allocation:
+        hb = min(hb, _TIER_LP_HIST_BALANCE)
     rev_tol = max(0.0, float(revenue_tolerance_baht if revenue_tolerance_baht is not None else 1000.0))
+
+    flex_skus: frozenset[str] | None = None
+    if tiered_allocation:
+        flex_skus = _flex_skus_by_target_value(df_sku, tier_pct) - even_skus
+        logger.info(
+            "tiered_allocation: flex_skus=%d strict_skus=%d even_skus=%d tier_pct=%.0f%%",
+            len(flex_skus),
+            max(0, len(_skus_with_target_boxes(df_sku)) - len(flex_skus) - len(even_skus)),
+            len(even_skus),
+            tier_pct * 100,
+        )
 
     _LP_STRATEGIES = frozenset({"L3M", "L6M", "LY", "LP"})
     base_map: dict[tuple[str, str], int] = {}
@@ -172,6 +220,10 @@ def allocate_boxes(
             cap_multiplier=effective_cap,
             base_map=base_map,
             hist_band_pct=_DEFAULT_HIST_BAND_PCT,
+            tiered_allocation=bool(tiered_allocation),
+            flex_skus=flex_skus,
+            flex_band_pct=_TIER_FLEX_BAND_PCT,
+            strict_band_pct=_TIER_STRICT_BAND_PCT,
         )
     else:
         df_out = _proportional(
@@ -182,6 +234,30 @@ def allocate_boxes(
             force_min_one,
             locked_map,
             effective_cap,
+            even_skus=even_skus,
+        )
+
+    if tiered_allocation and flex_skus and base_map:
+        strict_keys = frozenset(
+            _norm_sku(s)
+            for s in _skus_with_target_boxes(df_sku)
+            if _norm_sku(s) not in flex_skus and _norm_sku(s) not in even_skus
+        )
+        skip_for_greedy = strict_keys | even_skus
+        df_out = _greedy_revenue_balancer(
+            df_out,
+            df_emp_targets,
+            df_sku,
+            locked_map=locked_map,
+            force_min_one=force_min_one,
+            skip_balance_skus=skip_for_greedy,
+            tolerance_baht=rev_tol,
+            base_map=base_map,
+            tiered_allocation=True,
+            flex_skus=flex_skus,
+            flex_band_pct=_TIER_FLEX_BAND_PCT,
+            strict_band_pct=_TIER_STRICT_BAND_PCT,
+            default_band_pct=_DEFAULT_HIST_BAND_PCT,
             even_skus=even_skus,
         )
 
@@ -208,11 +284,6 @@ def allocate_boxes(
         )
     return df_expanded
 
-# ── Cap multiplier: คนใดคนหนึ่งจะได้หีบสูงสุดไม่เกิน CAP_MULTIPLIER × ค่าเฉลี่ย
-_CAP_MULTIPLIER = 3.0
-_DEFAULT_REVENUE_TOLERANCE_BAHT = 1000.0
-_DEFAULT_HIST_BAND_PCT = 0.20
-
 
 def _baseline_map_from_df(
     df_base: pd.DataFrame,
@@ -229,6 +300,67 @@ def _baseline_map_from_df(
             if key in base_map:
                 base_map[key] = int(r["allocated_boxes"])
     return base_map
+
+
+def _flex_skus_by_target_value(df_sku: pd.DataFrame, tier_pct: float = _TIER_DEFAULT_PCT) -> frozenset[str]:
+    """SKU หลัก: สะสมมูลค่าเป้าหีบ (หีบ×ราคา) ถึง tier_pct ของทีม (Pareto)"""
+    tier_pct = max(0.5, min(0.95, float(tier_pct)))
+    skus = _skus_with_target_boxes(df_sku)
+    if not skus:
+        return frozenset()
+
+    sku_to_val: dict[str, float] = {}
+    for _, r in df_sku.iterrows():
+        s = _norm_sku(r.get("sku"))
+        if s not in skus:
+            continue
+        boxes = int(pd.to_numeric(r.get("supervisor_target_boxes", 0), errors="coerce") or 0)
+        price = float(pd.to_numeric(r.get("price_per_box", 0), errors="coerce") or 0)
+        sku_to_val[s] = sku_to_val.get(s, 0.0) + max(0, boxes) * max(0.0, price)
+
+    if not sku_to_val:
+        return frozenset()
+
+    total = float(sum(sku_to_val.values()))
+    if total <= 0:
+        return frozenset(skus)
+
+    ordered = sorted(sku_to_val.items(), key=lambda x: -x[1])
+    cum = 0.0
+    flex: list[str] = []
+    for s, v in ordered:
+        flex.append(s)
+        cum += v
+        if cum / total >= tier_pct:
+            break
+    if not flex:
+        flex = [ordered[0][0]]
+    return frozenset(flex)
+
+
+def _tier_cell_band_pct(
+    sku_key: str,
+    *,
+    tiered_allocation: bool,
+    flex_skus: frozenset[str] | None,
+    default_band_pct: float,
+    flex_band_pct: float,
+    strict_band_pct: float,
+) -> float:
+    if not tiered_allocation or not flex_skus:
+        return default_band_pct
+    return flex_band_pct if sku_key in flex_skus else strict_band_pct
+
+
+def _tier_cell_anchor_mult(
+    sku_key: str,
+    *,
+    tiered_allocation: bool,
+    flex_skus: frozenset[str] | None,
+) -> float:
+    if not tiered_allocation or not flex_skus:
+        return 1.0
+    return _TIER_FLEX_ANCHOR_MULT if sku_key in flex_skus else _TIER_STRICT_ANCHOR_MULT
 
 
 def _hist_band_int_bounds(base: int, band_pct: float, var_min: int = 0) -> tuple[int, int]:
@@ -431,16 +563,56 @@ def _greedy_revenue_balancer(
     skip_balance_skus: frozenset | set | None = None,
     tolerance_baht: float = 1000.0,
     max_iters: int = 50000,
+    *,
+    base_map: dict[tuple[str, str], int] | None = None,
+    tiered_allocation: bool = False,
+    flex_skus: frozenset[str] | None = None,
+    flex_band_pct: float = _TIER_FLEX_BAND_PCT,
+    strict_band_pct: float = _TIER_STRICT_BAND_PCT,
+    default_band_pct: float = _DEFAULT_HIST_BAND_PCT,
+    even_skus: frozenset | None = None,
 ) -> pd.DataFrame:
     if df_out.empty:
         return df_out
     locked_map = locked_map or {}
     skip_balance_skus = skip_balance_skus or set()
+    even_skus = even_skus or frozenset()
     target_rev = dict(zip(df_emp_targets["emp_id"], df_emp_targets["yellow_target"]))
     sku_prices = dict(zip(df_sku["sku"], df_sku["price_per_box"]))
     target_boxes = dict(zip(df_sku["sku"], df_sku["supervisor_target_boxes"]))
     emps = df_emp_targets["emp_id"].tolist()
     n_emps = len(emps)
+
+    def _cell_bounds(emp: str, sku: str) -> tuple[int, int] | None:
+        if not base_map:
+            return None
+        if (emp, sku) in locked_map:
+            return None
+        sku_key = _norm_sku(sku)
+        if sku_key in even_skus:
+            return None
+        base = int(base_map.get((str(emp).strip(), sku_key), 0))
+        if base <= 0:
+            return None
+        min_box = _min_floor_boxes(sku)
+        cell_band = _tier_cell_band_pct(
+            sku_key,
+            tiered_allocation=tiered_allocation,
+            flex_skus=flex_skus,
+            default_band_pct=default_band_pct,
+            flex_band_pct=flex_band_pct,
+            strict_band_pct=strict_band_pct,
+        )
+        return _hist_band_int_bounds(base, cell_band, min_box)
+
+    def _can_move_box(from_emp: str, to_emp: str, sku: str) -> bool:
+        bounds_from = _cell_bounds(from_emp, sku)
+        bounds_to = _cell_bounds(to_emp, sku)
+        if bounds_from is not None and alloc[from_emp][sku] <= bounds_from[0]:
+            return False
+        if bounds_to is not None and alloc[to_emp][sku] >= bounds_to[1]:
+            return False
+        return True
 
     # ทำให้ "เป้าเงิน" อยู่ในสเกลที่เป็นไปได้จริง:
     # รายได้รวมที่จัดสรรได้ ถูกล็อคด้วยจำนวนหีบต่อ SKU (target_boxes × price)
@@ -518,16 +690,19 @@ def _greedy_revenue_balancer(
 
             floor = _min_floor_boxes(sku)
             # ห้ามดึงหีบจนเหลือต่ำกว่า floor (กัน force_min_one ถูกทำลายหลัง _proportional)
-            if alloc[rich_emp][sku] > floor:
-                current_error = abs(diffs[rich_emp]) + abs(diffs[poor_emp])
-                new_rich_diff = diffs[rich_emp] - price
-                new_poor_diff = diffs[poor_emp] + price
-                new_error = abs(new_rich_diff) + abs(new_poor_diff)
-                
-                improvement = current_error - new_error
-                if improvement > best_improvement:
-                    best_improvement = improvement
-                    best_sku_to_move = sku
+            if alloc[rich_emp][sku] <= floor:
+                continue
+            if not _can_move_box(rich_emp, poor_emp, sku):
+                continue
+            current_error = abs(diffs[rich_emp]) + abs(diffs[poor_emp])
+            new_rich_diff = diffs[rich_emp] - price
+            new_poor_diff = diffs[poor_emp] + price
+            new_error = abs(new_rich_diff) + abs(new_poor_diff)
+
+            improvement = current_error - new_error
+            if improvement > best_improvement:
+                best_improvement = improvement
+                best_sku_to_move = sku
                     
         if best_sku_to_move is None:
             break
@@ -555,6 +730,10 @@ def _lp_optimize(
     cap_multiplier=None,
     base_map: dict[tuple[str, str], int] | None = None,
     hist_band_pct: float = _DEFAULT_HIST_BAND_PCT,
+    tiered_allocation: bool = False,
+    flex_skus: frozenset[str] | None = None,
+    flex_band_pct: float = _TIER_FLEX_BAND_PCT,
+    strict_band_pct: float = _TIER_STRICT_BAND_PCT,
 ):
     locked_map = locked_map or {}
     even_skus = even_skus or frozenset()
@@ -620,100 +799,144 @@ def _lp_optimize(
         df_base = None
 
     logger.info(
-        "LP optimize: baseline=%s hist_balance=%.2f anchor=%.2f rev_tol=%.0f sf_w=%.2f band=%.0f%%",
+        "LP optimize: baseline=%s hist_balance=%.2f anchor=%.2f rev_tol=%.0f sf_w=%.2f band=%.0f%% tiered=%s flex_skus=%s",
         baseline_strategy,
         hist_balance,
         lp_anchor,
         tol,
         shortfall_w,
         band_pct * 100,
+        tiered_allocation,
+        len(flex_skus) if flex_skus else 0,
     )
 
-    prob = pulp.LpProblem("BoxAllocation_LP", pulp.LpMinimize)
+    strict_attempts: list[float] = [strict_band_pct]
+    if tiered_allocation and strict_band_pct < band_pct - 1e-9:
+        strict_attempts.append(band_pct)
 
-    x = {}
-    dpos = {}
-    dneg = {}
-    for emp in employees:
-        for sku in skus:
-            if (emp, sku) in locked_map:
-                val = locked_map[(emp, sku)]
-                x[(emp, sku)] = pulp.LpVariable(
-                    f"x_{emp}_{sku}", lowBound=val, upBound=val, cat="Integer"
-                )
-            else:
+    time_limit = min(60, max(15, (len(employees) * len(skus)) // 8))
+    last_status = "Not Solved"
+    x: dict = {}
+
+    for attempt_idx, attempt_strict in enumerate(strict_attempts):
+        if attempt_idx > 0:
+            logger.warning(
+                "tiered LP infeasible with strict ±%.0f%% → retry with ±%.0f%% on SKU รอง",
+                strict_attempts[0] * 100,
+                attempt_strict * 100,
+            )
+
+        prob = pulp.LpProblem("BoxAllocation_LP", pulp.LpMinimize)
+        x = {}
+        dpos = {}
+        dneg = {}
+        for emp in employees:
+            for sku in skus:
+                sku_key = _norm_sku(sku)
+                if (emp, sku) in locked_map:
+                    val = locked_map[(emp, sku)]
+                    x[(emp, sku)] = pulp.LpVariable(
+                        f"x_{emp}_{sku}", lowBound=val, upBound=val, cat="Integer"
+                    )
+                    continue
                 min_box = 1 if force_min_one and int(target_boxes[sku]) >= len(employees) else 0
+                even_base = None
+                if sku_key in even_skus and base_map:
+                    even_base = int(base_map.get((str(emp).strip(), sku_key), 0))
+                if even_base is not None:
+                    # SKU ใหม่แบ่งเท่า — ล็อกตาม baseline เกลี่ยเท่า ไม่ให้ LP/ทดลอง 80/20 ดึงไปปรับเงิน
+                    x[(emp, sku)] = pulp.LpVariable(
+                        f"x_{emp}_{sku}", lowBound=even_base, upBound=even_base, cat="Integer"
+                    )
+                    continue
                 x[(emp, sku)] = pulp.LpVariable(
                     f"x_{emp}_{sku}", lowBound=min_box, cat="Integer"
                 )
                 dpos[(emp, sku)] = pulp.LpVariable(f"dp_{emp}_{sku}", lowBound=0, cat="Continuous")
                 dneg[(emp, sku)] = pulp.LpVariable(f"dn_{emp}_{sku}", lowBound=0, cat="Continuous")
 
-    # รั้ว ±band_pct จาก baseline proportional (ยกเว้น locked / SKU เกลี่ย)
-    if band_pct > 0 and base_map:
-        for emp in employees:
-            for sku in skus:
-                if (emp, sku) in locked_map:
-                    continue
-                sku_key = _norm_sku(sku)
-                if sku_key in even_skus:
-                    continue
-                base = int(base_map.get((str(emp).strip(), sku_key), 0))
-                if base <= 0:
-                    continue
-                min_box = 1 if force_min_one and int(target_boxes[sku]) >= len(employees) else 0
-                lo, hi = _hist_band_int_bounds(base, band_pct, min_box)
-                prob += x[(emp, sku)] >= lo
-                prob += x[(emp, sku)] <= hi
+        if band_pct > 0 and base_map:
+            for emp in employees:
+                for sku in skus:
+                    if (emp, sku) in locked_map:
+                        continue
+                    sku_key = _norm_sku(sku)
+                    if sku_key in even_skus:
+                        continue
+                    base = int(base_map.get((str(emp).strip(), sku_key), 0))
+                    if base <= 0:
+                        continue
+                    min_box = 1 if force_min_one and int(target_boxes[sku]) >= len(employees) else 0
+                    cell_band = _tier_cell_band_pct(
+                        sku_key,
+                        tiered_allocation=tiered_allocation,
+                        flex_skus=flex_skus,
+                        default_band_pct=band_pct,
+                        flex_band_pct=flex_band_pct,
+                        strict_band_pct=attempt_strict,
+                    )
+                    lo, hi = _hist_band_int_bounds(base, cell_band, min_box)
+                    prob += x[(emp, sku)] >= lo
+                    prob += x[(emp, sku)] <= hi
 
-    shortfall = pulp.LpVariable.dicts("sf", employees, lowBound=0, cat="Continuous")
-    excess = pulp.LpVariable.dicts("ex", employees, lowBound=0, cat="Continuous")
-    sf_pen = pulp.LpVariable.dicts("sfp", employees, lowBound=0, cat="Continuous")
-    ex_pen = pulp.LpVariable.dicts("exp", employees, lowBound=0, cat="Continuous")
+        shortfall = pulp.LpVariable.dicts("sf", employees, lowBound=0, cat="Continuous")
+        excess = pulp.LpVariable.dicts("ex", employees, lowBound=0, cat="Continuous")
+        sf_pen = pulp.LpVariable.dicts("sfp", employees, lowBound=0, cat="Continuous")
+        ex_pen = pulp.LpVariable.dicts("exp", employees, lowBound=0, cat="Continuous")
 
-    anchor_term = 0
-    if lp_anchor > 0 and dpos:
-        anchor_term = pulp.lpSum(
-            (dpos[(e, s)] + dneg[(e, s)]) * float(sku_prices.get(s, 0) or 0) * lp_anchor
-            for (e, s) in dpos.keys()
-        )
-    prob += (
-        pulp.lpSum(shortfall_w * sf_pen[e] + excess_w * ex_pen[e] for e in employees)
-        + anchor_term
-    )
-
-    for sku in skus:
-        prob += pulp.lpSum(x[(e, sku)] for e in employees) == int(target_boxes[sku])
-
-    for emp in employees:
+        anchor_term = 0
+        if lp_anchor > 0 and dpos:
+            anchor_term = pulp.lpSum(
+                (dpos[(e, s)] + dneg[(e, s)])
+                * float(sku_prices.get(s, 0) or 0)
+                * lp_anchor
+                * _tier_cell_anchor_mult(
+                    _norm_sku(s),
+                    tiered_allocation=tiered_allocation,
+                    flex_skus=flex_skus,
+                )
+                for (e, s) in dpos.keys()
+            )
         prob += (
-            pulp.lpSum(x[(emp, s)] * sku_prices[s] for s in skus)
-            + shortfall[emp]
-            - excess[emp]
-            == target_rev[emp]
+            pulp.lpSum(shortfall_w * sf_pen[e] + excess_w * ex_pen[e] for e in employees)
+            + anchor_term
         )
-        prob += sf_pen[emp] >= shortfall[emp] - tol
-        prob += ex_pen[emp] >= excess[emp] - tol
 
-    if lp_anchor > 0 and dpos:
+        for sku in skus:
+            prob += pulp.lpSum(x[(e, sku)] for e in employees) == int(target_boxes[sku])
+
         for emp in employees:
-            for sku in skus:
-                if (emp, sku) in locked_map:
-                    continue
-                base = int(base_map.get((str(emp).strip(), _norm_sku(sku)), 0))
-                prob += x[(emp, sku)] - base == dpos[(emp, sku)] - dneg[(emp, sku)]
+            prob += (
+                pulp.lpSum(x[(emp, s)] * sku_prices[s] for s in skus)
+                + shortfall[emp]
+                - excess[emp]
+                == target_rev[emp]
+            )
+            prob += sf_pen[emp] >= shortfall[emp] - tol
+            prob += ex_pen[emp] >= excess[emp] - tol
 
-    time_limit = min(60, max(15, (len(employees) * len(skus)) // 8))
-    try:
-        prob.solve(pulp.PULP_CBC_CMD(msg=False, timeLimit=time_limit))
-    except Exception as e:
-        logger.warning("LP solver error: %s → fallback proportional %s", e, baseline_strategy)
-        return _fallback_prop()
+        if lp_anchor > 0 and dpos:
+            for emp in employees:
+                for sku in skus:
+                    if (emp, sku) in locked_map:
+                        continue
+                    base = int(base_map.get((str(emp).strip(), _norm_sku(sku)), 0))
+                    prob += x[(emp, sku)] - base == dpos[(emp, sku)] - dneg[(emp, sku)]
 
-    if pulp.LpStatus[prob.status] != "Optimal":
+        try:
+            prob.solve(pulp.PULP_CBC_CMD(msg=False, timeLimit=time_limit))
+        except Exception as e:
+            logger.warning("LP solver error: %s → fallback proportional %s", e, baseline_strategy)
+            return _fallback_prop()
+
+        last_status = pulp.LpStatus[prob.status]
+        if last_status == "Optimal":
+            break
+
+    if last_status != "Optimal":
         logger.warning(
             "LP status=%s (hist band ±%.0f%%) → fallback proportional %s",
-            pulp.LpStatus[prob.status],
+            last_status,
             band_pct * 100,
             baseline_strategy,
         )

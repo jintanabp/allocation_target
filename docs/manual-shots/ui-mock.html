@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Manual screenshot mock</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="../../frontend/style.css?v=202605134" />
   <link rel="stylesheet" href="shot.css" />
   <script>
@@ -23,6 +25,14 @@
   </header>
 
   <div class="page">
+    <div class="page-header shot-dash-header">
+      <div class="page-header-top">
+        <h1 class="page-title">ระบบกระจายเป้าหมายยอดขาย</h1>
+        <span class="page-sup-badge">SUP001 · ทีมขายกรุงเทพ</span>
+      </div>
+    </div>
+
+    <!-- STEP 1 -->
     <section class="step-section" data-shot="2">
       <div class="step-label-row">
         <span class="step-num">1</span>
@@ -37,6 +47,11 @@
           <span class="step1-target-hero__amount">12,450,000</span>
           <span class="step1-target-hero__period">ก.ค. 2569</span>
         </div>
+        <p class="step1-target-hero__note">
+          หากตัวเลขเป้ารวมไม่ถูกต้อง กรุณา
+          <a href="#" class="step1-target-hero__link">ติดต่อ IT</a>
+          <span class="step1-target-hero__star">*</span>
+        </p>
       </div>
       <div class="two-col two-col--step1">
         <div class="panel">
@@ -44,20 +59,44 @@
             <div class="panel-head__row">
               <span class="panel-icon">👤</span>
               <span class="panel-title">เป้าหมายตั้งต้นรายพนักงาน</span>
-              <span class="panel-count">3 คน</span>
+              <span class="panel-count">4 คน</span>
             </div>
-            <div class="emp-view-tabs">
+            <div class="emp-view-tabs" role="tablist">
               <button type="button" class="emp-view-tab emp-view-tab--active">เทียบเฉลี่ย 3 เดือน</button>
               <button type="button" class="emp-view-tab">เทียบปีที่แล้ว</button>
             </div>
           </div>
           <div class="panel-scroll panel-scroll--emp">
             <table class="tbl tbl--emp-step1">
-              <thead><tr><th>พนักงาน</th><th class="r">เป้า (บาท)</th><th class="r">เฉลี่ย 3 เดือนย้อนหลัง</th><th class="r">% เติบโต</th></tr></thead>
+              <thead>
+                <tr>
+                  <th>พนักงาน</th>
+                  <th class="r">เป้า (บาท)</th>
+                  <th class="r">เฉลี่ย 3 เดือนย้อนหลัง</th>
+                  <th class="r">% เติบโต</th>
+                </tr>
+              </thead>
               <tbody>
-                <tr><td>S001 · สมชาย ใจดี</td><td class="r">4,150,000</td><td class="r">3,980,000</td><td class="r">+4.3%</td></tr>
-                <tr><td>S002 · สมหญิง รักงาน</td><td class="r">4,100,000</td><td class="r">4,020,000</td><td class="r">+2.0%</td></tr>
-                <tr><td>S003 · วิชัย ขยัน</td><td class="r">4,200,000</td><td class="r">3,850,000</td><td class="r">+9.1%</td></tr>
+                <tr>
+                  <td><span class="emp-tag">104521</span><div class="emp-name-sub">สมชาย ใจดี</div></td>
+                  <td class="r mono">4,150,000</td><td class="r mono" style="color:var(--text-3);">3,980,000</td>
+                  <td class="r"><span class="gtag gtag-up">+4.3%</span></td>
+                </tr>
+                <tr>
+                  <td><span class="emp-tag">108332</span><div class="emp-name-sub">สมหญิง รักงาน</div></td>
+                  <td class="r mono">3,100,000</td><td class="r mono" style="color:var(--text-3);">3,020,000</td>
+                  <td class="r"><span class="gtag gtag-up">+2.6%</span></td>
+                </tr>
+                <tr>
+                  <td><span class="emp-tag">112908</span><div class="emp-name-sub">วิชัย ขยัน</div></td>
+                  <td class="r mono">2,800,000</td><td class="r mono" style="color:var(--text-3);">2,650,000</td>
+                  <td class="r"><span class="gtag gtag-up">+5.7%</span></td>
+                </tr>
+                <tr>
+                  <td><span class="emp-tag">115044</span><div class="emp-name-sub">มานะ พยายาม</div></td>
+                  <td class="r mono">2,400,000</td><td class="r mono" style="color:var(--text-3);">2,510,000</td>
+                  <td class="r"><span class="gtag gtag-down">-4.4%</span></td>
+                </tr>
               </tbody>
             </table>
           </div>
@@ -78,55 +117,169 @@
             <div class="panel-head__row panel-head__row--tight">
               <span class="panel-icon">📦</span>
               <span class="panel-title">เป้าหีบรวม</span>
+              <span class="panel-count">24 SKU</span>
             </div>
           </div>
-          <div class="panel-scroll panel-scroll--sku">
-            <table class="tbl tbl--sku-step1">
-              <thead><tr><th>สินค้า</th><th>แบรนด์</th><th>Section</th><th class="r">ราคา/หีบ</th><th class="r">เป้าหีบ</th><th class="r">มูลค่า</th></tr></thead>
+          <div class="panel-scroll panel-scroll--sku sku-panel-stack">
+            <div class="sku-table-scroll">
+              <table class="tbl tbl--sku-step1">
+                <colgroup>
+                  <col class="sku-col--product" /><col class="sku-col--brand" /><col class="sku-col--section" />
+                  <col class="sku-col--price" /><col class="sku-col--boxes" /><col class="sku-col--value" />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th class="th-sortable th-sort--active th-sort--desc">สินค้า</th>
+                    <th class="th-sortable">แบรนด์</th>
+                    <th class="th-sortable">Section</th>
+                    <th class="r th-sortable">ราคา/หีบ</th>
+                    <th class="r th-sortable">เป้าหีบ</th>
+                    <th class="r th-sortable">มูลค่า</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><div class="sku-cell-product"><div class="sku-cell-code">208405</div><div class="sku-cell-name">นม UHT รสจืด 1 ลิตร</div></div></td>
+                    <td><span class="brand-chip">นม UHT</span></td>
+                    <td>เครื่องดื่ม</td>
+                    <td class="r mono">1,250</td>
+                    <td class="r mono"><strong>820</strong></td>
+                    <td class="r mono">1,025,000</td>
+                  </tr>
+                  <tr>
+                    <td><div class="sku-cell-product"><div class="sku-cell-code">301122</div><div class="sku-cell-name">นม UHT รสช็อกโกแลต</div></div></td>
+                    <td><span class="brand-chip">นม UHT</span></td>
+                    <td>เครื่องดื่ม</td>
+                    <td class="r mono">980</td>
+                    <td class="r mono"><strong>640</strong></td>
+                    <td class="r mono">627,200</td>
+                  </tr>
+                  <tr>
+                    <td><div class="sku-cell-product"><div class="sku-cell-code">445901</div><div class="sku-cell-name">โยเกิร์ตรสธรรมชาติ</div></div></td>
+                    <td><span class="brand-chip">โยเกิร์ต</span></td>
+                    <td>นมเปรี้ยว</td>
+                    <td class="r mono">1,480</td>
+                    <td class="r mono"><strong>510</strong></td>
+                    <td class="r mono">754,800</td>
+                  </tr>
+                  <tr>
+                    <td><div class="sku-cell-product"><div class="sku-cell-code">512770</div><div class="sku-cell-name">น้ำผลไม้รวม 200ml</div></div></td>
+                    <td><span class="brand-chip">เครื่องดื่ม</span></td>
+                    <td>เครื่องดื่ม</td>
+                    <td class="r mono">720</td>
+                    <td class="r mono"><strong>380</strong></td>
+                    <td class="r mono">273,600</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="sku-table-foot">
+              <table class="tbl tbl--sku-step1 tbl--sku-step1-totals">
+                <colgroup>
+                  <col class="sku-col--product" /><col class="sku-col--brand" /><col class="sku-col--section" />
+                  <col class="sku-col--price" /><col class="sku-col--boxes" /><col class="sku-col--value" />
+                </colgroup>
+                <tfoot>
+                  <tr><td colspan="5" class="tfoot-label">มูลค่าหีบทั้งหมด</td><td class="r tfoot-val">8,420,500</td></tr>
+                  <tr><td colspan="4" class="tfoot-label">รวมเป้าหีบทั้งหมด</td><td class="r tfoot-val">6,840</td><td></td></tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- STEP 2 -->
+    <section class="step-section" data-shot="3">
+      <div class="step-label-row">
+        <span class="step-num">2</span>
+        <div>
+          <h2 class="step-title">กำหนดเป้าหมาย <span class="step-title-optional">(optional)</span></h2>
+          <p class="step-desc">คลิกแก้เป้าเป็นจำนวนเงินรายพนักงานในช่องที่กำหนดได้
+            <strong>โดยที่ยอดรวมของทุกคนต้องเท่ากับเป้ารวมของระบบเท่านั้น</strong></p>
+        </div>
+      </div>
+      <div class="status-bar ok">
+        <div class="status-left">
+          <span class="status-icon-wrap">✓</span>
+          <span>ยอดรวมตรงกับเป้ารวมพอดี — พร้อมกระจายหีบ</span>
+        </div>
+        <div class="status-right">
+          <div class="stat-item"><span class="stat-label">เป้ารวม</span><span class="stat-val">12,450,000</span></div>
+          <div class="stat-sep"></div>
+          <div class="stat-item"><span class="stat-label">เป้าหมายที่กำหนดเอง</span><span class="stat-val" style="color:var(--accent);">12,450,000</span></div>
+          <div class="stat-sep"></div>
+          <div class="stat-item"><span class="stat-label">ส่วนต่าง</span><span class="stat-val" style="color:var(--green);">+0</span></div>
+        </div>
+      </div>
+      <div class="track"><div class="track-fill" style="width:100%;background:var(--green);"></div></div>
+      <div class="step2-toolbar">
+        <button type="button" class="btn-bui"><span class="btn-bui__icon">➖</span><span class="btn-bui__label">หักบิวเทรี่ยม</span></button>
+        <button type="button" class="btn-bui btn-bui--reset"><span class="btn-bui__icon">↺</span><span class="btn-bui__label">รีเซ็ตเป็น Target Sun</span></button>
+        <span class="step2-toolbar__hint">กดเพื่อเปิดช่องกรอกยอดบิวเทรี่ยมที่ต้องหักจาก "ยอดขายเดือนเดียวกันปีที่แล้ว"</span>
+      </div>
+      <div class="panel no-head">
+        <div class="panel-scroll step2-panel-stack">
+          <div class="step2-table-scroll">
+            <table class="tbl editor-tbl tbl--step2-main">
+              <thead>
+                <tr>
+                  <th>พนักงาน</th>
+                  <th class="r">ยอดขายเดือนเดียวกันปีที่แล้ว</th>
+                  <th class="r">ยอดขายเฉลี่ย 3 เดือนย้อนหลัง</th>
+                  <th class="r">เป้า Target Sun</th>
+                  <th class="r editable-th">เป้าหมายที่กำหนดเอง</th>
+                  <th class="r">% เติบโต</th>
+                  <th class="r">สัดส่วน</th>
+                </tr>
+              </thead>
               <tbody>
-                <tr><td>208405</td><td>Brand A</td><td>Sec 1</td><td class="r">1,250</td><td class="r">820</td><td class="r">1,025,000</td></tr>
-                <tr><td>301122</td><td>Brand A</td><td>Sec 1</td><td class="r">980</td><td class="r">640</td><td class="r">627,200</td></tr>
-                <tr><td>445901</td><td>Brand B</td><td>Sec 2</td><td class="r">1,480</td><td class="r">510</td><td class="r">754,800</td></tr>
+                <tr>
+                  <td><span class="emp-tag">104521</span><span style="font-size:11px;color:var(--text-3);margin-left:4px;">สมชาย ใจดี</span></td>
+                  <td class="r mono">3,920,000</td><td class="r mono">3,980,000</td><td class="r mono">4,150,000</td>
+                  <td class="r"><input class="cell-input" type="text" value="4,150,000" readonly></td>
+                  <td class="r"><span class="gtag gtag-up">+5.9%</span></td><td class="r mono">33.3%</td>
+                </tr>
+                <tr>
+                  <td><span class="emp-tag">108332</span><span style="font-size:11px;color:var(--text-3);margin-left:4px;">สมหญิง รักงาน</span></td>
+                  <td class="r mono">3,000,000</td><td class="r mono">3,020,000</td><td class="r mono">3,100,000</td>
+                  <td class="r"><input class="cell-input" type="text" value="3,120,000" readonly></td>
+                  <td class="r"><span class="gtag gtag-up">+4.0%</span></td><td class="r mono">25.1%</td>
+                </tr>
+                <tr>
+                  <td><span class="emp-tag">112908</span><span style="font-size:11px;color:var(--text-3);margin-left:4px;">วิชัย ขยัน</span></td>
+                  <td class="r mono">2,650,000</td><td class="r mono">2,650,000</td><td class="r mono">2,800,000</td>
+                  <td class="r"><input class="cell-input" type="text" value="2,800,000" readonly></td>
+                  <td class="r"><span class="gtag gtag-up">+5.7%</span></td><td class="r mono">22.5%</td>
+                </tr>
+                <tr>
+                  <td><span class="emp-tag">115044</span><span style="font-size:11px;color:var(--text-3);margin-left:4px;">มานะ พยายาม</span></td>
+                  <td class="r mono">2,510,000</td><td class="r mono">2,510,000</td><td class="r mono">2,400,000</td>
+                  <td class="r"><input class="cell-input" type="text" value="2,380,000" readonly></td>
+                  <td class="r"><span class="gtag gtag-down">-5.2%</span></td><td class="r mono">19.1%</td>
+                </tr>
               </tbody>
+            </table>
+          </div>
+          <div class="step2-table-foot">
+            <table class="tbl editor-tbl tbl--step2-totals">
+              <tfoot>
+                <tr>
+                  <td class="tfoot-label" colspan="3">รวม</td>
+                  <td class="r tfoot-val">12,450,000</td>
+                  <td class="r tfoot-val" style="color:var(--accent);">12,450,000</td>
+                  <td class="r tfoot-val">+2.1%</td>
+                  <td class="r tfoot-val">100%</td>
+                </tr>
+              </tfoot>
             </table>
           </div>
         </div>
       </div>
     </section>
 
-    <section class="step-section" data-shot="3">
-      <div class="step-label-row">
-        <span class="step-num">2</span>
-        <div>
-          <h2 class="step-title">กำหนดเป้าหมาย <span class="step-title-optional">(optional)</span></h2>
-          <p class="step-desc">คลิกแก้เป้าเป็นจำนวนเงินรายพนักงานในช่องที่กำหนดได้</p>
-        </div>
-      </div>
-      <div class="panel-scroll">
-        <table class="tbl editor-tbl tbl--step2-main">
-          <thead>
-            <tr>
-              <th>พนักงาน</th>
-              <th class="r">เป้า Target Sun</th>
-              <th class="r">เป้าหมายที่กำหนดเอง</th>
-              <th class="r">ยอดขายเดือนเดียวกันปีที่แล้ว</th>
-              <th class="r">% เติบโต</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr><td>S001 · สมชาย</td><td class="r">4,150,000</td><td class="r"><span style="color:var(--accent);font-weight:700;">4,150,000</span></td><td class="r">3,920,000</td><td class="r">+5.9%</td></tr>
-            <tr><td>S002 · สมหญิง</td><td class="r">4,100,000</td><td class="r"><span style="color:var(--accent);font-weight:700;">4,120,000</span></td><td class="r">4,000,000</td><td class="r">+3.0%</td></tr>
-            <tr><td>S003 · วิชัย</td><td class="r">4,200,000</td><td class="r"><span style="color:var(--accent);font-weight:700;">4,180,000</span></td><td class="r">3,800,000</td><td class="r">+10.0%</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <table class="tbl editor-tbl tbl--step2-totals" style="margin-top:8px;">
-        <tbody>
-          <tr><td class="tfoot-label" colspan="2">รวมเป้าที่กำหนดเอง</td><td class="r tfoot-val" style="color:var(--green);">12,450,000</td><td colspan="2"></td></tr>
-        </tbody>
-      </table>
-    </section>
-
+    <!-- STEP 3 -->
     <section class="step-section" data-shot="4">
       <div class="step-label-row">
         <span class="step-num">3</span>
@@ -135,31 +288,96 @@
       <div class="strategy-wrap">
         <div class="strategy-wrap__head">
           <div class="field-label strategy-wrap__label">วิธีกระจายหีบ</div>
-          <div class="strategy-wrap__multi-hint"><span class="strategy-multi-badge">เลือกได้มากกว่า 1 วิธี</span></div>
+          <div class="strategy-wrap__multi-hint">
+            <span class="strategy-multi-badge">เลือกได้มากกว่า 1 วิธี</span>
+            เมื่อเลือกหลายวิธี ให้กำหนดด้านล่างว่าแต่ละแบรนด์จะใช้วิธีไหน
+          </div>
         </div>
         <div class="strategy-pills">
-          <label class="s-pill active"><input type="checkbox" checked><span class="s-pill-icon">📊</span><div><div class="s-pill-name">ยอดขายเฉลี่ย 3 เดือนย้อนหลัง</div></div></label>
-          <label class="s-pill"><input type="checkbox"><span class="s-pill-icon">📈</span><div><div class="s-pill-name">ยอดขายเฉลี่ย 6 เดือนย้อนหลัง</div></div></label>
-          <label class="s-pill"><input type="checkbox"><span class="s-pill-icon">📅</span><div><div class="s-pill-name">เดือนเดียวกันปีที่แล้ว</div></div></label>
+          <label class="s-pill active">
+            <input type="checkbox" checked>
+            <span class="s-pill-icon">📊</span>
+            <div>
+              <div class="s-pill-name">ยอดขายเฉลี่ย 3 เดือนย้อนหลัง</div>
+              <div class="s-pill-desc">กระจายตามสัดส่วนยอดขายเฉลี่ยรวม 3 เดือนย้อนหลัง</div>
+            </div>
+          </label>
+          <label class="s-pill">
+            <input type="checkbox">
+            <span class="s-pill-icon">📈</span>
+            <div>
+              <div class="s-pill-name">ยอดขายเฉลี่ย 6 เดือนย้อนหลัง</div>
+              <div class="s-pill-desc">กระจายตามสัดส่วนยอดขายเฉลี่ยรวม 6 เดือนย้อนหลัง</div>
+            </div>
+          </label>
+          <label class="s-pill">
+            <input type="checkbox">
+            <span class="s-pill-icon">📅</span>
+            <div>
+              <div class="s-pill-name">เดือนเดียวกันปีที่แล้ว</div>
+              <div class="s-pill-desc">กระจายตามสัดส่วนยอดขายเดือนเดียวกับงวดที่เลือกในปีที่แล้ว</div>
+            </div>
+          </label>
+          <label class="s-pill">
+            <input type="checkbox">
+            <span class="s-pill-icon">🚀</span>
+            <div>
+              <div class="s-pill-name">ผลักดันพนักงาน</div>
+              <div class="s-pill-desc">ใช้สัดส่วนยอดขายเฉลี่ย 3 เดือนย้อนหลัง แล้วเพิ่มให้พนักงานที่ขาย SKU นั้นน้อย</div>
+            </div>
+          </label>
         </div>
         <div class="strategy-options-block">
-          <label class="strategy-check-row"><input type="checkbox" class="strategy-check-input"><span class="strategy-check-body"><span class="strategy-check-title">บังคับให้ทุกคนได้อย่างน้อย 1 หีบ (ต่อ SKU)</span></span></label>
+          <p class="strategy-hist-note">
+            วิธี L3M / L6M / LY: แบ่งหีบตามสัดส่วนที่ระบบคำนวณจากวิธีที่เลือก แล้วปรับมูลค่ารายคนให้ใกล้เป้าเงิน (±1,000 บ.)
+            โดยหีบต่อ SKU ต่อคนไม่เกิน <strong>±20%</strong> จากสัดส่วนนั้น — ดูแถบ ◆ / ⚠ เหนือตารางผล
+          </p>
+          <label class="strategy-check-row">
+            <input type="checkbox" class="strategy-check-input">
+            <span class="strategy-check-body">
+              <span class="strategy-check-title">บังคับให้ทุกคนได้อย่างน้อย 1 หีบ (ต่อ SKU)</span>
+              <span class="strategy-check-desc">ทุกพนักงานได้เป้าหมายหีบอย่างน้อย 1 หีบ แม้ไม่มียอดขายในรายการประวัติ</span>
+            </span>
+          </label>
+          <label class="strategy-check-row">
+            <input type="checkbox" class="strategy-check-input">
+            <span class="strategy-check-body">
+              <span class="strategy-check-title">SKU ใหม่แบ่งเท่ากัน</span>
+              <span class="strategy-check-desc">SKU ที่ทั้งทีมไม่มียอดขายย้อนหลัง 12 เดือน จะถูกแบ่งจำนวนหีบเท่า ๆ กันทุกคน</span>
+            </span>
+          </label>
         </div>
       </div>
       <div class="run-card">
-        <div class="run-left"><div class="run-emoji">🤖</div><div><div class="run-title">พร้อมกระจายหีบ</div><div class="run-sub">ตรวจสอบยอดรวมเป้าเงินก่อนกดเริ่มคำนวณ</div></div></div>
+        <div class="run-left">
+          <div class="run-emoji">🤖</div>
+          <div>
+            <div class="run-title">พร้อมกระจายหีบ</div>
+            <div class="run-sub">ตรวจสอบยอดรวมเป้าเงินก่อนกดเริ่มคำนวณ</div>
+          </div>
+        </div>
         <button class="btn-run" type="button">เริ่มคำนวณ</button>
       </div>
     </section>
 
+    <!-- RESULT TABLE -->
     <section class="step-section" data-shot="5">
+      <div class="step-label-row shot-step3-label">
+        <span class="step-num">3</span>
+        <div><h2 class="step-title">กระจายหีบ</h2></div>
+      </div>
       <div class="result-block" style="display:block;">
         <div class="result-head">
           <div class="result-title">ผลลัพธ์การกระจายหีบ</div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <select class="field-select" style="min-width:140px;padding:6px 12px;height:auto;"><option>เรียงตาม รหัสสินค้า</option></select>
-            <select class="field-select" style="min-width:180px;padding:6px 12px;height:auto;font-weight:600;color:var(--accent);border-color:var(--accent-brd);background:var(--accent-bg);"><option>ทุกแบรนด์ (ทั้งหมด)</option></select>
-            <button class="btn-dl" type="button">💾 บันทึกร่าง</button>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <select class="field-select" style="min-width:140px;padding:6px 30px 6px 12px;height:auto;border-radius:6px;">
+              <option>เรียงตาม รหัสสินค้า</option>
+            </select>
+            <select class="field-select" style="min-width:180px;padding:6px 30px 6px 12px;height:auto;border-radius:6px;font-weight:600;color:var(--accent);border-color:var(--accent-brd);background-color:var(--accent-bg);">
+              <option>ทุกแบรนด์ (ทั้งหมด)</option>
+            </select>
+            <button class="btn-dl" style="color:var(--text-2);border-color:var(--border-md);background:var(--bg-main);" type="button">💾 บันทึกร่าง</button>
+            <button class="btn-dl" style="color:var(--text-2);border-color:var(--border-md);background:var(--bg-main);" type="button" disabled>↩️ Undo</button>
             <button class="btn-dl" type="button">↓ ดาวน์โหลด Excel</button>
             <button class="btn-dl" type="button">📤 ส่งเข้า Target Sun</button>
           </div>
@@ -167,86 +385,224 @@
         <div class="hist-dev-bar hist-dev-bar--warn">
           <div class="hist-dev-bar__head">
             <span class="hist-dev-bar__title">📐 หีบ vs ประวัติเก่า (±20%)</span>
-            <span class="hist-dev-bar__hint">คลิกเพื่อกรอง SKU ในตาราง</span>
+            <span class="hist-dev-bar__hint">คลิกปุ่มเพื่อกรองเฉพาะ SKU ที่มีสัญลักษณ์นั้นในตาราง</span>
           </div>
           <div class="hist-dev-bar__filters">
-            <button type="button" class="hist-dev-filter hist-dev-filter--near"><span class="hist-dev-filter__icon">◆</span><span class="hist-dev-filter__label">อยู่ในช่วง ±20%</span><span class="hist-dev-filter__count">18</span></button>
-            <button type="button" class="hist-dev-filter hist-dev-filter--far"><span class="hist-dev-filter__icon">⚠</span><span class="hist-dev-filter__label">เกินช่วง ±20%</span><span class="hist-dev-filter__count">2</span></button>
+            <button type="button" class="hist-dev-filter hist-dev-filter--near">
+              <span class="hist-dev-flag hist-dev-near">◆</span>
+              <span class="hist-dev-filter__label">อยู่ในช่วง ±20% ของประวัติเก่า</span>
+              <span class="hist-dev-filter__count">8</span>
+            </button>
+            <button type="button" class="hist-dev-filter hist-dev-filter--far">
+              <span class="hist-dev-flag hist-dev-far">⚠</span>
+              <span class="hist-dev-filter__label">เกินช่วง ±20% ของประวัติเก่า</span>
+              <span class="hist-dev-filter__count">1</span>
+            </button>
           </div>
         </div>
         <div class="tbl-scroll">
           <table class="tbl result-tbl">
             <thead>
               <tr>
-                <th>พนักงาน</th>
-                <th class="r">208405<br><small>Brand A · 1,250</small></th>
-                <th class="r">301122<br><small>Brand A · 980</small></th>
-                <th class="r sticky-col">รวมหีบ</th>
-                <th class="r sticky-col">มูลค่ารวม</th>
+                <th>S/M</th><th>W/H</th>
+                <th class="r sku-th">
+                  <div class="sku-th-code">208405</div>
+                  <div class="sku-th-brand">นม UHT</div>
+                  <div class="sku-th-price">1,250 <span class="muted">บาท/หีบ</span></div>
+                </th>
+                <th class="r sku-th">
+                  <div class="sku-th-code">301122</div>
+                  <div class="sku-th-brand">นม UHT</div>
+                  <div class="sku-th-price">980 <span class="muted">บาท/หีบ</span></div>
+                </th>
+                <th class="r sku-th">
+                  <div class="sku-th-code">445901</div>
+                  <div class="sku-th-brand">โยเกิร์ต</div>
+                  <div class="sku-th-price">1,480 <span class="muted">บาท/หีบ</span></div>
+                </th>
+                <th class="sticky-gap"></th>
+                <th class="r sticky-grand-box">รวมหีบ<div style="font-size:9px;color:var(--text-3)">ทุกแบรนด์</div></th>
+                <th class="r sticky-grand-val">มูลค่ารวม<div style="font-size:9px;color:var(--text-3)">ทุกแบรนด์</div>
+                  <div class="sku-th-dev-hint">ขาด / เกิน เป้าหมายที่กำหนดเอง<br><span style="font-weight:500">(เกณฑ์ ±1,000 บ.)</span></div>
+                </th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td>S001 · สมชาย</td>
-                <td class="r"><span class="mock-cell-edit">285</span><span class="mock-flag">◆</span><div class="mock-hist">3M: 280 · LM: 90</div></td>
-                <td class="r"><span class="mock-cell-edit">210</span><div class="mock-hist">3M: 205 · LM: 68</div></td>
-                <td class="r">495</td>
-                <td class="r">562,050 <small style="color:var(--green);">✓ ใกล้เป้า</small></td>
+                <td><span class="emp-tag">104521</span><div style="font-size:10px;margin-top:2px;">สมชาย ใจดี</div></td>
+                <td class="mono" style="color:var(--text-3);font-size:12px;">WH01</td>
+                <td class="r result-cell" style="vertical-align:top;">
+                  <div class="result-box-wrap"><div class="result-box-num">205</div><span class="hist-dev-flag hist-dev-near">◆</span></div>
+                  <div class="hist-sub"><div>เฉลี่ย 3M ย้อนหลัง: 200.0</div><div>เดือนที่แล้ว: 68.0</div><div>เดือนเดียวกันปีก่อน: 198.0</div></div>
+                </td>
+                <td class="r result-cell" style="vertical-align:top;">
+                  <div class="result-box-wrap"><div class="result-box-num">160</div></div>
+                  <div class="hist-sub"><div>เฉลี่ย 3M ย้อนหลัง: 158.0</div><div>เดือนที่แล้ว: 52.0</div><div>เดือนเดียวกันปีก่อน: 155.0</div></div>
+                </td>
+                <td class="r result-cell" style="vertical-align:top;">
+                  <div class="result-box-wrap"><div class="result-box-num">128</div></div>
+                  <div class="hist-sub"><div>เฉลี่ย 3M ย้อนหลัง: 125.0</div><div>เดือนที่แล้ว: 42.0</div></div>
+                </td>
+                <td class="sticky-gap"></td>
+                <td class="r">493</td>
+                <td class="r val-ok">562,240</td>
               </tr>
               <tr>
-                <td>S002 · สมหญิง</td>
-                <td class="r"><span class="mock-cell-edit">268</span><div class="mock-hist">3M: 260 · LM: 88</div></td>
-                <td class="r"><span class="mock-cell-edit">198</span><span class="mock-flag">⚠</span><div class="mock-hist">3M: 220 · LM: 72</div></td>
-                <td class="r">466</td>
-                <td class="r">529,140</td>
+                <td><span class="emp-tag">108332</span><div style="font-size:10px;margin-top:2px;">สมหญิง รักงาน</div></td>
+                <td class="mono" style="color:var(--text-3);font-size:12px;">WH01</td>
+                <td class="r result-cell" style="vertical-align:top;">
+                  <div class="result-box-wrap"><div class="result-box-num">153</div></div>
+                  <div class="hist-sub"><div>เฉลี่ย 3M ย้อนหลัง: 150.0</div><div>เดือนที่แล้ว: 50.0</div></div>
+                </td>
+                <td class="r result-cell" style="vertical-align:top;">
+                  <div class="result-box-wrap">
+                    <div class="result-box-num">120</div><span class="hist-dev-flag hist-dev-far">⚠</span>
+                  </div>
+                  <div class="hist-sub"><div>เฉลี่ย 3M ย้อนหลัง: 135.0</div><div>เดือนที่แล้ว: 44.0</div></div>
+                </td>
+                <td class="r result-cell" style="vertical-align:top;">
+                  <div class="result-box-wrap"><div class="result-box-num">96</div></div>
+                  <div class="hist-sub"><div>เฉลี่ย 3M ย้อนหลัง: 94.0</div><div>เดือนที่แล้ว: 31.0</div></div>
+                </td>
+                <td class="sticky-gap"></td>
+                <td class="r">369</td>
+                <td class="r">421,080</td>
               </tr>
               <tr>
-                <td>S003 · วิชัย</td>
-                <td class="r"><span class="mock-cell-edit">267</span><div class="mock-hist">3M: 280 · LM: 92</div></td>
-                <td class="r"><span class="mock-cell-edit">232</span><div class="mock-hist">3M: 215 · LM: 70</div></td>
-                <td class="r">499</td>
-                <td class="r">561,260</td>
+                <td><span class="emp-tag">112908</span><div style="font-size:10px;margin-top:2px;">วิชัย ขยัน</div></td>
+                <td class="mono" style="color:var(--text-3);font-size:12px;">WH02</td>
+                <td class="r result-cell" style="vertical-align:top;">
+                  <div class="result-box-wrap"><div class="result-box-num">138</div></div>
+                  <div class="hist-sub"><div>เฉลี่ย 3M ย้อนหลัง: 136.0</div><div>เดือนที่แล้ว: 45.0</div></div>
+                </td>
+                <td class="r result-cell" style="vertical-align:top;">
+                  <div class="result-box-wrap"><div class="result-box-num">108</div></div>
+                  <div class="hist-sub"><div>เฉลี่ย 3M ย้อนหลัง: 106.0</div><div>เดือนที่แล้ว: 35.0</div></div>
+                </td>
+                <td class="r result-cell" style="vertical-align:top;">
+                  <div class="result-box-wrap"><div class="result-box-num">86</div></div>
+                  <div class="hist-sub"><div>เฉลี่ย 3M ย้อนหลัง: 84.0</div><div>เดือนที่แล้ว: 28.0</div></div>
+                </td>
+                <td class="sticky-gap"></td>
+                <td class="r">332</td>
+                <td class="r val-ok">378,920</td>
               </tr>
             </tbody>
             <tfoot>
-              <tr><td>เป้ารวม (หีบ)</td><td class="r">820 ✓</td><td class="r">640 ✓</td><td colspan="2"></td></tr>
-              <tr><td>รวมพื้นที่จัดสรร</td><td class="r">820 ✓</td><td class="r">640 ✓</td><td colspan="2"></td></tr>
+              <tr>
+                <td class="tfoot-label">เป้ารวม (หีบ)</td><td></td>
+                <td class="r tfoot-val" style="color:var(--text-3);font-size:12px;">820</td>
+                <td class="r tfoot-val" style="color:var(--text-3);font-size:12px;">640</td>
+                <td class="r tfoot-val" style="color:var(--text-3);font-size:12px;">510</td>
+                <td class="sticky-gap"></td>
+                <td class="r tfoot-val sticky-grand-box"></td>
+                <td class="r tfoot-val sticky-grand-val"></td>
+              </tr>
+              <tr>
+                <td class="tfoot-label">รวมหีบที่จัดสรร</td><td></td>
+                <td class="r tfoot-val" style="color:var(--green);">820 <span style="font-size:10px;">✓</span></td>
+                <td class="r tfoot-val" style="color:var(--green);">640 <span style="font-size:10px;">✓</span></td>
+                <td class="r tfoot-val" style="color:var(--green);">510 <span style="font-size:10px;">✓</span></td>
+                <td class="sticky-gap"></td>
+                <td class="r tfoot-val sticky-grand-box">1,970</td>
+                <td class="r tfoot-val sticky-grand-val">2,362,240</td>
+              </tr>
             </tfoot>
           </table>
+        </div>
+        <div class="edit-note">
+          💡 คลิกตัวเลข <span style="color:var(--accent);font-weight:700;">สีน้ำเงิน</span> เพื่อแก้ไขจำนวนหีบ
+          · ยอดเงินรวมรายพนักงานจะอัปเดตอัตโนมัติที่ (เกณฑ์ ±1,000 บาท)
         </div>
       </div>
     </section>
 
+    <!-- EXPORT -->
     <section class="step-section" data-shot="6">
-      <div class="result-block" style="display:block;">
+      <div class="result-block shot-dim" style="display:block;">
         <div class="result-head">
           <div class="result-title">ผลลัพธ์การกระจายหีบ</div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button class="btn-dl" type="button">↓ ดาวน์โหลด Excel</button>
-            <button class="btn-dl" type="button" style="background:var(--accent);color:#fff;border-color:var(--accent);">📤 ส่งเข้า Target Sun</button>
+            <button class="btn-dl" type="button">📤 ส่งเข้า Target Sun</button>
           </div>
         </div>
-      </div>
-      <div class="export-shot">
-        <div class="export-shot__title">ส่งผลเข้า Target Sun</div>
-        <div class="export-shot__actions">
-          <button class="btn-dl" type="button">↓ ดาวน์โหลด Excel</button>
-          <button class="btn-dl" type="button" style="background:var(--accent);color:#fff;border-color:var(--accent);">📤 ส่งเข้า Target Sun</button>
-        </div>
-        <div class="modal-mock">
-          <div class="modal-mock__opt">📤 ส่งเข้า Target Sun — ระบบสร้างไฟล์และส่งให้อัตโนมัติ</div>
-          <div class="modal-mock__opt" style="border-color:var(--border-md);font-weight:500;">↓ ดาวน์โหลด Excel อย่างเดียว (รูปแบบ TGA)</div>
+        <div class="hist-dev-bar hist-dev-bar--warn">
+          <div class="hist-dev-bar__head">
+            <span class="hist-dev-bar__title">📐 หีบ vs ประวัติเก่า (±20%)</span>
+          </div>
         </div>
       </div>
     </section>
   </div>
 
+  <div class="modal-overlay shot-modal" data-shot="6">
+    <div class="modal-card modal-card--lakehouse" onclick="event.stopPropagation()">
+      <div class="modal-title modal-title--lakehouse">ส่งเข้า Target Sun</div>
+      <div class="modal-body modal-body--lakehouse">
+        <div class="lakehouse-modal">
+          <div class="lakehouse-banner" role="status">
+            <span class="lakehouse-banner__icon">📤</span>
+            <div class="lakehouse-banner__text">
+              <strong>ส่งผลการกระจายหีบเข้า Target Sun</strong>
+              กดปุ่มด้านล่างแล้วระบบจะส่งให้เอง — ไม่ต้องแนบไฟล์ Excel
+            </div>
+          </div>
+          <div class="lakehouse-summary">
+            <div class="lakehouse-stat">
+              <span class="lakehouse-stat__label">Supervisor</span>
+              <span class="lakehouse-stat__value">SUP001</span>
+            </div>
+            <div class="lakehouse-stat">
+              <span class="lakehouse-stat__label">งวดเป้า</span>
+              <span class="lakehouse-stat__value">กรกฎาคม 2569</span>
+            </div>
+            <div class="lakehouse-stat">
+              <span class="lakehouse-stat__label">ข้อมูลที่ส่ง</span>
+              <span class="lakehouse-stat__value">96</span>
+              <span class="lakehouse-stat__sub">จากผลขั้นที่ 3 เท่านั้น</span>
+            </div>
+          </div>
+          <ul class="lakehouse-what">
+            <li>ส่งจำนวนหีบตามที่คุณยืนยันในตารางขั้นที่ 3</li>
+            <li>บันทึกผู้ส่งรหัส <strong>SUP001</strong> ไว้ตรวจสอบภายหลัง</li>
+          </ul>
+          <div class="lakehouse-note">
+            ⏱ อาจใช้เวลาสักครู่ — อย่าปิดหน้าจอหรือกดส่งซ้ำจนกว่าจะขึ้นว่าสำเร็จหรือมีข้อผิดพลาด
+          </div>
+        </div>
+      </div>
+      <div class="modal-foot modal-foot--lakehouse">
+        <button class="btn-run" type="button">ส่งเข้า Target Sun</button>
+        <button class="btn-dl" type="button">ดาวน์โหลด Excel อย่างเดียว</button>
+        <button class="btn-logout" type="button">ยกเลิก</button>
+      </div>
+    </div>
+  </div>
+
+  <button type="button" class="btn-manual btn-manual--floating">
+    <span class="btn-manual__icon">📖</span>
+    <span class="btn-manual__text">คู่มือ</span>
+  </button>
+
+  <div class="footer">หากมีปัญหาในการใช้งาน กรุณาติดต่อ IT</div>
+
   <script>
     (function () {
       var step = document.documentElement.dataset.step;
       document.querySelectorAll("[data-shot]").forEach(function (el) {
-        el.style.display = el.dataset.shot === step ? "block" : "none";
+        if (el.classList.contains("shot-modal")) {
+          el.style.display = step === "6" ? "flex" : "none";
+          return;
+        }
+        if (el.classList.contains("step-section")) {
+          el.style.display = el.dataset.shot === step ? "block" : "none";
+        }
       });
+      if (step === "5") {
+        var lbl = document.querySelector(".shot-step3-label");
+        if (lbl) lbl.style.display = "none";
+      }
     })();
   </script>
 </body>

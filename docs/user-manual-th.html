@@ -89,6 +89,9 @@ figure.shot {
   background: #f8fafc;
   box-shadow: 0 6px 24px rgba(15,23,42,.08);
 }
+figure.shot--lead {
+  margin-top: 8px;
+}
 figure.shot img {
   display: block;
   width: 100%;
@@ -96,23 +99,77 @@ figure.shot img {
 }
 figure.shot figcaption {
   padding: 10px 14px;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--muted);
   border-top: 1px solid var(--border);
-  background: #fff;
+  background: #fffbeb;
+  line-height: 1.45;
+}
+.chapter {
+  margin-bottom: 28px;
+  padding-bottom: 8px;
+}
+.chapter > h3 {
+  margin: 0 0 16px;
+  padding: 12px 16px;
+  font-size: 19px;
+  line-height: 1.35;
+  color: #312e81;
+  background: linear-gradient(180deg, #eef2ff 0%, #f8fafc 100%);
+  border: 1px solid #c7d2fe;
+  border-radius: 10px;
+}
+.chapter > h3 + p,
+.chapter > h3 + ol {
+  margin-top: 0;
+}
+.chapter-section-head {
+  margin: 22px 0 14px;
+  padding: 12px 16px;
+  font-size: 19px;
+  line-height: 1.35;
+  font-weight: 700;
+  color: #312e81;
+  background: linear-gradient(180deg, #eef2ff 0%, #f8fafc 100%);
+  border: 1px solid #c7d2fe;
+  border-radius: 10px;
+}
+.chapter-section-head + p,
+.chapter-section-head + figure {
+  margin-top: 0;
+}
+h4 {
+  margin: 18px 0 8px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #334155;
 }
 .print-bar {
   grid-column: 1 / -1;
   display: flex;
-  gap: 10px;
+  gap: 12px;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   background: #1e1b4b;
   color: #e0e7ff;
   padding: 12px 16px;
   border-radius: 10px;
   font-size: 13px;
+}
+.print-bar__text { flex: 1 1 280px; line-height: 1.55; }
+.print-bar__text strong { color: #fff; }
+.print-bar__tip {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #c7d2fe;
+}
+.print-bar__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
 }
 .print-bar button {
   background: #fff;
@@ -123,7 +180,9 @@ figure.shot figcaption {
   font-family: inherit;
   font-weight: 700;
   cursor: pointer;
+  white-space: nowrap;
 }
+.print-bar button:hover { background: #eef2ff; }
 h2 {
   margin: 32px 0 12px;
   padding-top: 8px;
@@ -136,6 +195,12 @@ h3 {
   margin: 20px 0 8px;
   font-size: 17px;
   color: #334155;
+}
+.chapter h4 + p,
+.chapter h4 + ul,
+.chapter h4 + ol,
+.chapter h4 + .table-wrap {
+  margin-top: 0;
 }
 p { margin: 0 0 12px; }
 article a { color: var(--accent); word-break: break-all; }
@@ -167,7 +232,7 @@ blockquote.note {
   border-radius: 0 8px 8px 0;
   color: #78350f;
 }
-.table-wrap { overflow-x: auto; margin: 0 0 16px; }
+.table-wrap { overflow-x: auto; margin: 0 0 14px; }
 table {
   width: 100%;
   border-collapse: collapse;
@@ -175,12 +240,23 @@ table {
 }
 th, td {
   border: 1px solid var(--border);
-  padding: 10px 12px;
+  padding: 8px 10px;
   text-align: left;
   vertical-align: top;
 }
 th { background: #f1f5f9; font-weight: 700; }
 tr:nth-child(even) td { background: #fafafa; }
+p.lead-block {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  font-size: 14px;
+}
+.keep-together {
+  margin: 0 0 14px;
+}
 .faq {
   margin: 0 0 12px;
   padding: 12px 14px;
@@ -196,27 +272,135 @@ tr:nth-child(even) td { background: #fafafa; }
   color: var(--muted);
   text-align: center;
 }
-hr { border: none; border-top: 1px dashed var(--border); margin: 24px 0; }
+hr { display: none; }
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; }
   nav.toc { position: static; }
   article { padding: 22px 18px 28px; }
 }
 @media print {
-  body { background: #fff; font-size: 11pt; }
+  @page {
+    size: A4 portrait;
+    margin: 14mm 12mm 16mm 12mm;
+  }
+  body {
+    background: #fff;
+    font-size: 10.5pt;
+    line-height: 1.5;
+    orphans: 3;
+    widows: 3;
+  }
   .print-bar, nav.toc { display: none !important; }
-  .layout { display: block; max-width: none; padding: 0; }
-  article { box-shadow: none; border: none; padding: 0; }
-  h2 { page-break-after: avoid; }
-  .table-wrap, .faq, figure.shot { page-break-inside: avoid; }
+  .layout {
+    display: block;
+    max-width: none;
+    padding: 0;
+  }
+  article {
+    box-shadow: none;
+    border: none;
+    padding: 0 0 16mm 0;
+    border-radius: 0;
+  }
+  .hero {
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom-width: 1px;
+  }
+  .hero h1 { font-size: 19pt; margin-bottom: 6px; }
+  .hero .lead { font-size: 11pt; }
+  .chapter {
+    margin-bottom: 0;
+    padding-bottom: 0;
+  }
+  .chapter > h3 {
+    page-break-before: always;
+    break-before: page;
+    page-break-after: avoid;
+    break-after: avoid-page;
+    margin-bottom: 10px;
+    padding: 8px 10px;
+    font-size: 13pt;
+    border-radius: 6px;
+    box-shadow: none;
+  }
+  .chapter:first-of-type > h3 {
+    page-break-before: auto;
+    break-before: auto;
+  }
+  .chapter-section-head {
+    page-break-before: auto !important;
+    break-before: auto !important;
+    page-break-after: avoid;
+    break-after: avoid-page;
+    margin-top: 10px;
+    margin-bottom: 8px;
+    padding: 8px 10px;
+    font-size: 13pt;
+    border-radius: 6px;
+    box-shadow: none;
+  }
+  .chapter > h4#กดคำนวณ + ol {
+    page-break-after: avoid;
+    break-after: avoid-page;
+  }
+  h4 {
+    page-break-after: avoid;
+    break-after: avoid-page;
+    margin-top: 12px;
+    font-size: 11pt;
+  }
+  p { margin-bottom: 7px; }
+  ul, ol { margin-bottom: 8px; padding-left: 18px; }
+  li { margin-bottom: 3px; }
+  .table-wrap {
+    page-break-inside: avoid;
+    break-inside: avoid-page;
+    margin-bottom: 10px;
+  }
+  .keep-together {
+    page-break-inside: avoid;
+    break-inside: avoid-page;
+    margin-bottom: 10px;
+  }
+  table { font-size: 9.5pt; }
+  th, td { padding: 5px 7px; }
+  figure.shot {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    margin: 8px 0 12px;
+    box-shadow: none;
+    border-radius: 6px;
+    overflow: visible;
+  }
+  figure.shot img {
+    display: block !important;
+    width: 100%;
+    max-width: 100%;
+    height: auto !important;
+    max-height: 140mm;
+    object-fit: contain;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  figure.shot figcaption {
+    padding: 6px 8px;
+    font-size: 9pt;
+  }
+  code { font-size: 9pt; }
 }
 </style>
 </head>
 <body>
   <div class="layout">
     <div class="print-bar">
-      <span>📖 คู่มือ Target Allocation — จัดหน้าแล้ว · อ่านบนเบราว์เซอร์ หรือพิมพ์เป็น PDF ได้เลย</span>
-      <button type="button" onclick="window.print()">🖨️ พิมพ์ / บันทึก PDF</button>
+      <div class="print-bar__text">
+        <strong>📖 คู่มือ Target Allocation</strong>
+        <span class="print-bar__tip">บันทึก PDF แบบ<strong>ไม่มีวันที่/ชื่อไฟล์</strong>ด้านบนล่าง: รัน <code style="background:#312e81;padding:1px 6px;border-radius:4px;">python docs/build-manual-html.py --pdf</code> · หรือ Ctrl+P แล้ว<strong> ปิด Headers and footers</strong> (Edge: ตั้งค่าเพิ่มเติม → หัวกระดาษและท้ายกระดาษ)</span>
+      </div>
+      <div class="print-bar__actions">
+        <button type="button" onclick="window.print()">🖨️ พิมพ์ / บันทึก PDF</button>
+      </div>
     </div>
     <nav class="toc" aria-label="สารบัญ">
       <h2>สารบัญ</h2>
@@ -234,7 +418,8 @@ hr { border: none; border-top: 1px dashed var(--border); margin: 24px 0; }
         <h1>คู่มือการใช้งาน Target Allocation</h1>
         <p class="lead">ระบบกระจายเป้าหมาย (หีบ) ให้พนักงานขายรายคน</p>
       </header>
-      <p>ทำตามลำดับด้านล่างทีละขั้น ระบบดึงข้อมูลจากข้อมูลกลางอัตโนมัติ</p><h3 id="1-เข้าสู่ระบบ">1. เข้าสู่ระบบ</h3>
+      <p>ทำตามลำดับด้านล่างทีละขั้น ระบบดึงข้อมูลจากข้อมูลกลางอัตโนมัติ</p><section class="chapter">
+<h3 id="1-เข้าสู่ระบบ">1. เข้าสู่ระบบ</h3>
 <ul>
 <li>เปิด URL แอป: <a href="https://spc-ai.sahapat.com/allocation_target/" target="_blank" rel="noopener">https://spc-ai.sahapat.com/allocation_target/</a></li>
 <li>(แนะนำ) กด <strong>อ่านคู่มือก่อนใช้งาน</strong> บนการ์ดเข้าสู่ระบบ (อ่านได้ก่อนล็อกอิน) หรือกดปุ่ม <strong>คู่มือ</strong> มุมขวาบน</li>
@@ -244,8 +429,9 @@ hr { border: none; border-top: 1px dashed var(--border); margin: 24px 0; }
 <li>เลือก <strong>งวดเดือนที่จะกระจายเป้า</strong> (ค่าเริ่มต้นมักเป็นเดือนถัดจากวันนี้)</li>
 <li>กด <strong>เข้าสู่ระบบ Dashboard</strong></li>
 </ul>
-<figure class="shot"><img src="images/01-login.png" alt="หน้าเข้าสู่ระบบ, ล็อกอิน Microsoft และเลือก Supervisor / งวด" loading="lazy"><figcaption>หน้าเข้าสู่ระบบ, ล็อกอิน Microsoft และเลือก Supervisor / งวด</figcaption></figure>
-<hr>
+<figure class="shot"><img src="images/01-login.png" alt="หน้าเข้าสู่ระบบ, ล็อกอิน Microsoft และเลือก Supervisor / งวด"><figcaption>หน้าเข้าสู่ระบบ, ล็อกอิน Microsoft และเลือก Supervisor / งวด</figcaption></figure>
+</section>
+<section class="chapter">
 <h3 id="2-ขั้นที่-1-ข้อมูลตั้งต้น">2. ขั้นที่ 1: ข้อมูลตั้งต้น</h3>
 <ul>
 <li>ดู <strong>เป้ารวม</strong> ด้านบน (ยอดเงินรวมของงวดที่เลือก)</li>
@@ -254,8 +440,9 @@ hr { border: none; border-top: 1px dashed var(--border); margin: 24px 0; }
 <li>สลับแท็บ <strong>เทียบเฉลี่ย 3 เดือน</strong> / <strong>เทียบปีที่แล้ว</strong> เพื่อดูบริบทเป้า</li>
 <li>จัดกลุ่ม SKU เป็น <strong>ราย SKU · แบรนด์ · Section</strong> ตามต้องการตรวจ</li>
 </ul>
-<figure class="shot"><img src="images/02-step1-data.png" alt="ขั้นที่ 1, เป้ารวม ตารางพนักงาน และ SKU" loading="lazy"><figcaption>ขั้นที่ 1, เป้ารวม ตารางพนักงาน และ SKU</figcaption></figure>
-<hr>
+<figure class="shot"><img src="images/02-step1-data.png" alt="ขั้นที่ 1, เป้ารวม ตารางพนักงาน และ SKU"><figcaption>ขั้นที่ 1, เป้ารวม ตารางพนักงาน และ SKU</figcaption></figure>
+</section>
+<section class="chapter">
 <h3 id="3-ขั้นที่-2-กำหนดเป้าหมาย-ไม่บังคับ">3. ขั้นที่ 2: กำหนดเป้าหมาย (ไม่บังคับ)</h3>
 <p>ขั้นนี้ <strong>ข้ามได้</strong> ถ้าใช้เป้า Target Sun ตามที่ระบบดึงมาโดยไม่แก้</p>
 <ul>
@@ -264,7 +451,7 @@ hr { border: none; border-top: 1px dashed var(--border); margin: 24px 0; }
 <li>ระบบคำนวณ <strong>% เติบโต</strong> ให้อัตโนมัติ</li>
 <li>ตรวจ <strong>ยอดรวมเป้าที่กำหนดเอง</strong> ด้านล่าง ควรใกล้เป้ารวม</li>
 </ul>
-<p><strong>เกณฑ์ยอดรวม</strong></p>
+<div class="keep-together"><p><strong>เกณฑ์ยอดรวม</strong></p>
 <div class="table-wrap"><table>
 <thead><tr><th>ส่วนต่างจากเป้ารวม</th><th>ความหมาย</th></tr></thead>
 <tbody>
@@ -272,6 +459,7 @@ hr { border: none; border-top: 1px dashed var(--border); margin: 24px 0; }
 <tr><td>ไม่เกิน ~99 บาท</td><td>แจ้งเตือน แต่ยังกดคำนวณได้</td></tr>
 <tr><td>มากกว่านั้น</td><td>ปุ่ม <strong>เริ่มคำนวณ</strong> ปิด ต้องปรับให้รวมใกล้เป้ารวม</td></tr>
 </tbody></table></div>
+</div>
 <p><strong>ตัวเลือกเพิ่ม</strong></p>
 <ul>
 <li><strong>รีเซ็ตเป็น Target Sun</strong>: คืนค่าเป้าที่กำหนดเองทุกคน</li>
@@ -280,11 +468,13 @@ hr { border: none; border-top: 1px dashed var(--border); margin: 24px 0; }
 <p><strong>กรณีเติบโตติดลบ</strong></p>
 <p>ถ้าเป้าที่ตั้งทำให้ <strong>% เติบโตติดลบ</strong> ระบบจะขอ <strong>เหตุผล</strong> อย่างน้อย 8 ตัวอักษร ก่อนกดคำนวณ</p>
 <p>(ถ้าเป้าเท่า Target Sun แล้วเติบโตติดลบอยู่ดี ไม่ต้องกรอกเหตุผล)</p>
-<figure class="shot"><img src="images/03-step2-target.png" alt="ขั้นที่ 2, ปรับเป้าเงินรายคนและยอดรวม" loading="lazy"><figcaption>ขั้นที่ 2, ปรับเป้าเงินรายคนและยอดรวม</figcaption></figure>
-<hr>
+<figure class="shot shot--lead"><img src="images/03-step2-target.png" alt="ขั้นที่ 2, ปรับเป้าเงินรายคนและยอดรวม"><figcaption>ขั้นที่ 2, ปรับเป้าเงินรายคนและยอดรวม</figcaption></figure>
+</section>
+<section class="chapter">
 <h3 id="4-ขั้นที่-3-กระจายหีบ">4. ขั้นที่ 3: กระจายหีบ</h3>
 <h4 id="เลือกวิธีกระจาย">เลือกวิธีกระจาย</h4>
 <p>เลือกได้ <strong>มากกว่า 1 วิธี</strong> (ติ๊กการ์ดด้านบน):</p>
+<figure class="shot shot--lead"><img src="images/04-step3-allocate.png" alt="ขั้นที่ 3, เลือกวิธีกระจายและกดเริ่มคำนวณ"><figcaption>ขั้นที่ 3, เลือกวิธีกระจายและกดเริ่มคำนวณ</figcaption></figure>
 <div class="table-wrap"><table>
 <thead><tr><th>วิธี</th><th>ความหมาย</th></tr></thead>
 <tbody>
@@ -303,13 +493,11 @@ hr { border: none; border-top: 1px dashed var(--border); margin: 24px 0; }
 <ul>
 <li>เลือกวิธีกระจาย (และแบรนด์→วิธี ถ้าเลือกหลายวิธี)</li>
 <li>ติ๊ก checkbox ตามต้องการ</li>
-<li>ตรวจว่ายอดรวมเป้าเงินขั้น 2 พร้อม (ปุ่ม <strong>เริ่มคำนวณ</strong> เปิด)</li>
-<li>กด <strong>เริ่มคำนวณ</strong> แล้วรอ progress 4 ขั้น</li>
-<li>เมื่อเสร็จ ปุ่มเปลี่ยนเป็น <strong>คำนวณใหม่</strong> (ใช้เมื่อเปลี่ยนวิธีหรือแก้เป้า)</li>
+<li>กด <strong>เริ่มคำนวณ</strong></li>
+<li>หากมีการเปลี่ยนเป้า ปุ่มจะเปลี่ยนเป็น <strong>คำนวณใหม่</strong> ให้กดเพื่อคำนวณใหม่</li>
 </ul>
-<figure class="shot"><img src="images/04-step3-allocate.png" alt="ขั้นที่ 3, เลือกวิธีกระจายและกดเริ่มคำนวณ" loading="lazy"><figcaption>ขั้นที่ 3, เลือกวิธีกระจายและกดเริ่มคำนวณ</figcaption></figure>
-<hr>
-<h3 id="5-อ่านตารางผลลัพธ์">5. อ่านตารางผลลัพธ์</h3>
+<h4 id="5-อ่านตารางผลลัพธ์" class="chapter-section-head">5. อ่านตารางผลลัพธ์</h4>
+<figure class="shot shot--lead"><img src="images/05-result-table.png" alt="ตารางผลลัพธ์, แถบกรอง ◆ / ⚠ และตารางหีบ"><figcaption>ตารางผลลัพธ์, แถบกรอง ◆ / ⚠ และตารางหีบ</figcaption></figure>
 <p>หลังกด <strong>เริ่มคำนวณ</strong> จะเห็นส่วน <strong>ผลลัพธ์การกระจายหีบ</strong> อ่านจาก<strong>บนลงล่าง</strong>ตามลำดับนี้</p>
 <h4 id="1-ปุ่มด้านบนตาราง">1) ปุ่มด้านบนตาราง</h4>
 <ul>
@@ -324,37 +512,23 @@ hr { border: none; border-top: 1px dashed var(--border); margin: 24px 0; }
 <li><strong>⚠ (ตัวเลข)</strong> กดแล้วเห็นเฉพาะ SKU ที่เกินช่วง ±20% (มักเกิดหลังแก้ตัวเลขเอง)</li>
 </ul>
 <p>กดปุ่มเดิมอีกครั้ง หรือกด <strong>แสดงทั้งหมด</strong> เพื่อยกเลิกกรอง · ถ้าตัวเลขเป็น 0 ปุ่มจะกดไม่ได้</p>
-<h4 id="3-ตารางหีบ">3) ตารางหีบ</h4>
-<div class="table-wrap"><table>
-<thead><tr><th>ดูตรงไหน</th><th>หมายความว่า</th></tr></thead>
-<tbody>
-<tr><td><strong>แถว</strong></td><td>พนักงานแต่ละคน</td></tr>
-<tr><td><strong>คอลัมน์</strong></td><td>SKU แต่ละตัว (หัวคอลัมน์มีรหัสสินค้า แบรนด์ ราค/หีบ)</td></tr>
-<tr><td><strong>ตัวเลขสีน้ำเงิน</strong></td><td>จำนวนหีบที่ได้ <strong>คลิกแล้วแก้ได้</strong></td></tr>
-<tr><td><strong>ตัวเลขสีเทาใต้ลงมา</strong></td><td>ประวัติยอดขาย (เฉลี่ย 3 เดือน, เดือนที่แล้ว, ปีที่แล้ว)</td></tr>
-<tr><td><strong>คอลัมน์ขวาสุด</strong></td><td>รวมหีบและมูลค่ารวมของคนนั้น</td></tr>
-</tbody></table></div>
-<p><strong>สัญลักษณ์ ◆ และ ⚠</strong> (ในเซลล์หรือที่หัวคอลัมน์)</p>
-<ul>
-<li><strong>◆</strong> หีบยังอยู่ในช่วง ±20% ของประวัติเก่า (ปกติหลังระบบคำนวณ)</li>
-<li><strong>⚠</strong> หีบเกินช่วง ±20% (มักหลังแก้มือ)</li>
-</ul>
 <p><strong>มูลค่ารวมต่อคน</strong> (คอลัมน์ขวา): <strong>✓ ใกล้เป้า</strong> = ห่างจากเป้าเงินไม่เกิน 1,000 บ. · ถ้า <strong>ขาด/เกิน X บาท</strong> = ยังห่างจากเป้าเงินมาก</p>
-<h4 id="4-แถวล่างสุดของตาราง">4) แถวล่างสุดของตาราง</h4>
+<h4 id="3-แถวล่างสุดของตาราง">3) แถวล่างสุดของตาราง</h4>
 <ul>
 <li><strong>เป้ารวม (หีบ)</strong> = เป้าหีบที่หัวหน้ากำหนดต่อ SKU</li>
 <li><strong>รวมพื้นที่จัดสรร</strong> = หีบที่แบ่งให้พนักงานรวมกัน</li>
 <li>ควรเห็น <strong>✓ สีเขียว</strong> ทุกคอลัมน์ (รวมหีบตรงเป้า) ก่อนส่ง Target Sun</li>
 </ul>
-<h4 id="5-แก้หีบด้วยมือ">5) แก้หีบด้วยมือ</h4>
+<h4 id="4-แก้หีบด้วยมือ">4) แก้หีบด้วยมือ</h4>
 <ul>
 <li>คลิกตัวเลขสีน้ำเงิน → พิมพ์จำนวนใหม่ → คลิกนอกช่อง</li>
 <li>กด <strong>↩️ Undo</strong> ถ้าต้องการย้อน</li>
 <li>กด <strong>💾 บันทึกร่าง</strong> เก็บไว้ในเครื่อง (ยังไม่ใช่การส่งเข้า Target Sun)</li>
 </ul>
-<figure class="shot"><img src="images/05-result-table.png" alt="ตารางผลลัพธ์, แถบกรอง ◆ / ⚠ และตารางหีบ" loading="lazy"><figcaption>ตารางผลลัพธ์, แถบกรอง ◆ / ⚠ และตารางหีบ</figcaption></figure>
-<hr>
+</section>
+<section class="chapter">
 <h3 id="6-ส่งผล-excel-และ-target-sun">6. ส่งผล (Excel และ Target Sun)</h3>
+<figure class="shot shot--lead"><img src="images/06-export.png" alt="ส่งผล, ดาวน์โหลด Excel และส่งเข้า Target Sun"><figcaption>ส่งผล, ดาวน์โหลด Excel และส่งเข้า Target Sun</figcaption></figure>
 <h4 id="ดาวน์โหลด-excel-สรุปผล-dashboard">ดาวน์โหลด Excel (สรุปผล Dashboard)</h4>
 <ul>
 <li>กด <strong>↓ ดาวน์โหลด Excel</strong></li>
@@ -374,7 +548,7 @@ hr { border: none; border-top: 1px dashed var(--border); margin: 24px 0; }
 <li>[ ] แก้มือแล้วกดกรอง <strong>⚠</strong> ในแถบด้านบน ตรวจ SKU ที่เกินช่วง ±20%</li>
 </ul>
 <p>สินค้าที่ไม่มีใน Target Sun จะไม่ถูกส่ง ระบบแจ้งจำนวนใน<strong>หน้าต่างแจ้งผล</strong>หลังส่ง</p>
-<figure class="shot"><img src="images/06-export.png" alt="ส่งผล, ดาวน์โหลด Excel และส่งเข้า Target Sun" loading="lazy"><figcaption>ส่งผล, ดาวน์โหลด Excel และส่งเข้า Target Sun</figcaption></figure>
+</section>
     </article>
   </div>
 </body>

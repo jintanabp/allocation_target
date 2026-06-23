@@ -559,6 +559,17 @@
           </div>
         </div>
 
+        <div class="tiered-trial-wrap" id="tieredTrialWrap">
+          <button type="button" id="tieredTrialBtn" class="btn-tiered-trial" aria-pressed="false"
+            onclick="toggleTieredTrial()">
+            <span class="btn-tiered-trial__icon" aria-hidden="true">🧪</span>
+            <span class="btn-tiered-trial__label">ทดลอง: แยก SKU หลัก/รอง (80% มูลค่าเป้าหีบ)</span>
+          </button>
+          <p class="tiered-trial-hint">
+            ปิด = วิธีเดิม (รั้ว ±20% ทุก SKU) · เปิด = SKU หลัก ~80% มูลค่าเป้าหีบปรับเงินได้ (±35%) · SKU รองยึดประวัติแน่น (±12%)
+          </p>
+        </div>
+
         <div id="fabricChangeStep3Notice" class="fabric-change-inline" style="display:none;" aria-live="polite"></div>
 
         <div class="run-card">
@@ -615,6 +626,10 @@
           <div id="histDevSummary" class="hist-dev-bar" style="display:none;" aria-live="polite"></div>
 
           <div id="step3ResultTargetNote" class="fabric-change-inline" style="display:none;margin-bottom:12px;" aria-live="polite"></div>
+
+          <div id="step3TieredNote" class="tiered-result-note" style="display:none;margin-bottom:12px;" aria-live="polite"></div>
+
+          <div id="step3RevenueScaleNote" class="revenue-scale-note-wrap" style="display:none;margin-bottom:12px;" aria-live="polite"></div>
 
           <!-- brand summary bar (แสดงเมื่อ filter) -->
           <div class="brand-summary" id="brandSummary"></div>

@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Target Allocation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../../frontend/style.css?v=202605134" />
+  <link rel="stylesheet" href="shot.css" />
+</head>
+<body class="shot-page shot-page--login is-login">
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand"><span class="brand-dot"></span><span class="brand-name">Target Allocation</span></div>
+      <div class="topbar-actions"></div>
+    </div>
+  </header>
+
+  <div class="page">
+    <div class="login-wrap">
+      <div class="login-shell">
+        <aside class="login-hero" aria-hidden="true">
+          <div class="login-hero-card">
+            <div class="login-hero-badge">🎯</div>
+            <div class="login-hero-title">Target Allocation</div>
+            <div class="login-hero-sub">ระบบกระจายเป้าหมายยอดขายสำหรับใช้งานในองค์กร</div>
+            <div class="login-hero-points">
+              <div class="pt"><span class="dot"></span>ดึงเป้าจากข้อมูลกลางอัตโนมัติ</div>
+              <div class="pt"><span class="dot"></span>ย้อนหลัง 3 เดือน / 6 เดือน / เทียบปีที่แล้ว</div>
+              <div class="pt"><span class="dot"></span>บันทึกแบบร่างและรักษาการแก้ไขด้วยมือ</div>
+              <div class="pt"><span class="dot"></span>มีคู่มือทีละขั้น — อ่านได้ก่อนล็อกอิน</div>
+            </div>
+          </div>
+        </aside>
+
+        <main class="login-panel">
+          <div class="login-card2">
+            <div class="login-head">
+              <div class="login-mark">🎯</div>
+              <div>
+                <div class="login-title2">เข้าสู่ระบบ</div>
+                <div class="login-sub2">เข้าใช้งานด้วยบัญชี Microsoft และเลือกผู้รับผิดชอบ / งวดเป้า</div>
+              </div>
+            </div>
+
+            <button type="button" class="login-manual-cta">
+              <span class="login-manual-cta__icon">📖</span>
+              <span class="login-manual-cta__body">
+                <span class="login-manual-cta__head">
+                  <span class="login-manual-cta__title">อ่านคู่มือก่อนใช้งาน</span>
+                  <span class="login-manual-cta__badge">แนะนำ</span>
+                </span>
+                <span class="login-manual-cta__meta">
+                  <span class="login-manual-cta__chip">6 ขั้นตอน</span>
+                  <span class="login-manual-cta__chip">~4 นาที</span>
+                  <span class="login-manual-cta__chip">อ่านได้ก่อนล็อกอิน</span>
+                </span>
+              </span>
+              <span class="login-manual-cta__arrow">→</span>
+            </button>
+
+            <div class="ms-auth-block">
+              <button type="button" class="btn-ms" style="display:none;">ล็อกอินด้วย Microsoft</button>
+              <p class="ms-user-line">✓ ล็อกอินแล้ว: somchai.w@sahapat.com</p>
+              <p class="ms-auth-hint">เมื่อล็อกอินบัญชีองค์กรคุณสามารถเข้าใช้งานได้ตามสิทธิที่คุณมี</p>
+            </div>
+
+            <div id="loginFormBlock">
+              <div class="field-group">
+                <label class="field-label">ผู้รับผิดชอบ (Supervisor / Manager)</label>
+                <select class="field-select" style="width:100%;">
+                  <option value="SUP001" selected>SUP001 · สมชาย ทีมขายกรุงเทพ</option>
+                  <option value="SUP002">SUP002 · สมหญิง ทีมขายภาคเหนือ</option>
+                  <option value="MGR101">MGR101 · วิชัย ผู้จัดการภาค</option>
+                </select>
+                <div class="field-help field-help--short">* หากไม่มีสิทธิหรือไม่พบรายการ ให้ติดต่อ IT</div>
+              </div>
+
+              <div class="field-group">
+                <label class="field-label">งวดเดือนที่จะกระจายเป้า</label>
+                <div class="month-year-row">
+                  <select class="field-select">
+                    <option value="7" selected>กรกฎาคม</option>
+                  </select>
+                  <select class="field-select year-select">
+                    <option value="2026" selected>2569</option>
+                  </select>
+                </div>
+                <div class="field-help">ค่าเริ่มต้น = เดือนถัดจากวันนี้ — เป้าดึงตามวันที่มีผล (EFFECTIVEDATE) ของงวดที่เลือก</div>
+              </div>
+
+              <div class="login-mini">
+                <div class="mini-row">
+                  <span class="k">📊 ยอดขายเฉลี่ย 3 เดือนย้อนหลัง</span>
+                  <span class="v">เม.ย. – มิ.ย. 2569</span>
+                </div>
+                <div class="mini-row">
+                  <span class="k">📅 ยอดขายเดือนเดียวกันปีที่แล้ว</span>
+                  <span class="v">ก.ค. 2568</span>
+                </div>
+              </div>
+
+              <div class="server-status">
+                <span style="width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0;"></span>
+                <span style="color:var(--green);">✓ Server พร้อมใช้งาน</span>
+              </div>
+
+              <button type="button" class="btn-run login-btn">เข้าสู่ระบบ Dashboard</button>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+  </div>
+
+  <button type="button" class="btn-manual btn-manual--floating">
+    <span class="btn-manual__icon">📖</span>
+    <span class="btn-manual__text">คู่มือ</span>
+  </button>
+
+  <div class="footer">หากมีปัญหาในการใช้งาน กรุณาติดต่อ IT</div>
+</body>
+</html>

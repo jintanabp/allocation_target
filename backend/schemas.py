@@ -29,6 +29,9 @@ class OptimizeRequest(BaseModel):
     hist_balance: float = Field(default=0.85, ge=0.0, le=1.0)
     """ยอมให้มูลค่ารวมต่อคนคลาดเป้าเงินได้ไม่เกินกี่บาท (soft penalty ใน LP)"""
     revenue_tolerance_baht: float = Field(default=1000.0, ge=0.0)
+    tiered_allocation: bool = False
+    """ทดลอง 80/20: SKU หลัก (~80% มูลค่าเป้าหีบ) ปรับเงินได้ · SKU รองยึดประวัติแน่น"""
+    tier_pct: float = Field(default=0.80, ge=0.5, le=0.95)
     # Multi-strategy support
     brand_strategy_map: dict[str, str] = Field(default_factory=dict)
     bui_deductions: dict[str, float] = Field(default_factory=dict)

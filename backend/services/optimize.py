@@ -4,7 +4,7 @@ import os
 import pandas as pd
 from fastapi import HTTPException
 
-from ..OR_engine import allocate_boxes
+from ..OR_engine import allocate_boxes, _flex_skus_by_target_value, _revenue_scale_factor
 from ..core.allocation_checks import (
     skus_no_sales_cy_ly,
     skus_zero_team_hist_window,
@@ -254,6 +254,8 @@ def run_optimization_service(
                 new_product_skus=new_skus_grp if req.new_products_even else None,
                 hist_balance=float(req.hist_balance),
                 revenue_tolerance_baht=float(req.revenue_tolerance_baht),
+                tiered_allocation=bool(req.tiered_allocation),
+                tier_pct=float(req.tier_pct),
             )
             alloc_parts.append(df_alloc_grp)
         df_allocation = (
@@ -274,7 +276,13 @@ def run_optimization_service(
             new_product_skus=new_skus_cy_ly if req.new_products_even else None,
             hist_balance=float(req.hist_balance),
             revenue_tolerance_baht=float(req.revenue_tolerance_baht),
+            tiered_allocation=bool(req.tiered_allocation),
+            tier_pct=float(req.tier_pct),
         )
+
+    tier_flex_skus: list[str] = []
+    if req.tiered_allocation:
+        tier_flex_skus = sorted(_flex_skus_by_target_value(df_sku, float(req.tier_pct)))
 
     # log meta จาก Step 2
     if req.bui_deductions:
@@ -364,4 +372,9 @@ def run_optimization_service(
         "hist_window_months": hist_months,
         "new_products_even_mode": new_products_even_mode,
         "new_product_skus": new_product_skus_used,
+        "tiered_allocation": bool(req.tiered_allocation),
+        "tier_pct": float(req.tier_pct) if req.tiered_allocation else None,
+        "tier_flex_skus": tier_flex_skus,
+        "tier_strict_sku_count": max(0, len(df_sku) - len(tier_flex_skus)) if req.tiered_allocation else 0,
+        "revenue_scale": round(_revenue_scale_factor(df_emp_targets, df_sku), 6),
     }
