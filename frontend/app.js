@@ -516,10 +516,7 @@ let S = {
   negGrowthReason: "",
   /** brand → strategy map สำหรับโหมดเลือกหลายวิธี */
   brandStrategyMap: {},
-  /** ทดลอง 80/20 — ปุ่มแยก (default ปิด = วิธีเดิม) */
-  tieredTrialMode: false,
-  /** จากผล optimize ล่าสุด — ใช้แสดง badge / แบนเนอร์ */
-  optimizeTieredActive: false,
+  /** จากผล optimize ล่าสุด — ป้ายหลัก/รอง ในตารางผล */
   tierFlexSkus: new Set(),
   tierStrictSkuCount: 0,
   /** สเกลเป้าเงินที่ backend ใช้ (มูลค่าหีบรวม ÷ sum เป้าเหลือง) */
@@ -1436,7 +1433,6 @@ async function handleLogin() {
       _setUndoEnabled();
       updateSupervisorSwitcherUI();
       _bindSupervisorSwitchOnce();
-      _syncTieredTrialBtn();
     } catch (err) {
       console.error("RENDER ERROR:", err);
       alert("Render error: " + err.message);
@@ -1488,7 +1484,7 @@ function _doLogout() {
     _managerSet: keepLoginMeta._managerSet,
     yellowLocked: {}, skuWarnings: [],
     buiDeductions: {}, buiColumnOpen: false, negGrowthReason: "", brandStrategyMap: {},
-    tieredTrialMode: false, optimizeTieredActive: false, tierFlexSkus: new Set(), tierStrictSkuCount: 0,
+    tierFlexSkus: new Set(), tierStrictSkuCount: 0,
     revenueScale: 1,
   };
   dismissAllToasts();
@@ -1639,6 +1635,7 @@ async function loadData(supId, targetMonth, targetYear) {
     S.histWindowMonths = 3;
     S.skus = data.skus;
     S.employees = data.employees;
+    _applyNewProductSkus(data.new_product_skus);
     S.supervisorName = (data.supervisor_name || "").trim();
     S.totalTarget = S.skus.reduce(
       (a, s) => a + (Number(s.price_per_box) || 0) * (Number(s.supervisor_target_boxes) || 0), 0
@@ -1950,25 +1947,35 @@ function _sec1PriceStates(s) {
   return { price, fromHist, missing };
 }
 
+function _applyNewProductSkus(list) {
+  S.newProductSkus = new Set(
+    Array.isArray(list) ? list.map(x => String(x).trim()).filter(Boolean) : []
+  );
+}
+
 function _skuNewBadgeHtml(sku) {
   const key = String(sku || "").trim();
   if (!key) return "";
   const set = S.newProductSkus;
   if (set && typeof set.has === "function" && set.has(key)) {
-    return `<span class="badge-new" title="SKU นี้ถูกจัดเป็นสินค้าใหม่และถูกกระจายเท่ากัน">NEW</span>`;
+    const evenNote = document.getElementById("newProductsEvenBox")?.checked
+      ? " — ติ๊กแบ่งเท่ากันไว้ จะเกลี่ยเท่าทุกคนเมื่อคำนวณ"
+      : "";
+    return `<span class="badge-new" title="สินค้าใหม่ (ไม่มียอดขายปีนี้และปีที่แล้ว)${evenNote}">ใหม่</span>`;
   }
   return "";
 }
 
 function _skuTierBadgeHtml(sku) {
-  if (!S.optimizeTieredActive) return "";
+  if (!S.allocations?.length) return "";
   const key = String(sku || "").trim();
   if (!key) return "";
+  if (S.newProductSkus?.has?.(key)) return "";
   const flex = S.tierFlexSkus;
   if (flex && typeof flex.has === "function" && flex.has(key)) {
-    return `<span class="tiered-badge tiered-badge--flex" title="SKU หลัก (~80% มูลค่าเป้าหีบ) — ปรับเงินได้กว้างกว่า">หลัก</span>`;
+    return `<span class="tiered-badge tiered-badge--flex" title="SKU หลัก (~80% มูลค่าเป้าหีบ) — ปรับเงินได้ ±35%">หลัก</span>`;
   }
-  return `<span class="tiered-badge tiered-badge--strict" title="SKU รอง — ยึดสัดส่วนประวัติแน่น (±8%)">รอง</span>`;
+  return `<span class="tiered-badge tiered-badge--strict" title="SKU รอง — ยึดสัดส่วนประวัติแน่น ±12%">รอง</span>`;
 }
 
 function _skuLineValue(s) {
@@ -2503,9 +2510,9 @@ async function _doOptimize(lockedEdits = []) {
         Object.entries(S.buiDeductions || {}).filter(([, v]) => Number(v) > 0)
       ),
       neg_growth_reason: (S.negGrowthReason || "").trim() || null,
-      hist_balance: S.tieredTrialMode ? 0.35 : _histBalancePayload(),
+      hist_balance: _TIERED_HIST_BALANCE,
       revenue_tolerance_baht: _revenueTolerancePayload(),
-      tiered_allocation: !!S.tieredTrialMode,
+      tiered_allocation: true,
       tier_pct: 0.80,
     };
 
@@ -2533,8 +2540,9 @@ async function _doOptimize(lockedEdits = []) {
       else S.histWindowMonths = 3;
     }
     S.newProductsEvenMode = String(json.new_products_even_mode || "off");
-    S.newProductSkus = new Set(Array.isArray(json.new_product_skus) ? json.new_product_skus.map(x => String(x).trim()) : []);
-    S.optimizeTieredActive = !!json.tiered_allocation;
+    if (Array.isArray(json.new_product_skus)) {
+      _applyNewProductSkus(json.new_product_skus);
+    }
     S.tierFlexSkus = new Set(
       Array.isArray(json.tier_flex_skus) ? json.tier_flex_skus.map(x => String(x).trim()) : []
     );
@@ -2918,11 +2926,11 @@ function syncStep3ResultFabricNote() {
   }
 }
 
-/** แบนเนอร์ผลลัพธ์เมื่อใช้โหมดทดลอง 80/20 */
+/** แบนเนอร์ผลลัพธ์ — สรุป SKU หลัก/รอง */
 function syncStep3TieredNote() {
   const el = document.getElementById("step3TieredNote");
   if (!el) return;
-  if (!S.optimizeTieredActive || !S.allocations?.length) {
+  if (!S.allocations?.length) {
     el.innerHTML = "";
     el.style.display = "none";
     return;
@@ -2930,8 +2938,9 @@ function syncStep3TieredNote() {
   const flexN = S.tierFlexSkus?.size || 0;
   const strictN = S.tierStrictSkuCount || Math.max(0, (S.skus?.length || 0) - flexN);
   el.innerHTML =
-    `<strong>🧪 โหมดทดลอง 80/20</strong> — SKU หลัก <b>${flexN}</b> รายการ (~80% มูลค่าเป้าหีบ) ปรับเงินได้ (±35%) · ` +
-    `SKU รอง <b>${strictN}</b> รายการ ยึดประวัติแน่น (±12%) · ระบบสลับหีบ SKU หลักเพื่อให้ใกล้เป้าเงิน ±1,000 บ.`;
+    `<strong>SKU หลัก / รอง</strong> — หลัก <b>${flexN}</b> รายการ (~80% มูลค่าเป้าหีบ, ±35%) · ` +
+    `รอง <b>${strictN}</b> รายการ (±12%) · ดูป้าย <span class="tiered-badge tiered-badge--flex">หลัก</span> / ` +
+    `<span class="tiered-badge tiered-badge--strict">รอง</span> ในหัวคอลัมน์`;
   el.style.display = "block";
 }
 
@@ -3065,7 +3074,15 @@ function autoRebalance(silent = false) {
     const delta = Math.round(target - currentSum);
     if (delta === 0) return;
 
-    const weights = unedited.map(a => Math.max(Number(a.hist_avg) || 0, 0) + 0.1);
+    const weights = unedited.map(a => {
+      const key = String(a.sku || "").trim();
+      const evenNew =
+        S.newProductsEvenMode !== "off" &&
+        S.newProductSkus &&
+        typeof S.newProductSkus.has === "function" &&
+        S.newProductSkus.has(key);
+      return evenNew ? 1 : Math.max(Number(a.hist_avg) || 0, 0) + 0.1;
+    });
     const wSum = weights.reduce((a, v) => a + v, 0) || unedited.length;
 
     if (delta > 0) {
@@ -3628,7 +3645,6 @@ function _clearDashboardNotices() {
     tierNote.innerHTML = "";
     tierNote.style.display = "none";
   }
-  if (typeof _syncTieredTrialBtn === "function") _syncTieredTrialBtn();
   dismissAllToasts();
 }
 
@@ -4528,27 +4544,6 @@ function toggleBuiColumn() {
   _updateNegGrowthReasonState();
 }
 
-/* ════════════════════════════════════════════════════════════════════════════
-   STEP 3 — ทดลอง 80/20 (ปุ่มแยก)
-════════════════════════════════════════════════════════════════════════════ */
-function _syncTieredTrialBtn() {
-  const btn = document.getElementById("tieredTrialBtn");
-  if (!btn) return;
-  btn.classList.toggle("is-active", !!S.tieredTrialMode);
-  btn.setAttribute("aria-pressed", String(!!S.tieredTrialMode));
-}
-
-function toggleTieredTrial() {
-  S.tieredTrialMode = !S.tieredTrialMode;
-  _syncTieredTrialBtn();
-  const hint = document.querySelector(".tiered-trial-hint");
-  if (hint) {
-    hint.textContent = S.tieredTrialMode
-      ? "เปิดอยู่ — ครั้งถัดไปที่กดคำนวณจะใช้ SKU หลัก/รอง · ปิดเพื่อกลับวิธีเดิม (±20% ทุก SKU)"
-      : "ปิด = วิธีเดิม (รั้ว ±20% ทุก SKU) · เปิด = SKU หลัก ~80% มูลค่าเป้าหีบปรับเงินได้ (±35%) · SKU รองยึดประวัติแน่น (±12%)";
-  }
-}
-
 function onBuiChange(input) {
   const emp = input.dataset.emp;
   const val = Math.max(0, parseFloat(String(input.value).replace(/,/g, "")) || 0);
@@ -4691,6 +4686,7 @@ function _getSelectedStrategies() {
 const _HIST_BALANCE_LP_STRATEGIES = new Set(["L3M", "L6M", "LY", "LP"]);
 /** ค่าคงที่ — UI ไม่ให้เลือกแล้ว; ช่วง ±20% เป็นตัวจำกัดหลัก */
 const _DEFAULT_HIST_BALANCE = 0.85;
+const _TIERED_HIST_BALANCE = 0.35;
 const _HIST_BAND_PCT = 20;
 
 function syncHistAllocNote() {

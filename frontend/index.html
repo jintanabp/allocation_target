@@ -9,7 +9,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Instrument+Serif:ital@0;1&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=202605134" />
+  <link rel="stylesheet" href="style.css?v=202605135" />
 </head>
 
 <body>
@@ -559,16 +559,117 @@
           </div>
         </div>
 
-        <div class="tiered-trial-wrap" id="tieredTrialWrap">
-          <button type="button" id="tieredTrialBtn" class="btn-tiered-trial" aria-pressed="false"
-            onclick="toggleTieredTrial()">
-            <span class="btn-tiered-trial__icon" aria-hidden="true">🧪</span>
-            <span class="btn-tiered-trial__label">ทดลอง: แยก SKU หลัก/รอง (80% มูลค่าเป้าหีบ)</span>
-          </button>
-          <p class="tiered-trial-hint">
-            ปิด = วิธีเดิม (รั้ว ±20% ทุก SKU) · เปิด = SKU หลัก ~80% มูลค่าเป้าหีบปรับเงินได้ (±35%) · SKU รองยึดประวัติแน่น (±12%)
-          </p>
-        </div>
+        <details class="tiered-how" id="tieredHowDetails">
+          <summary class="tiered-how__summary">
+            <span class="tiered-how__summary-main">
+              <span class="tiered-how__icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.75"/>
+                  <path d="M12 11v5" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+                  <circle cx="12" cy="8" r="1" fill="currentColor"/>
+                </svg>
+              </span>
+              <span class="tiered-how__summary-text">
+                <span class="tiered-how__summary-title">ระบบแบ่งหีบยังไง?</span>
+                <span class="tiered-how__summary-hint">กดเพื่ออ่านสั้น ๆ · กดอีกครั้งเพื่อปิด</span>
+              </span>
+            </span>
+            <span class="tiered-how__chev" aria-hidden="true"></span>
+          </summary>
+          <div class="tiered-how__body">
+            <div class="tiered-how__hero">
+              <p class="tiered-how__hero-title">แยก SKU เป็น 2 กลุ่ม ก่อนแบ่งหีบให้ทีม</p>
+              <p class="tiered-how__hero-sub">สินค้ามูลค่าสูงช่วยดึงยอดเงินให้เข้าเป้า · สินค้าที่เหลือแบ่งตามประวัติขายเดิม</p>
+            </div>
+
+            <ol class="tiered-how__flow">
+              <li class="tiered-how__item">
+                <div class="tiered-how__item-head">
+                  <span class="tiered-how__step-num">1</span>
+                  <div>
+                    <strong class="tiered-how__item-title">เรียง SKU จากมูลค่าสูง → ต่ำ</strong>
+                    <p class="tiered-how__item-lead">มูลค่า = เป้าหีบ × ราคาต่อหีบ (ต่อ SKU)</p>
+                  </div>
+                </div>
+                <div class="tiered-how__example" aria-hidden="true">
+                  <span class="tiered-how__bar tiered-how__bar--a" style="--w:72%">A</span>
+                  <span class="tiered-how__bar tiered-how__bar--b" style="--w:48%">B</span>
+                  <span class="tiered-how__bar tiered-how__bar--c" style="--w:28%">C</span>
+                  <span class="tiered-how__bar tiered-how__bar--d" style="--w:18%">…</span>
+                </div>
+                <div class="tiered-how__split-viz" aria-hidden="true">
+                  <div class="tiered-how__split-main">
+                    <span class="tiered-how__split-label">~80%</span>
+                    <span class="tiered-how__split-name">กลุ่มหลัก</span>
+                  </div>
+                  <div class="tiered-how__split-rest">
+                    <span class="tiered-how__split-label">~20%</span>
+                    <span class="tiered-how__split-name">กลุ่มรอง</span>
+                  </div>
+                </div>
+              </li>
+
+              <li class="tiered-how__item tiered-how__item--flex">
+                <div class="tiered-how__item-head">
+                  <span class="tiered-how__step-num">2</span>
+                  <div>
+                    <strong class="tiered-how__item-title">
+                      กลุ่มหลัก
+                      <span class="tiered-badge tiered-badge--flex">หลัก</span>
+                    </strong>
+                    <p class="tiered-how__item-lead">เอา SKU อันดับต้น ๆ มารวมกันจนครบประมาณ <b>80%</b> ของมูลค่าเป้าทั้งทีม</p>
+                  </div>
+                </div>
+                <ul class="tiered-how__bullets">
+                  <li>แบ่งหีบเพื่อให้ยอดเงินของแต่ละคนเข้าเป้าได้ง่ายขึ้น</li>
+                  <li>มักเป็น SKU ไม่กี่ตัวที่มูลค่าสูงสุด (เช่น A + B ในตัวอย่างด้านบน)</li>
+                </ul>
+              </li>
+
+              <li class="tiered-how__item tiered-how__item--strict">
+                <div class="tiered-how__item-head">
+                  <span class="tiered-how__step-num tiered-how__step-num--muted">3</span>
+                  <div>
+                    <strong class="tiered-how__item-title">
+                      กลุ่มรอง
+                      <span class="tiered-badge tiered-badge--strict">รอง</span>
+                    </strong>
+                    <p class="tiered-how__item-lead">SKU ที่เหลือทั้งหมด (นอกกลุ่ม 80%)</p>
+                  </div>
+                </div>
+                <ul class="tiered-how__bullets">
+                  <li>แบ่งหีบตามสัดส่วนยอดขายในอดีตของแต่ละคน</li>
+                  <li>ระบบไม่ปรับมาก — คงสัดส่วนเดิมให้ใกล้เคียงที่สุด</li>
+                </ul>
+              </li>
+
+              <li class="tiered-how__item tiered-how__item--new">
+                <div class="tiered-how__item-head">
+                  <span class="tiered-how__step-num tiered-how__step-num--new">4</span>
+                  <div>
+                    <strong class="tiered-how__item-title">
+                      SKU ใหม่
+                      <span class="badge-new badge-new--inline">ใหม่</span>
+                      <span class="tiered-how__optional">ถ้าติ๊กด้านบน</span>
+                    </strong>
+                    <p class="tiered-how__item-lead">เฉพาะ SKU ที่ทั้งทีมไม่เคยมียอดขายย้อนหลัง 12 เดือน</p>
+                  </div>
+                </div>
+                <ul class="tiered-how__bullets">
+                  <li>ทุกคนได้จำนวนหีบเท่ากัน — ไม่เข้ากฎกลุ่มหลัก/รอง</li>
+                </ul>
+              </li>
+            </ol>
+
+            <div class="tiered-how__foot">
+              <span class="tiered-how__foot-icon" aria-hidden="true">💡</span>
+              <span>หลังกด <strong>เริ่มคำนวณ</strong> ดูป้าย
+                <span class="tiered-badge tiered-badge--flex">หลัก</span>
+                <span class="tiered-badge tiered-badge--strict">รอง</span>
+                ที่หัวคอลัมน์ในตารางผล</span>
+            </div>
+          </div>
+        </details>
 
         <div id="fabricChangeStep3Notice" class="fabric-change-inline" style="display:none;" aria-live="polite"></div>
 

@@ -6,7 +6,7 @@ from fastapi import HTTPException
 
 from ..OR_engine import allocate_boxes, _flex_skus_by_target_value, _revenue_scale_factor
 from ..core.allocation_checks import (
-    skus_no_sales_cy_ly,
+    detect_new_product_skus,
     skus_zero_team_hist_window,
     validate_allocation_vs_targets,
 )
@@ -161,29 +161,44 @@ def run_optimization_service(
         if str(le.emp_id).strip() in eligible_set
     ]
     sku_ids_opt = df_sku["sku"].astype(str).str.strip().tolist()
+    new_product_skus_used, detection_mode = detect_new_product_skus(
+        sup_id, target_year, sku_ids_opt, df_hist
+    )
+    new_products_even_mode = detection_mode if new_product_skus_used else "off"
     new_skus_cy_ly: set[str] | None = set()
-    new_products_even_mode = "off"
-    new_product_skus_used: list[str] = []
+
     if req.new_products_even:
-        cy_ok = os.path.exists(hist_calendar_year_cache_path(sup_id, target_year))
-        ly_ok = os.path.exists(hist_calendar_year_cache_path(sup_id, target_year - 1))
-        if not cy_ok or not ly_ok:
-            logger.warning(
-                "new_products_even เปิดอยู่ แต่ไม่พบ cache ปีปฏิทิน (hist_cy_) — "
-                "จะ fallback ใช้เงื่อนไขยอด 3M/6M = 0 (ชั่วคราว) — "
-                "แนะนำให้โหลดหน้า Dashboard ใหม่เพื่อสร้างไฟล์ CY/LY"
-            )
+        if detection_mode == "cy_ly":
+            new_skus_cy_ly = set(new_product_skus_used)
+            new_products_even_mode = "cy_ly"
+        elif detection_mode == "fallback_hist_window":
             new_skus_cy_ly = None
             new_products_even_mode = "fallback_hist_window"
-            new_product_skus_used = sorted(skus_zero_team_hist_window(df_hist, sku_ids_opt))
         else:
-            new_skus_cy_ly = skus_no_sales_cy_ly(sup_id, target_year, sku_ids_opt)
-            new_products_even_mode = "cy_ly"
-            new_product_skus_used = sorted(list(new_skus_cy_ly))
-            logger.info(
-                "new_products_even: SKU ไม่มียอดทั้งปีนี้และปีที่แล้ว (ปีปฏิทิน) = %d รายการ",
-                len(new_skus_cy_ly),
+            cy_ok = os.path.exists(hist_calendar_year_cache_path(sup_id, target_year))
+            ly_ok = os.path.exists(hist_calendar_year_cache_path(sup_id, target_year - 1))
+            if not cy_ok or not ly_ok:
+                logger.warning(
+                    "new_products_even เปิดอยู่ แต่ไม่พบ cache ปีปฏิทิน (hist_cy_) — "
+                    "จะ fallback ใช้เงื่อนไขยอด 3M/6M = 0 (ชั่วคราว) — "
+                    "แนะนำให้โหลดหน้า Dashboard ใหม่เพื่อสร้างไฟล์ CY/LY"
+                )
+            new_skus_cy_ly = None
+            new_product_skus_used = sorted(skus_zero_team_hist_window(df_hist, sku_ids_opt))
+            new_products_even_mode = (
+                "fallback_hist_window" if new_product_skus_used else "off"
             )
+        logger.info(
+            "new_products_even: แบ่งเท่า %d SKU (mode=%s)",
+            len(new_product_skus_used),
+            new_products_even_mode,
+        )
+    elif new_product_skus_used:
+        logger.info(
+            "สินค้าใหม่ %d SKU (mode=%s) — แสดงป้าย UI (ยังไม่ติ๊กแบ่งเท่า)",
+            len(new_product_skus_used),
+            detection_mode,
+        )
 
     # ──────────────────────────────────────────────────────────────
     # MULTI-STRATEGY: ผู้ใช้เลือกหลายวิธี + กำหนดแบรนด์ไหนใช้วิธีไหน
@@ -239,8 +254,8 @@ def run_optimization_service(
             locked_grp = [le for le in (locked_edits_data or []) if str(le.get("sku", "")).strip() in sku_in_grp]
 
             new_skus_grp = None
-            if req.new_products_even and new_skus_cy_ly is not None:
-                new_skus_grp = {s for s in new_skus_cy_ly if s in sku_in_grp}
+            if req.new_products_even and new_product_skus_used:
+                new_skus_grp = {s for s in new_product_skus_used if s in sku_in_grp}
 
             df_alloc_grp = allocate_boxes(
                 df_targets_grp,
@@ -251,7 +266,7 @@ def run_optimization_service(
                 locked_edits=locked_grp if locked_grp else None,
                 cap_multiplier=req.cap_multiplier,
                 even_new_products=bool(req.new_products_even),
-                new_product_skus=new_skus_grp if req.new_products_even else None,
+                new_product_skus=new_skus_grp if (req.new_products_even and new_skus_grp) else None,
                 hist_balance=float(req.hist_balance),
                 revenue_tolerance_baht=float(req.revenue_tolerance_baht),
                 tiered_allocation=bool(req.tiered_allocation),
@@ -273,7 +288,9 @@ def run_optimization_service(
             locked_edits=locked_edits_data if locked_edits_data else None,
             cap_multiplier=req.cap_multiplier,
             even_new_products=bool(req.new_products_even),
-            new_product_skus=new_skus_cy_ly if req.new_products_even else None,
+            new_product_skus=(
+                frozenset(new_product_skus_used) if req.new_products_even and new_product_skus_used else None
+            ),
             hist_balance=float(req.hist_balance),
             revenue_tolerance_baht=float(req.revenue_tolerance_baht),
             tiered_allocation=bool(req.tiered_allocation),
@@ -373,7 +390,7 @@ def run_optimization_service(
         "new_products_even_mode": new_products_even_mode,
         "new_product_skus": new_product_skus_used,
         "tiered_allocation": bool(req.tiered_allocation),
-        "tier_pct": float(req.tier_pct) if req.tiered_allocation else None,
+        "tier_pct": float(req.tier_pct),
         "tier_flex_skus": tier_flex_skus,
         "tier_strict_sku_count": max(0, len(df_sku) - len(tier_flex_skus)) if req.tiered_allocation else 0,
         "revenue_scale": round(_revenue_scale_factor(df_emp_targets, df_sku), 6),

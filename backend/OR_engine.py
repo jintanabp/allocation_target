@@ -135,7 +135,7 @@ def allocate_boxes(
     new_product_skus: set | frozenset | None = None,
     hist_balance: float = 0.85,
     revenue_tolerance_baht: float = 1000.0,
-    tiered_allocation: bool = False,
+    tiered_allocation: bool = True,
     tier_pct: float = _TIER_DEFAULT_PCT,
 ) -> pd.DataFrame:
     strategy = strategy.upper()
@@ -158,8 +158,7 @@ def allocate_boxes(
             zero_hist_skus = _skus_zero_team_hist(df_hist, df_sku["sku"].tolist())
             even_skus = zero_hist_skus
         else:
-            cy_ly_skus = frozenset(_norm_sku(s) for s in (new_product_skus or []))
-            even_skus = cy_ly_skus
+            even_skus = frozenset(_norm_sku(s) for s in (new_product_skus or []))
 
     logger.info(
         "allocate_boxes: strategy=%s emp=%d sku=%d force_min_one=%s locked=%d even_new_products=%s even_skus=%d (cy_ly=%d zero_hist=%d)",
@@ -261,6 +260,18 @@ def allocate_boxes(
             even_skus=even_skus,
         )
 
+    if even_skus:
+        df_out = _enforce_even_skus_on_df(
+            df_out,
+            even_skus,
+            df_emp_targets,
+            df_sku,
+            locked_map,
+            force_min_one,
+        )
+        if base_map and strategy in _LP_STRATEGIES:
+            base_map = _baseline_map_from_df(df_out, df_emp_targets, df_sku)
+
     df_expanded = _expand_full_allocation_matrix(df_out, df_emp_targets, df_sku)
     if not base_map:
         prop_strat = strategy if strategy in ("L3M", "L6M", "LY", "EVEN", "PUSH") else "L3M"
@@ -336,6 +347,99 @@ def _flex_skus_by_target_value(df_sku: pd.DataFrame, tier_pct: float = _TIER_DEF
     if not flex:
         flex = [ordered[0][0]]
     return frozenset(flex)
+
+
+def _distribute_even_integers(total: int, n_slots: int) -> list[int]:
+    """แบ่งจำนวนเต็มให้เท่าที่สุด (ต่างกันได้ไม่เกิน 1)"""
+    n = max(0, int(n_slots))
+    total = max(0, int(total))
+    if n <= 0:
+        return []
+    base = total // n
+    rem = total % n
+    return [base + (1 if i < rem else 0) for i in range(n)]
+
+
+def _enforce_even_skus_on_df(
+    df_out: pd.DataFrame,
+    even_skus: frozenset[str],
+    df_emp_targets: pd.DataFrame,
+    df_sku: pd.DataFrame,
+    locked_map: dict | None,
+    force_min_one: bool,
+) -> pd.DataFrame:
+    """บังคับ SKU สินค้าใหม่ให้แบ่งเท่าทุกคน (หลัง LP/greedy — กันโหมดหลัก/รองดึงไปปรับเงิน)"""
+    locked_map = locked_map or {}
+    if not even_skus:
+        return df_out
+
+    employees = [
+        str(e).strip()
+        for e in df_emp_targets["emp_id"].tolist()
+        if str(e).strip()
+    ]
+    if not employees:
+        return df_out
+
+    sku_targets: dict[str, int] = {}
+    for _, r in df_sku.iterrows():
+        s = _norm_sku(r.get("sku"))
+        if s in even_skus:
+            sku_targets[s] = max(
+                0,
+                int(pd.to_numeric(r.get("supervisor_target_boxes", 0), errors="coerce") or 0),
+            )
+
+    rows: list[dict] = []
+    if df_out is not None and not df_out.empty:
+        for _, r in df_out.iterrows():
+            e = str(r["emp_id"]).strip()
+            s = _norm_sku(r["sku"])
+            if s not in even_skus and e in employees:
+                rows.append(
+                    {
+                        "emp_id": e,
+                        "sku": r["sku"],
+                        "allocated_boxes": int(
+                            pd.to_numeric(r.get("allocated_boxes", 0), errors="coerce") or 0
+                        ),
+                    }
+                )
+
+    n_emps = len(employees)
+    for sku_key, total_target in sku_targets.items():
+        if total_target <= 0:
+            continue
+
+        locked_by_emp: dict[str, int] = {}
+        for e in employees:
+            if (e, sku_key) in locked_map:
+                locked_by_emp[e] = max(0, int(locked_map[(e, sku_key)]))
+
+        locked_sum = sum(locked_by_emp.values())
+        free_emps = [e for e in employees if e not in locked_by_emp]
+        if not free_emps:
+            for e, boxes in locked_by_emp.items():
+                if boxes > 0:
+                    rows.append({"emp_id": e, "sku": sku_key, "allocated_boxes": boxes})
+            continue
+
+        base_box = 1 if force_min_one and total_target >= n_emps else 0
+        remaining = max(0, total_target - locked_sum - base_box * len(free_emps))
+        parts = _distribute_even_integers(remaining, len(free_emps))
+
+        for e, boxes in locked_by_emp.items():
+            if boxes > 0:
+                rows.append({"emp_id": e, "sku": sku_key, "allocated_boxes": boxes})
+
+        for i, e in enumerate(free_emps):
+            boxes = base_box + parts[i]
+            if boxes > 0:
+                rows.append({"emp_id": e, "sku": sku_key, "allocated_boxes": boxes})
+
+    if not rows:
+        return df_out
+    return pd.DataFrame(rows)
 
 
 def _tier_cell_band_pct(
@@ -527,25 +631,27 @@ def _proportional(
 
         hist_sum = sum(hist_by_emp.values())
 
-        # สินค้าใหม่ (ไม่มียอดปีปฏิทินปีนี้+ปีที่แล้ว): เกลี่ยเท่ากัน แม้ strategy จะเป็น L3M/L6M/PUSH
-        if strategy == "EVEN" or sku_key in even_skus or hist_sum == 0:
-            weights = {e: 1.0 for e in active_employees}
-        elif strategy in ("L3M", "L6M", "LY"):
-            weights = {e: max(hist_by_emp[e], 0.01) for e in active_employees}
-        elif strategy == "PUSH":
-            max_h = max(hist_by_emp.values()) if hist_by_emp else 1.0
-            weights = {e: max(max_h - hist_by_emp[e] + 0.1, 0.1) for e in active_employees}
+        # สินค้าใหม่: แบ่งเท่าโดยไม่ผ่าน cap (กันหีบเบี้ยวในโหมดหลัก/รอง)
+        if sku_key in even_skus:
+            parts = _distribute_even_integers(total, len(active_employees))
+            floored = {e: parts[i] for i, e in enumerate(active_employees)}
         else:
-            weights = {e: 1.0 for e in active_employees}
+            if strategy == "EVEN" or hist_sum == 0:
+                weights = {e: 1.0 for e in active_employees}
+            elif strategy in ("L3M", "L6M", "LY"):
+                weights = {e: max(hist_by_emp[e], 0.01) for e in active_employees}
+            elif strategy == "PUSH":
+                max_h = max(hist_by_emp.values()) if hist_by_emp else 1.0
+                weights = {e: max(max_h - hist_by_emp[e] + 0.1, 0.1) for e in active_employees}
+            else:
+                weights = {e: 1.0 for e in active_employees}
 
-        total_w = sum(weights.values())
-
-        if total_w > 0 and total > 0:
-            raw = {e: total * weights[e] / total_w for e in active_employees}
-            # ใช้ capped distribution แทน plain floor เพื่อป้องกัน outlier กองหีบ
-            floored = _cap_and_redistribute(raw, total, cap_multiplier=cap_multiplier)
-        else:
-            floored = {e: 0 for e in active_employees}
+            total_w = sum(weights.values())
+            if total_w > 0 and total > 0:
+                raw = {e: total * weights[e] / total_w for e in active_employees}
+                floored = _cap_and_redistribute(raw, total, cap_multiplier=cap_multiplier)
+            else:
+                floored = {e: 0 for e in active_employees}
 
         for emp in active_employees:
             boxes = floored[emp] + base_box
@@ -916,12 +1022,9 @@ def _lp_optimize(
             prob += ex_pen[emp] >= excess[emp] - tol
 
         if lp_anchor > 0 and dpos:
-            for emp in employees:
-                for sku in skus:
-                    if (emp, sku) in locked_map:
-                        continue
-                    base = int(base_map.get((str(emp).strip(), _norm_sku(sku)), 0))
-                    prob += x[(emp, sku)] - base == dpos[(emp, sku)] - dneg[(emp, sku)]
+            for emp, sku in dpos.keys():
+                base = int(base_map.get((str(emp).strip(), _norm_sku(sku)), 0))
+                prob += x[(emp, sku)] - base == dpos[(emp, sku)] - dneg[(emp, sku)]
 
         try:
             prob.solve(pulp.PULP_CBC_CMD(msg=False, timeLimit=time_limit))

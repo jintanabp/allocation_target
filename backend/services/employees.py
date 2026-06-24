@@ -4,6 +4,7 @@ import os
 import pandas as pd
 from fastapi import HTTPException
 
+from ..core.allocation_checks import detect_new_product_skus
 from ..core.constants import PRICE_FALLBACK
 from ..core.paths import (
     emp_cache_path,
@@ -590,11 +591,18 @@ def load_employees_payload(
             <= 0
         )
 
+    sku_ids_list = df_sku["sku"].astype(str).str.strip().tolist()
+    new_product_skus, new_products_detection_mode = detect_new_product_skus(
+        sup_id, target_year, sku_ids_list, df_hist
+    )
+
     return {
         "employees": _clean(df_emp),
         "skus": _clean(df_sku),
         "sku_warnings": sku_warnings,
         "tga_period_status": tga_period_status,
         "supervisor_name": sup_name,
+        "new_product_skus": new_product_skus,
+        "new_products_detection_mode": new_products_detection_mode,
     }
 

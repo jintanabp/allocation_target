@@ -32,6 +32,30 @@ def skus_no_sales_cy_ly(sup_id: str, target_year: int, sku_list: list[str]) -> s
     return out
 
 
+def detect_new_product_skus(
+    sup_id: str,
+    target_year: int,
+    sku_list: list[str],
+    df_hist: pd.DataFrame | None = None,
+) -> tuple[list[str], str]:
+    """
+    ระบุ SKU สินค้าใหม่สำหรับแสดงป้าย UI (ไม่ขึ้นกับว่าติ๊กแบ่งเท่าหรือไม่)
+    คืน (รายการ sku เรียงแล้ว, โหมด: cy_ly | fallback_hist_window | off)
+    """
+    sku_list = [str(s or "").strip() for s in (sku_list or []) if str(s or "").strip()]
+    if not sku_list:
+        return [], "off"
+    cy_ok = os.path.exists(hist_calendar_year_cache_path(sup_id, target_year))
+    ly_ok = os.path.exists(hist_calendar_year_cache_path(sup_id, target_year - 1))
+    if cy_ok and ly_ok:
+        found = skus_no_sales_cy_ly(sup_id, target_year, sku_list)
+        return sorted(found), "cy_ly" if found else "off"
+    if df_hist is not None and not df_hist.empty:
+        found = skus_zero_team_hist_window(df_hist, sku_list)
+        return sorted(found), "fallback_hist_window" if found else "off"
+    return [], "off"
+
+
 def skus_zero_team_hist_window(df_hist: pd.DataFrame, sku_list: list[str]) -> set[str]:
     """
     SKU ที่รวมยอดหีบในประวัติช่วงที่ใช้เกลี่ย (df_hist: 3M/6M) = 0 ทั้งทีม
