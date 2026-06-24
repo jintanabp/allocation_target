@@ -23,9 +23,13 @@ def managers_common_typo():
 def get_managers(user: dict = Depends(require_authenticated_user)):
     os.makedirs("data", exist_ok=True)
     full = load_full_managers_payload()
-    if user.get("auth_disabled"):
+    if user.get("auth_disabled") or user.get("acc_admin_full_access"):
         out = dict(full)
     else:
         out = dict(filter_managers_payload_for_user(full, user))
     out["can_import_targetsun"] = user_can_import_targetsun(user)
+    out["is_admin"] = bool(user.get("is_admin"))
+    if user.get("view_as_email"):
+        out["view_as_email"] = user["view_as_email"]
+        out["acting_admin_email"] = user.get("acting_admin_email")
     return out

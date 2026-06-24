@@ -1,5 +1,5 @@
 """
-สิทธิ์ผู้ใช้หลังล็อกอิน Microsoft: อิงอีเมลใน ACC_USER_CONTROL[EMAIL] แล้วผูก USERPL
+สิทธิ์ผู้ใช้หลังล็อกอิน Microsoft: อิงอีเมลใน config/user_access.json แล้วผูก USERPL
 กับรหัส Supervisor / Manager จาก trf_select_supervisor (เหมือนหน้า login)
 """
 
@@ -12,48 +12,40 @@ import threading
 import time
 from typing import Any
 
-from ..fabric_dax_connector import FabricDAXConnector
 from . import managers as managers_svc
+from .user_access_store import (
+    emails_with_targetsun,
+    normalized_email,
+    read_rows,
+)
 
 logger = logging.getLogger("target_allocation")
 
 _ACC_LOCK = threading.Lock()
 _ACC_ROWS_CACHE: list[dict] | None = None
 _ACC_CACHE_AT: float = 0.0
-
-_EXTRA_LOCK = threading.Lock()
-_EXTRA_ROWS_CACHE: list[dict] | None = None
-_EXTRA_CACHE_AT: float = 0.0
+_REGION_TEAMS_CACHE: dict[str, list[str]] | None = None
 
 
 def _acc_cache_ttl_sec() -> int:
+    raw = os.environ.get("USER_ACCESS_CACHE_TTL_SEC", "").strip()
+    if raw:
+        return int(raw)
     return int(os.environ.get("ACC_USER_CONTROL_CACHE_TTL_SEC", "300"))
 
 
-def _extra_cache_ttl_sec() -> int:
-    raw = os.environ.get("EXTRA_USER_ACCESS_CACHE_TTL_SEC", "").strip()
-    return int(raw) if raw else _acc_cache_ttl_sec()
-
-
-def _extra_disabled() -> bool:
-    """ปิดการดึงตาราง acc_extra_user เมื่ออยากประกันไม่ให้ยิง DAX ฟีเจอร์นี้ (ออปชัน)."""
-    flag = os.environ.get("EXTRA_USER_ACCESS_DISABLED", "").strip().lower()
-    return flag in ("1", "true", "yes")
-
-
-def _extra_must_succeed() -> bool:
-    flag = os.environ.get("EXTRA_USER_ACCESS_FAIL_CLOSED", "").strip().lower()
-    return flag in ("1", "true", "yes")
-
-
-def normalized_email(s: str | None) -> str:
-    return (s or "").strip().lower()
+def invalidate_user_access_cache() -> None:
+    global _ACC_ROWS_CACHE, _ACC_CACHE_AT, _REGION_TEAMS_CACHE
+    with _ACC_LOCK:
+        _ACC_ROWS_CACHE = None
+        _ACC_CACHE_AT = 0.0
+    _REGION_TEAMS_CACHE = None
 
 
 def parse_allocation_admin_emails() -> set[str]:
     """
-    อีเมลที่กำหนดใน ALLOCATION_ADMIN_EMAILS — เห็นรหัส Supervisor/Manager ทั้งหมดจาก trf เหมือนไม่กรอง ACC
-    (คั่นด้วย comma/semicolon)
+    อีเมลที่กำหนดใน ALLOCATION_ADMIN_EMAILS — เห็นรหัส Supervisor/Manager ทั้งหมดจาก trf
+    และเข้าหน้าแอดมินจัดการสิทธิ์
     """
     raw = (os.environ.get("ALLOCATION_ADMIN_EMAILS") or "").strip()
     if not raw:
@@ -66,50 +58,12 @@ def parse_allocation_admin_emails() -> set[str]:
     return out
 
 
-def _repo_root() -> str:
-    return os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
-
-
-def _targetsun_allowlist_json_path() -> str:
-    """ไฟล์รายชื่ออีเมลที่ส่ง Target Sun ได้ (นอกเหนือ admin) — ค่าเริ่มต้น config/acc_local_test.json"""
-    raw = (os.environ.get("ACC_USER_CONTROL_DEV_JSON") or "").strip()
-    if raw:
-        p = os.path.normpath(os.path.abspath(raw))
-        if os.path.isfile(p):
-            return p
-    return os.path.join(_repo_root(), "config", "acc_local_test.json")
-
-
-def load_targetsun_allowlist_emails() -> set[str]:
-    """
-    อีเมลจาก config/acc_local_test.json (หรือ path ใน ACC_USER_CONTROL_DEV_JSON ถ้ามีไฟล์)
-    ใช้คู่กับ ALLOCATION_ADMIN_EMAILS สำหรับ POST /lakehouse/import-targetsun
-    """
-    path = _targetsun_allowlist_json_path()
-    if not os.path.isfile(path):
-        logger.info("TargetSun allowlist: ไม่พบไฟล์ %s — เฉพาะ ALLOCATION_ADMIN_EMAILS ส่งได้", path)
-        return set()
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
-        logger.warning("TargetSun allowlist: อ่าน %s ไม่ได้: %s", path, e)
-        return set()
-    if not isinstance(data, list):
-        logger.warning("TargetSun allowlist: คาด array ของ {email, userpl} ใน %s", path)
-        return set()
-    out: set[str] = set()
-    for row in data:
-        if not isinstance(row, dict):
-            continue
-        em = normalized_email(row.get("email") or row.get("EMAIL"))
-        if "@" in em:
-            out.add(em)
-    return out
+def is_allocation_admin_email(email: str | None) -> bool:
+    return normalized_email(email) in parse_allocation_admin_emails()
 
 
 def user_can_import_targetsun(user: dict[str, Any]) -> bool:
-    """ส่งเข้า Target Sun ได้: ปิด auth / admin / อีเมลใน acc_local_test.json"""
+    """ส่งเข้า Target Sun ได้: ปิด auth / admin / อีเมลที่ตั้ง can_import_targetsun ใน user_access.json"""
     if user.get("auth_disabled"):
         return True
     if user.get("acc_admin_full_access"):
@@ -119,7 +73,7 @@ def user_can_import_targetsun(user: dict[str, Any]) -> bool:
         return False
     if email in parse_allocation_admin_emails():
         return True
-    return email in load_targetsun_allowlist_emails()
+    return email in emails_with_targetsun()
 
 
 def _rows_for_email(acc_rows: list[dict], email: str) -> list[dict]:
@@ -140,9 +94,6 @@ def _normalized_by_manager(raw_bm: dict[str, Any] | None) -> dict[str, list[str]
 
 
 def parse_trf_managers_metadata(mdata: dict[str, Any]) -> tuple[set[str], set[str], dict[str, list[str]]]:
-    """
-    คืนชุดรหัส Supervisor / Manager และ map manager → supervisors จาก payload เดียวกับ /managers
-    """
     src = str(mdata.get("source") or "").strip()
     by_m = _normalized_by_manager(mdata.get("by_manager"))
     if not (mdata.get("supervisors") or []) and src == "dim_fallback":
@@ -160,12 +111,6 @@ def classify_userpls_picks(
     supervisors: set[str],
     manager_codes: set[str],
 ) -> tuple[set[str], set[str]]:
-    """
-    แยก USERPL ว่าเป็นป้ายเข้าระบบแบบ Supervisor / Manager
-
-    รหัสเดียวโผล่ทั้งเป็น Supervisor และเป็น Manager — เก็บทั้งสอง (ไม่ใช้ elif)
-    เพื่อให้เลือก role ใน login และให้ชุด allowed_sup ครบทั้งรหัสตัวเองและหมดภายใต้ depend_on (เมื่อรวมกับ compute_allowed_supervisor_codes)
-    """
     sup_pick: set[str] = set()
     mgr_pick: set[str] = set()
     for u in userpls:
@@ -176,94 +121,169 @@ def classify_userpls_picks(
     return sup_pick, mgr_pick
 
 
+def _repo_root() -> str:
+    return os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+def load_region_teams() -> dict[str, list[str]]:
+    global _REGION_TEAMS_CACHE
+    if _REGION_TEAMS_CACHE is not None:
+        return _REGION_TEAMS_CACHE
+    path = os.path.join(_repo_root(), "config", "region_teams.json")
+    if not os.path.isfile(path):
+        _REGION_TEAMS_CACHE = {}
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        logger.warning("region_teams.json: %s", e)
+        _REGION_TEAMS_CACHE = {}
+        return {}
+    if not isinstance(data, dict):
+        _REGION_TEAMS_CACHE = {}
+        return {}
+    out: dict[str, list[str]] = {}
+    for k, v in data.items():
+        if isinstance(v, list):
+            out[str(k)] = [str(x).strip().upper() for x in v if x]
+    _REGION_TEAMS_CACHE = out
+    return out
+
+
+def _full_rows_by_email_userpl() -> dict[tuple[str, str], dict[str, Any]]:
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for r in read_rows():
+        key = (normalized_email(r.get("email")), str(r.get("userpl") or "").strip().upper())
+        out[key] = r
+    return out
+
+
+def _expand_userpl_to_supervisors(
+    upl: str,
+    meta: dict[str, Any] | None,
+    supervisors: set[str],
+    manager_codes: set[str],
+    by_m: dict[str, list[str]],
+    region_teams: dict[str, list[str]],
+) -> set[str]:
+    upl = upl.strip().upper()
+    allowed: set[str] = set()
+    login_kind = str((meta or {}).get("login_kind") or "standard")
+    region = str((meta or {}).get("acc_region") or "")
+
+    if login_kind in ("regional_manager", "district_manager") and region:
+        for code in region_teams.get(region, []):
+            cu = str(code).strip().upper()
+            if cu in supervisors:
+                allowed.add(cu)
+        if allowed:
+            return allowed
+
+    if login_kind == "supervisor_acc" and region and upl not in supervisors:
+        for code in region_teams.get(region, []):
+            cu = str(code).strip().upper()
+            if cu in supervisors:
+                allowed.add(cu)
+        if allowed:
+            return allowed
+
+    in_sup = upl in supervisors
+    in_mgr = upl in manager_codes
+    if in_mgr:
+        allowed.update(by_m.get(upl, []))
+    if in_sup:
+        allowed.add(upl)
+
+    if not allowed and login_kind == "supervisor_acc" and in_sup:
+        allowed.add(upl)
+
+    return allowed
+
+
+def role_label_for_meta(
+    meta: dict[str, Any] | None,
+    upl: str,
+    supervisors: set[str],
+    manager_codes: set[str],
+) -> str:
+    login_kind = str((meta or {}).get("login_kind") or "standard")
+    region = str((meta or {}).get("acc_region") or "")
+    upl = upl.strip().upper()
+
+    if login_kind == "regional_manager":
+        return "regional_manager"
+    if login_kind == "district_manager":
+        return "district_manager"
+    if login_kind == "manager_acc":
+        if upl in manager_codes:
+            return "manager"
+        return "manager_acc"
+    if login_kind == "supervisor_acc":
+        if upl in supervisors:
+            return "supervisor"
+        return "supervisor_acc"
+
+    sup_pick, mgr_pick = classify_userpls_picks({upl}, supervisors, manager_codes)
+    if sup_pick and mgr_pick:
+        return "both"
+    if mgr_pick:
+        return "manager"
+    if sup_pick:
+        return "supervisor"
+    if login_kind == "supervisor_acc":
+        return "supervisor_acc"
+    if region:
+        return "acc_only"
+    return "unknown"
+
+
+def role_label_for_userpls(
+    userpls: set[str],
+    supervisors: set[str],
+    manager_codes: set[str],
+) -> str:
+    sup_pick, mgr_pick = classify_userpls_picks(userpls, supervisors, manager_codes)
+    if sup_pick and mgr_pick:
+        return "both"
+    if sup_pick:
+        return "supervisor"
+    if mgr_pick:
+        return "manager"
+    if userpls:
+        return "unknown"
+    return "none"
+
+
 def compute_allowed_supervisor_codes(
     email: str,
     acc_rows: list[dict],
     mdata: dict[str, Any],
 ) -> set[str]:
-    """
-    ผู้ที่ USERPL = รหัส Supervisor → ได้ใช้ sup_id = รหัสนั้นตรงๆ
-    ผู้ที่ USERPL = รหัส Manager → ได้ใช้ sup_id เท่ากับ Supervisor ภายใต้ Manager (จาก depend_on/by_manager)
-
-    ถ้า USERPL เป็นได้ทั้งคู่ — ให้สิทธิครบทั้งทีม (manager) และรหัส supervisor ตัวเอง
-
-    EMAIL/USERPL ซ้ำหลายแถว → ถือว่าเหมือนกันแล้วรวม set
-    """
     supervisors, manager_codes, by_m = parse_trf_managers_metadata(mdata)
-
     userpls = _unique_userpls_for_email(acc_rows, email)
+    region_teams = load_region_teams()
+    meta_map = _full_rows_by_email_userpl()
 
     allowed: set[str] = set()
+    ne = normalized_email(email)
     for upl in userpls:
-        in_sup = upl in supervisors
-        in_mgr = upl in manager_codes
-        # ขยายจาก manager ก่อน — เคสถ้าใช้ if/elif อย่างเดียว รหัสที่อยู่ทั้งใน supervisors และ manager_codes อาจไม่ได้ expand ทีมใต้ depend_on
-        if in_mgr:
-            allowed.update(by_m.get(upl, []))
-        if in_sup:
-            allowed.add(upl)
-        if not in_sup and not in_mgr:
+        meta = meta_map.get((ne, upl))
+        expanded = _expand_userpl_to_supervisors(
+            upl, meta, supervisors, manager_codes, by_m, region_teams
+        )
+        if expanded:
+            allowed.update(expanded)
+        elif not expanded:
             logger.warning(
-                "ACC_USER_CONTROL USERPL=%s ไม่ตรง trf supervisor/manager — ข้าม", upl
+                "USERPL=%s ไม่ตรง trf / ภูมิภาค — ข้าม", upl
             )
 
     return allowed
 
 
-def _try_load_acc_from_dev_json() -> list[dict] | None:
-    """
-    โหลด ACC จากไฟล์ JSON เฉพาะเมื่อ ALLOCATION_ALLOW_ACC_DEV_JSON=1 — ไว้ทดสอบใน dev โดยไม่ต้องพึ่งข้อมูลจาก Fabric
-
-    JSON: รายการอ็อบเจ็กต์ {"email":"...","userpl":"SL330"} (หรือ EMAIL/USERPL ตัวพิมพ์ใหญ่)
-    """
-    flag = os.environ.get("ALLOCATION_ALLOW_ACC_DEV_JSON", "").strip().lower()
-    if flag not in ("1", "true", "yes"):
-        return None
-    path = (os.environ.get("ACC_USER_CONTROL_DEV_JSON") or "").strip()
-    if not path:
-        logger.warning(
-            "ALLOCATION_ALLOW_ACC_DEV_JSON เปิดอยู่ แต่ยังไม่ตั้ง ACC_USER_CONTROL_DEV_JSON",
-        )
-        return None
-    path = os.path.normpath(os.path.abspath(path))
-    if not os.path.isfile(path):
-        logger.warning("ไม่พบไฟล์ ACC dev: %s", path)
-        return None
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
-        logger.warning("อ่าน/แปลง JSON ACC dev ไม่ได้ %s: %s", path, e)
-        return None
-    if not isinstance(data, list):
-        logger.warning("ACC dev JSON คาดว่าเป็น array ของแถว")
-        return None
-    out: list[dict] = []
-    for row in data:
-        if not isinstance(row, dict):
-            continue
-        em = normalized_email(row.get("email") or row.get("EMAIL"))
-        upl_raw = row.get("userpl") if row.get("userpl") is not None else row.get("USERPL")
-        upl = str(upl_raw or "").strip().upper()
-        if not em or not upl:
-            continue
-        out.append({"email": em, "userpl": upl})
-    logger.warning(
-        "ใช้ ACC จากไฟล์ dev (%s) จำนวน %d แถว — อย่าปิด env ใน production",
-        path,
-        len(out),
-    )
-    return out
-
-
 def load_acc_rows() -> list[dict]:
-    """
-    ACC rows with short in-process cache (เหมือน managers cache TTL ที่สั้นกว่า — อย่าเก็บนานเกินสิทธิ์จริง)
-    """
-    dev_rows = _try_load_acc_from_dev_json()
-    if dev_rows is not None:
-        return dev_rows
-
+    """โหลด EMAIL+USERPL จาก config/user_access.json (แคชใน process)"""
     global _ACC_ROWS_CACHE, _ACC_CACHE_AT
     ttl = _acc_cache_ttl_sec()
     now = time.time()
@@ -274,102 +294,44 @@ def load_acc_rows() -> list[dict]:
             and (now - _ACC_CACHE_AT) < ttl
         ):
             return list(_ACC_ROWS_CACHE)
+
     try:
-        fabric = FabricDAXConnector()
-        rows = fabric.get_acc_user_control_rows()
+        rows = read_rows()
+    except PermissionError:
+        raise
     except Exception as e:
-        logger.error("ACC_USER_CONTROL fetch failed: %s", e)
+        logger.error("user_access JSON fetch failed: %s", e)
         raise PermissionError(
-            "ไม่สามารถโหลดตารางสิทธิ์ผู้ใช้ (ACC_USER_CONTROL) จาก Fabric"
+            "ไม่สามารถโหลดตารางสิทธิ์ผู้ใช้ (user_access.json)"
         ) from e
 
+    # คืนเฉพาะ email+userpl สำหรับ logic เดิม
+    slim = [{"email": r["email"], "userpl": r["userpl"]} for r in rows]
+
     with _ACC_LOCK:
-        _ACC_ROWS_CACHE = rows
+        _ACC_ROWS_CACHE = slim
         _ACC_CACHE_AT = time.time()
-    return list(rows)
-
-
-def load_extra_user_access_rows() -> list[dict]:
-    """
-    ตารางเสริมใน Semantic model เพื่อ map EMAIL → USERPL (Supervisor / Manager login code)
-
-    Default: ดึงจาก acc_extra_user (EMAIL, USERPL) — ไม่ต้องตั้ง env เพื่อเปิด
-    ปิดได้ด้วย EXTRA_USER_ACCESS_DISABLED=1
-    """
-    if _extra_disabled():
-        return []
-
-    global _EXTRA_ROWS_CACHE, _EXTRA_CACHE_AT
-    ttl = _extra_cache_ttl_sec()
-    now = time.time()
-    with _EXTRA_LOCK:
-        if (
-            _EXTRA_ROWS_CACHE is not None
-            and ttl > 0
-            and (now - _EXTRA_CACHE_AT) < ttl
-        ):
-            return list(_EXTRA_ROWS_CACHE)
-
-    try:
-        fabric = FabricDAXConnector()
-        rows = fabric.get_extra_user_access_rows()
-    except Exception as e:
-        msg = str(e)
-        table = (os.environ.get("EXTRA_USER_ACCESS_TABLE_NAME", "acc_extra_user").strip() or "acc_extra_user")
-        logger.error("%s fallback fetch failed: %s", table, msg)
-        if _extra_must_succeed():
-            raise PermissionError(
-                "ไม่สามารถโหลดตารางสิทธิ์ผู้ใช้เสริมจาก Fabric "
-                f"({table})"
-            ) from e
-        rows = []
-
-    with _EXTRA_LOCK:
-        _EXTRA_ROWS_CACHE = rows
-        _EXTRA_CACHE_AT = time.time()
-    return list(rows)
-
-
-def _combine_acc_and_extra(acc_rows: list[dict], extra_rows: list[dict]) -> list[dict]:
-    if not extra_rows:
-        return list(acc_rows)
-    seen: set[tuple[str, str]] = set()
-    merged: list[dict] = []
-    for batch in (acc_rows, extra_rows):
-        for r in batch or []:
-            em = normalized_email(r.get("email"))
-            upl = str(r.get("userpl") or "").strip().upper()
-            if not em or not upl:
-                continue
-            key = (em, upl)
-            if key in seen:
-                continue
-            seen.add(key)
-            merged.append({"email": em, "userpl": upl})
-    return merged
+    return list(slim)
 
 
 def unrestricted_user_context() -> dict[str, Any]:
-    """เมื่อปิด Entra — ไม่จำกัดรหัส"""
     return {
         "auth_disabled": True,
         "email": None,
         "allowed_supervisor_codes": None,
         "can_import_targetsun": True,
+        "is_admin": False,
     }
 
 
-def build_user_access_context(email: str) -> dict[str, Any]:
-    """
-    หลังยืนยัน Microsoft token แล้ว — ตรวจ ACC + trf และคืนชุด Supervisor ที่อนุญาติ
-    """
+def build_user_access_context(email: str, *, allow_admin_bypass: bool = True) -> dict[str, Any]:
     ne = normalized_email(email)
     if not ne:
-        raise ValueError("ไม่มีอีเมลสำหรับตรวจสิทธิ์ ACC_USER_CONTROL")
+        raise ValueError("ไม่มีอีเมลสำหรับตรวจสิทธิ์")
 
-    if ne in parse_allocation_admin_emails():
+    if allow_admin_bypass and ne in parse_allocation_admin_emails():
         logger.info(
-            "สิทธิ์ผู้ดูแล (ALLOCATION_ADMIN_EMAILS): เข้าถึงทุกรหัสผ่าน Supervisor/API — ไม่อิง ACC_USER_CONTROL",
+            "สิทธิ์ผู้ดูแล (ALLOCATION_ADMIN_EMAILS): เข้าถึงทุกรหัส — ไม่อิง user_access.json",
         )
         return {
             "auth_disabled": False,
@@ -379,31 +341,39 @@ def build_user_access_context(email: str) -> dict[str, Any]:
             "userpls_supervisor_pick": set(),
             "userpls_manager_pick": set(),
             "can_import_targetsun": True,
+            "is_admin": True,
         }
 
-    acc_rows_base = load_acc_rows()
-    extra_rows = load_extra_user_access_rows()
-    acc_rows = _combine_acc_and_extra(acc_rows_base, extra_rows)
-
+    acc_rows = load_acc_rows()
     user_rows = _rows_for_email(acc_rows, ne)
     if not user_rows:
         raise PermissionError(
             "ไม่พบสิทธิ์การใช้งาน — "
-            "อีเมลของคุณยังไม่อยู่ในตาราง ACC_USER_CONTROL"
-            + (" และ acc_extra_user" if not _extra_disabled() else "")
+            "อีเมลของคุณยังไม่อยู่ในรายชื่อ user_access.json"
         )
 
     mdata = managers_svc.load_full_managers_payload()
     supervisors, manager_codes, _ = parse_trf_managers_metadata(mdata)
     userpls = _unique_userpls_for_email(acc_rows, ne)
+    meta_map = _full_rows_by_email_userpl()
+
     sup_pick, mgr_pick = classify_userpls_picks(userpls, supervisors, manager_codes)
+    for upl in userpls:
+        meta = meta_map.get((ne, upl))
+        lk = str((meta or {}).get("login_kind") or "")
+        if lk in ("regional_manager", "district_manager"):
+            mgr_pick.add(upl)
+        elif upl in supervisors:
+            sup_pick.add(upl)
+        elif upl in manager_codes:
+            mgr_pick.add(upl)
 
     allowed = compute_allowed_supervisor_codes(ne, acc_rows, mdata)
 
     if not allowed:
         raise PermissionError(
             "บัญชีนี้ไม่มีรหัส Supervisor/Manager ที่ใช้งานได้ — "
-            "ตรวจสอบ USERPL ใน ACC_USER_CONTROL ให้ตรงกับรหัสในระบบ"
+            "ตรวจสอบ USERPL ใน user_access.json ให้ตรงกับรหัสในระบบ"
         )
 
     ctx = {
@@ -412,16 +382,45 @@ def build_user_access_context(email: str) -> dict[str, Any]:
         "allowed_supervisor_codes": allowed,
         "userpls_supervisor_pick": sup_pick,
         "userpls_manager_pick": mgr_pick,
+        "is_admin": False,
     }
     ctx["can_import_targetsun"] = user_can_import_targetsun(ctx)
     return ctx
 
 
+def enrich_user_access_rows(rows: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """เพิ่ม role + visible_supervisors สำหรับหน้าแอดมิน"""
+    source = rows if rows is not None else read_rows()
+    mdata = managers_svc.load_full_managers_payload()
+    supervisors, manager_codes, by_m = parse_trf_managers_metadata(mdata)
+    region_teams = load_region_teams()
+
+    out: list[dict[str, Any]] = []
+    for r in source:
+        em = normalized_email(r.get("email"))
+        upl = str(r.get("userpl") or "").strip().upper()
+        role = role_label_for_meta(r, upl, supervisors, manager_codes)
+        visible = sorted(
+            _expand_userpl_to_supervisors(
+                upl, r, supervisors, manager_codes, by_m, region_teams
+            )
+        )
+        out.append(
+            {
+                "email": em,
+                "userpl": upl,
+                "can_import_targetsun": bool(r.get("can_import_targetsun")),
+                "note": str(r.get("note") or ""),
+                "acc_region": str(r.get("acc_region") or ""),
+                "login_kind": str(r.get("login_kind") or "standard"),
+                "role": role,
+                "visible_supervisors": visible,
+            }
+        )
+    return out
+
+
 def filter_managers_payload_for_user(full: dict, user: dict[str, Any]) -> dict:
-    """
-    จำกัด dropdown login เหลือเฉพาะรหัส Supervisor / Manager ที่ตรง USERPL ใน ACC (ไม่โชว์
-    Manager ที่เป็นหัวหน้าของเราโดยอ้อมจาก depend_on เท่านั้น)
-    """
     if user.get("auth_disabled") or user.get("acc_admin_full_access"):
         return full
 
@@ -454,10 +453,29 @@ def filter_managers_payload_for_user(full: dict, user: dict[str, Any]) -> dict:
             for s in raw_bm.get(m, []):
                 rows_f.append({"supervisor_code": s, "depend_on": m})
 
+    allowed_codes = user.get("allowed_supervisor_codes")
+    if allowed_codes:
+        allowed_set = {str(x).strip().upper() for x in allowed_codes}
+        if not rows_f:
+            for sc in sorted(allowed_set):
+                rows_f.append({"supervisor_code": sc, "depend_on": "NONE"})
+                sup_pick.add(sc)
+        else:
+            rows_f = [
+                row
+                for row in rows_f
+                if str(row.get("supervisor_code") or "").strip().upper() in allowed_set
+            ]
+
     by_manager_f: dict[str, list[str]] = {}
     for m in sorted(mgr_pick):
-        # USERPL = manager นี้ → ให้สลับครบทุก sup ใต้โครงสร้าง trf (ชุดตรงกับ allowed สำหรับ role นี้)
-        by_manager_f[m] = sorted(raw_bm.get(m, []))
+        team = sorted(raw_bm.get(m, []))
+        if team:
+            by_manager_f[m] = team
+        elif allowed_codes:
+            by_manager_f[m] = sorted(
+                {str(x).strip().upper() for x in allowed_codes}
+            )
 
     pick_labels: list[str] = []
     for c in sorted(sup_pick):

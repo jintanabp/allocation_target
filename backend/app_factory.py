@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import auth_entra
 from .core.caches import cleanup_export_artifacts_keep_latest_per_sup, cleanup_old_caches
+from .routers import admin as admin_router
 from .routers import auth as auth_router
 from .routers import data as data_router
 from .routers import debug as debug_router
@@ -36,8 +37,8 @@ def create_app() -> FastAPI:
     if auth_entra.auth_enabled():
         n_admin = len(parse_allocation_admin_emails())
         logger.info(
-            "Entra login เปิด — สิทธิทั่วไปจาก ACC_USER_CONTROL; "
-            "ALLOCATION_ADMIN_EMAILS=%d entry สำหรับเข้าถึงทุกรหัส",
+            "Entra login เปิด — สิทธิจาก user_access.json; "
+            "ALLOCATION_ADMIN_EMAILS=%d entry สำหรับแอดมิน",
             n_admin,
         )
 
@@ -50,6 +51,7 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(auth_router.router)
+    app.include_router(admin_router.router)
     app.include_router(favicon_router.router)
     app.include_router(managers_router.router)
     app.include_router(data_router.router)

@@ -359,7 +359,7 @@ async function initEntraAuth() {
           `เชื่อมต่อ ${API_BASE_URL}/auth/config ไม่ได้ — ตรวจว่าเปิด URL นี้ผ่าน server เดียวกัน (ไม่ใช้ไฟล์เปล่า) และรีเฟรช`;
       } else {
         hintEl.textContent =
-          "ล็อกอิน Microsoft ปิดอยู่ — ใส่ AZURE_AUTH_CLIENT_ID + FABRIC_TENANT_ID (หรือ AZURE_AUTH_TENANT_ID) ใน config/.env หรือ .env ที่ราก แล้วรีสตาร์ท server · ในโหมดนี้รายชื่อ Supervisor/Manager แสดงทั้งระบบ (ไม่กรองตาม ACC_USER_CONTROL)";
+          "ล็อกอิน Microsoft ปิดอยู่ — ใส่ AZURE_AUTH_CLIENT_ID + FABRIC_TENANT_ID ใน config/.env แล้วรีสตาร์ท server · ในโหมดนี้รายชื่อ Supervisor/Manager แสดงทั้งระบบ (ไม่กรองตาม user_access.json)";
       }
     }
     if (msBtn) msBtn.style.display = "none";
@@ -523,6 +523,12 @@ let S = {
   revenueScale: 1,
   /** ส่งเข้า Target Sun ได้หรือไม่ (จาก GET /managers → can_import_targetsun) */
   canImportTargetSun: true,
+  /** แอดมิน (ALLOCATION_ADMIN_EMAILS) */
+  isAdmin: false,
+  /** โหมดทดสอบมุมมองผู้ใช้อื่น */
+  viewAsEmail: null,
+  /** แถวจาก /admin/user-access */
+  adminRows: [],
 };
 
 /** DOM / format helpers — ต้องอยู่ก่อนโค้ดที่เรียกใช้ (อย่าวางไว้ท้ายไฟล์เพราะเสี่ยงอ้างก่อนประกาศ) */
@@ -923,6 +929,10 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
       throw new Error("ยังไม่มี Microsoft access token — กรุณากด “ล็อกอินด้วย Microsoft” อีกครั้ง");
     }
     if (tok) opts.headers.Authorization = `Bearer ${tok}`;
+    const isAdminApi = /\/admin\//.test(url);
+    if (!isAdminApi && S.viewAsEmail) {
+      opts.headers["X-View-As-Email"] = S.viewAsEmail;
+    }
     if (ctrl) opts.signal = ctrl.signal;
     return await fetch(url, opts);
   } finally {
@@ -1290,6 +1300,11 @@ async function loadManagers() {
       if (typeof data.can_import_targetsun === "boolean") {
         S.canImportTargetSun = data.can_import_targetsun;
       }
+      if (typeof data.is_admin === "boolean") {
+        S.isAdmin = data.is_admin;
+      }
+      updateAdminNavVisibility();
+      updateViewAsBanner();
       syncLakehouseButton();
       const rows = Array.isArray(data.rows) ? data.rows : [];
       let list = [];
@@ -1416,6 +1431,7 @@ async function handleLogin() {
     document.getElementById("topbarTotalContainer").style.display = "block";
     document.getElementById("topbarPeriodContainer").style.display = "block";
     document.getElementById("logoutBtn").style.display = "block";
+    updateAdminNavVisibility();
 
     const periodStr = MONTH_FULL_TH[S.targetMonth] + " " + (S.targetYear + 543);
     document.getElementById("topbarPeriodText").textContent = periodStr;
@@ -1459,6 +1475,8 @@ function _doLogout() {
   // กลับไปหน้าเลือก Supervisor/Manager เท่านั้น — ไม่เรียก MSAL logoutRedirect
   // (ผู้ใช้ยังล็อกอิน Microsoft อยู่; token/cache ใช้เรียก API รอบถัดไปได้)
   const keepManagers = S.managers || [];
+  const keepIsAdmin = S.isAdmin;
+  const keepViewAs = S.viewAsEmail;
   const keepLoginMeta = {
     supervisorRows: S.supervisorRows,
     byManager: S.byManager,
@@ -1474,6 +1492,9 @@ function _doLogout() {
     activeBrand: "ALL", histDevFilter: null, targetMonth: null, targetYear: null, supId: null,
     supervisorName: "",
     managers: keepManagers,
+    isAdmin: keepIsAdmin,
+    viewAsEmail: keepViewAs,
+    adminRows: [],
     loginRole: null,
     managerCode: null,
     supervisorChoices: [],
@@ -1486,6 +1507,7 @@ function _doLogout() {
     buiDeductions: {}, buiColumnOpen: false, negGrowthReason: "", brandStrategyMap: {},
     tierFlexSkus: new Set(), tierStrictSkuCount: 0,
     revenueScale: 1,
+    canImportTargetSun: true,
   };
   dismissAllToasts();
   ["logoutModal", "draftModal"].forEach(id => {
@@ -1496,9 +1518,10 @@ function _doLogout() {
   document.getElementById("loginView").style.display = "block";
   document.body.classList.add("is-login");
   _enableLoginScrollLock();
-  ["topbarTotalContainer", "topbarPeriodContainer", "logoutBtn"].forEach(id =>
+  ["topbarTotalContainer", "topbarPeriodContainer", "logoutBtn", "adminNavBtn"].forEach(id =>
     document.getElementById(id).style.display = "none"
   );
+  updateViewAsBanner();
   document.getElementById("totalTargetDisplay").textContent = "—";
   document.getElementById("resultBlock").style.display = "none";
   document.getElementById("progList").style.display = "none";
@@ -3177,7 +3200,7 @@ function syncLakehouseButton() {
   btn.classList.toggle("btn-dl--disabled", !on);
   btn.setAttribute("aria-disabled", on ? "false" : "true");
   if (!allowed) {
-    btn.title = "เฉพาะผู้ที่ได้รับอนุญาตเท่านั้น (ดู config/acc_local_test.json หรือผู้ดูแลระบบ)";
+    btn.title = "เฉพาะผู้ที่ได้รับอนุญาตเท่านั้น (ตั้ง can_import_targetsun ใน user_access.json หรือผู้ดูแลระบบ)";
   } else if (!has) {
     btn.title = "ส่งผลการกระจายหีบเข้า Target Sun — ต้องมีผลขั้นที่ 3 ก่อน";
   } else {
@@ -4957,4 +4980,324 @@ document.addEventListener("change", (e) => {
     syncHistAllocNote();
   }
 });
+
+/* ══════════════════════════════════════════════
+   ADMIN — user_access.json
+══════════════════════════════════════════════ */
+const ADMIN_ROLE_LABELS = {
+  supervisor: "Supervisor",
+  manager: "Manager",
+  both: "Supervisor + Manager",
+  regional_manager: "ผู้จัดการภูมิภาค",
+  district_manager: "ผู้จัดการเขต",
+  supervisor_acc: "Supervisor (ACC)",
+  manager_acc: "Manager (ACC)",
+  acc_only: "ACC เท่านั้น",
+  unknown: "ไม่พบใน trf",
+  none: "—",
+};
+
+let _adminRoleFilter = "";
+let _adminOpenedFromLogin = false;
+
+function updateAdminNavVisibility() {
+  const topBtn = document.getElementById("adminNavBtn");
+  const loginBtn = document.getElementById("adminNavLoginBtn");
+  const onLogin = document.getElementById("loginView")?.style.display !== "none";
+  const inAdmin = document.getElementById("adminView")?.style.display !== "none";
+  if (topBtn) {
+    topBtn.style.display = S.isAdmin && !onLogin && !inAdmin ? "inline-flex" : "none";
+  }
+  if (loginBtn) {
+    loginBtn.style.display = S.isAdmin && onLogin ? "block" : "none";
+  }
+}
+
+function updateViewAsBanner() {
+  const bar = document.getElementById("viewAsBanner");
+  const txt = document.getElementById("viewAsBannerText");
+  if (!bar || !txt) return;
+  if (S.viewAsEmail) {
+    txt.textContent = `โหมดทดสอบ: กำลังดูสิทธิ์แบบ ${S.viewAsEmail}`;
+    bar.style.display = "flex";
+  } else {
+    bar.style.display = "none";
+  }
+}
+
+function openAdminView() {
+  if (!S.isAdmin) return;
+  const av = document.getElementById("adminView");
+  const dash = document.getElementById("dashboardView");
+  const login = document.getElementById("loginView");
+  if (!av) return;
+  _adminOpenedFromLogin = login?.style.display !== "none";
+  av.style.display = "block";
+  av.setAttribute("aria-hidden", "false");
+  if (dash) dash.style.display = "none";
+  if (login) login.style.display = "none";
+  document.body.classList.remove("is-login");
+  const nav = document.getElementById("adminNavBtn");
+  if (nav) nav.style.display = "none";
+  adminLoadRows();
+}
+
+function closeAdminView() {
+  const av = document.getElementById("adminView");
+  const dash = document.getElementById("dashboardView");
+  const login = document.getElementById("loginView");
+  if (av) {
+    av.style.display = "none";
+    av.setAttribute("aria-hidden", "true");
+  }
+  const onLoginFlow = _adminOpenedFromLogin;
+  _adminOpenedFromLogin = false;
+  if (onLoginFlow) {
+    if (login) login.style.display = "block";
+    document.body.classList.add("is-login");
+  } else if (dash && login?.style.display === "none") {
+    dash.style.display = "block";
+  }
+  updateAdminNavVisibility();
+}
+
+function adminRenderStats(rows) {
+  const el = document.getElementById("adminStats");
+  if (!el) return;
+  const counts = { total: rows.length, supervisor: 0, manager: 0, regional: 0, unknown: 0 };
+  for (const r of rows) {
+    const role = r.role || "";
+    if (role === "supervisor" || role === "supervisor_acc" || role === "both") counts.supervisor += 1;
+    else if (role === "manager" || role === "manager_acc") counts.manager += 1;
+    else if (role === "regional_manager" || role === "district_manager") counts.regional += 1;
+    else if (role === "unknown" || role === "acc_only") counts.unknown += 1;
+  }
+  el.innerHTML = `
+    <div class="admin-stat"><span class="admin-stat__n">${counts.total}</span><span class="admin-stat__l">รายการทั้งหมด</span></div>
+    <div class="admin-stat"><span class="admin-stat__n">${counts.supervisor}</span><span class="admin-stat__l">Supervisor</span></div>
+    <div class="admin-stat"><span class="admin-stat__n">${counts.manager}</span><span class="admin-stat__l">Manager</span></div>
+    <div class="admin-stat"><span class="admin-stat__n">${counts.regional}</span><span class="admin-stat__l">ภูมิภาค/เขต</span></div>
+    <div class="admin-stat admin-stat--muted"><span class="admin-stat__n">${counts.unknown}</span><span class="admin-stat__l">ไม่พบใน trf</span></div>`;
+}
+
+function adminSetRoleFilter(btn) {
+  document.querySelectorAll("#adminRoleFilters .admin-chip").forEach((b) => {
+    b.classList.toggle("admin-chip--active", b === btn);
+  });
+  _adminRoleFilter = btn?.dataset?.role || "";
+  adminFilterRows();
+}
+
+function _adminFormatVisible(vis) {
+  if (!vis || !vis.length) return { text: "—", title: "" };
+  const title = vis.join(", ");
+  if (vis.length <= 4) return { text: vis.join(", "), title };
+  return { text: `${vis.slice(0, 4).join(", ")} +${vis.length - 4}`, title };
+}
+
+function _adminShowError(msg) {
+  const el = document.getElementById("adminError");
+  if (!el) return;
+  if (!msg) {
+    el.style.display = "none";
+    el.textContent = "";
+    return;
+  }
+  el.style.display = "block";
+  el.textContent = msg;
+}
+
+function adminShowAddForm() {
+  const p = document.getElementById("adminAddPanel");
+  if (p) p.style.display = "block";
+}
+
+function adminHideAddForm() {
+  const p = document.getElementById("adminAddPanel");
+  if (p) p.style.display = "none";
+}
+
+async function adminLoadRows() {
+  const loading = document.getElementById("adminLoading");
+  if (loading) loading.style.display = "block";
+  _adminShowError("");
+  try {
+    const res = await fetchWithTimeout(`${API_BASE_URL}/admin/user-access`, {}, 20000);
+    if (!res.ok) {
+      let d = "โหลดรายการไม่สำเร็จ";
+      try {
+        const j = await res.json();
+        if (j.detail) d = j.detail;
+      } catch (_) { /* ignore */ }
+      throw new Error(d);
+    }
+    const data = await res.json();
+    S.adminRows = Array.isArray(data.rows) ? data.rows : [];
+    adminRenderStats(S.adminRows);
+    adminFilterRows();
+  } catch (e) {
+    _adminShowError(e?.message || String(e));
+  } finally {
+    if (loading) loading.style.display = "none";
+  }
+}
+
+function adminFilterRows() {
+  const q = (document.getElementById("adminSearch")?.value || "").trim().toLowerCase();
+  let filtered = S.adminRows;
+  if (_adminRoleFilter) {
+    filtered = filtered.filter((r) => {
+      const role = r.role || "";
+      if (_adminRoleFilter === "supervisor") {
+        return role === "supervisor" || role === "supervisor_acc" || role === "both";
+      }
+      if (_adminRoleFilter === "manager") {
+        return role === "manager" || role === "manager_acc" || role === "both";
+      }
+      return role === _adminRoleFilter;
+    });
+  }
+  if (q) {
+    filtered = filtered.filter(
+      (r) =>
+        (r.email || "").toLowerCase().includes(q) ||
+        (r.userpl || "").toLowerCase().includes(q) ||
+        (r.acc_region || "").toLowerCase().includes(q) ||
+        (ADMIN_ROLE_LABELS[r.role] || "").toLowerCase().includes(q)
+    );
+  }
+  adminRenderTable(filtered);
+}
+
+function adminRenderTable(rows) {
+  const tbody = document.getElementById("adminTableBody");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    const role = ADMIN_ROLE_LABELS[r.role] || r.role || "—";
+    const em = escapeHtml(r.email);
+    const upl = escapeHtml(r.userpl);
+    const region = escapeHtml(r.acc_region || "—");
+    const visArr = Array.isArray(r.visible_supervisors) ? r.visible_supervisors : [];
+    const visFmt = _adminFormatVisible(visArr);
+    const vis = escapeHtml(visFmt.text);
+    const visTitle = escapeHtml(visFmt.title);
+    const tsChecked = r.can_import_targetsun ? "checked" : "";
+    tr.innerHTML = `
+      <td class="admin-td-email">${em}</td>
+      <td><code class="admin-code">${upl}</code></td>
+      <td><span class="admin-role admin-role--${escapeHtml(r.role || "none")}">${escapeHtml(role)}</span></td>
+      <td class="admin-td-region">${region}</td>
+      <td class="admin-td-vis" title="${visTitle}">${vis}</td>
+      <td class="admin-td-ts"><input type="checkbox" class="admin-ts-check" ${tsChecked} aria-label="Target Sun" /></td>
+      <td class="admin-td-actions">
+        <button type="button" class="btn-secondary btn-xs admin-btn-view">ดูแบบนี้</button>
+        <button type="button" class="btn-secondary btn-xs admin-btn-danger admin-btn-del">ลบ</button>
+      </td>`;
+    const tsInp = tr.querySelector(".admin-ts-check");
+    if (tsInp) {
+      tsInp.addEventListener("change", () => adminToggleTargetSun(r.email, tsInp.checked));
+    }
+    tr.querySelector(".admin-btn-view")?.addEventListener("click", () => adminStartViewAs(r.email));
+    tr.querySelector(".admin-btn-del")?.addEventListener("click", () => adminDeleteRow(r.email, r.userpl));
+    tbody.appendChild(tr);
+  }
+}
+
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+async function adminSubmitAdd() {
+  const email = (document.getElementById("adminAddEmail")?.value || "").trim();
+  const userpl = (document.getElementById("adminAddUserpl")?.value || "").trim().toUpperCase();
+  const canTs = !!document.getElementById("adminAddTargetSun")?.checked;
+  const note = (document.getElementById("adminAddNote")?.value || "").trim();
+  if (!email || !userpl) {
+    _adminShowError("กรุณากรอกอีเมลและรหัส SL");
+    return;
+  }
+  try {
+    const res = await fetchWithTimeout(`${API_BASE_URL}/admin/user-access`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, userpl, can_import_targetsun: canTs, note }),
+    }, 15000);
+    if (!res.ok) {
+      let d = "เพิ่มไม่สำเร็จ";
+      try {
+        const j = await res.json();
+        if (j.detail) d = j.detail;
+      } catch (_) { /* ignore */ }
+      throw new Error(d);
+    }
+    adminHideAddForm();
+    ["adminAddEmail", "adminAddUserpl", "adminAddNote"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.value = "";
+    });
+    const ts = document.getElementById("adminAddTargetSun");
+    if (ts) ts.checked = false;
+    await adminLoadRows();
+  } catch (e) {
+    _adminShowError(e?.message || String(e));
+  }
+}
+
+async function adminDeleteRow(email, userpl) {
+  if (!confirm(`ลบ ${email} / ${userpl}?`)) return;
+  try {
+    const res = await fetchWithTimeout(`${API_BASE_URL}/admin/user-access`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, userpl }),
+    }, 15000);
+    if (!res.ok) throw new Error("ลบไม่สำเร็จ");
+    await adminLoadRows();
+  } catch (e) {
+    _adminShowError(e?.message || String(e));
+  }
+}
+
+async function adminToggleTargetSun(email, enabled) {
+  try {
+    const res = await fetchWithTimeout(`${API_BASE_URL}/admin/user-access/targetsun`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, enabled }),
+    }, 15000);
+    if (!res.ok) throw new Error("อัปเดต Target Sun ไม่สำเร็จ");
+    await adminLoadRows();
+    if (S.viewAsEmail === (email || "").trim().toLowerCase()) await loadManagers();
+  } catch (e) {
+    _adminShowError(e?.message || String(e));
+    await adminLoadRows();
+  }
+}
+
+async function adminStartViewAs(email) {
+  S.viewAsEmail = (email || "").trim().toLowerCase();
+  updateViewAsBanner();
+  closeAdminView();
+  document.getElementById("dashboardView").style.display = "none";
+  document.getElementById("loginView").style.display = "block";
+  document.body.classList.add("is-login");
+  _enableLoginScrollLock();
+  ["topbarTotalContainer", "topbarPeriodContainer", "logoutBtn", "adminNavBtn"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = "none";
+  });
+  await loadManagers();
+}
+
+async function exitViewAsMode() {
+  S.viewAsEmail = null;
+  updateViewAsBanner();
+  await loadManagers();
+}
 

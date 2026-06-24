@@ -9,7 +9,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Instrument+Serif:ital@0;1&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=202605135" />
+  <link rel="stylesheet" href="style.css?v=202606081" />
 </head>
 
 <body>
@@ -27,12 +27,20 @@
         <div class="topbar-period" id="topbarPeriodContainer" style="display:none;">
           <span id="topbarPeriodText">—</span>
         </div>
+        <button id="adminNavBtn" class="btn-admin-nav" type="button" style="display:none;" onclick="openAdminView()">
+          จัดการสิทธิ์
+        </button>
         <button id="logoutBtn" class="btn-logout" style="display:none;" onclick="handleLogout()">
           กลับเลือก Supervisor
         </button>
       </div>
     </div>
   </header>
+
+  <div id="viewAsBanner" class="view-as-banner" style="display:none;" role="status" aria-live="polite">
+    <span id="viewAsBannerText"></span>
+    <button type="button" class="view-as-banner__exit" onclick="exitViewAsMode()">ออกจากโหมดทดสอบ</button>
+  </div>
 
   <div class="page">
 
@@ -154,6 +162,9 @@
 
             <button type="button" class="btn-run login-btn" id="loginBtn">
               เข้าสู่ระบบ Dashboard
+            </button>
+            <button type="button" id="adminNavLoginBtn" class="btn-admin-login" style="display:none;" onclick="openAdminView()">
+              จัดการสิทธิ์ผู้ใช้ (แอดมิน)
             </button>
             <div class="login-error" id="loginError" style="display:none;"></div>
 
@@ -809,9 +820,67 @@
     หากมีปัญหาในการใช้งาน กรุณาติดต่อ IT
   </div>
 
+  <!-- ─── ADMIN VIEW ─── -->
+  <div id="adminView" class="admin-view" style="display:none;" aria-hidden="true">
+    <div class="admin-view__head">
+      <div>
+        <h1 class="admin-view__title">จัดการสิทธิ์ผู้ใช้</h1>
+        <p class="admin-view__sub">อีเมล + รหัส SL — แก้แล้วมีผลทันที (ไม่ต้อง refresh semantic model)</p>
+      </div>
+      <button type="button" class="btn-secondary" onclick="closeAdminView()">← กลับ</button>
+    </div>
+
+    <div id="adminStats" class="admin-stats" aria-live="polite"></div>
+
+    <div class="admin-toolbar">
+      <input type="search" id="adminSearch" class="admin-search" placeholder="ค้นหาอีเมล รหัส SL หรือภูมิภาค…" oninput="adminFilterRows()" />
+      <div class="admin-filter-chips" id="adminRoleFilters">
+        <button type="button" class="admin-chip admin-chip--active" data-role="" onclick="adminSetRoleFilter(this)">ทั้งหมด</button>
+        <button type="button" class="admin-chip" data-role="supervisor" onclick="adminSetRoleFilter(this)">Supervisor</button>
+        <button type="button" class="admin-chip" data-role="manager" onclick="adminSetRoleFilter(this)">Manager</button>
+        <button type="button" class="admin-chip" data-role="regional_manager" onclick="adminSetRoleFilter(this)">ผู้จัดการภูมิภาค</button>
+        <button type="button" class="admin-chip" data-role="unknown" onclick="adminSetRoleFilter(this)">ไม่พบใน trf</button>
+      </div>
+      <button type="button" class="btn-run admin-add-btn" onclick="adminShowAddForm()">+ เพิ่มผู้ใช้</button>
+    </div>
+
+    <div id="adminAddPanel" class="admin-add-panel" style="display:none;">
+      <div class="admin-add-grid">
+        <label>อีเมล<input type="email" id="adminAddEmail" class="field-input" placeholder="user@sahapat.co.th" /></label>
+        <label>รหัส SL<input type="text" id="adminAddUserpl" class="field-input" placeholder="SL330" /></label>
+        <label class="admin-check-label"><input type="checkbox" id="adminAddTargetSun" /> ส่ง Target Sun ได้</label>
+        <label>หมายเหตุ<input type="text" id="adminAddNote" class="field-input" placeholder="ไม่บังคับ" /></label>
+      </div>
+      <div class="admin-add-actions">
+        <button type="button" class="btn-run" onclick="adminSubmitAdd()">บันทึก</button>
+        <button type="button" class="btn-secondary" onclick="adminHideAddForm()">ยกเลิก</button>
+      </div>
+    </div>
+
+    <div id="adminError" class="login-error admin-error" style="display:none;"></div>
+    <div id="adminLoading" class="admin-loading" style="display:none;">กำลังโหลด…</div>
+
+    <div class="admin-table-wrap">
+      <table class="admin-table" id="adminTable">
+        <thead>
+          <tr>
+            <th>อีเมล</th>
+            <th>รหัส</th>
+            <th>บทบาท</th>
+            <th>ภูมิภาค</th>
+            <th>ดูได้ (SL)</th>
+            <th>Target Sun</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="adminTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- ใช้ไฟล์ในโปรเจกต์ — เครือข่ายองค์กรมักบล็อก alcdn.msauth.net ทำให้ msal ไม่โหลด -->
   <script src="vendor/msal-browser.min.js"></script>
-  <script src="app.js?v=202605133"></script>
+  <script src="app.js?v=202606081"></script>
 </body>
 
 </html>

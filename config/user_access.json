@@ -1,0 +1,752 @@
+[
+  {
+    "email": "amata.p@sahapat.co.th",
+    "userpl": "SL397",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "อีสาน",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "apichai.w@sahapat.co.th",
+    "userpl": "SL396",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "เหนือ",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "apichat.t@sahapat.co.th",
+    "userpl": "SL459",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "ใต้",
+    "acc_type": "",
+    "acc_joblevel": "",
+    "login_kind": "regional_manager"
+  },
+  {
+    "email": "atthaporn.n@sahapat.co.th",
+    "userpl": "SL527",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "กลางเครดิต",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "chaisant.l@sahapat.co.th",
+    "userpl": "SL112",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "A",
+    "login_kind": "standard"
+  },
+  {
+    "email": "chaiwat.k@sahapat.co.th",
+    "userpl": "SL372",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "เหนือ",
+    "acc_type": "NON",
+    "acc_joblevel": "2",
+    "login_kind": "manager_acc"
+  },
+  {
+    "email": "chaiyan.f@sahapat.co.th",
+    "userpl": "SL328",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "chartri.n@sahapat.co.th",
+    "userpl": "SL406",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "chatree.j@sahapat.co.th",
+    "userpl": "SL526",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "กลางหน่วยรถ",
+    "acc_type": "",
+    "acc_joblevel": "",
+    "login_kind": "regional_manager"
+  },
+  {
+    "email": "chumphon.a@sahapat.co.th",
+    "userpl": "SL415",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "danai.k@sahapat.co.th",
+    "userpl": "SL386",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "3",
+    "login_kind": "standard"
+  },
+  {
+    "email": "jantaluk.w@sahapat.co.th",
+    "userpl": "SL959",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "jaroonsub.t@sahapat.co.th",
+    "userpl": "SL369",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "2",
+    "login_kind": "manager_acc"
+  },
+  {
+    "email": "jessada.m@sahapat.co.th",
+    "userpl": "SL513",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "kanittha.h@sahapat.co.th",
+    "userpl": "SL629",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "2",
+    "login_kind": "manager_acc"
+  },
+  {
+    "email": "karntawit.k@sahapat.co.th",
+    "userpl": "SL301",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "3",
+    "login_kind": "standard"
+  },
+  {
+    "email": "kerdpong.v@sahapat.co.th",
+    "userpl": "SL528",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "korrapath.b@sahapat.co.th",
+    "userpl": "SL412",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "kriangsak.w@sahapat.co.th",
+    "userpl": "SL518",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "ใต้",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "kritsada.h@sahapat.co.th",
+    "userpl": "SL531",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "กลางเครดิต",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "manu.s@sahapat.co.th",
+    "userpl": "SL525",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "ใต้",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "napat.w@sahapat.co.th",
+    "userpl": "SL458",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "natee.k@sahapat.co.th",
+    "userpl": "SL454",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "nattapol.b@sahapat.co.th",
+    "userpl": "SL456",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "อีสาน",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "district_manager"
+  },
+  {
+    "email": "nirut.w@sahapat.co.th",
+    "userpl": "SL388",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "2",
+    "login_kind": "manager_acc"
+  },
+  {
+    "email": "noppadon.t@sahapat.co.th",
+    "userpl": "SL515",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "ใต้",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "noppol.t@sahapat.co.th",
+    "userpl": "SL411",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "numchok.p@sahapat.co.th",
+    "userpl": "SL387",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "nuttawan.c@sahapat.co.th",
+    "userpl": "SL223",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "pairat.c@sahapat.co.th",
+    "userpl": "SL358",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "ใต้",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "pakpoom.k@sahapat.co.th",
+    "userpl": "SL345",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "2",
+    "login_kind": "manager_acc"
+  },
+  {
+    "email": "panuwat.c@sahapat.co.th",
+    "userpl": "SL350",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "กลางหน่วยรถ",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "payom.k@sahapat.co.th",
+    "userpl": "SL330",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "",
+    "acc_joblevel": "",
+    "login_kind": "standard"
+  },
+  {
+    "email": "peerachat.o@sahapat.co.th",
+    "userpl": "SL214",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "3",
+    "login_kind": "standard"
+  },
+  {
+    "email": "phanuwat.j@sahapat.co.th",
+    "userpl": "SL392",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "กลางเครดิต",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "phisit.w@sahapat.co.th",
+    "userpl": "SL394",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "2",
+    "login_kind": "manager_acc"
+  },
+  {
+    "email": "pich.c@sahapat.co.th",
+    "userpl": "SL958",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "pittaya.k@sahapat.co.th",
+    "userpl": "SL453",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "กลางเครดิต",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "pongpol.k@sahapat.co.th",
+    "userpl": "SL382",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "ponlawat.p@sahapat.co.th",
+    "userpl": "SL532",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "pornsak.c@sahapat.co.th",
+    "userpl": "SL367",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "prasert.c@sahapat.co.th",
+    "userpl": "SL352",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "ใต้",
+    "acc_type": "NON",
+    "acc_joblevel": "2",
+    "login_kind": "manager_acc"
+  },
+  {
+    "email": "pratak.k@sahapat.co.th",
+    "userpl": "SL529",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "อีสาน",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "preecha.k@sahapat.co.th",
+    "userpl": "SL402",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "2",
+    "login_kind": "manager_acc"
+  },
+  {
+    "email": "preecha.p@sahapat.co.th",
+    "userpl": "SL393",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "เหนือ",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "ronnachai.s@sahapat.co.th",
+    "userpl": "SL319",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "sanchai.m@sahapat.co.th",
+    "userpl": "SL376",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "sarawut.p@sahapat.co.th",
+    "userpl": "SL535",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "เหนือ",
+    "acc_type": "",
+    "acc_joblevel": "",
+    "login_kind": "regional_manager"
+  },
+  {
+    "email": "senee.k@sahapat.co.th",
+    "userpl": "SL356",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "2",
+    "login_kind": "manager_acc"
+  },
+  {
+    "email": "sittidat.o@sahapat.co.th",
+    "userpl": "SL351",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "เหนือ",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "somchart.c@sahapat.co.th",
+    "userpl": "SL413",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "sompod.m@sahapat.co.th",
+    "userpl": "SL307",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "somrat.w@sahapat.co.th",
+    "userpl": "SL380",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "ใต้",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "somtawin.n@sahapat.co.th",
+    "userpl": "SL457",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "กลางหน่วยรถ",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "sorakom.n@sahapat.co.th",
+    "userpl": "SL371",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "sorawich.s@sahapat.co.th",
+    "userpl": "SL340",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "suban.c@sahapat.co.th",
+    "userpl": "SL506",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "เหนือ",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "sukhee.n@sahapat.co.th",
+    "userpl": "SL359",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "เหนือ",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "sumeth.s@sahapat.co.th",
+    "userpl": "SL311",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "2",
+    "login_kind": "manager_acc"
+  },
+  {
+    "email": "surachai.a@sahapat.co.th",
+    "userpl": "SL395",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "tanakorn.p@sahapat.co.th",
+    "userpl": "SL341",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "tanameat.s@sahapat.co.th",
+    "userpl": "SL384",
+    "can_import_targetsun": true,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "tanat.t@sahapat.co.th",
+    "userpl": "SL360",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "กลางเครดิต",
+    "acc_type": "NON",
+    "acc_joblevel": "2",
+    "login_kind": "manager_acc"
+  },
+  {
+    "email": "taweesak.p@sahapat.co.th",
+    "userpl": "SL204",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "เหนือ",
+    "acc_type": "NON",
+    "acc_joblevel": "3",
+    "login_kind": "standard"
+  },
+  {
+    "email": "teerasak.w@sahapat.co.th",
+    "userpl": "SL225",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "thanit.l@sahapat.co.th",
+    "userpl": "SL524",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "2",
+    "login_kind": "manager_acc"
+  },
+  {
+    "email": "thavorn.k@sahapat.co.th",
+    "userpl": "SL452",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "อีสาน",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "district_manager"
+  },
+  {
+    "email": "thitiwat.a@sahapat.co.th",
+    "userpl": "SL511",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "2",
+    "login_kind": "manager_acc"
+  },
+  {
+    "email": "tree.p@sahapat.co.th",
+    "userpl": "SL510",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "อีสาน",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "waranyoo.n@sahapat.co.th",
+    "userpl": "SL530",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "ใต้",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "werachai.j@sahapat.co.th",
+    "userpl": "SL503",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  },
+  {
+    "email": "wichit.l@sahapat.co.th",
+    "userpl": "SL374",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "2",
+    "login_kind": "manager_acc"
+  },
+  {
+    "email": "wigit.w@sahapat.co.th",
+    "userpl": "SL349",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "",
+    "acc_type": "NON",
+    "acc_joblevel": "2",
+    "login_kind": "manager_acc"
+  },
+  {
+    "email": "winai.s@sahapat.co.th",
+    "userpl": "SL309",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "อีสาน",
+    "acc_type": "NON",
+    "acc_joblevel": "2",
+    "login_kind": "manager_acc"
+  },
+  {
+    "email": "wirat.a@sahapat.co.th",
+    "userpl": "SL509",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "อีสาน",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc"
+  }
+]

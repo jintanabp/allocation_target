@@ -2,28 +2,27 @@
 
 ## ไฟล์ `.env`
 
-บน **server บริษัท** (ไม่ commit): คัดลอก **`config/.env.example` → `config/.env`** แล้วกรอกค่า — backend โหลด `config/.env` ก่อน แล้วโหลด `.env` ที่รากโปรเจกต์ถ้ามี (ค่าที่รากจะทับค่าซ้ำ)  
-โค้ด deploy จาก GitHub **ไม่ทับ** ไฟล์นี้
+คัดลอก **`config/.env.example` → `config/.env`** แล้วกรอกค่า — backend โหลด `config/.env` ก่อน แล้วโหลด `.env` ที่รากถ้ามี
 
-## `acc_local_test.json` (dev / UAT)
+## สิทธิ์ผู้ใช้ — `user_access.json` + `region_teams.json`
 
-ไฟล์นี้ใช้ได้ **สองอย่าง** (ไม่ต้องตั้ง env แยกสำหรับสิทธิ์ส่ง Target Sun):
+รายชื่อ **อีเมล + รหัส SL (USERPL)** เก็บที่ **`config/user_access.json`**
 
-1. **จำลอง ACC_USER_CONTROL** — เมื่อเปิด `ALLOCATION_ALLOW_ACC_DEV_JSON=1` และชี้ `ACC_USER_CONTROL_DEV_JSON=config/acc_local_test.json`
-2. **Allowlist ส่ง Target Sun** — อีเมลในไฟล์นี้ (และ admin ใน `ALLOCATION_ADMIN_EMAILS`) เท่านั้นที่กด **ส่งเข้า Target Sun** ได้
+- **ครั้งแรก / อัปเดตจาก ACC CSV:**  
+  `python scripts/enrich_user_access_from_csv.py --csv path/to/ACC_USER_CONTROL.csv`  
+  สคริปต์จะสร้าง `user_access.json` และ `region_teams.json` (จับคู่ภูมิภาคกับรหัส SL สำหรับผู้จัดการภูมิภาค)
+- **Deploy ครั้งแรก:** ไฟล์ทั้งสองอยู่ใน Git — server ได้รายชื่อพร้อมใช้หลัง `git pull`
+- **หลัง deploy:** แอดมินแก้ผ่านปุ่ม **「จัดการสิทธิ์」** (อีเมลใน `ALLOCATION_ADMIN_EMAILS`) — การแก้บน server ไม่ถูก commit อัตโนมัติ
+- ฟิลด์ `can_import_targetsun` กำหนดใครกด **ส่งเข้า Target Sun** ได้
 
-รูปแบบ:
+ตัวอย่างรูปแบบ: ดู `config/user_access.example.json`
 
-```json
-[
-  { "email": "user@sahapat.co.th", "userpl": "SL330" }
-]
-```
+## ไฟล์เก่า (เลิกใช้สำหรับสิทธิ์ login)
 
-เพิ่ม/ลดผู้ทดสอบ → แก้ JSON → รีสตาร์ท backend → รีเฟรชหน้าเว็บ
+- `ALLOCATION_ALLOW_ACC_DEV_JSON` / `ACC_USER_CONTROL_DEV_JSON` — ไม่ใช้แล้ว
+- `acc_local_test.json` — ใช้ seed สิทธิ์ Target Sun ครั้งแรกได้ (สคริปต์ enrich อ่านอัตโนมัติ)
+- `acc_extra_user` บน Fabric — ปิดด้วย `EXTRA_USER_ACCESS_DISABLED=1`
 
 ## ความปลอดภัย
 
-ไฟล์ `.env` มี **client secret** — เก็บเฉพาะบน server; หมุน secret เมื่อมีการรั่วหรือย้าย environment
-
-`acc_local_test.json` ไม่ควร commit อีเมล production จริงถ้า repo เปิดกว้าง — ใช้เฉพาะช่วงทดสอบ
+`.env` มี secret — อย่า commit; backup `user_access.json` บน server เป็นระยะหลังแอดมินแก้ผ่านเว็บ
