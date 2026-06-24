@@ -285,10 +285,9 @@ def compute_allowed_supervisor_codes(
         )
         if expanded:
             allowed.update(expanded)
-        elif not expanded:
-            logger.warning(
-                "USERPL=%s ไม่ตรง trf / ภูมิภาค — ข้าม", upl
-            )
+        elif upl:
+            allowed.add(upl)
+            logger.info("USERPL=%s ใช้รหัสตัวเองเป็น fallback", upl)
 
     return allowed
 
@@ -447,11 +446,12 @@ def visible_supervisors_for_row_dict(
     if region_teams is None:
         region_teams = load_region_teams()
     upl = str(row.get("userpl") or "").strip().upper()
-    return sorted(
-        _expand_userpl_to_supervisors(
-            upl, row, supervisors, manager_codes, by_m, region_teams
-        )
+    vis = _expand_userpl_to_supervisors(
+        upl, row, supervisors, manager_codes, by_m, region_teams
     )
+    if upl:
+        vis.add(upl)
+    return sorted(vis)
 
 
 def filter_managers_payload_for_user(full: dict, user: dict[str, Any]) -> dict:

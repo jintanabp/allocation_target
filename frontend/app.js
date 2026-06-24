@@ -5127,9 +5127,25 @@ function adminSetRoleFilter(btn) {
   adminFilterRows();
 }
 
+function _adminEffectiveVisible(rowOrVis, userplFallback) {
+  if (rowOrVis && typeof rowOrVis === "object" && !Array.isArray(rowOrVis)) {
+    const vis = Array.isArray(rowOrVis.visible_supervisors)
+      ? rowOrVis.visible_supervisors.filter(Boolean)
+      : [];
+    const upl = String(rowOrVis.userpl || "").trim().toUpperCase();
+    if (vis.length) return vis;
+    return upl ? [upl] : [];
+  }
+  const vis = Array.isArray(rowOrVis) ? rowOrVis.filter(Boolean) : [];
+  const upl = String(userplFallback || "").trim().toUpperCase();
+  if (vis.length) return vis;
+  return upl ? [upl] : [];
+}
+
 function _adminFormatVisible(vis) {
-  if (!vis || !vis.length) return { text: "—", title: "" };
-  const text = vis.join(", ");
+  const arr = Array.isArray(vis) ? vis.filter(Boolean) : [];
+  if (!arr.length) return { text: "—", title: "" };
+  const text = arr.join(", ");
   return { text, title: text };
 }
 
@@ -5170,7 +5186,7 @@ async function _adminFetchVisiblePreview(userpl, loginKind, accRegion, targetEl)
       return;
     }
     const data = await res.json();
-    const vis = Array.isArray(data.visible_supervisors) ? data.visible_supervisors : [];
+    const vis = _adminEffectiveVisible(data.visible_supervisors, upl);
     _adminRenderVisiblePreview(targetEl, vis.length ? vis : [upl]);
   } catch (_) {
     _adminRenderVisiblePreview(targetEl, [upl]);
@@ -5255,7 +5271,7 @@ function adminShowEditForm(row) {
   _adminBindVisiblePreviewListeners();
   _adminRenderVisiblePreview(
     document.getElementById("adminEditVisible"),
-    row.visible_supervisors
+    _adminEffectiveVisible(row)
   );
   _adminScheduleVisiblePreview("edit");
   const p = document.getElementById("adminEditPanel");
@@ -5346,8 +5362,7 @@ function adminRenderTable(rows) {
     const em = escapeHtml(r.email);
     const upl = escapeHtml(r.userpl);
     const region = escapeHtml(r.acc_region || "—");
-    const visArr = Array.isArray(r.visible_supervisors) ? r.visible_supervisors : [];
-    const visFmt = _adminFormatVisible(visArr);
+    const visFmt = _adminFormatVisible(_adminEffectiveVisible(r));
     const vis = escapeHtml(visFmt.text);
     const visTitle = escapeHtml(visFmt.title);
     const tsChecked = r.can_import_targetsun ? "checked" : "";
