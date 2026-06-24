@@ -25,8 +25,6 @@
     "can_import_targetsun": false,
     "note": "",
     "acc_region": "ใต้",
-    "acc_type": "",
-    "acc_joblevel": "",
     "login_kind": "regional_manager"
   },
   {
@@ -44,7 +42,6 @@
     "userpl": "SL112",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "A",
     "login_kind": "standard"
@@ -64,7 +61,6 @@
     "userpl": "SL328",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -74,7 +70,6 @@
     "userpl": "SL406",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -85,8 +80,6 @@
     "can_import_targetsun": false,
     "note": "",
     "acc_region": "กลางหน่วยรถ",
-    "acc_type": "",
-    "acc_joblevel": "",
     "login_kind": "regional_manager"
   },
   {
@@ -94,7 +87,6 @@
     "userpl": "SL415",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -104,7 +96,6 @@
     "userpl": "SL386",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "3",
     "login_kind": "standard"
@@ -114,7 +105,6 @@
     "userpl": "SL959",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -124,7 +114,6 @@
     "userpl": "SL369",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc"
@@ -134,7 +123,6 @@
     "userpl": "SL513",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -144,7 +132,6 @@
     "userpl": "SL629",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc"
@@ -154,7 +141,6 @@
     "userpl": "SL301",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "3",
     "login_kind": "standard"
@@ -164,7 +150,6 @@
     "userpl": "SL528",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -174,7 +159,6 @@
     "userpl": "SL412",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -214,7 +198,6 @@
     "userpl": "SL458",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -224,7 +207,6 @@
     "userpl": "SL454",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -244,7 +226,6 @@
     "userpl": "SL388",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc"
@@ -264,7 +245,6 @@
     "userpl": "SL411",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -274,7 +254,6 @@
     "userpl": "SL387",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -284,7 +263,6 @@
     "userpl": "SL223",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -304,7 +282,6 @@
     "userpl": "SL345",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc"
@@ -324,9 +301,6 @@
     "userpl": "SL330",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
-    "acc_type": "",
-    "acc_joblevel": "",
     "login_kind": "standard"
   },
   {
@@ -334,7 +308,6 @@
     "userpl": "SL214",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "3",
     "login_kind": "standard"
@@ -354,7 +327,6 @@
     "userpl": "SL394",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc"
@@ -364,7 +336,6 @@
     "userpl": "SL958",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -384,7 +355,6 @@
     "userpl": "SL382",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -394,7 +364,6 @@
     "userpl": "SL532",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -404,7 +373,6 @@
     "userpl": "SL367",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -434,7 +402,6 @@
     "userpl": "SL402",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc"
@@ -454,7 +421,6 @@
     "userpl": "SL319",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -464,7 +430,6 @@
     "userpl": "SL376",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -475,8 +440,6 @@
     "can_import_targetsun": false,
     "note": "",
     "acc_region": "เหนือ",
-    "acc_type": "",
-    "acc_joblevel": "",
     "login_kind": "regional_manager"
   },
   {
@@ -484,7 +447,6 @@
     "userpl": "SL356",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc"
@@ -504,7 +466,6 @@
     "userpl": "SL413",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -514,7 +475,6 @@
     "userpl": "SL307",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -544,7 +504,6 @@
     "userpl": "SL371",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -554,7 +513,6 @@
     "userpl": "SL340",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -584,7 +542,6 @@
     "userpl": "SL311",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc"
@@ -594,7 +551,6 @@
     "userpl": "SL395",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -604,7 +560,6 @@
     "userpl": "SL341",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -614,7 +569,6 @@
     "userpl": "SL384",
     "can_import_targetsun": true,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -644,7 +598,6 @@
     "userpl": "SL225",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -654,7 +607,6 @@
     "userpl": "SL524",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc"
@@ -674,7 +626,6 @@
     "userpl": "SL511",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc"
@@ -704,7 +655,6 @@
     "userpl": "SL503",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc"
@@ -714,7 +664,6 @@
     "userpl": "SL374",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc"
@@ -724,7 +673,6 @@
     "userpl": "SL349",
     "can_import_targetsun": false,
     "note": "",
-    "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc"

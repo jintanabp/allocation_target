@@ -19,6 +19,19 @@ from ..core.tga_period import (
     enforce_tga_has_targets_for_period,
     enforce_tga_selection_matches_effective_window,
 )
+
+_SKU_OUTPUT_COLUMNS = [
+    "sku",
+    "price_per_box",
+    "price_missing",
+    "price_from_sales_history",
+    "supervisor_target_boxes",
+    "brand_name_thai",
+    "brand_name_english",
+    "section",
+    "product_name_thai",
+    "product_name_english",
+]
 from ..fabric_dax_connector import FabricDAXConnector
 
 logger = logging.getLogger("target_allocation")
@@ -38,8 +51,15 @@ def _build_sku_and_sun_from_tga(
       ราคา: หลัก cfm_product_characteristic[CREDITUNITPRICE] (PRODUCTSIZE=0, PRODUCTCODE);
       ไม่มี → Amount÷Qty ประวัติ (ไฮไลต์ฟ้า); ไม่มีเลย → 0 + เหลือง
     """
-    sku_list = [str(s).strip() for s in sku_list]
+    sku_list = [str(s).strip() for s in sku_list if str(s).strip()]
     team_set = set(str(e).strip() for e in emp_list)
+
+    if not sku_list:
+        df_sku = pd.DataFrame(columns=_SKU_OUTPUT_COLUMNS)
+        df_sun = pd.DataFrame(
+            [{"emp_id": str(e).strip(), "target_sun": 0.0} for e in emp_list]
+        )
+        return df_sku, df_sun, set()
 
     df_p = (
         df_product.copy()
@@ -291,6 +311,13 @@ def load_employees_payload(
             )
         if not sku_union:
             logger.warning("ไม่มี SKU ที่มีเป้า TGA ในงวดที่เลือก")
+            enforce_tga_has_targets_for_period(
+                fabric,
+                target_month,
+                target_year,
+                df_tga,
+                0,
+            )
 
         df_sku_base = pd.DataFrame()
         try:

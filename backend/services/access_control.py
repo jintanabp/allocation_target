@@ -71,6 +71,9 @@ def user_can_import_targetsun(user: dict[str, Any]) -> bool:
     email = normalized_email(user.get("email"))
     if not email:
         return False
+    # โหมดทดสอบ (view-as): ไม่อนุโลมสิทธิ์แอดมิน — ใช้แค่ can_import_targetsun ของอีเมลที่จำลอง
+    if user.get("view_as_email"):
+        return email in emails_with_targetsun()
     if email in parse_allocation_admin_emails():
         return True
     return email in emails_with_targetsun()
@@ -178,6 +181,8 @@ def _expand_userpl_to_supervisors(
             if cu in supervisors:
                 allowed.add(cu)
         if allowed:
+            if upl:
+                allowed.add(upl)
             return allowed
 
     if login_kind == "supervisor_acc" and region and upl not in supervisors:
@@ -186,6 +191,8 @@ def _expand_userpl_to_supervisors(
             if cu in supervisors:
                 allowed.add(cu)
         if allowed:
+            if upl:
+                allowed.add(upl)
             return allowed
 
     in_sup = upl in supervisors
@@ -196,6 +203,10 @@ def _expand_userpl_to_supervisors(
         allowed.add(upl)
 
     if not allowed and login_kind == "supervisor_acc" and in_sup:
+        allowed.add(upl)
+
+    # ทุกรหัส SL ใน user_access ดูรหัสตัวเองได้อย่างน้อย (แม้ขยายตามภูมิภาค/trf แล้ว)
+    if upl:
         allowed.add(upl)
 
     return allowed
@@ -363,6 +374,10 @@ def build_user_access_context(email: str, *, allow_admin_bypass: bool = True) ->
         lk = str((meta or {}).get("login_kind") or "")
         if lk in ("regional_manager", "district_manager"):
             mgr_pick.add(upl)
+        elif lk == "manager_acc":
+            mgr_pick.add(upl)
+        elif lk == "supervisor_acc":
+            sup_pick.add(upl)
         elif upl in supervisors:
             sup_pick.add(upl)
         elif upl in manager_codes:
@@ -400,10 +415,8 @@ def enrich_user_access_rows(rows: list[dict[str, Any]] | None = None) -> list[di
         em = normalized_email(r.get("email"))
         upl = str(r.get("userpl") or "").strip().upper()
         role = role_label_for_meta(r, upl, supervisors, manager_codes)
-        visible = sorted(
-            _expand_userpl_to_supervisors(
-                upl, r, supervisors, manager_codes, by_m, region_teams
-            )
+        visible = visible_supervisors_for_row_dict(
+            r, supervisors, manager_codes, by_m, region_teams
         )
         out.append(
             {
@@ -418,6 +431,27 @@ def enrich_user_access_rows(rows: list[dict[str, Any]] | None = None) -> list[di
             }
         )
     return out
+
+
+def visible_supervisors_for_row_dict(
+    row: dict[str, Any],
+    supervisors: set[str] | None = None,
+    manager_codes: set[str] | None = None,
+    by_m: dict[str, list[str]] | None = None,
+    region_teams: dict[str, list[str]] | None = None,
+) -> list[str]:
+    """คำนวณรหัส SL ที่ผู้ใช้ดูได้ (สำหรับแอดมิน / preview)"""
+    if supervisors is None or manager_codes is None or by_m is None:
+        mdata = managers_svc.load_full_managers_payload()
+        supervisors, manager_codes, by_m = parse_trf_managers_metadata(mdata)
+    if region_teams is None:
+        region_teams = load_region_teams()
+    upl = str(row.get("userpl") or "").strip().upper()
+    return sorted(
+        _expand_userpl_to_supervisors(
+            upl, row, supervisors, manager_codes, by_m, region_teams
+        )
+    )
 
 
 def filter_managers_payload_for_user(full: dict, user: dict[str, Any]) -> dict:

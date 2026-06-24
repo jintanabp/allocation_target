@@ -57,7 +57,8 @@ def require_authenticated_user(
 
     try:
         ctx = build_user_access_context(effective_email, allow_admin_bypass=allow_admin_bypass)
-        ctx["is_admin"] = is_admin
+        # โหมดทดสอบ: สิทธิ์ตามผู้ใช้ที่จำลองเท่านั้น — ไม่คงสิทธิ์แอดมิน
+        ctx["is_admin"] = is_admin and not view_as
         if view_as and is_admin:
             ctx["view_as_email"] = view_as
             ctx["acting_admin_email"] = actual_email

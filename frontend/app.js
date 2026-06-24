@@ -1005,8 +1005,7 @@ function _enableLoginScrollLock() {
   _loginScrollLockOn = true;
 
   // ล็อก scroll ที่ระดับ html element (ที่ scroll จริง)
-  document.documentElement.style.overflow = 'hidden';
-  document.documentElement.style.height = '100dvh';
+  _setPageScrollLocked(true);
 
   const prevent = (e) => {
     if (!document.body.classList.contains("is-login")) return;
@@ -1028,11 +1027,19 @@ function _enableLoginScrollLock() {
   window.addEventListener("keydown", preventKeys, { passive: false, capture: true });
 }
 
+function _setPageScrollLocked(locked) {
+  if (locked) {
+    document.documentElement.style.overflow = "hidden";
+    document.documentElement.style.height = "100dvh";
+  } else {
+    document.documentElement.style.overflow = "";
+    document.documentElement.style.height = "";
+  }
+}
+
 function _disableLoginScrollLock() {
   document.body.classList.remove("is-login");
-  // คืนค่า scroll ให้ html element เมื่อเข้า dashboard
-  document.documentElement.style.overflow = '';
-  document.documentElement.style.height = '';
+  _setPageScrollLocked(false);
 }
 
 async function _pollServerStatus() {
@@ -1301,10 +1308,10 @@ async function loadManagers() {
         S.canImportTargetSun = data.can_import_targetsun;
       }
       if (typeof data.is_admin === "boolean") {
-        S.isAdmin = data.is_admin;
+        S.isAdmin = !!data.is_admin && !S.viewAsEmail;
       }
-      updateAdminNavVisibility();
       updateViewAsBanner();
+      updateAdminNavVisibility();
       syncLakehouseButton();
       const rows = Array.isArray(data.rows) ? data.rows : [];
       let list = [];
@@ -1592,24 +1599,30 @@ async function loadData(supId, targetMonth, targetYear) {
     if (!res.ok) {
       let detail = "ดึงข้อมูลไม่สำเร็จ";
       let j = null;
-      try { j = await res.json(); detail = j.detail || detail; } catch (_) { j = null; }
+      try {
+        j = await res.json();
+        detail = _formatApiErrorDetail(j) || detail;
+      } catch (_) {
+        j = null;
+      }
 
       // ไม่มีเป้าในงวดที่เลือก (กรอง EFFECTIVEDATE แล้วว่าง)
-      if (res.status === 409 && detail && typeof detail === "object" && detail.code === "TGA_PERIOD_EMPTY") {
-        _showTgaPeriodEmptyModal(targetMonth, targetYear, detail);
+      const detailObj = j && j.detail && typeof j.detail === "object" && !Array.isArray(j.detail) ? j.detail : null;
+      if (res.status === 409 && detailObj && detailObj.code === "TGA_PERIOD_EMPTY") {
+        _showTgaPeriodEmptyModal(targetMonth, targetYear, detailObj);
         return false;
       }
 
       // Friendly handling: งวดที่เลือกไม่ตรงกับ snapshot ของ TGA (EFFECTIVEDATE)
-      if (res.status === 409 && detail && typeof detail === "object" && detail.code === "TGA_EFFECTIVE_WINDOW") {
-        const sug = detail.suggested || {};
+      if (res.status === 409 && detailObj && detailObj.code === "TGA_EFFECTIVE_WINDOW") {
+        const sug = detailObj.suggested || {};
         const sm = Number(sug.month);
         const sy = Number(sug.year);
         const label = (sm && sy) ? (MONTH_FULL_TH[sm] + " " + (sy + 543)) : "";
-        const eff = detail.effectiveDateLabel ? `อัปเดตล่าสุด: <b>${escH(detail.effectiveDateLabel)}</b>` : "";
+        const eff = detailObj.effectiveDateLabel ? `อัปเดตล่าสุด: <b>${escH(detailObj.effectiveDateLabel)}</b>` : "";
         const bodyHtml = `
           <div style="margin-bottom:8px;">
-            ${escH(detail.message || "กรุณาเลือกงวดเดือนที่ระบบแนะนำ")}
+            ${escH(detailObj.message || "กรุณาเลือกงวดเดือนที่ระบบแนะนำ")}
           </div>
           ${label ? `<div style="margin:6px 0 0;"><b>งวดที่แนะนำ:</b> ${escH(label)}</div>` : ""}
           ${eff ? `<div style="margin-top:6px;color:var(--text-3);font-size:12px;">${eff}</div>` : ""}
@@ -1641,9 +1654,13 @@ async function loadData(supId, targetMonth, targetYear) {
         return false;
       }
 
-      // Default error
-      const printable = (typeof detail === "string") ? detail : (detail?.message || detail?.title || "ดึงข้อมูลไม่สำเร็จ");
-      showLoginError(`❌ ${_userFacingError(printable, "โหลดข้อมูลไม่สำเร็จ")}`);
+      // Default error — แสดงรหัส HTTP + ข้อความจาก backend ถ้ามี
+      const printable =
+        typeof detail === "string" && detail.trim()
+          ? detail
+          : "ดึงข้อมูลไม่สำเร็จ";
+      const prefix = res.status ? `(${res.status}) ` : "";
+      showLoginError(`❌ ${prefix}${_userFacingError(printable, "โหลดข้อมูลไม่สำเร็จ")}`);
       return false;
     }
     const data = await res.json();
@@ -3366,11 +3383,18 @@ function _formatApiErrorDetail(j) {
   if (!j) return "";
   const d = j.detail;
   if (typeof d === "string") return d;
+  if (Array.isArray(d)) {
+    return d
+      .map((x) => (x && (x.msg || x.message)) || "")
+      .filter(Boolean)
+      .join(" — ");
+  }
   if (d && typeof d === "object") {
     const parts = [];
     if (typeof d.message === "string") parts.push(d.message);
     if (typeof d.hint_th === "string") parts.push(d.hint_th);
     if (parts.length) return parts.join(" — ");
+    if (typeof d.title === "string") parts.push(d.title);
     if (typeof d.resultMsg === "string") return d.resultMsg;
     try { return JSON.stringify(d).slice(0, 800); } catch (_) { return String(d); }
   }
@@ -4999,17 +5023,19 @@ const ADMIN_ROLE_LABELS = {
 
 let _adminRoleFilter = "";
 let _adminOpenedFromLogin = false;
+let _adminEditOrig = null;
 
 function updateAdminNavVisibility() {
   const topBtn = document.getElementById("adminNavBtn");
   const loginBtn = document.getElementById("adminNavLoginBtn");
   const onLogin = document.getElementById("loginView")?.style.display !== "none";
   const inAdmin = document.getElementById("adminView")?.style.display !== "none";
+  const adminUi = S.isAdmin && !S.viewAsEmail;
   if (topBtn) {
-    topBtn.style.display = S.isAdmin && !onLogin && !inAdmin ? "inline-flex" : "none";
+    topBtn.style.display = adminUi && !onLogin && !inAdmin ? "inline-flex" : "none";
   }
   if (loginBtn) {
-    loginBtn.style.display = S.isAdmin && onLogin ? "block" : "none";
+    loginBtn.style.display = adminUi && onLogin ? "block" : "none";
   }
 }
 
@@ -5017,28 +5043,38 @@ function updateViewAsBanner() {
   const bar = document.getElementById("viewAsBanner");
   const txt = document.getElementById("viewAsBannerText");
   if (!bar || !txt) return;
-  if (S.viewAsEmail) {
-    txt.textContent = `โหมดทดสอบ: กำลังดูสิทธิ์แบบ ${S.viewAsEmail}`;
+  const active = !!S.viewAsEmail;
+  document.body.classList.toggle("has-view-as-banner", active);
+  if (active) {
+    txt.textContent = `โหมดทดสอบ: กำลังดูสิทธิ์แบบ ${S.viewAsEmail} (ไม่มีสิทธิ์แอดมิน)`;
     bar.style.display = "flex";
+    updateAdminNavVisibility();
   } else {
     bar.style.display = "none";
+    document.body.classList.remove("has-view-as-banner");
   }
 }
 
 function openAdminView() {
-  if (!S.isAdmin) return;
+  if (!S.isAdmin || S.viewAsEmail) return;
   const av = document.getElementById("adminView");
   const dash = document.getElementById("dashboardView");
   const login = document.getElementById("loginView");
   if (!av) return;
   _adminOpenedFromLogin = login?.style.display !== "none";
-  av.style.display = "block";
+  av.style.display = "flex";
   av.setAttribute("aria-hidden", "false");
   if (dash) dash.style.display = "none";
   if (login) login.style.display = "none";
   document.body.classList.remove("is-login");
+  document.body.classList.add("is-admin");
+  _setPageScrollLocked(false);
   const nav = document.getElementById("adminNavBtn");
   if (nav) nav.style.display = "none";
+  window.scrollTo(0, 0);
+  adminHideEditForm();
+  adminHideAddForm();
+  _adminBindVisiblePreviewListeners();
   adminLoadRows();
 }
 
@@ -5050,13 +5086,16 @@ function closeAdminView() {
     av.style.display = "none";
     av.setAttribute("aria-hidden", "true");
   }
+  document.body.classList.remove("is-admin");
   const onLoginFlow = _adminOpenedFromLogin;
   _adminOpenedFromLogin = false;
   if (onLoginFlow) {
     if (login) login.style.display = "block";
     document.body.classList.add("is-login");
+    _setPageScrollLocked(true);
   } else if (dash && login?.style.display === "none") {
     dash.style.display = "block";
+    _setPageScrollLocked(false);
   }
   updateAdminNavVisibility();
 }
@@ -5073,11 +5112,11 @@ function adminRenderStats(rows) {
     else if (role === "unknown" || role === "acc_only") counts.unknown += 1;
   }
   el.innerHTML = `
-    <div class="admin-stat"><span class="admin-stat__n">${counts.total}</span><span class="admin-stat__l">รายการทั้งหมด</span></div>
-    <div class="admin-stat"><span class="admin-stat__n">${counts.supervisor}</span><span class="admin-stat__l">Supervisor</span></div>
-    <div class="admin-stat"><span class="admin-stat__n">${counts.manager}</span><span class="admin-stat__l">Manager</span></div>
-    <div class="admin-stat"><span class="admin-stat__n">${counts.regional}</span><span class="admin-stat__l">ภูมิภาค/เขต</span></div>
-    <div class="admin-stat admin-stat--muted"><span class="admin-stat__n">${counts.unknown}</span><span class="admin-stat__l">ไม่พบใน trf</span></div>`;
+    <span class="admin-stat-pill admin-stat-pill--total"><b>${counts.total}</b> ทั้งหมด</span>
+    <span class="admin-stat-pill admin-stat-pill--supervisor"><b>${counts.supervisor}</b> Sup</span>
+    <span class="admin-stat-pill admin-stat-pill--manager"><b>${counts.manager}</b> Mgr</span>
+    <span class="admin-stat-pill admin-stat-pill--regional"><b>${counts.regional}</b> ภูมิภาค</span>
+    <span class="admin-stat-pill admin-stat-pill--muted"><b>${counts.unknown}</b> ไม่ใน trf</span>`;
 }
 
 function adminSetRoleFilter(btn) {
@@ -5090,9 +5129,79 @@ function adminSetRoleFilter(btn) {
 
 function _adminFormatVisible(vis) {
   if (!vis || !vis.length) return { text: "—", title: "" };
-  const title = vis.join(", ");
-  if (vis.length <= 4) return { text: vis.join(", "), title };
-  return { text: `${vis.slice(0, 4).join(", ")} +${vis.length - 4}`, title };
+  const text = vis.join(", ");
+  return { text, title: text };
+}
+
+let _adminVisiblePreviewTimer = null;
+let _adminVisiblePreviewBound = false;
+
+function _adminRenderVisiblePreview(el, vis) {
+  if (!el) return;
+  const arr = Array.isArray(vis) ? vis.filter(Boolean) : [];
+  if (!arr.length) {
+    el.innerHTML = '<span class="admin-visible-preview__empty">—</span>';
+    return;
+  }
+  el.innerHTML = arr
+    .map((c) => `<code class="admin-vis-chip">${escapeHtml(c)}</code>`)
+    .join("");
+}
+
+async function _adminFetchVisiblePreview(userpl, loginKind, accRegion, targetEl) {
+  const upl = (userpl || "").trim().toUpperCase();
+  if (!upl) {
+    _adminRenderVisiblePreview(targetEl, []);
+    return;
+  }
+  try {
+    const q = new URLSearchParams({
+      userpl: upl,
+      login_kind: loginKind || "standard",
+      acc_region: accRegion || "",
+    });
+    const res = await fetchWithTimeout(
+      `${API_BASE_URL}/admin/user-access/preview-visible?${q}`,
+      {},
+      10000
+    );
+    if (!res.ok) {
+      _adminRenderVisiblePreview(targetEl, [upl]);
+      return;
+    }
+    const data = await res.json();
+    const vis = Array.isArray(data.visible_supervisors) ? data.visible_supervisors : [];
+    _adminRenderVisiblePreview(targetEl, vis.length ? vis : [upl]);
+  } catch (_) {
+    _adminRenderVisiblePreview(targetEl, [upl]);
+  }
+}
+
+function _adminScheduleVisiblePreview(mode) {
+  clearTimeout(_adminVisiblePreviewTimer);
+  _adminVisiblePreviewTimer = setTimeout(() => {
+    const isEdit = mode === "edit";
+    const uplEl = document.getElementById(isEdit ? "adminEditUserpl" : "adminAddUserpl");
+    const targetEl = document.getElementById(isEdit ? "adminEditVisible" : "adminAddVisible");
+    const meta = isEdit ? _adminEditOrig : null;
+    _adminFetchVisiblePreview(
+      uplEl?.value,
+      meta?.login_kind || "standard",
+      meta?.acc_region || "",
+      targetEl
+    );
+  }, 280);
+}
+
+function _adminBindVisiblePreviewListeners() {
+  if (_adminVisiblePreviewBound) return;
+  _adminVisiblePreviewBound = true;
+  document.getElementById("adminEditUserpl")?.addEventListener("input", () => {
+    _adminScheduleVisiblePreview("edit");
+  });
+  document.getElementById("adminAddUserpl")?.addEventListener("input", () => {
+    _adminScheduleVisiblePreview("add");
+  });
 }
 
 function _adminShowError(msg) {
@@ -5108,12 +5217,58 @@ function _adminShowError(msg) {
 }
 
 function adminShowAddForm() {
+  adminHideEditForm();
   const p = document.getElementById("adminAddPanel");
-  if (p) p.style.display = "block";
+  if (p) {
+    p.style.display = "block";
+    p.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+  _adminBindVisiblePreviewListeners();
+  _adminScheduleVisiblePreview("add");
 }
 
 function adminHideAddForm() {
   const p = document.getElementById("adminAddPanel");
+  if (p) p.style.display = "none";
+}
+
+function adminShowEditForm(row) {
+  adminHideAddForm();
+  _adminEditOrig = {
+    email: (row.email || "").trim().toLowerCase(),
+    userpl: (row.userpl || "").trim().toUpperCase(),
+    login_kind: row.login_kind || "standard",
+    acc_region: row.acc_region || "",
+  };
+  const em = document.getElementById("adminEditEmail");
+  const upl = document.getElementById("adminEditUserpl");
+  const ts = document.getElementById("adminEditTargetSun");
+  const note = document.getElementById("adminEditNote");
+  const hint = document.getElementById("adminEditHint");
+  if (em) em.value = row.email || "";
+  if (upl) upl.value = row.userpl || "";
+  if (ts) ts.checked = !!row.can_import_targetsun;
+  if (note) note.value = row.note || "";
+  if (hint) {
+    hint.textContent = `แก้ไขแถว ${_adminEditOrig.email} / ${_adminEditOrig.userpl}`;
+  }
+  _adminBindVisiblePreviewListeners();
+  _adminRenderVisiblePreview(
+    document.getElementById("adminEditVisible"),
+    row.visible_supervisors
+  );
+  _adminScheduleVisiblePreview("edit");
+  const p = document.getElementById("adminEditPanel");
+  if (p) {
+    p.style.display = "block";
+    p.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+  _adminShowError("");
+}
+
+function adminHideEditForm() {
+  _adminEditOrig = null;
+  const p = document.getElementById("adminEditPanel");
   if (p) p.style.display = "none";
 }
 
@@ -5171,8 +5326,20 @@ function adminFilterRows() {
 
 function adminRenderTable(rows) {
   const tbody = document.getElementById("adminTableBody");
+  const countEl = document.getElementById("adminRowCount");
   if (!tbody) return;
+  if (countEl) {
+    const total = S.adminRows.length;
+    const shown = rows.length;
+    countEl.textContent =
+      shown === total ? `แสดง ${shown} รายการ` : `แสดง ${shown} จาก ${total} รายการ`;
+  }
   tbody.innerHTML = "";
+  if (!rows.length) {
+    tbody.innerHTML =
+      '<tr><td colspan="7" class="admin-empty">ไม่พบรายการที่ตรงกับตัวกรอง</td></tr>';
+    return;
+  }
   for (const r of rows) {
     const tr = document.createElement("tr");
     const role = ADMIN_ROLE_LABELS[r.role] || r.role || "—";
@@ -5192,14 +5359,16 @@ function adminRenderTable(rows) {
       <td class="admin-td-vis" title="${visTitle}">${vis}</td>
       <td class="admin-td-ts"><input type="checkbox" class="admin-ts-check" ${tsChecked} aria-label="Target Sun" /></td>
       <td class="admin-td-actions">
-        <button type="button" class="btn-secondary btn-xs admin-btn-view">ดูแบบนี้</button>
-        <button type="button" class="btn-secondary btn-xs admin-btn-danger admin-btn-del">ลบ</button>
+        <button type="button" class="admin-action admin-action--edit">แก้ไข</button>
+        <button type="button" class="admin-action admin-action--view">ดูแบบนี้</button>
+        <button type="button" class="admin-action admin-action--del admin-btn-del">ลบ</button>
       </td>`;
     const tsInp = tr.querySelector(".admin-ts-check");
     if (tsInp) {
       tsInp.addEventListener("change", () => adminToggleTargetSun(r.email, tsInp.checked));
     }
-    tr.querySelector(".admin-btn-view")?.addEventListener("click", () => adminStartViewAs(r.email));
+    tr.querySelector(".admin-action--edit")?.addEventListener("click", () => adminShowEditForm(r));
+    tr.querySelector(".admin-action--view")?.addEventListener("click", () => adminStartViewAs(r.email));
     tr.querySelector(".admin-btn-del")?.addEventListener("click", () => adminDeleteRow(r.email, r.userpl));
     tbody.appendChild(tr);
   }
@@ -5211,6 +5380,53 @@ function escapeHtml(s) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+async function adminSubmitEdit() {
+  if (!_adminEditOrig) return;
+  const email = (document.getElementById("adminEditEmail")?.value || "").trim();
+  const userpl = (document.getElementById("adminEditUserpl")?.value || "").trim().toUpperCase();
+  const canTs = !!document.getElementById("adminEditTargetSun")?.checked;
+  const note = (document.getElementById("adminEditNote")?.value || "").trim();
+  if (!email || !userpl) {
+    _adminShowError("กรุณากรอกอีเมลและรหัส SL");
+    return;
+  }
+  const body = {
+    email: _adminEditOrig.email,
+    userpl: _adminEditOrig.userpl,
+    can_import_targetsun: canTs,
+    note,
+  };
+  const newEmail = email.toLowerCase();
+  const newUserpl = userpl.toUpperCase();
+  if (newEmail !== _adminEditOrig.email) body.new_email = newEmail;
+  if (newUserpl !== _adminEditOrig.userpl) body.new_userpl = newUserpl;
+  try {
+    const res = await fetchWithTimeout(`${API_BASE_URL}/admin/user-access`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }, 15000);
+    if (!res.ok) {
+      let d = "แก้ไขไม่สำเร็จ";
+      try {
+        const j = await res.json();
+        if (j.detail) d = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
+      } catch (_) { /* ignore */ }
+      throw new Error(d);
+    }
+    const viewEmail = _adminEditOrig.email;
+    adminHideEditForm();
+    await adminLoadRows();
+    if (S.viewAsEmail && S.viewAsEmail === viewEmail) {
+      S.viewAsEmail = newEmail;
+      updateViewAsBanner();
+      await loadManagers();
+    }
+  } catch (e) {
+    _adminShowError(e?.message || String(e));
+  }
 }
 
 async function adminSubmitAdd() {
@@ -5251,6 +5467,13 @@ async function adminSubmitAdd() {
 
 async function adminDeleteRow(email, userpl) {
   if (!confirm(`ลบ ${email} / ${userpl}?`)) return;
+  if (
+    _adminEditOrig &&
+    _adminEditOrig.email === (email || "").trim().toLowerCase() &&
+    _adminEditOrig.userpl === (userpl || "").trim().toUpperCase()
+  ) {
+    adminHideEditForm();
+  }
   try {
     const res = await fetchWithTimeout(`${API_BASE_URL}/admin/user-access`, {
       method: "DELETE",
@@ -5282,6 +5505,7 @@ async function adminToggleTargetSun(email, enabled) {
 
 async function adminStartViewAs(email) {
   S.viewAsEmail = (email || "").trim().toLowerCase();
+  S.isAdmin = false;
   updateViewAsBanner();
   closeAdminView();
   document.getElementById("dashboardView").style.display = "none";
@@ -5299,5 +5523,6 @@ async function exitViewAsMode() {
   S.viewAsEmail = null;
   updateViewAsBanner();
   await loadManagers();
+  updateAdminNavVisibility();
 }
 

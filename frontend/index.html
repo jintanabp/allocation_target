@@ -9,7 +9,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Instrument+Serif:ital@0;1&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=202606081" />
+  <link rel="stylesheet" href="style.css?v=202606096" />
 </head>
 
 <body>
@@ -137,7 +137,7 @@
                 </select>
                 <select id="yearSelect" class="field-select year-select"></select>
               </div>
-              <div class="field-help">ค่าเริ่มต้น = เดือนถัดจากวันนี้ — เป้าดึงตามวันที่มีผล (EFFECTIVEDATE) ของงวดที่เลือก (เลือกย้อนดูเดือนก่อนได้)</div>
+              <div class="field-help" title="ค่าเริ่มต้น = เดือนถัดจากวันนี้ — เป้าดึงตามวันที่มีผล (EFFECTIVEDATE) ของงวดที่เลือก">ค่าเริ่มต้น = เดือนถัดไป · เป้าตาม EFFECTIVEDATE</div>
             </div>
 
             <div class="login-mini">
@@ -822,65 +822,104 @@
 
   <!-- ─── ADMIN VIEW ─── -->
   <div id="adminView" class="admin-view" style="display:none;" aria-hidden="true">
-    <div class="admin-view__head">
-      <div>
-        <h1 class="admin-view__title">จัดการสิทธิ์ผู้ใช้</h1>
-        <p class="admin-view__sub">อีเมล + รหัส SL — แก้แล้วมีผลทันที (ไม่ต้อง refresh semantic model)</p>
-      </div>
-      <button type="button" class="btn-secondary" onclick="closeAdminView()">← กลับ</button>
-    </div>
+    <div class="admin-shell">
+      <header class="admin-top">
+        <div class="admin-top__title">
+          <h1 class="admin-view__title">จัดการสิทธิ์ผู้ใช้</h1>
+          <p class="admin-view__sub">อีเมล + รหัส SL — แก้แล้วมีผลทันที</p>
+        </div>
+        <div id="adminStats" class="admin-stats admin-stats--compact" aria-live="polite"></div>
+        <button type="button" class="admin-btn-back" onclick="closeAdminView()">
+          <span class="admin-btn-back__icon" aria-hidden="true">←</span>
+          กลับแอป
+        </button>
+      </header>
 
-    <div id="adminStats" class="admin-stats" aria-live="polite"></div>
+      <section class="admin-controls">
+        <div class="admin-toolbar">
+          <div class="admin-toolbar__search-wrap">
+            <span class="admin-toolbar__search-icon" aria-hidden="true">⌕</span>
+            <input type="search" id="adminSearch" class="admin-search" placeholder="ค้นหาอีเมล รหัส SL หรือภูมิภาค…" oninput="adminFilterRows()" />
+          </div>
+          <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminShowAddForm()">+ เพิ่มผู้ใช้</button>
+        </div>
+        <div class="admin-filter-chips" id="adminRoleFilters">
+          <button type="button" class="admin-chip admin-chip--active" data-role="" onclick="adminSetRoleFilter(this)">ทั้งหมด</button>
+          <button type="button" class="admin-chip" data-role="supervisor" onclick="adminSetRoleFilter(this)">Supervisor</button>
+          <button type="button" class="admin-chip" data-role="manager" onclick="adminSetRoleFilter(this)">Manager</button>
+          <button type="button" class="admin-chip" data-role="regional_manager" onclick="adminSetRoleFilter(this)">ภูมิภาค</button>
+          <button type="button" class="admin-chip" data-role="unknown" onclick="adminSetRoleFilter(this)">ไม่พบใน trf</button>
+        </div>
+      </section>
 
-    <div class="admin-toolbar">
-      <input type="search" id="adminSearch" class="admin-search" placeholder="ค้นหาอีเมล รหัส SL หรือภูมิภาค…" oninput="adminFilterRows()" />
-      <div class="admin-filter-chips" id="adminRoleFilters">
-        <button type="button" class="admin-chip admin-chip--active" data-role="" onclick="adminSetRoleFilter(this)">ทั้งหมด</button>
-        <button type="button" class="admin-chip" data-role="supervisor" onclick="adminSetRoleFilter(this)">Supervisor</button>
-        <button type="button" class="admin-chip" data-role="manager" onclick="adminSetRoleFilter(this)">Manager</button>
-        <button type="button" class="admin-chip" data-role="regional_manager" onclick="adminSetRoleFilter(this)">ผู้จัดการภูมิภาค</button>
-        <button type="button" class="admin-chip" data-role="unknown" onclick="adminSetRoleFilter(this)">ไม่พบใน trf</button>
-      </div>
-      <button type="button" class="btn-run admin-add-btn" onclick="adminShowAddForm()">+ เพิ่มผู้ใช้</button>
-    </div>
+      <section id="adminAddPanel" class="admin-card admin-card--add" style="display:none;">
+        <h2 class="admin-card__title">เพิ่มผู้ใช้ใหม่</h2>
+        <div class="admin-add-grid">
+          <label>อีเมล<input type="email" id="adminAddEmail" class="field-input" placeholder="user@sahapat.co.th" /></label>
+          <label>รหัส SL<input type="text" id="adminAddUserpl" class="field-input" placeholder="SL330" /></label>
+          <label class="admin-check-label"><input type="checkbox" id="adminAddTargetSun" /> ส่ง Target Sun ได้</label>
+          <label>หมายเหตุ<input type="text" id="adminAddNote" class="field-input" placeholder="ไม่บังคับ" /></label>
+          <label class="admin-visible-label">ดูได้ (SL)
+            <div id="adminAddVisible" class="admin-visible-preview" aria-live="polite">—</div>
+            <span class="admin-visible-help">คำนวณจากรหัส SL + trf — อย่างน้อยรหัสตัวเอง</span>
+          </label>
+        </div>
+        <div class="admin-add-actions">
+          <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminSubmitAdd()">บันทึก</button>
+          <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminHideAddForm()">ยกเลิก</button>
+        </div>
+      </section>
 
-    <div id="adminAddPanel" class="admin-add-panel" style="display:none;">
-      <div class="admin-add-grid">
-        <label>อีเมล<input type="email" id="adminAddEmail" class="field-input" placeholder="user@sahapat.co.th" /></label>
-        <label>รหัส SL<input type="text" id="adminAddUserpl" class="field-input" placeholder="SL330" /></label>
-        <label class="admin-check-label"><input type="checkbox" id="adminAddTargetSun" /> ส่ง Target Sun ได้</label>
-        <label>หมายเหตุ<input type="text" id="adminAddNote" class="field-input" placeholder="ไม่บังคับ" /></label>
-      </div>
-      <div class="admin-add-actions">
-        <button type="button" class="btn-run" onclick="adminSubmitAdd()">บันทึก</button>
-        <button type="button" class="btn-secondary" onclick="adminHideAddForm()">ยกเลิก</button>
-      </div>
-    </div>
+      <section id="adminEditPanel" class="admin-card admin-card--add" style="display:none;">
+        <h2 class="admin-card__title">แก้ไขผู้ใช้</h2>
+        <p id="adminEditHint" class="admin-edit-hint"></p>
+        <div class="admin-add-grid">
+          <label>อีเมล<input type="email" id="adminEditEmail" class="field-input" placeholder="user@sahapat.co.th" /></label>
+          <label>รหัส SL<input type="text" id="adminEditUserpl" class="field-input" placeholder="SL330" /></label>
+          <label class="admin-check-label"><input type="checkbox" id="adminEditTargetSun" /> ส่ง Target Sun ได้</label>
+          <label>หมายเหตุ<input type="text" id="adminEditNote" class="field-input" placeholder="ไม่บังคับ" /></label>
+          <label class="admin-visible-label">ดูได้ (SL)
+            <div id="adminEditVisible" class="admin-visible-preview" aria-live="polite">—</div>
+            <span class="admin-visible-help">อัปเดตเมื่อเปลี่ยนรหัส SL — ขยายตาม trf / ภูมิภาคถ้ามี</span>
+          </label>
+        </div>
+        <div class="admin-add-actions">
+          <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminSubmitEdit()">บันทึกการแก้ไข</button>
+          <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminHideEditForm()">ยกเลิก</button>
+        </div>
+      </section>
 
-    <div id="adminError" class="login-error admin-error" style="display:none;"></div>
-    <div id="adminLoading" class="admin-loading" style="display:none;">กำลังโหลด…</div>
+      <div id="adminError" class="admin-alert admin-alert--error" style="display:none;"></div>
+      <div id="adminLoading" class="admin-loading" style="display:none;">กำลังโหลด…</div>
 
-    <div class="admin-table-wrap">
-      <table class="admin-table" id="adminTable">
-        <thead>
-          <tr>
-            <th>อีเมล</th>
-            <th>รหัส</th>
-            <th>บทบาท</th>
-            <th>ภูมิภาค</th>
-            <th>ดูได้ (SL)</th>
-            <th>Target Sun</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="adminTableBody"></tbody>
-      </table>
+      <section class="admin-card admin-card--table">
+        <div class="admin-table-head">
+          <h2 class="admin-card__title">รายชื่อผู้ใช้</h2>
+          <span id="adminRowCount" class="admin-row-count"></span>
+        </div>
+        <div class="admin-table-wrap">
+          <table class="admin-table" id="adminTable">
+            <thead>
+              <tr>
+                <th class="admin-th-email">อีเมล</th>
+                <th>รหัส</th>
+                <th>บทบาท</th>
+                <th>ภูมิภาค</th>
+                <th>ดูได้ (SL)</th>
+                <th>Target Sun</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="adminTableBody"></tbody>
+          </table>
+        </div>
+      </section>
     </div>
   </div>
 
   <!-- ใช้ไฟล์ในโปรเจกต์ — เครือข่ายองค์กรมักบล็อก alcdn.msauth.net ทำให้ msal ไม่โหลด -->
   <script src="vendor/msal-browser.min.js"></script>
-  <script src="app.js?v=202606081"></script>
+  <script src="app.js?v=202606097"></script>
 </body>
 
 </html>
