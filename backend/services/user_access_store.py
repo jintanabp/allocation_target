@@ -54,10 +54,23 @@ def _normalize_row(row: dict[str, Any]) -> dict[str, Any] | None:
         "can_import_targetsun": can_ts,
         "note": note,
     }
-    for key in ("acc_region", "acc_type", "acc_joblevel", "login_kind"):
+    for key in (
+        "full_name",
+        "acc_region",
+        "acc_type",
+        "acc_joblevel",
+        "login_kind",
+        "acc_division",
+        "acc_unit",
+        "acc_position",
+        "acc_scope",
+    ):
         val = row.get(key)
         if val is not None and str(val).strip():
             out[key] = str(val).strip()
+    vis = row.get("visible_supervisor_codes")
+    if isinstance(vis, list) and vis:
+        out["visible_supervisor_codes"] = [str(x).strip().upper() for x in vis if x]
     return out
 
 

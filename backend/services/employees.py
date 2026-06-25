@@ -1,5 +1,6 @@
 import logging
 import os
+from typing import Any
 
 import pandas as pd
 from fastapi import HTTPException
@@ -33,6 +34,10 @@ _SKU_OUTPUT_COLUMNS = [
     "product_name_english",
 ]
 from ..fabric_dax_connector import FabricDAXConnector
+from .employee_payload_cache import (
+    read_cached_employee_payload,
+    write_cached_employee_payload,
+)
 
 logger = logging.getLogger("target_allocation")
 
@@ -160,11 +165,19 @@ def load_employees_payload(
     target_month: int,
     target_year: int,
     regen_target: bool = False,
+    refresh: bool = False,
 ) -> dict:
     """
     Logic ของ GET /data/employees (ย้ายออกจาก router เพื่อให้อ่านง่าย)
     ต้องคง behavior เดิม: เขียน cache ที่ data/, สร้าง target_boxes/target_sun, สร้าง history caches
+
+    refresh=True หรือ regen_target=True → ข้าม JSON cache แล้วยิง DAX ใหม่
     """
+    if not regen_target and not refresh:
+        cached = read_cached_employee_payload(sup_id, target_month, target_year)
+        if cached is not None:
+            return cached
+
     os.makedirs("data", exist_ok=True)
 
     # ── Step 1: ดึงพนักงาน ───────────────────────────────
@@ -623,7 +636,7 @@ def load_employees_payload(
         sup_id, target_year, sku_ids_list, df_hist
     )
 
-    return {
+    payload = {
         "employees": _clean(df_emp),
         "skus": _clean(df_sku),
         "sku_warnings": sku_warnings,
@@ -631,5 +644,121 @@ def load_employees_payload(
         "supervisor_name": sup_name,
         "new_product_skus": new_product_skus,
         "new_products_detection_mode": new_products_detection_mode,
+        "data_from_cache": False,
+        "data_cached_at": None,
     }
+    write_cached_employee_payload(sup_id, target_month, target_year, payload)
+    return payload
+
+
+def merge_employees_payloads(
+    payloads: list[dict[str, Any]],
+    *,
+    aggregate_label: str,
+    aggregate_sup_ids: list[str],
+) -> dict[str, Any]:
+    """รวมหลาย supervisor payload เป็นมุมมองเดียว (read-only overview)"""
+    if not payloads:
+        raise HTTPException(404, detail="ไม่มีข้อมูลจาก Supervisor ที่เลือก")
+
+    employees: list[dict[str, Any]] = []
+    sku_map: dict[str, dict[str, Any]] = {}
+    warnings: list[dict[str, Any]] = []
+    new_products: set[str] = set()
+    skipped: list[dict[str, str]] = []
+
+    for p in payloads:
+        sid = str(p.get("_source_sup_id") or "").strip().upper()
+        for emp in p.get("employees") or []:
+            row = dict(emp)
+            row["supervisor_code"] = sid
+            employees.append(row)
+        for s in p.get("skus") or []:
+            sku = str(s.get("sku") or "").strip()
+            if not sku:
+                continue
+            boxes = float(s.get("supervisor_target_boxes") or 0)
+            if sku in sku_map:
+                sku_map[sku]["supervisor_target_boxes"] = (
+                    float(sku_map[sku].get("supervisor_target_boxes") or 0) + boxes
+                )
+            else:
+                sku_map[sku] = dict(s)
+                sku_map[sku]["supervisor_target_boxes"] = boxes
+        for w in p.get("sku_warnings") or []:
+            warnings.append(dict(w))
+        for np in p.get("new_product_skus") or []:
+            new_products.add(str(np).strip())
+
+    employees.sort(key=lambda e: (str(e.get("supervisor_code") or ""), str(e.get("emp_id") or "")))
+    skus = sorted(sku_map.values(), key=lambda s: str(s.get("sku") or ""))
+
+    warnings.insert(
+        0,
+        {
+            "type": "aggregate_view",
+            "sku": "",
+            "brand": "",
+            "message": (
+                f"โหมดดูรวม ({aggregate_label}) — {len(aggregate_sup_ids)} ซุป, "
+                f"{len(employees)} พนักงาน · ไม่สามารถกระจายหีบในโหมดนี้"
+            ),
+        },
+    )
+
+    return {
+        "employees": employees,
+        "skus": skus,
+        "sku_warnings": warnings,
+        "tga_period_status": "ok",
+        "supervisor_name": aggregate_label,
+        "new_product_skus": sorted(new_products),
+        "new_products_detection_mode": "aggregate",
+        "aggregate_mode": True,
+        "aggregate_sup_ids": aggregate_sup_ids,
+        "skipped_supervisors": skipped,
+    }
+
+
+def load_employees_bulk(
+    sup_ids: list[str],
+    target_month: int,
+    target_year: int,
+    *,
+    aggregate_label: str,
+    refresh: bool = False,
+) -> dict[str, Any]:
+    ids = sorted({str(x).strip().upper() for x in sup_ids if str(x).strip()})
+    if not ids:
+        raise HTTPException(400, detail="ไม่มีรหัส Supervisor สำหรับโหลดแบบรวม")
+
+    payloads: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
+    for sid in ids:
+        try:
+            p = load_employees_payload(
+                sid, target_month, target_year, refresh=refresh
+            )
+            p["_source_sup_id"] = sid
+            payloads.append(p)
+        except HTTPException as ex:
+            skipped.append({"sup_id": sid, "detail": str(ex.detail)})
+            logger.warning("bulk skip %s: %s", sid, ex.detail)
+        except Exception as ex:
+            skipped.append({"sup_id": sid, "detail": str(ex)})
+            logger.warning("bulk skip %s: %s", sid, ex)
+
+    if not payloads:
+        raise HTTPException(
+            404,
+            detail=f"ไม่สามารถโหลดข้อมูลจาก Supervisor ที่เลือก ({len(skipped)} รายการล้มเหลว)",
+        )
+
+    merged = merge_employees_payloads(
+        payloads,
+        aggregate_label=aggregate_label,
+        aggregate_sup_ids=[p["_source_sup_id"] for p in payloads],
+    )
+    merged["skipped_supervisors"] = skipped
+    return merged
 

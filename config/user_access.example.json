@@ -7,6 +7,9 @@
     "acc_region": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
-    "login_kind": "standard"
+    "login_kind": "standard",
+    "acc_division": "",
+    "acc_unit": "",
+    "acc_position": ""
   }
 ]

@@ -36,6 +36,11 @@ def emp_cache_path(sup_id: str, month: int, year: int) -> str:
     return f"data/emp_cache_{safe_id(sup_id)}_{year}_{month:02d}.csv"
 
 
+def employee_payload_cache_path(sup_id: str, month: int, year: int) -> str:
+    """JSON cache ของ GET /data/employees ต่อ (sup, งวด) — ลดการยิง DAX ซ้ำ"""
+    return f"data/payload_cache_{safe_id(sup_id)}_{year}_{month:02d}.json"
+
+
 def tga_grain_cache_path(sup_id: str, month: int, year: int) -> str:
     """
     เป้าหมายจาก tga_target_salesman_next — grain เต็ม (SALESMAN×PRODUCT×SALESTYPE×…)

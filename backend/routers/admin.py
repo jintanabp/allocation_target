@@ -43,6 +43,31 @@ class UserAccessUpdateBody(BaseModel):
     note: str | None = None
     new_email: str | None = Field(default=None, description="เปลี่ยนอีเมล")
     new_userpl: str | None = Field(default=None, description="เปลี่ยนรหัส USERPL")
+    login_kind: str | None = None
+    acc_region: str | None = None
+    acc_division: str | None = None
+    acc_unit: str | None = None
+    acc_position: str | None = None
+
+
+_META_PATCH_KEYS = (
+    "login_kind",
+    "acc_region",
+    "acc_division",
+    "acc_unit",
+    "acc_position",
+)
+
+
+def _patch_row_meta(row: dict[str, Any], body: UserAccessUpdateBody) -> None:
+    for key in _META_PATCH_KEYS:
+        if getattr(body, key, None) is None:
+            continue
+        val = str(getattr(body, key) or "").strip()
+        if val:
+            row[key] = val
+        else:
+            row.pop(key, None)
 
 
 class UserAccessDeleteBody(BaseModel):
@@ -66,6 +91,7 @@ def preview_user_visible(
     userpl: str = Query(..., min_length=1),
     login_kind: str = Query("standard"),
     acc_region: str = Query(""),
+    acc_division: str = Query(""),
     _admin: dict = Depends(require_admin_user),
 ) -> dict[str, Any]:
     """Preview รหัส SL ที่ดูได้ — ใช้ในฟอร์มแอดมิน"""
@@ -73,6 +99,7 @@ def preview_user_visible(
         "userpl": userpl.strip().upper(),
         "login_kind": (login_kind or "standard").strip(),
         "acc_region": (acc_region or "").strip(),
+        "acc_division": (acc_division or "").strip(),
     }
     visible = visible_supervisors_for_row_dict(row)
     return {"visible_supervisors": visible}
@@ -135,6 +162,7 @@ def update_user_access(
         updated_row["can_import_targetsun"] = bool(body.can_import_targetsun)
     if body.note is not None:
         updated_row["note"] = str(body.note).strip()
+    _patch_row_meta(updated_row, body)
 
     out = [
         updated_row if r["email"] == em and r["userpl"] == upl else r

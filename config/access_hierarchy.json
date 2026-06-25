@@ -1,0 +1,1829 @@
+{
+  "source": "excel_roster",
+  "synced_at": "2026-06-25T15:00:44+0700",
+  "rows": [
+    {
+      "supervisor_code": "SL397",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL520",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL396",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL459",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL460",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL375",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL527",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL351",
+      "depend_on": "SL372",
+      "manager_code": "SL372"
+    },
+    {
+      "supervisor_code": "SL372",
+      "depend_on": "SL372",
+      "manager_code": "SL372"
+    },
+    {
+      "supervisor_code": "SL393",
+      "depend_on": "SL372",
+      "manager_code": "SL372"
+    },
+    {
+      "supervisor_code": "SL396",
+      "depend_on": "SL372",
+      "manager_code": "SL372"
+    },
+    {
+      "supervisor_code": "SL506",
+      "depend_on": "SL372",
+      "manager_code": "SL372"
+    },
+    {
+      "supervisor_code": "SL535",
+      "depend_on": "SL372",
+      "manager_code": "SL372"
+    },
+    {
+      "supervisor_code": "SL328",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL362",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL406",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL526",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL539",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL415",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL959",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL369",
+      "depend_on": "SL369",
+      "manager_code": "SL369"
+    },
+    {
+      "supervisor_code": "SL523",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL513",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL381",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL629",
+      "depend_on": "SL629",
+      "manager_code": "SL629"
+    },
+    {
+      "supervisor_code": "SL301",
+      "depend_on": "SL301",
+      "manager_code": "SL301"
+    },
+    {
+      "supervisor_code": "SL330",
+      "depend_on": "SL301",
+      "manager_code": "SL301"
+    },
+    {
+      "supervisor_code": "SL350",
+      "depend_on": "SL301",
+      "manager_code": "SL301"
+    },
+    {
+      "supervisor_code": "SL351",
+      "depend_on": "SL301",
+      "manager_code": "SL301"
+    },
+    {
+      "supervisor_code": "SL380",
+      "depend_on": "SL301",
+      "manager_code": "SL301"
+    },
+    {
+      "supervisor_code": "SL393",
+      "depend_on": "SL301",
+      "manager_code": "SL301"
+    },
+    {
+      "supervisor_code": "SL396",
+      "depend_on": "SL301",
+      "manager_code": "SL301"
+    },
+    {
+      "supervisor_code": "SL397",
+      "depend_on": "SL301",
+      "manager_code": "SL301"
+    },
+    {
+      "supervisor_code": "SL452",
+      "depend_on": "SL301",
+      "manager_code": "SL301"
+    },
+    {
+      "supervisor_code": "SL453",
+      "depend_on": "SL301",
+      "manager_code": "SL301"
+    },
+    {
+      "supervisor_code": "SL456",
+      "depend_on": "SL301",
+      "manager_code": "SL301"
+    },
+    {
+      "supervisor_code": "SL457",
+      "depend_on": "SL301",
+      "manager_code": "SL301"
+    },
+    {
+      "supervisor_code": "SL459",
+      "depend_on": "SL301",
+      "manager_code": "SL301"
+    },
+    {
+      "supervisor_code": "SL460",
+      "depend_on": "SL301",
+      "manager_code": "SL301"
+    },
+    {
+      "supervisor_code": "SL506",
+      "depend_on": "SL301",
+      "manager_code": "SL301"
+    },
+    {
+      "supervisor_code": "SL509",
+      "depend_on": "SL301",
+      "manager_code": "SL301"
+    },
+    {
+      "supervisor_code": "SL515",
+      "depend_on": "SL301",
+      "manager_code": "SL301"
+    },
+    {
+      "supervisor_code": "SL518",
+      "depend_on": "SL301",
+      "manager_code": "SL301"
+    },
+    {
+      "supervisor_code": "SL525",
+      "depend_on": "SL301",
+      "manager_code": "SL301"
+    },
+    {
+      "supervisor_code": "SL526",
+      "depend_on": "SL301",
+      "manager_code": "SL301"
+    },
+    {
+      "supervisor_code": "SL527",
+      "depend_on": "SL301",
+      "manager_code": "SL301"
+    },
+    {
+      "supervisor_code": "SL529",
+      "depend_on": "SL301",
+      "manager_code": "SL301"
+    },
+    {
+      "supervisor_code": "SL530",
+      "depend_on": "SL301",
+      "manager_code": "SL301"
+    },
+    {
+      "supervisor_code": "SL531",
+      "depend_on": "SL301",
+      "manager_code": "SL301"
+    },
+    {
+      "supervisor_code": "SL535",
+      "depend_on": "SL301",
+      "manager_code": "SL301"
+    },
+    {
+      "supervisor_code": "SL528",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL412",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL518",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL531",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL525",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL399",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL458",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL346",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL454",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL456",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL319",
+      "depend_on": "SL388",
+      "manager_code": "SL388"
+    },
+    {
+      "supervisor_code": "SL387",
+      "depend_on": "SL388",
+      "manager_code": "SL388"
+    },
+    {
+      "supervisor_code": "SL388",
+      "depend_on": "SL388",
+      "manager_code": "SL388"
+    },
+    {
+      "supervisor_code": "SL407",
+      "depend_on": "SL388",
+      "manager_code": "SL388"
+    },
+    {
+      "supervisor_code": "SL408",
+      "depend_on": "SL388",
+      "manager_code": "SL388"
+    },
+    {
+      "supervisor_code": "SL415",
+      "depend_on": "SL388",
+      "manager_code": "SL388"
+    },
+    {
+      "supervisor_code": "SL454",
+      "depend_on": "SL388",
+      "manager_code": "SL388"
+    },
+    {
+      "supervisor_code": "SL515",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL418",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL411",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL387",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL223",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL320",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL358",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL341",
+      "depend_on": "SL345",
+      "manager_code": "SL345"
+    },
+    {
+      "supervisor_code": "SL345",
+      "depend_on": "SL345",
+      "manager_code": "SL345"
+    },
+    {
+      "supervisor_code": "SL375",
+      "depend_on": "SL345",
+      "manager_code": "SL345"
+    },
+    {
+      "supervisor_code": "SL381",
+      "depend_on": "SL345",
+      "manager_code": "SL345"
+    },
+    {
+      "supervisor_code": "SL382",
+      "depend_on": "SL345",
+      "manager_code": "SL345"
+    },
+    {
+      "supervisor_code": "SL418",
+      "depend_on": "SL345",
+      "manager_code": "SL345"
+    },
+    {
+      "supervisor_code": "SL528",
+      "depend_on": "SL345",
+      "manager_code": "SL345"
+    },
+    {
+      "supervisor_code": "SL350",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL330",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL350",
+      "depend_on": "SL392",
+      "manager_code": "SL392"
+    },
+    {
+      "supervisor_code": "SL392",
+      "depend_on": "SL392",
+      "manager_code": "SL392"
+    },
+    {
+      "supervisor_code": "SL453",
+      "depend_on": "SL392",
+      "manager_code": "SL392"
+    },
+    {
+      "supervisor_code": "SL457",
+      "depend_on": "SL392",
+      "manager_code": "SL392"
+    },
+    {
+      "supervisor_code": "SL526",
+      "depend_on": "SL392",
+      "manager_code": "SL392"
+    },
+    {
+      "supervisor_code": "SL527",
+      "depend_on": "SL392",
+      "manager_code": "SL392"
+    },
+    {
+      "supervisor_code": "SL531",
+      "depend_on": "SL392",
+      "manager_code": "SL392"
+    },
+    {
+      "supervisor_code": "SL225",
+      "depend_on": "SL394",
+      "manager_code": "SL394"
+    },
+    {
+      "supervisor_code": "SL307",
+      "depend_on": "SL394",
+      "manager_code": "SL394"
+    },
+    {
+      "supervisor_code": "SL394",
+      "depend_on": "SL394",
+      "manager_code": "SL394"
+    },
+    {
+      "supervisor_code": "SL503",
+      "depend_on": "SL394",
+      "manager_code": "SL394"
+    },
+    {
+      "supervisor_code": "SL514",
+      "depend_on": "SL394",
+      "manager_code": "SL394"
+    },
+    {
+      "supervisor_code": "SL539",
+      "depend_on": "SL394",
+      "manager_code": "SL394"
+    },
+    {
+      "supervisor_code": "SL958",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL453",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL382",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL532",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL367",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL352",
+      "depend_on": "SL352",
+      "manager_code": "SL352"
+    },
+    {
+      "supervisor_code": "SL380",
+      "depend_on": "SL532",
+      "manager_code": "SL532"
+    },
+    {
+      "supervisor_code": "SL459",
+      "depend_on": "SL532",
+      "manager_code": "SL532"
+    },
+    {
+      "supervisor_code": "SL515",
+      "depend_on": "SL532",
+      "manager_code": "SL532"
+    },
+    {
+      "supervisor_code": "SL518",
+      "depend_on": "SL532",
+      "manager_code": "SL532"
+    },
+    {
+      "supervisor_code": "SL525",
+      "depend_on": "SL532",
+      "manager_code": "SL532"
+    },
+    {
+      "supervisor_code": "SL530",
+      "depend_on": "SL532",
+      "manager_code": "SL532"
+    },
+    {
+      "supervisor_code": "SL532",
+      "depend_on": "SL532",
+      "manager_code": "SL532"
+    },
+    {
+      "supervisor_code": "SL529",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL328",
+      "depend_on": "SL402",
+      "manager_code": "SL402"
+    },
+    {
+      "supervisor_code": "SL362",
+      "depend_on": "SL402",
+      "manager_code": "SL402"
+    },
+    {
+      "supervisor_code": "SL399",
+      "depend_on": "SL402",
+      "manager_code": "SL402"
+    },
+    {
+      "supervisor_code": "SL402",
+      "depend_on": "SL402",
+      "manager_code": "SL402"
+    },
+    {
+      "supervisor_code": "SL412",
+      "depend_on": "SL402",
+      "manager_code": "SL402"
+    },
+    {
+      "supervisor_code": "SL520",
+      "depend_on": "SL402",
+      "manager_code": "SL402"
+    },
+    {
+      "supervisor_code": "SL393",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL319",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL376",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL408",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL535",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL356",
+      "depend_on": "SL356",
+      "manager_code": "SL356"
+    },
+    {
+      "supervisor_code": "SL351",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL413",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL105",
+      "depend_on": "SL105",
+      "manager_code": "SL105"
+    },
+    {
+      "supervisor_code": "SL330",
+      "depend_on": "SL105",
+      "manager_code": "SL105"
+    },
+    {
+      "supervisor_code": "SL350",
+      "depend_on": "SL105",
+      "manager_code": "SL105"
+    },
+    {
+      "supervisor_code": "SL351",
+      "depend_on": "SL105",
+      "manager_code": "SL105"
+    },
+    {
+      "supervisor_code": "SL380",
+      "depend_on": "SL105",
+      "manager_code": "SL105"
+    },
+    {
+      "supervisor_code": "SL393",
+      "depend_on": "SL105",
+      "manager_code": "SL105"
+    },
+    {
+      "supervisor_code": "SL396",
+      "depend_on": "SL105",
+      "manager_code": "SL105"
+    },
+    {
+      "supervisor_code": "SL397",
+      "depend_on": "SL105",
+      "manager_code": "SL105"
+    },
+    {
+      "supervisor_code": "SL452",
+      "depend_on": "SL105",
+      "manager_code": "SL105"
+    },
+    {
+      "supervisor_code": "SL453",
+      "depend_on": "SL105",
+      "manager_code": "SL105"
+    },
+    {
+      "supervisor_code": "SL456",
+      "depend_on": "SL105",
+      "manager_code": "SL105"
+    },
+    {
+      "supervisor_code": "SL457",
+      "depend_on": "SL105",
+      "manager_code": "SL105"
+    },
+    {
+      "supervisor_code": "SL459",
+      "depend_on": "SL105",
+      "manager_code": "SL105"
+    },
+    {
+      "supervisor_code": "SL460",
+      "depend_on": "SL105",
+      "manager_code": "SL105"
+    },
+    {
+      "supervisor_code": "SL506",
+      "depend_on": "SL105",
+      "manager_code": "SL105"
+    },
+    {
+      "supervisor_code": "SL509",
+      "depend_on": "SL105",
+      "manager_code": "SL105"
+    },
+    {
+      "supervisor_code": "SL515",
+      "depend_on": "SL105",
+      "manager_code": "SL105"
+    },
+    {
+      "supervisor_code": "SL518",
+      "depend_on": "SL105",
+      "manager_code": "SL105"
+    },
+    {
+      "supervisor_code": "SL525",
+      "depend_on": "SL105",
+      "manager_code": "SL105"
+    },
+    {
+      "supervisor_code": "SL526",
+      "depend_on": "SL105",
+      "manager_code": "SL105"
+    },
+    {
+      "supervisor_code": "SL527",
+      "depend_on": "SL105",
+      "manager_code": "SL105"
+    },
+    {
+      "supervisor_code": "SL529",
+      "depend_on": "SL105",
+      "manager_code": "SL105"
+    },
+    {
+      "supervisor_code": "SL530",
+      "depend_on": "SL105",
+      "manager_code": "SL105"
+    },
+    {
+      "supervisor_code": "SL531",
+      "depend_on": "SL105",
+      "manager_code": "SL105"
+    },
+    {
+      "supervisor_code": "SL535",
+      "depend_on": "SL105",
+      "manager_code": "SL105"
+    },
+    {
+      "supervisor_code": "SL307",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL380",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL457",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL417",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL371",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL340",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL506",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL351",
+      "depend_on": "SL359",
+      "manager_code": "SL359"
+    },
+    {
+      "supervisor_code": "SL359",
+      "depend_on": "SL359",
+      "manager_code": "SL359"
+    },
+    {
+      "supervisor_code": "SL393",
+      "depend_on": "SL359",
+      "manager_code": "SL359"
+    },
+    {
+      "supervisor_code": "SL396",
+      "depend_on": "SL359",
+      "manager_code": "SL359"
+    },
+    {
+      "supervisor_code": "SL506",
+      "depend_on": "SL359",
+      "manager_code": "SL359"
+    },
+    {
+      "supervisor_code": "SL535",
+      "depend_on": "SL359",
+      "manager_code": "SL359"
+    },
+    {
+      "supervisor_code": "SL311",
+      "depend_on": "SL311",
+      "manager_code": "SL311"
+    },
+    {
+      "supervisor_code": "SL395",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL315",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL341",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL330",
+      "depend_on": "SL384",
+      "manager_code": "SL384"
+    },
+    {
+      "supervisor_code": "SL384",
+      "depend_on": "SL384",
+      "manager_code": "SL384"
+    },
+    {
+      "supervisor_code": "SL330",
+      "depend_on": "SL360",
+      "manager_code": "SL360"
+    },
+    {
+      "supervisor_code": "SL350",
+      "depend_on": "SL360",
+      "manager_code": "SL360"
+    },
+    {
+      "supervisor_code": "SL351",
+      "depend_on": "SL360",
+      "manager_code": "SL360"
+    },
+    {
+      "supervisor_code": "SL360",
+      "depend_on": "SL360",
+      "manager_code": "SL360"
+    },
+    {
+      "supervisor_code": "SL380",
+      "depend_on": "SL360",
+      "manager_code": "SL360"
+    },
+    {
+      "supervisor_code": "SL393",
+      "depend_on": "SL360",
+      "manager_code": "SL360"
+    },
+    {
+      "supervisor_code": "SL396",
+      "depend_on": "SL360",
+      "manager_code": "SL360"
+    },
+    {
+      "supervisor_code": "SL397",
+      "depend_on": "SL360",
+      "manager_code": "SL360"
+    },
+    {
+      "supervisor_code": "SL452",
+      "depend_on": "SL360",
+      "manager_code": "SL360"
+    },
+    {
+      "supervisor_code": "SL453",
+      "depend_on": "SL360",
+      "manager_code": "SL360"
+    },
+    {
+      "supervisor_code": "SL456",
+      "depend_on": "SL360",
+      "manager_code": "SL360"
+    },
+    {
+      "supervisor_code": "SL457",
+      "depend_on": "SL360",
+      "manager_code": "SL360"
+    },
+    {
+      "supervisor_code": "SL459",
+      "depend_on": "SL360",
+      "manager_code": "SL360"
+    },
+    {
+      "supervisor_code": "SL460",
+      "depend_on": "SL360",
+      "manager_code": "SL360"
+    },
+    {
+      "supervisor_code": "SL506",
+      "depend_on": "SL360",
+      "manager_code": "SL360"
+    },
+    {
+      "supervisor_code": "SL509",
+      "depend_on": "SL360",
+      "manager_code": "SL360"
+    },
+    {
+      "supervisor_code": "SL515",
+      "depend_on": "SL360",
+      "manager_code": "SL360"
+    },
+    {
+      "supervisor_code": "SL518",
+      "depend_on": "SL360",
+      "manager_code": "SL360"
+    },
+    {
+      "supervisor_code": "SL525",
+      "depend_on": "SL360",
+      "manager_code": "SL360"
+    },
+    {
+      "supervisor_code": "SL526",
+      "depend_on": "SL360",
+      "manager_code": "SL360"
+    },
+    {
+      "supervisor_code": "SL527",
+      "depend_on": "SL360",
+      "manager_code": "SL360"
+    },
+    {
+      "supervisor_code": "SL529",
+      "depend_on": "SL360",
+      "manager_code": "SL360"
+    },
+    {
+      "supervisor_code": "SL530",
+      "depend_on": "SL360",
+      "manager_code": "SL360"
+    },
+    {
+      "supervisor_code": "SL531",
+      "depend_on": "SL360",
+      "manager_code": "SL360"
+    },
+    {
+      "supervisor_code": "SL535",
+      "depend_on": "SL360",
+      "manager_code": "SL360"
+    },
+    {
+      "supervisor_code": "SL204",
+      "depend_on": "SL204",
+      "manager_code": "SL204"
+    },
+    {
+      "supervisor_code": "SL330",
+      "depend_on": "SL204",
+      "manager_code": "SL204"
+    },
+    {
+      "supervisor_code": "SL350",
+      "depend_on": "SL204",
+      "manager_code": "SL204"
+    },
+    {
+      "supervisor_code": "SL351",
+      "depend_on": "SL204",
+      "manager_code": "SL204"
+    },
+    {
+      "supervisor_code": "SL380",
+      "depend_on": "SL204",
+      "manager_code": "SL204"
+    },
+    {
+      "supervisor_code": "SL393",
+      "depend_on": "SL204",
+      "manager_code": "SL204"
+    },
+    {
+      "supervisor_code": "SL396",
+      "depend_on": "SL204",
+      "manager_code": "SL204"
+    },
+    {
+      "supervisor_code": "SL397",
+      "depend_on": "SL204",
+      "manager_code": "SL204"
+    },
+    {
+      "supervisor_code": "SL452",
+      "depend_on": "SL204",
+      "manager_code": "SL204"
+    },
+    {
+      "supervisor_code": "SL453",
+      "depend_on": "SL204",
+      "manager_code": "SL204"
+    },
+    {
+      "supervisor_code": "SL456",
+      "depend_on": "SL204",
+      "manager_code": "SL204"
+    },
+    {
+      "supervisor_code": "SL457",
+      "depend_on": "SL204",
+      "manager_code": "SL204"
+    },
+    {
+      "supervisor_code": "SL459",
+      "depend_on": "SL204",
+      "manager_code": "SL204"
+    },
+    {
+      "supervisor_code": "SL460",
+      "depend_on": "SL204",
+      "manager_code": "SL204"
+    },
+    {
+      "supervisor_code": "SL506",
+      "depend_on": "SL204",
+      "manager_code": "SL204"
+    },
+    {
+      "supervisor_code": "SL509",
+      "depend_on": "SL204",
+      "manager_code": "SL204"
+    },
+    {
+      "supervisor_code": "SL515",
+      "depend_on": "SL204",
+      "manager_code": "SL204"
+    },
+    {
+      "supervisor_code": "SL518",
+      "depend_on": "SL204",
+      "manager_code": "SL204"
+    },
+    {
+      "supervisor_code": "SL525",
+      "depend_on": "SL204",
+      "manager_code": "SL204"
+    },
+    {
+      "supervisor_code": "SL526",
+      "depend_on": "SL204",
+      "manager_code": "SL204"
+    },
+    {
+      "supervisor_code": "SL527",
+      "depend_on": "SL204",
+      "manager_code": "SL204"
+    },
+    {
+      "supervisor_code": "SL529",
+      "depend_on": "SL204",
+      "manager_code": "SL204"
+    },
+    {
+      "supervisor_code": "SL530",
+      "depend_on": "SL204",
+      "manager_code": "SL204"
+    },
+    {
+      "supervisor_code": "SL531",
+      "depend_on": "SL204",
+      "manager_code": "SL204"
+    },
+    {
+      "supervisor_code": "SL535",
+      "depend_on": "SL204",
+      "manager_code": "SL204"
+    },
+    {
+      "supervisor_code": "SL225",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL508",
+      "depend_on": "SL508",
+      "manager_code": "SL508"
+    },
+    {
+      "supervisor_code": "SL532",
+      "depend_on": "SL508",
+      "manager_code": "SL508"
+    },
+    {
+      "supervisor_code": "SL524",
+      "depend_on": "SL524",
+      "manager_code": "SL524"
+    },
+    {
+      "supervisor_code": "SL452",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL514",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL511",
+      "depend_on": "SL511",
+      "manager_code": "SL511"
+    },
+    {
+      "supervisor_code": "SL397",
+      "depend_on": "SL510",
+      "manager_code": "SL510"
+    },
+    {
+      "supervisor_code": "SL452",
+      "depend_on": "SL510",
+      "manager_code": "SL510"
+    },
+    {
+      "supervisor_code": "SL456",
+      "depend_on": "SL510",
+      "manager_code": "SL510"
+    },
+    {
+      "supervisor_code": "SL460",
+      "depend_on": "SL510",
+      "manager_code": "SL510"
+    },
+    {
+      "supervisor_code": "SL509",
+      "depend_on": "SL510",
+      "manager_code": "SL510"
+    },
+    {
+      "supervisor_code": "SL510",
+      "depend_on": "SL510",
+      "manager_code": "SL510"
+    },
+    {
+      "supervisor_code": "SL529",
+      "depend_on": "SL510",
+      "manager_code": "SL510"
+    },
+    {
+      "supervisor_code": "SL530",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL407",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL503",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL374",
+      "depend_on": "SL374",
+      "manager_code": "SL374"
+    },
+    {
+      "supervisor_code": "SL315",
+      "depend_on": "SL349",
+      "manager_code": "SL349"
+    },
+    {
+      "supervisor_code": "SL320",
+      "depend_on": "SL349",
+      "manager_code": "SL349"
+    },
+    {
+      "supervisor_code": "SL346",
+      "depend_on": "SL349",
+      "manager_code": "SL349"
+    },
+    {
+      "supervisor_code": "SL349",
+      "depend_on": "SL349",
+      "manager_code": "SL349"
+    },
+    {
+      "supervisor_code": "SL376",
+      "depend_on": "SL349",
+      "manager_code": "SL349"
+    },
+    {
+      "supervisor_code": "SL406",
+      "depend_on": "SL349",
+      "manager_code": "SL349"
+    },
+    {
+      "supervisor_code": "SL417",
+      "depend_on": "SL349",
+      "manager_code": "SL349"
+    },
+    {
+      "supervisor_code": "SL523",
+      "depend_on": "SL349",
+      "manager_code": "SL349"
+    },
+    {
+      "supervisor_code": "SL309",
+      "depend_on": "SL309",
+      "manager_code": "SL309"
+    },
+    {
+      "supervisor_code": "SL330",
+      "depend_on": "SL309",
+      "manager_code": "SL309"
+    },
+    {
+      "supervisor_code": "SL350",
+      "depend_on": "SL309",
+      "manager_code": "SL309"
+    },
+    {
+      "supervisor_code": "SL351",
+      "depend_on": "SL309",
+      "manager_code": "SL309"
+    },
+    {
+      "supervisor_code": "SL380",
+      "depend_on": "SL309",
+      "manager_code": "SL309"
+    },
+    {
+      "supervisor_code": "SL393",
+      "depend_on": "SL309",
+      "manager_code": "SL309"
+    },
+    {
+      "supervisor_code": "SL396",
+      "depend_on": "SL309",
+      "manager_code": "SL309"
+    },
+    {
+      "supervisor_code": "SL397",
+      "depend_on": "SL309",
+      "manager_code": "SL309"
+    },
+    {
+      "supervisor_code": "SL452",
+      "depend_on": "SL309",
+      "manager_code": "SL309"
+    },
+    {
+      "supervisor_code": "SL453",
+      "depend_on": "SL309",
+      "manager_code": "SL309"
+    },
+    {
+      "supervisor_code": "SL456",
+      "depend_on": "SL309",
+      "manager_code": "SL309"
+    },
+    {
+      "supervisor_code": "SL457",
+      "depend_on": "SL309",
+      "manager_code": "SL309"
+    },
+    {
+      "supervisor_code": "SL459",
+      "depend_on": "SL309",
+      "manager_code": "SL309"
+    },
+    {
+      "supervisor_code": "SL460",
+      "depend_on": "SL309",
+      "manager_code": "SL309"
+    },
+    {
+      "supervisor_code": "SL506",
+      "depend_on": "SL309",
+      "manager_code": "SL309"
+    },
+    {
+      "supervisor_code": "SL509",
+      "depend_on": "SL309",
+      "manager_code": "SL309"
+    },
+    {
+      "supervisor_code": "SL515",
+      "depend_on": "SL309",
+      "manager_code": "SL309"
+    },
+    {
+      "supervisor_code": "SL518",
+      "depend_on": "SL309",
+      "manager_code": "SL309"
+    },
+    {
+      "supervisor_code": "SL525",
+      "depend_on": "SL309",
+      "manager_code": "SL309"
+    },
+    {
+      "supervisor_code": "SL526",
+      "depend_on": "SL309",
+      "manager_code": "SL309"
+    },
+    {
+      "supervisor_code": "SL527",
+      "depend_on": "SL309",
+      "manager_code": "SL309"
+    },
+    {
+      "supervisor_code": "SL529",
+      "depend_on": "SL309",
+      "manager_code": "SL309"
+    },
+    {
+      "supervisor_code": "SL530",
+      "depend_on": "SL309",
+      "manager_code": "SL309"
+    },
+    {
+      "supervisor_code": "SL531",
+      "depend_on": "SL309",
+      "manager_code": "SL309"
+    },
+    {
+      "supervisor_code": "SL535",
+      "depend_on": "SL309",
+      "manager_code": "SL309"
+    },
+    {
+      "supervisor_code": "SL509",
+      "depend_on": "",
+      "manager_code": ""
+    }
+  ],
+  "by_manager": {
+    "SL105": [
+      "SL105",
+      "SL330",
+      "SL350",
+      "SL351",
+      "SL380",
+      "SL393",
+      "SL396",
+      "SL397",
+      "SL452",
+      "SL453",
+      "SL456",
+      "SL457",
+      "SL459",
+      "SL460",
+      "SL506",
+      "SL509",
+      "SL515",
+      "SL518",
+      "SL525",
+      "SL526",
+      "SL527",
+      "SL529",
+      "SL530",
+      "SL531",
+      "SL535"
+    ],
+    "SL204": [
+      "SL204",
+      "SL330",
+      "SL350",
+      "SL351",
+      "SL380",
+      "SL393",
+      "SL396",
+      "SL397",
+      "SL452",
+      "SL453",
+      "SL456",
+      "SL457",
+      "SL459",
+      "SL460",
+      "SL506",
+      "SL509",
+      "SL515",
+      "SL518",
+      "SL525",
+      "SL526",
+      "SL527",
+      "SL529",
+      "SL530",
+      "SL531",
+      "SL535"
+    ],
+    "SL301": [
+      "SL301",
+      "SL330",
+      "SL350",
+      "SL351",
+      "SL380",
+      "SL393",
+      "SL396",
+      "SL397",
+      "SL452",
+      "SL453",
+      "SL456",
+      "SL457",
+      "SL459",
+      "SL460",
+      "SL506",
+      "SL509",
+      "SL515",
+      "SL518",
+      "SL525",
+      "SL526",
+      "SL527",
+      "SL529",
+      "SL530",
+      "SL531",
+      "SL535"
+    ],
+    "SL309": [
+      "SL309",
+      "SL330",
+      "SL350",
+      "SL351",
+      "SL380",
+      "SL393",
+      "SL396",
+      "SL397",
+      "SL452",
+      "SL453",
+      "SL456",
+      "SL457",
+      "SL459",
+      "SL460",
+      "SL506",
+      "SL509",
+      "SL515",
+      "SL518",
+      "SL525",
+      "SL526",
+      "SL527",
+      "SL529",
+      "SL530",
+      "SL531",
+      "SL535"
+    ],
+    "SL311": [
+      "SL311"
+    ],
+    "SL345": [
+      "SL341",
+      "SL345",
+      "SL375",
+      "SL381",
+      "SL382",
+      "SL418",
+      "SL528"
+    ],
+    "SL349": [
+      "SL315",
+      "SL320",
+      "SL346",
+      "SL349",
+      "SL376",
+      "SL406",
+      "SL417",
+      "SL523"
+    ],
+    "SL352": [
+      "SL352"
+    ],
+    "SL356": [
+      "SL356"
+    ],
+    "SL359": [
+      "SL351",
+      "SL359",
+      "SL393",
+      "SL396",
+      "SL506",
+      "SL535"
+    ],
+    "SL360": [
+      "SL330",
+      "SL350",
+      "SL351",
+      "SL360",
+      "SL380",
+      "SL393",
+      "SL396",
+      "SL397",
+      "SL452",
+      "SL453",
+      "SL456",
+      "SL457",
+      "SL459",
+      "SL460",
+      "SL506",
+      "SL509",
+      "SL515",
+      "SL518",
+      "SL525",
+      "SL526",
+      "SL527",
+      "SL529",
+      "SL530",
+      "SL531",
+      "SL535"
+    ],
+    "SL369": [
+      "SL369"
+    ],
+    "SL372": [
+      "SL351",
+      "SL372",
+      "SL393",
+      "SL396",
+      "SL506",
+      "SL535"
+    ],
+    "SL374": [
+      "SL374"
+    ],
+    "SL384": [
+      "SL330",
+      "SL384"
+    ],
+    "SL388": [
+      "SL319",
+      "SL387",
+      "SL388",
+      "SL407",
+      "SL408",
+      "SL415",
+      "SL454"
+    ],
+    "SL392": [
+      "SL350",
+      "SL392",
+      "SL453",
+      "SL457",
+      "SL526",
+      "SL527",
+      "SL531"
+    ],
+    "SL394": [
+      "SL225",
+      "SL307",
+      "SL394",
+      "SL503",
+      "SL514",
+      "SL539"
+    ],
+    "SL402": [
+      "SL328",
+      "SL362",
+      "SL399",
+      "SL402",
+      "SL412",
+      "SL520"
+    ],
+    "SL508": [
+      "SL508",
+      "SL532"
+    ],
+    "SL510": [
+      "SL397",
+      "SL452",
+      "SL456",
+      "SL460",
+      "SL509",
+      "SL510",
+      "SL529"
+    ],
+    "SL511": [
+      "SL511"
+    ],
+    "SL524": [
+      "SL524"
+    ],
+    "SL532": [
+      "SL380",
+      "SL459",
+      "SL515",
+      "SL518",
+      "SL525",
+      "SL530",
+      "SL532"
+    ],
+    "SL629": [
+      "SL629"
+    ]
+  },
+  "supervisors": [
+    "SL105",
+    "SL112",
+    "SL204",
+    "SL214",
+    "SL223",
+    "SL225",
+    "SL301",
+    "SL307",
+    "SL309",
+    "SL311",
+    "SL315",
+    "SL319",
+    "SL320",
+    "SL328",
+    "SL330",
+    "SL340",
+    "SL341",
+    "SL345",
+    "SL346",
+    "SL349",
+    "SL350",
+    "SL351",
+    "SL352",
+    "SL356",
+    "SL358",
+    "SL359",
+    "SL360",
+    "SL362",
+    "SL367",
+    "SL369",
+    "SL371",
+    "SL372",
+    "SL374",
+    "SL375",
+    "SL376",
+    "SL380",
+    "SL381",
+    "SL382",
+    "SL384",
+    "SL386",
+    "SL387",
+    "SL388",
+    "SL392",
+    "SL393",
+    "SL394",
+    "SL395",
+    "SL396",
+    "SL397",
+    "SL399",
+    "SL402",
+    "SL406",
+    "SL407",
+    "SL408",
+    "SL411",
+    "SL412",
+    "SL413",
+    "SL415",
+    "SL417",
+    "SL418",
+    "SL452",
+    "SL453",
+    "SL454",
+    "SL456",
+    "SL457",
+    "SL458",
+    "SL459",
+    "SL460",
+    "SL503",
+    "SL506",
+    "SL508",
+    "SL509",
+    "SL510",
+    "SL511",
+    "SL513",
+    "SL514",
+    "SL515",
+    "SL518",
+    "SL520",
+    "SL523",
+    "SL524",
+    "SL525",
+    "SL526",
+    "SL527",
+    "SL528",
+    "SL529",
+    "SL530",
+    "SL531",
+    "SL532",
+    "SL535",
+    "SL539",
+    "SL629",
+    "SL958",
+    "SL959"
+  ],
+  "manager_codes": [
+    "SL105",
+    "SL204",
+    "SL301",
+    "SL309",
+    "SL311",
+    "SL345",
+    "SL349",
+    "SL352",
+    "SL356",
+    "SL359",
+    "SL360",
+    "SL369",
+    "SL372",
+    "SL374",
+    "SL384",
+    "SL388",
+    "SL392",
+    "SL394",
+    "SL402",
+    "SL508",
+    "SL510",
+    "SL511",
+    "SL524",
+    "SL532",
+    "SL629"
+  ],
+  "managers": [
+    "SL112 (Supervisor)",
+    "SL214 (Supervisor)",
+    "SL223 (Supervisor)",
+    "SL225 (Supervisor)",
+    "SL307 (Supervisor)",
+    "SL315 (Supervisor)",
+    "SL319 (Supervisor)",
+    "SL320 (Supervisor)",
+    "SL328 (Supervisor)",
+    "SL330 (Supervisor)",
+    "SL340 (Supervisor)",
+    "SL341 (Supervisor)",
+    "SL346 (Supervisor)",
+    "SL350 (Supervisor)",
+    "SL351 (Supervisor)",
+    "SL358 (Supervisor)",
+    "SL362 (Supervisor)",
+    "SL367 (Supervisor)",
+    "SL371 (Supervisor)",
+    "SL375 (Supervisor)",
+    "SL376 (Supervisor)",
+    "SL380 (Supervisor)",
+    "SL381 (Supervisor)",
+    "SL382 (Supervisor)",
+    "SL386 (Supervisor)",
+    "SL387 (Supervisor)",
+    "SL393 (Supervisor)",
+    "SL395 (Supervisor)",
+    "SL396 (Supervisor)",
+    "SL397 (Supervisor)",
+    "SL399 (Supervisor)",
+    "SL406 (Supervisor)",
+    "SL407 (Supervisor)",
+    "SL408 (Supervisor)",
+    "SL411 (Supervisor)",
+    "SL412 (Supervisor)",
+    "SL413 (Supervisor)",
+    "SL415 (Supervisor)",
+    "SL417 (Supervisor)",
+    "SL418 (Supervisor)",
+    "SL452 (Supervisor)",
+    "SL453 (Supervisor)",
+    "SL454 (Supervisor)",
+    "SL456 (Supervisor)",
+    "SL457 (Supervisor)",
+    "SL458 (Supervisor)",
+    "SL459 (Supervisor)",
+    "SL460 (Supervisor)",
+    "SL503 (Supervisor)",
+    "SL506 (Supervisor)",
+    "SL509 (Supervisor)",
+    "SL513 (Supervisor)",
+    "SL514 (Supervisor)",
+    "SL515 (Supervisor)",
+    "SL518 (Supervisor)",
+    "SL520 (Supervisor)",
+    "SL523 (Supervisor)",
+    "SL525 (Supervisor)",
+    "SL526 (Supervisor)",
+    "SL527 (Supervisor)",
+    "SL528 (Supervisor)",
+    "SL529 (Supervisor)",
+    "SL530 (Supervisor)",
+    "SL531 (Supervisor)",
+    "SL535 (Supervisor)",
+    "SL539 (Supervisor)",
+    "SL958 (Supervisor)",
+    "SL959 (Supervisor)",
+    "SL105 (Manager)",
+    "SL204 (Manager)",
+    "SL301 (Manager)",
+    "SL309 (Manager)",
+    "SL311 (Manager)",
+    "SL345 (Manager)",
+    "SL349 (Manager)",
+    "SL352 (Manager)",
+    "SL356 (Manager)",
+    "SL359 (Manager)",
+    "SL360 (Manager)",
+    "SL369 (Manager)",
+    "SL372 (Manager)",
+    "SL374 (Manager)",
+    "SL384 (Manager)",
+    "SL388 (Manager)",
+    "SL392 (Manager)",
+    "SL394 (Manager)",
+    "SL402 (Manager)",
+    "SL508 (Manager)",
+    "SL510 (Manager)",
+    "SL511 (Manager)",
+    "SL524 (Manager)",
+    "SL532 (Manager)",
+    "SL629 (Manager)"
+  ]
+}

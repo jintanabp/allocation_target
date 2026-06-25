@@ -9,7 +9,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Instrument+Serif:ital@0;1&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=202606096" />
+  <link rel="stylesheet" href="style.css?v=202606117" />
 </head>
 
 <body>
@@ -39,7 +39,7 @@
 
   <div id="viewAsBanner" class="view-as-banner" style="display:none;" role="status" aria-live="polite">
     <span id="viewAsBannerText"></span>
-    <button type="button" class="view-as-banner__exit" onclick="exitViewAsMode()">ออกจากโหมดทดสอบ</button>
+    <button type="button" class="view-as-banner__exit" onclick="exitViewAsMode()">กลับหน้าแอดมิน</button>
   </div>
 
   <div class="page">
@@ -193,10 +193,17 @@
               <span class="sup-switch__emoji" aria-hidden="true">👥</span>
               <div class="sup-switch__main">
                 <div class="sup-switch__head">
-                  <span class="sup-switch__title">สลับ Supervisor</span>
+                  <span class="sup-switch__title">มุมมองข้อมูล</span>
                   <span class="sup-switch__hint">เลือกทีมที่ต้องการดูข้อมูล</span>
                 </div>
                 <div class="sup-switch__controls">
+                  <select id="managerViewModeSelect" class="sup-switch__select sup-switch__select--mode" aria-label="มุมมองข้อมูล" style="display:none;">
+                    <option value="individual">รายคน</option>
+                    <option value="all">รวมทั้งหมด</option>
+                    <option value="region">รวมตามภาค</option>
+                  </select>
+                  <span id="managerViewRegionLabel" class="sup-switch__region-label" style="display:none;">ภาค</span>
+                  <select id="managerViewRegionSelect" class="sup-switch__select sup-switch__select--region" aria-label="เลือกภาค" style="display:none;"></select>
                   <select id="supervisorSwitchSelect" class="sup-switch__select" aria-label="เลือกรหัส Supervisor"></select>
                 </div>
               </div>
@@ -206,6 +213,9 @@
               </div>
             </div>
           </div>
+        </div>
+        <div id="aggregateModeBanner" class="aggregate-mode-banner" style="display:none;" role="status">
+          โหมดดูรวม — แสดงข้อมูลสรุปเท่านั้น ไม่สามารถกระจายหีบ · สลับเป็น「รายคน」เพื่อดำเนินการ
         </div>
       </div>
 
@@ -250,7 +260,8 @@
             <div class="panel-scroll panel-scroll--emp">
               <table class="tbl tbl--emp-step1">
                 <thead>
-                  <tr>
+                  <tr id="empStep1HeadRow">
+                    <th id="empStep1SupTh" style="display:none;">ซุป (SL)</th>
                     <th>พนักงาน</th>
                     <th class="r">เป้า (บาท)</th>
                     <th class="r" id="empStep1MidTh">เฉลี่ย 3 เดือนย้อนหลัง</th>
@@ -463,14 +474,16 @@
       <div class="divider"></div>
 
       <!-- ══ STEP 3 ══ -->
-      <section class="step-section">
+      <section class="step-section" id="step3Section" aria-labelledby="step3Title">
         <div class="step-label-row">
           <span class="step-num">3</span>
-          <div>
-            <h2 class="step-title">กระจายหีบ</h2>
+          <div class="step-label-row__text">
+            <h2 class="step-title" id="step3Title">กระจายหีบ</h2>
+            <span class="step3-lock-badge" id="step3LockBadge">ใช้ไม่ได้ในโหมดดูรวม</span>
           </div>
         </div>
 
+        <div class="step3-body" id="step3Body">
         <!-- Strategy selector -->
         <div class="strategy-wrap">
           <div class="strategy-wrap__head">
@@ -759,6 +772,7 @@
             · ยอดเงินรวมรายพนักงานจะอัปเดตอัตโนมัติที่ (เกณฑ์ ±1,000 บาท)
           </div>
         </div>
+        </div><!-- /step3Body -->
       </section>
 
     </div><!-- /dashboardView -->
@@ -829,28 +843,15 @@
           <p class="admin-view__sub">อีเมล + รหัส SL — แก้แล้วมีผลทันที</p>
         </div>
         <div id="adminStats" class="admin-stats admin-stats--compact" aria-live="polite"></div>
-        <button type="button" class="admin-btn-back" onclick="closeAdminView()">
-          <span class="admin-btn-back__icon" aria-hidden="true">←</span>
-          กลับแอป
-        </button>
-      </header>
-
-      <section class="admin-controls">
-        <div class="admin-toolbar">
-          <div class="admin-toolbar__search-wrap">
-            <span class="admin-toolbar__search-icon" aria-hidden="true">⌕</span>
-            <input type="search" id="adminSearch" class="admin-search" placeholder="ค้นหาอีเมล รหัส SL หรือภูมิภาค…" oninput="adminFilterRows()" />
-          </div>
+        <div class="admin-top__actions">
           <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminShowAddForm()">+ เพิ่มผู้ใช้</button>
+          <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" id="adminClearFilters" onclick="adminResetTableFilters()">ล้างตัวกรอง</button>
+          <button type="button" class="admin-btn-back" id="adminBackBtn" onclick="closeAdminView()">
+            <span class="admin-btn-back__icon" aria-hidden="true">←</span>
+            <span id="adminBackBtnLabel">กลับแอป</span>
+          </button>
         </div>
-        <div class="admin-filter-chips" id="adminRoleFilters">
-          <button type="button" class="admin-chip admin-chip--active" data-role="" onclick="adminSetRoleFilter(this)">ทั้งหมด</button>
-          <button type="button" class="admin-chip" data-role="supervisor" onclick="adminSetRoleFilter(this)">Supervisor</button>
-          <button type="button" class="admin-chip" data-role="manager" onclick="adminSetRoleFilter(this)">Manager</button>
-          <button type="button" class="admin-chip" data-role="regional_manager" onclick="adminSetRoleFilter(this)">ภูมิภาค</button>
-          <button type="button" class="admin-chip" data-role="unknown" onclick="adminSetRoleFilter(this)">ไม่พบใน trf</button>
-        </div>
-      </section>
+      </header>
 
       <section id="adminAddPanel" class="admin-card admin-card--add" style="display:none;">
         <h2 class="admin-card__title">เพิ่มผู้ใช้ใหม่</h2>
@@ -870,24 +871,7 @@
         </div>
       </section>
 
-      <section id="adminEditPanel" class="admin-card admin-card--add" style="display:none;">
-        <h2 class="admin-card__title">แก้ไขผู้ใช้</h2>
-        <p id="adminEditHint" class="admin-edit-hint"></p>
-        <div class="admin-add-grid">
-          <label>อีเมล<input type="email" id="adminEditEmail" class="field-input" placeholder="user@sahapat.co.th" /></label>
-          <label>รหัส SL<input type="text" id="adminEditUserpl" class="field-input" placeholder="SL330" /></label>
-          <label class="admin-check-label"><input type="checkbox" id="adminEditTargetSun" /> ส่ง Target Sun ได้</label>
-          <label>หมายเหตุ<input type="text" id="adminEditNote" class="field-input" placeholder="ไม่บังคับ" /></label>
-          <label class="admin-visible-label">ดูได้ (SL)
-            <div id="adminEditVisible" class="admin-visible-preview" aria-live="polite">—</div>
-            <span class="admin-visible-help">อัปเดตเมื่อเปลี่ยนรหัส SL — ขยายตาม trf / ภูมิภาคถ้ามี</span>
-          </label>
-        </div>
-        <div class="admin-add-actions">
-          <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminSubmitEdit()">บันทึกการแก้ไข</button>
-          <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminHideEditForm()">ยกเลิก</button>
-        </div>
-      </section>
+      <section id="adminEditPanel" class="admin-card admin-card--add" style="display:none;" aria-hidden="true"></section>
 
       <div id="adminError" class="admin-alert admin-alert--error" style="display:none;"></div>
       <div id="adminLoading" class="admin-loading" style="display:none;">กำลังโหลด…</div>
@@ -900,26 +884,100 @@
         <div class="admin-table-wrap">
           <table class="admin-table" id="adminTable">
             <thead>
-              <tr>
-                <th class="admin-th-email">อีเมล</th>
-                <th>รหัส</th>
-                <th>บทบาท</th>
-                <th>ภูมิภาค</th>
-                <th>ดูได้ (SL)</th>
-                <th>Target Sun</th>
-                <th></th>
+              <tr class="admin-thead-row">
+                <th class="admin-th-stack admin-th-stack--email">
+                  <button type="button" class="admin-sort-btn" onclick="adminToggleSort('email')">
+                    <span class="admin-sort-label">อีเมล</span>
+                    <span class="admin-sort-icon" data-col="email" aria-hidden="true"></span>
+                  </button>
+                  <label class="admin-filter-field">
+                    <span class="admin-filter-field__icon" aria-hidden="true">⌕</span>
+                    <input type="search" id="adminFEmail" class="admin-col-filter" placeholder="ค้นหา…" oninput="adminFilterRows()" />
+                  </label>
+                </th>
+                <th class="admin-th-stack admin-th-stack--code">
+                  <button type="button" class="admin-sort-btn" onclick="adminToggleSort('userpl')">
+                    <span class="admin-sort-label">รหัส</span>
+                    <span class="admin-sort-icon" data-col="userpl" aria-hidden="true"></span>
+                  </button>
+                  <label class="admin-filter-field">
+                    <input type="search" id="adminFUserpl" class="admin-col-filter admin-col-filter--code" placeholder="SL…" oninput="adminFilterRows()" />
+                  </label>
+                </th>
+                <th class="admin-th-stack admin-th-stack--role">
+                  <button type="button" class="admin-sort-btn" onclick="adminToggleSort('role')">
+                    <span class="admin-sort-label">ตำแหน่ง</span>
+                    <span class="admin-sort-icon" data-col="role" aria-hidden="true"></span>
+                  </button>
+                  <select id="adminFRole" class="admin-col-filter admin-col-filter--select" onchange="adminFilterRows()">
+                    <option value="">ทั้งหมด</option>
+                    <option value="supervisor">Supervisor</option>
+                    <option value="manager">Manager</option>
+                    <option value="unknown">ไม่ระบุบทบาท</option>
+                  </select>
+                </th>
+                <th class="admin-th-stack admin-th-stack--narrow">
+                  <button type="button" class="admin-sort-btn" onclick="adminToggleSort('division')">
+                    <span class="admin-sort-label">Division</span>
+                    <span class="admin-sort-icon" data-col="division" aria-hidden="true"></span>
+                  </button>
+                  <select id="adminFDivision" class="admin-col-filter admin-col-filter--select" onchange="adminFilterRows()">
+                    <option value="">ทั้งหมด</option>
+                    <option value="Div.B">Div.B</option>
+                    <option value="Div.E">Div.E</option>
+                    <option value="Div.S">Div.S</option>
+                    <option value="__none__">ไม่ระบุ</option>
+                  </select>
+                </th>
+                <th class="admin-th-stack">
+                  <button type="button" class="admin-sort-btn" onclick="adminToggleSort('region')">
+                    <span class="admin-sort-label">ภูมิภาค</span>
+                    <span class="admin-sort-icon" data-col="region" aria-hidden="true"></span>
+                  </button>
+                  <select id="adminFRegion" class="admin-col-filter admin-col-filter--select" onchange="adminFilterRows()">
+                    <option value="">ทั้งหมด</option>
+                  </select>
+                </th>
+                <th class="admin-th-stack admin-th-stack--narrow">
+                  <button type="button" class="admin-sort-btn" onclick="adminToggleSort('unit')">
+                    <span class="admin-sort-label">หน่วย</span>
+                    <span class="admin-sort-icon" data-col="unit" aria-hidden="true"></span>
+                  </button>
+                  <select id="adminFUnit" class="admin-col-filter admin-col-filter--select" onchange="adminFilterRows()">
+                    <option value="">ทั้งหมด</option>
+                    <option value="van">van</option>
+                    <option value="credit">credit</option>
+                    <option value="__none__">—</option>
+                  </select>
+                </th>
+                <th class="admin-th-stack admin-th-stack--static">
+                  <span class="admin-th-static-label">ดูได้ (SL)</span>
+                </th>
+                <th class="admin-th-stack admin-th-stack--narrow">
+                  <button type="button" class="admin-sort-btn" onclick="adminToggleSort('targetsun')">
+                    <span class="admin-sort-label">Target Sun</span>
+                    <span class="admin-sort-icon" data-col="targetsun" aria-hidden="true"></span>
+                  </button>
+                  <select id="adminFTargetSun" class="admin-col-filter admin-col-filter--select" onchange="adminFilterRows()">
+                    <option value="">ทั้งหมด</option>
+                    <option value="yes">เปิด</option>
+                    <option value="no">ปิด</option>
+                  </select>
+                </th>
+                <th class="admin-th-stack admin-th-stack--actions"></th>
               </tr>
             </thead>
             <tbody id="adminTableBody"></tbody>
           </table>
         </div>
+        <datalist id="adminRegionDatalist"></datalist>
       </section>
     </div>
   </div>
 
   <!-- ใช้ไฟล์ในโปรเจกต์ — เครือข่ายองค์กรมักบล็อก alcdn.msauth.net ทำให้ msal ไม่โหลด -->
   <script src="vendor/msal-browser.min.js"></script>
-  <script src="app.js?v=202606098"></script>
+  <script src="app.js?v=202606117"></script>
 </body>
 
 </html>

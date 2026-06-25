@@ -328,6 +328,57 @@ SUMMARIZECOLUMNS(
         print(f"✅ พบ SuperCode ทั้งหมด {len(sorted_codes)} รหัส")
         return sorted_codes
 
+    def get_dim_salesman_supervisor_index(self) -> list[dict]:
+        """
+        ดึง distinct SuperCode, ManagerCode, Area_NameThai, SalesType จาก Dim_Salesman
+        ใช้ validate roster — ไม่ใช้กำหนดสิทธิ login
+        SalesType: 0=credit, 1=van
+        """
+        print("📡 [Dim_Salesman] กำลังดึง index SuperCode / Area / SalesType...")
+        dax = """
+EVALUATE
+SUMMARIZECOLUMNS(
+    'Dim_Salesman'[SuperCode],
+    'Dim_Salesman'[ManagerCode],
+    'Dim_Salesman'[Area_NameThai],
+    'Dim_Salesman'[SalesType]
+)
+"""
+        rows = self._execute_dax(dax)
+        out: list[dict] = []
+        seen: set[tuple[str, str, str, str]] = set()
+        for r in rows or []:
+            sc = str(
+                self._get(r, "[SuperCode]", "Dim_Salesman[SuperCode]", default="")
+            ).strip().upper()
+            if not sc or sc in ("NONE", "0", "(BLANK)"):
+                continue
+            mc = str(
+                self._get(r, "[ManagerCode]", "Dim_Salesman[ManagerCode]", default="")
+            ).strip().upper()
+            area = str(
+                self._get(r, "[Area_NameThai]", "Dim_Salesman[Area_NameThai]", default="")
+            ).strip()
+            st_raw = self._get(r, "[SalesType]", "Dim_Salesman[SalesType]", default=None)
+            try:
+                sales_type = int(st_raw) if st_raw is not None and str(st_raw).strip() != "" else None
+            except (TypeError, ValueError):
+                sales_type = None
+            key = (sc, mc, area, str(sales_type))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(
+                {
+                    "super_code": sc,
+                    "manager_code": mc,
+                    "area_name_thai": area,
+                    "sales_type": sales_type,
+                }
+            )
+        print(f"✅ Dim_Salesman index: {len(out)} แถว")
+        return out
+
     def get_trf_select_supervisor_rows(self) -> list[dict]:
         """
         ดึงจากตาราง trf_select_supervisor (ใช้หน้า login):
