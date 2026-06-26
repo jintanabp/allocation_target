@@ -1285,7 +1285,11 @@ ORDER BY 'cross_sold_history_2y_qu'[SalesmanCode], [cnt] DESC
         *,
         n_months: int = 3,
     ) -> pd.DataFrame:
+<<<<<<< Updated upstream
         """ยอดขาย (บาท) ราย emp×warehouse ย้อนหลัง n เดือน"""
+=======
+        """ยอดขาย (บาท) ราย emp×warehouse ย้อนหลัง n เดือน — ใช้แบ่ง LY/3M ต่อคลัง"""
+>>>>>>> Stashed changes
         if not emp_list:
             return pd.DataFrame(columns=["emp_id", "warehouse_code", "hist_amount"])
         n_months = max(1, min(int(n_months), 24))
@@ -1307,6 +1311,7 @@ SUMMARIZECOLUMNS(
         rows = self._execute_dax(dax)
         records = []
         for r in rows:
+<<<<<<< Updated upstream
             emp = str(self._get(r, "cross_sold_history_2y_qu[SalesmanCode]", "[SalesmanCode]", default="")).strip()
             wh = str(self._get(r, "cross_sold_history_2y_qu[WarehouseCode]", "[WarehouseCode]", default="")).strip()
             amt = float(self._get(r, "[hist_amount]", default=0) or 0)
@@ -1318,6 +1323,40 @@ SUMMARIZECOLUMNS(
 
     def get_ly_same_month_amount_by_emp_wh(
         self, target_month: int, target_year: int, emp_list: list
+=======
+            emp = str(
+                self._get(
+                    r,
+                    "cross_sold_history_2y_qu[SalesmanCode]",
+                    "[SalesmanCode]",
+                    default="",
+                )
+            ).strip()
+            wh = str(
+                self._get(
+                    r,
+                    "cross_sold_history_2y_qu[WarehouseCode]",
+                    "[WarehouseCode]",
+                    default="",
+                )
+            ).strip()
+            amt = float(self._get(r, "[hist_amount]", default=0) or 0)
+            if emp:
+                records.append(
+                    {"emp_id": emp, "warehouse_code": wh, "hist_amount": amt}
+                )
+        return (
+            pd.DataFrame(records)
+            if records
+            else pd.DataFrame(columns=["emp_id", "warehouse_code", "hist_amount"])
+        )
+
+    def get_ly_same_month_amount_by_emp_wh(
+        self,
+        target_month: int,
+        target_year: int,
+        emp_list: list,
+>>>>>>> Stashed changes
     ) -> pd.DataFrame:
         """ยอดขาย (บาท) ราย emp×warehouse เดือนเดียวกันปีที่แล้ว"""
         if not emp_list:
@@ -1331,7 +1370,14 @@ SUMMARIZECOLUMNS(
     'cross_sold_history_2y_qu'[SalesmanCode],
     'cross_sold_history_2y_qu'[WarehouseCode],
     CALCULATETABLE(
+<<<<<<< Updated upstream
         FILTER('DimDate', YEAR('DimDate'[Date]) = {ly_year}, MONTH('DimDate'[Date]) = {tm})
+=======
+        FILTER('DimDate',
+            YEAR('DimDate'[Date]) = {ly_year},
+            MONTH('DimDate'[Date]) = {tm}
+        )
+>>>>>>> Stashed changes
     ),
     {emp_filter}
     "hist_amount", SUM('cross_sold_history_2y_qu'[Amount])
@@ -1340,6 +1386,7 @@ SUMMARIZECOLUMNS(
         rows = self._execute_dax(dax)
         records = []
         for r in rows:
+<<<<<<< Updated upstream
             emp = str(self._get(r, "cross_sold_history_2y_qu[SalesmanCode]", "[SalesmanCode]", default="")).strip()
             wh = str(self._get(r, "cross_sold_history_2y_qu[WarehouseCode]", "[WarehouseCode]", default="")).strip()
             amt = float(self._get(r, "[hist_amount]", default=0) or 0)
@@ -1347,6 +1394,33 @@ SUMMARIZECOLUMNS(
                 records.append({"emp_id": emp, "warehouse_code": wh, "hist_amount": amt})
         return pd.DataFrame(records) if records else pd.DataFrame(
             columns=["emp_id", "warehouse_code", "hist_amount"]
+=======
+            emp = str(
+                self._get(
+                    r,
+                    "cross_sold_history_2y_qu[SalesmanCode]",
+                    "[SalesmanCode]",
+                    default="",
+                )
+            ).strip()
+            wh = str(
+                self._get(
+                    r,
+                    "cross_sold_history_2y_qu[WarehouseCode]",
+                    "[WarehouseCode]",
+                    default="",
+                )
+            ).strip()
+            amt = float(self._get(r, "[hist_amount]", default=0) or 0)
+            if emp:
+                records.append(
+                    {"emp_id": emp, "warehouse_code": wh, "hist_amount": amt}
+                )
+        return (
+            pd.DataFrame(records)
+            if records
+            else pd.DataFrame(columns=["emp_id", "warehouse_code", "hist_amount"])
+>>>>>>> Stashed changes
         )
 
     @staticmethod

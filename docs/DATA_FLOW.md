@@ -1,8 +1,12 @@
 # เอกสารการดึง / ใช้ / ส่งข้อมูล — Target Allocation
 
+<<<<<<< Updated upstream
 เอกสารนี้อธิบายแหล่งข้อมูลทั้งหมดในระบบ รวมถึงตาราง Semantic Model (Power BI / Fabric) ที่ดึงผ่าน DAX REST API
 
 **อัปเดต:** มิถุนายน 2026 · อ้างอิงโค้ด `backend/fabric_dax_connector.py`
+=======
+อ้างอิงโค้ด `backend/fabric_dax_connector.py` และ services ที่เกี่ยวข้อง
+>>>>>>> Stashed changes
 
 ---
 
@@ -11,7 +15,11 @@
 ```mermaid
 flowchart TB
   subgraph sources [แหล่งข้อมูลเข้า]
+<<<<<<< Updated upstream
     SM[Semantic Model<br/>Power BI executeQueries]
+=======
+    SM[Semantic Model Power BI]
+>>>>>>> Stashed changes
     UA[user_access.json]
     AH[access_hierarchy.json]
     ENT[Microsoft Entra ID]
@@ -20,13 +28,17 @@ flowchart TB
   subgraph backend [Backend FastAPI]
     FDC[fabric_dax_connector.py]
     EMP[employees.py]
+<<<<<<< Updated upstream
     OPT[optimize.py]
+=======
+>>>>>>> Stashed changes
     LH[lakehouse.py]
     TS[targetsun_import.py]
   end
 
   subgraph outbound [ปลายทางส่งออก]
     TSAPI[TargetSun SPC API]
+<<<<<<< Updated upstream
     OL[OneLake / Fabric Lakehouse]
     DL[ดาวน์โหลด Excel/CSV]
     CACHE[data/*.csv / *.json]
@@ -43,12 +55,30 @@ flowchart TB
   FDC --> OPT
   EMP --> FE
   FE --> OPT
+=======
+    OL[OneLake]
+    DL[ดาวน์โหลด Excel CSV]
+    CACHE[data cache files]
+  end
+
+  SM -->|DAX executeQueries| FDC
+  UA --> backend
+  AH --> backend
+  ENT -->|JWT| backend
+  FDC --> EMP
+  FDC --> LH
+  EMP --> CACHE
+  EMP --> FE[frontend app.js]
+>>>>>>> Stashed changes
   FE --> LH
   LH --> TS
   TS --> TSAPI
   LH --> OL
   LH --> DL
+<<<<<<< Updated upstream
   EMP --> CACHE
+=======
+>>>>>>> Stashed changes
 ```
 
 ---
@@ -57,6 +87,7 @@ flowchart TB
 
 ### การเชื่อมต่อ
 
+<<<<<<< Updated upstream
 | รายการ | ค่า / ไฟล์ |
 |--------|------------|
 | Connector | `backend/fabric_dax_connector.py` → class `FabricDAXConnector` |
@@ -70,18 +101,40 @@ Frontend **ไม่** เรียก Power BI โดยตรง — ทุก
 ---
 
 ### 1.1 ตารางที่ดึงใน Runtime (ใช้งานจริง)
+=======
+| รายการ | ค่า |
+|--------|-----|
+| Connector | `backend/fabric_dax_connector.py` → `FabricDAXConnector` |
+| API | `POST …/datasets/{FABRIC_DATASET_ID}/executeQueries` |
+| Auth | Service Principal (`FABRIC_CLIENT_SECRET`) หรือ interactive user |
+| Config | `config/.env` — `FABRIC_CLIENT_ID`, `FABRIC_TENANT_ID`, `FABRIC_DATASET_ID`, `FABRIC_WORKSPACE_ID` |
+| Diagnostic | `python scripts/test_powerbi_access.py` |
+
+Frontend **ไม่** เรียก Power BI โดยตรง
+
+---
+
+### 1.1 ตารางที่ดึงใน Runtime
+>>>>>>> Stashed changes
 
 #### `Dim_Salesman`
 
 | คอลัมน์ | การใช้งาน |
 |---------|-----------|
+<<<<<<< Updated upstream
 | `SuperCode` | จับคู่ Supervisor ที่เลือกในแอป → รายชื่อพนักงาน |
 | `ManagerCode` | ข้อมูล manager (index / validate) |
 | `Area_NameThai` | ภาค (validate roster) |
+=======
+| `SuperCode` | จับคู่ Supervisor → รายชื่อพนักงาน |
+| `ManagerCode` | ข้อมูล manager (index / validate) |
+| `Area_NameThai` | ภาค |
+>>>>>>> Stashed changes
 | `SalesType` | 0=credit, 1=van |
 | `SalesmanCode` | รหัสพนักงาน |
 | `Salesman_NameThai` | ชื่อพนักงาน |
 
+<<<<<<< Updated upstream
 | Method | เรียกจาก | หน้าที่ |
 |--------|----------|---------|
 | `get_employees_by_manager(super_code)` | `employees.py` | รายชื่อพนักงานใต้ Supervisor |
@@ -89,11 +142,19 @@ Frontend **ไม่** เรียก Power BI โดยตรง — ทุก
 | `get_dim_salesman_supervisor_index()` | `scripts/access/validate_access_with_dim.py` | validate สิทธิ vs roster |
 
 ---
+=======
+| Method | เรียกจาก |
+|--------|----------|
+| `get_employees_by_manager()` | `employees.py`, admin team |
+| `get_supervisor_name()` | `employees.py` |
+| `get_dim_salesman_supervisor_index()` | `scripts/validate_access_with_dim.py` |
+>>>>>>> Stashed changes
 
 #### `Dim_Super`
 
 | คอลัมน์ | การใช้งาน |
 |---------|-----------|
+<<<<<<< Updated upstream
 | `Code` | รหัส Supervisor |
 | `Namethai` | ชื่อภาษาไทย |
 
@@ -102,11 +163,15 @@ Frontend **ไม่** เรียก Power BI โดยตรง — ทุก
 | `get_supervisor_name()` | `employees.py` |
 
 ---
+=======
+| `Code`, `Namethai` | ชื่อ Supervisor |
+>>>>>>> Stashed changes
 
 #### `Dim_Product`
 
 | คอลัมน์ | การใช้งาน |
 |---------|-----------|
+<<<<<<< Updated upstream
 | `ProductCode` | รหัส SKU |
 | `Brand`, `Brand_NameThai` | แบรนด์ |
 | `Product_NameThai`, `Product_NameEnglish` | ชื่อสินค้า |
@@ -117,21 +182,29 @@ Frontend **ไม่** เรียก Power BI โดยตรง — ทุก
 | `get_product_info(sku_list)` | `employees.py` |
 
 ---
+=======
+| `ProductCode`, `Brand`, `Brand_NameThai`, `Product_NameThai`, `Product_NameEnglish`, `Section` | ข้อมูล SKU |
+>>>>>>> Stashed changes
 
 #### `DimDate`
 
 | คอลัมน์ | การใช้งาน |
 |---------|-----------|
+<<<<<<< Updated upstream
 | `Date` | กรองช่วงเวลา YEAR/MONTH สำหรับประวัติขาย |
 
 ใช้ร่วมกับ `cross_sold_history_2y_qu` ในทุก query ประวัติขาย
 
 ---
+=======
+| `Date` | กรอง YEAR/MONTH สำหรับประวัติขาย |
+>>>>>>> Stashed changes
 
 #### `cross_sold_history_2y_qu`
 
 | คอลัมน์ | การใช้งาน |
 |---------|-----------|
+<<<<<<< Updated upstream
 | `SalesmanCode` | รหัสพนักงาน |
 | `ProductCode` | รหัส SKU |
 | `TotalQuantity` | จำนวนหีบ |
@@ -160,11 +233,23 @@ Frontend **ไม่** เรียก Power BI โดยตรง — ทุก
 ดึงร่วมใน `get_product_info()`
 
 ---
+=======
+| `SalesmanCode`, `ProductCode`, `TotalQuantity`, `Amount`, `WarehouseCode` | ประวัติขาย, ราคา/หีบ, คลัง |
+
+Methods: `get_skus_sold_by_team`, `get_historical_sales`, `get_calendar_year_sales_by_emp_sku`, `get_same_month_prior_year_by_emp_sku`, `get_prev_month_by_emp_sku`, `get_latest_price_per_box_by_sku`, `get_warehouse_by_emp`
+
+#### `cfm_produc_master`
+
+| คอลัมน์ | การใช้งาน |
+|---------|-----------|
+| `PRODUCTCODE`, `ACTUALCOSTPERUNIT`, `COSTPERUNIT` | ต้นทุน (ชื่อตารางใน model: produc ไม่ใช่ product) |
+>>>>>>> Stashed changes
 
 #### `cfm_product_characteristic`
 
 | คอลัมน์ | การใช้งาน |
 |---------|-----------|
+<<<<<<< Updated upstream
 | `PRODUCTCODE` | รหัสสินค้า |
 | `CREDITUNITPRICE` | ราคา/หน่วย (หลักสำหรับคำนวณเป้า Sun) |
 | `PRODUCTSIZE` | กรอง `= 0` |
@@ -195,11 +280,28 @@ Frontend **ไม่** เรียก Power BI โดยตรง — ทุก
 | `get_tga_target_salesman_granular()` | `employees.py`, `lakehouse.py` | เป้าราย emp×sku |
 | `get_tga_lakehouse_dims_by_emp_sku()` | `lakehouse.py` | เติม dim ก่อนส่ง TargetSun |
 | `get_tga_lakehouse_dims_by_emp()` | `lakehouse.py` | fallback dim ต่อพนักงาน |
+=======
+| `PRODUCTCODE`, `CREDITUNITPRICE`, `PRODUCTSIZE`, `FROMDATE`, `TODATE` | ราคา/หน่วย (PRODUCTSIZE=0) |
+
+#### `tga_target_salesman_next` (override: `TGA_TABLE_NAME`)
+
+| คอลัมน์ | env override |
+|---------|--------------|
+| `SALESMANCODE` | `TGA_COL_SALESMAN` |
+| `PRODUCTCODE` | `TGA_COL_PRODUCT` |
+| `QUANTITYCASE` | `TGA_COL_QUANTITY` |
+| `EFFECTIVEDATE` | `TGA_COL_EFFECTIVE` |
+| `UPDATEDATE` | `TGA_COL_EFFECTIVE_FALLBACK` |
+| `SALESTYPE`, `DIVISIONCODE`, `AREACODE`, `PROVINCECODE`, `WAREHOUSECODE` | `LAKEHOUSE_COL_*` |
+
+Methods: `get_tga_max_effective_raw`, `get_tga_target_salesman_granular`, `get_tga_lakehouse_dims_by_emp_sku`, `get_tga_lakehouse_dims_by_emp`
+>>>>>>> Stashed changes
 
 ---
 
 ### 1.2 ตารางที่ไม่ใช้ใน Runtime แล้ว
 
+<<<<<<< Updated upstream
 ตารางเหล่านี้ยังอาจมีใน Semantic Model แต่ **ระบบปัจจุบันไม่ดึง** — สิทธิ์และ hierarchy ย้ายมาใช้ไฟล์ JSON แทน
 
 | ตาราง | เคยใช้สำหรับ | แทนที่ด้วย |
@@ -228,10 +330,37 @@ python scripts/access/rebuild_access_hierarchy.py
 python scripts/access/validate_access_with_dim.py   # ใช้ Dim_Salesman validate เท่านั้น
 python scripts/access/repair_user_access.py
 # รีสตาร์ท server
+=======
+| ตาราง | แทนที่ด้วย |
+|-------|------------|
+| `trf_select_supervisor` | `config/access_hierarchy.json` |
+| `ACC_USER_CONTROL` | `config/user_access.json` |
+| `acc_extra_user` | `config/user_access.json` + `can_import_targetsun` |
+
+---
+
+## 2. ไฟล์บน Server (ไม่ใช่ Semantic Model)
+
+| แหล่ง | ไฟล์ | ใช้สำหรับ |
+|-------|------|-----------|
+| สิทธิผู้ใช้ | `config/user_access.json` | อีเมล → USERPL, division, scope, `can_import_targetsun` |
+| ลำดับชั้น | `config/access_hierarchy.json` | Manager → Supervisor |
+| Cache managers | `data/managers_cache.json` | เร่ง `/managers` |
+| Legacy CSV | `USE_LEGACY_TARGET_CSV=1` | ข้าม Fabric ใช้ `data/target_boxes.csv` |
+
+### Workflow อัปเดตสิทธิ์
+
+```bash
+python scripts/import_user_access_from_division_xlsx.py
+python scripts/rebuild_access_hierarchy.py
+python scripts/validate_access_with_dim.py
+python scripts/repair_user_access.py
+>>>>>>> Stashed changes
 ```
 
 ---
 
+<<<<<<< Updated upstream
 ## 3. API Endpoints → การดึงข้อมูล
 
 | Endpoint | ดึงจาก Fabric? | ข้อมูลที่ได้ / ทำอะไร |
@@ -348,3 +477,71 @@ TTL: `EMPLOYEE_PAYLOAD_CACHE_TTL_SEC`, `MANAGERS_CACHE_TTL_SEC`
 | สิทธิ | `backend/services/access_control.py`, `user_access_store.py` |
 | Config template | `config/.env.example` |
 | สิทธิ / hierarchy | `config/README.md` |
+=======
+## 3. Cache ใน `data/`
+
+| Pattern | แหล่งข้อมูล |
+|---------|-------------|
+| `emp_cache_{sup}_{year}_{mm}.csv` | Dim_Salesman |
+| `payload_cache_{sup}_{year}_{mm}.json` | payload ขั้นที่ 1 ทั้งก้อน |
+| `tga_lines_{sup}_{year}_{mm}.csv` | tga_target_salesman_next |
+| `hist_cache_*`, `hist_lysm_*`, `hist_prev_*`, `hist_cy_*` | cross_sold_history |
+| `target_boxes.csv`, `target_sun.csv` | คำนวณจาก TGA + ราคา |
+| `managers_cache.json` | access_hierarchy |
+| `ts_prepare/*.xlsx` | ไฟล์ชั่วคราวก่อนส่ง TargetSun |
+
+TTL: `EMPLOYEE_PAYLOAD_CACHE_TTL_SEC`, `MANAGERS_CACHE_TTL_SEC`, `ADMIN_TEAM_CACHE_TTL_SEC`
+
+---
+
+## 4. API Endpoints
+
+| Endpoint | ดึง Fabric? | หน้าที่ |
+|----------|-------------|---------|
+| `GET /managers` | ไม่ | Dropdown Manager/Supervisor |
+| `GET /data/employees` | ใช่ | Payload ขั้นที่ 1 |
+| `GET /data/employees/aggregate` | ใช่ | รวมหลาย Supervisor |
+| `POST /optimize` | บางส่วน | ตรวจ TGA period |
+| `POST /export/excel`, `GET /download/excel` | ไม่ | Export จาก cache |
+| `POST /lakehouse/*` | บางส่วน | Excel / TargetSun / OneLake |
+| `GET /admin/user-access` | ไม่ | จัดการสิทธิ |
+| `GET /admin/supervisor-team` | ใช่ | รายชื่อพนักงานใต้ Supervisor |
+| `GET /admin/data-inventory` | บางส่วน | สรุปแหล่งข้อมูล |
+| `GET /debug/fabric` | ใช่ | debug (`ENABLE_DEBUG_ENDPOINTS=1`) |
+
+---
+
+## 5. ปลายทางส่งออก
+
+### TargetSun SPC API
+
+- ไฟล์: `backend/services/targetsun_import.py`
+- URL: `TARGETSUN_IMPORT_EXCEL_URL` (default UAT)
+- คอลัมน์: `PRODUCTCODE`, `SALESTYPE`, `DIVISIONCODE`, `SALESMANCODE`, `AREACODE`, `PROVINCECODE`, `WAREHOUSECODE`, `QUANTITYCASE`, `EFFECTIVEDATE`, `UPDATEDATE`, `USERCODE`
+- เอกสาร: `targetsun-importTargetSalesmanNextFromExcel.md`
+
+### OneLake
+
+- ไฟล์: `backend/services/lakehouse.py`
+- Auth: `storage.azure.com` scope (แยกจาก Power BI)
+
+### ดาวน์โหลดในเครื่อง
+
+- `backend/services/exporting.py`, `generate_excel.py`
+
+---
+
+## 6. การยืนยันตัวตน (3 ชุด)
+
+| ชุด | ใช้กับ |
+|-----|--------|
+| Entra JWT | ผู้ใช้แอป (`AZURE_AUTH_*`) |
+| Fabric SP | DAX (`FABRIC_CLIENT_SECRET`) |
+| Azure Storage | OneLake upload |
+
+---
+
+## 7. โหมด Legacy
+
+`USE_LEGACY_TARGET_CSV=1` — ข้าม Fabric ใน Step 1 ใช้ CSV ใน `data/` แทน
+>>>>>>> Stashed changes

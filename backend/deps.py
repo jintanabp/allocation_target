@@ -8,6 +8,7 @@ from . import auth_entra
 from .services.access_control import (
     build_user_access_context,
     is_allocation_admin_email,
+    is_marketing_email,
     normalized_email,
     unrestricted_user_context,
     user_can_import_targetsun,
@@ -78,14 +79,29 @@ def require_authenticated_user(
 def require_admin_user(
     authorization: Annotated[str | None, Header()] = None,
 ) -> dict:
-    """แอดมินเท่านั้น — ไม่รับ view-as (ใช้ JWT จริง)"""
+    """แอดมินเต็มรูปแบบเท่านั้น — ไม่รับ view-as (ใช้ JWT จริง)"""
     if not auth_entra.auth_enabled():
-        return {"auth_disabled": True, "email": None, "is_admin": True}
+        return {"auth_disabled": True, "email": None, "is_admin": True, "is_marketing": False}
     ident = _identity_from_bearer(authorization)
     email = normalized_email(ident.get("email"))
     if not is_allocation_admin_email(email):
         raise HTTPException(status_code=403, detail="เฉพาะผู้ดูแลระบบเท่านั้น")
-    return {"email": email, "is_admin": True}
+    return {"email": email, "is_admin": True, "is_marketing": False}
+
+
+def require_admin_or_marketing_team(
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict:
+    """แอดมิน หรือ Marketing (ทีมพนักงาน)"""
+    if not auth_entra.auth_enabled():
+        return {"auth_disabled": True, "email": None, "is_admin": True, "is_marketing": True}
+    ident = _identity_from_bearer(authorization)
+    email = normalized_email(ident.get("email"))
+    if is_allocation_admin_email(email):
+        return {"email": email, "is_admin": True, "is_marketing": False}
+    if is_marketing_email(email):
+        return {"email": email, "is_admin": False, "is_marketing": True}
+    raise HTTPException(status_code=403, detail="ไม่มีสิทธิ์เข้าถึงหน้านี้")
 
 
 def ensure_targetsun_import_allowed(user: dict) -> None:

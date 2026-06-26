@@ -11,5 +11,12 @@
     "acc_division": "",
     "acc_unit": "",
     "acc_position": ""
+  },
+  {
+    "email": "marketing@sahapat.co.th",
+    "userpl": "MKT",
+    "can_import_targetsun": false,
+    "note": "ทีม Marketing — เข้าแอดมินแท็บทีมพนักงานเท่านั้น",
+    "login_kind": "marketing"
   }
 ]

@@ -64,6 +64,22 @@ def is_allocation_admin_email(email: str | None) -> bool:
     return normalized_email(email) in parse_allocation_admin_emails()
 
 
+def is_marketing_email(email: str | None) -> bool:
+    """อีเมลที่มี login_kind=marketing ใน user_access.json — เข้าแอดมินแท็บทีมพนักงานเท่านั้น"""
+    ne = normalized_email(email)
+    if not ne:
+        return False
+    try:
+        for r in read_rows():
+            if normalized_email(r.get("email")) != ne:
+                continue
+            if str(r.get("login_kind") or "").strip().lower() == "marketing":
+                return True
+    except Exception:
+        return False
+    return False
+
+
 def user_can_import_targetsun(user: dict[str, Any]) -> bool:
     """ส่งเข้า Target Sun ได้: ปิด auth / admin / อีเมลที่ตั้ง can_import_targetsun ใน user_access.json"""
     if user.get("auth_disabled"):
@@ -144,6 +160,9 @@ def role_label_for_meta(
 ) -> str:
     login_kind = str((meta or {}).get("login_kind") or "standard")
     upl = upl.strip().upper()
+
+    if login_kind == "marketing":
+        return "marketing"
 
     if login_kind == "manager_acc":
         if upl in manager_codes:
@@ -263,6 +282,24 @@ def build_user_access_context(email: str, *, allow_admin_bypass: bool = True) ->
             "is_admin": True,
         }
 
+    full_rows = read_rows()
+    if any(
+        str(r.get("login_kind") or "").strip().lower() == "marketing"
+        for r in full_rows
+        if normalized_email(r.get("email")) == ne
+    ):
+        logger.info("สิทธิ์ Marketing: เข้าแอดมินแท็บทีมพนักงานเท่านั้น — %s", ne)
+        return {
+            "auth_disabled": False,
+            "email": ne,
+            "is_admin": False,
+            "is_marketing": True,
+            "allowed_supervisor_codes": set(),
+            "userpls_supervisor_pick": set(),
+            "userpls_manager_pick": set(),
+            "can_import_targetsun": False,
+        }
+
     acc_rows = load_acc_rows()
     user_rows = _rows_for_email(acc_rows, ne)
     if not user_rows:
@@ -367,6 +404,14 @@ def visible_supervisors_for_row_dict(
 def filter_managers_payload_for_user(full: dict, user: dict[str, Any]) -> dict:
     if user.get("auth_disabled") or user.get("acc_admin_full_access"):
         return full
+    if user.get("is_marketing"):
+        return {
+            "rows": [],
+            "supervisors": [],
+            "manager_codes": [],
+            "by_manager": {},
+            "manager_views": {},
+        }
 
     hierarchy_supervisors, hierarchy_manager_codes, raw_bm_from_meta = parse_hierarchy_metadata(full)
     sup_pick = {str(x).strip().upper() for x in (user.get("userpls_supervisor_pick") or ())}

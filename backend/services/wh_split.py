@@ -109,10 +109,19 @@ def expand_employee_rows(
         if not emp:
             continue
         whs = wh_map.get(emp) or []
+<<<<<<< Updated upstream
         unique_whs = sorted(set(whs), key=lambda x: (x == "", x))
         if len(unique_whs) < 2:
             nr = dict(row)
             nr["warehouse_code"] = str(nr.get("warehouse_code") or (unique_whs[0] if unique_whs else "")).strip()
+=======
+        distinct = [w for w in whs if w != ""] if len(whs) > 1 else whs
+        # แยกเมื่อมี ≥ 2 ค่า WH ที่ต่างกัน (รวมค่าว่างถ้ามี)
+        unique_whs = sorted(set(whs), key=lambda x: (x == "", x))
+        if len(unique_whs) < 2:
+            nr = dict(row)
+            nr["warehouse_code"] = str(nr.get("warehouse_code") or unique_whs[0] if unique_whs else "").strip()
+>>>>>>> Stashed changes
             nr["wh_split"] = False
             nr["alloc_key"] = alloc_key(emp, nr.get("warehouse_code"), wh_split=False)
             out.append(nr)
@@ -123,6 +132,7 @@ def expand_employee_rows(
         ly_total = float(row.get("ly_sales") or 0.0)
         avg_total = float(row.get("hist_avg_3m") or 0.0)
         ts_parts = _split_amount(ts_total, shares)
+<<<<<<< Updated upstream
         ly_weights = (
             {w: float(ly_amount_by_emp_wh.get((emp, w), 0.0)) for w in unique_whs}
             if ly_amount_by_emp_wh
@@ -133,6 +143,10 @@ def expand_employee_rows(
             if avg3_amount_by_emp_wh
             else shares
         )
+=======
+        ly_weights = {w: float(ly_amount_by_emp_wh.get((emp, w), 0.0)) for w in unique_whs} if ly_amount_by_emp_wh else shares
+        avg_weights = {w: float(avg3_amount_by_emp_wh.get((emp, w), 0.0)) for w in unique_whs} if avg3_amount_by_emp_wh else shares
+>>>>>>> Stashed changes
         ly_parts = _split_amount(ly_total, ly_weights)
         avg_parts = _split_amount(avg_total, avg_weights)
 

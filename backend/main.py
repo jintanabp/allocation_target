@@ -40,6 +40,10 @@ logging.basicConfig(
 
 app = create_app()
 
+_DOCS_DIR = Path(__file__).resolve().parent.parent / "docs"
+if _DOCS_DIR.is_dir():
+    app.mount("/docs", StaticFiles(directory=str(_DOCS_DIR)), name="docs")
+
 # เสิร์ฟ frontend จาก http://127.0.0.1:8000/ (ลงท้าย — ให้ API routes ถูกจับก่อน)
 _FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 if _FRONTEND_DIR.is_dir():

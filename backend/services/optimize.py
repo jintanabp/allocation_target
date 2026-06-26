@@ -84,6 +84,7 @@ def _wh_value_shares(
         return value_shares_for_reverse_map(reverse_map, {})
 
 
+<<<<<<< Updated upstream
 def _maybe_split_hist(
     df: pd.DataFrame,
     reverse_map: dict[str, tuple[str, str]],
@@ -94,11 +95,23 @@ def _maybe_split_hist(
     return split_hist_dataframe(df, reverse_map, value_shares)
 
 
+=======
+>>>>>>> Stashed changes
 def _read_hist_cache(path: str, emp_list: list[str]) -> pd.DataFrame:
     if not os.path.exists(path):
         return pd.DataFrame(columns=["emp_id", "sku", "hist_boxes"])
     df = pd.read_csv(path, dtype={"sku": str, "emp_id": str})
     return df[df["emp_id"].isin(emp_list)]
+
+
+def _maybe_split_hist(
+    df: pd.DataFrame,
+    reverse_map: dict[str, tuple[str, str]],
+    value_shares: dict[tuple[str, str], float],
+) -> pd.DataFrame:
+    if not reverse_map or not any("|" in k for k in reverse_map):
+        return df
+    return split_hist_dataframe(df, reverse_map, value_shares)
 
 
 def _hist_input_for_strategy(
@@ -326,6 +339,10 @@ def run_optimization_service(
                 "(ทุกคนเป้า 0 ในงวดนี้ / ตรวจสอบ Target Sun)"
             ),
         )
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
     df_prepared, reverse_map = prepare_optimize_targets(df_emp_targets)
     value_shares = _wh_value_shares(
         reverse_map, sup_id, target_month, target_year, df_sku

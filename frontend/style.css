@@ -1104,11 +1104,13 @@ body.is-admin .admin-view {
   width: 100%;
   max-width: none;
   margin: 0;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 8px;
+  overflow: hidden;
 }
 .admin-top {
+  grid-row: 1;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1143,6 +1145,118 @@ body.is-admin .admin-view {
   font-size: 11px;
   color: var(--text-3);
 }
+.admin-tabs {
+  grid-row: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0 2px;
+  flex-shrink: 0;
+}
+.admin-tab {
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #fff;
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.admin-tab:hover { border-color: #c4b5fd; background: #faf5ff; }
+.admin-tab--active {
+  border-color: #7c3aed;
+  background: #ede9fe;
+  color: #5b21b6;
+}
+.admin-panel {
+  grid-row: 3;
+  grid-column: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+#adminPanelData .admin-card {
+  min-height: min-content;
+}
+#adminPanelUsers {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.admin-card__hint {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.admin-team-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  align-items: flex-end;
+  margin-bottom: 12px;
+}
+.admin-team-toolbar label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.admin-team-select { min-width: 160px; }
+.admin-team-select--sm { min-width: 72px; }
+.admin-team-input--sm { width: 88px; }
+.admin-team-meta {
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.admin-team-meta__warn { color: #b45309; }
+.admin-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.admin-badge--cache { background: #dbeafe; color: #1d4ed8; }
+.admin-badge--fabric { background: #dcfce7; color: #15803d; }
+.admin-data-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.admin-data-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.admin-inventory { font-size: 13px; padding-bottom: 24px; }
+.admin-inv-block {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+}
+.admin-inv-block summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--text-1);
+}
+.admin-inv-list { margin: 8px 0 0; padding-left: 18px; }
+.admin-inv-ok { color: #15803d; font-weight: 600; }
+.admin-inv-err { color: #b91c1c; }
+.admin-inv-muted { color: var(--text-3); font-size: 12px; }
+.admin-inv-url { font-size: 11px; word-break: break-all; }
+.admin-table--compact { font-size: 12px; }
+.admin-table--compact th,
+.admin-table--compact td { padding: 6px 8px; }
 .admin-stats--compact {
   display: flex;
   flex-wrap: wrap;
@@ -1171,6 +1285,7 @@ body.is-admin .admin-view {
 .admin-stat-pill--total { border-color: #c7d2fe; background: #eef2ff; }
 .admin-stat-pill--supervisor { border-color: #bfdbfe; background: #eff6ff; }
 .admin-stat-pill--manager { border-color: #ddd6fe; background: #f5f3ff; }
+.admin-stat-pill--marketing { border-color: #fde68a; background: #fffbeb; }
 .admin-stat-pill--regional { border-color: #fed7aa; background: #fff7ed; }
 .admin-stat-pill--muted { border-color: #e2e8f0; background: #f8fafc; }
 .admin-btn-back {
@@ -1890,6 +2005,7 @@ body.is-admin .admin-view {
 .admin-role--district_manager { background: #fef3c7; color: #b45309; }
 .admin-role--supervisor_acc { background: #e0f2fe; color: #0369a1; }
 .admin-role--manager_acc { background: #f3e8ff; color: #7e22ce; }
+.admin-role--marketing { background: #fef3c7; color: #b45309; }
 .admin-role--unknown { background: #f1f5f9; color: #64748b; }
 .admin-role--acc_only { background: #f8fafc; color: #94a3b8; }
 

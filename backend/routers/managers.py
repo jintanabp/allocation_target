@@ -36,6 +36,7 @@ def get_managers(user: dict = Depends(require_authenticated_user)):
             out["manager_views"] = build_manager_views_map(by_m, list(mgrs))
         out["can_import_targetsun"] = user_can_import_targetsun(user)
         out["is_admin"] = bool(user.get("is_admin"))
+        out["is_marketing"] = bool(user.get("is_marketing"))
         if user.get("view_as_email"):
             out["view_as_email"] = user["view_as_email"]
             out["acting_admin_email"] = user.get("acting_admin_email")

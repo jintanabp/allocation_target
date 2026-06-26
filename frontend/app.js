@@ -530,6 +530,8 @@ let S = {
   canImportTargetSun: true,
   /** แอดมิน (ALLOCATION_ADMIN_EMAILS) */
   isAdmin: false,
+  /** Marketing — แอดมินแท็บทีมพนักงานเท่านั้น */
+  isMarketing: false,
   /** โหมดทดสอบมุมมองผู้ใช้อื่น */
   viewAsEmail: null,
   /** แถวจาก /admin/user-access */
@@ -1658,9 +1660,24 @@ async function loadManagers(force = false) {
       if (typeof data.is_admin === "boolean") {
         S.isAdmin = !!data.is_admin && !S.viewAsEmail;
       }
+      if (typeof data.is_marketing === "boolean") {
+        S.isMarketing = !!data.is_marketing && !S.viewAsEmail;
+      } else {
+        S.isMarketing = false;
+      }
       updateViewAsBanner();
       updateAdminNavVisibility();
       syncLakehouseButton();
+      if (S.isMarketing && !S.isAdmin && !S.viewAsEmail) {
+        _disableLoginScrollLock();
+        const login = document.getElementById("loginView");
+        const dash = document.getElementById("dashboardView");
+        if (login) login.style.display = "none";
+        if (dash) dash.style.display = "none";
+        document.body.classList.remove("is-login");
+        openAdminView({ teamOnly: true });
+        return;
+      }
       S.managerViews = (data.manager_views && typeof data.manager_views === "object")
         ? data.manager_views
         : {};
@@ -1840,6 +1857,7 @@ function _doLogout() {
   // (ผู้ใช้ยังล็อกอิน Microsoft อยู่; token/cache ใช้เรียก API รอบถัดไปได้)
   const keepManagers = S.managers || [];
   const keepIsAdmin = S.isAdmin;
+  const keepIsMarketing = S.isMarketing;
   const keepViewAs = S.viewAsEmail;
   const keepLoginMeta = {
     supervisorRows: S.supervisorRows,
@@ -1857,6 +1875,7 @@ function _doLogout() {
     supervisorName: "",
     managers: keepManagers,
     isAdmin: keepIsAdmin,
+    isMarketing: keepIsMarketing,
     viewAsEmail: keepViewAs,
     adminRows: [],
     loginRole: null,
@@ -1871,8 +1890,10 @@ function _doLogout() {
     buiDeductions: {}, buiColumnOpen: false, negGrowthReason: "", brandStrategyMap: {},
     tierFlexSkus: new Set(), tierStrictSkuCount: 0,
     revenueScale: 1,
-    canImportTargetSun: true,
-  };
+  canImportTargetSun: true,
+  /** emp_id ที่ขยายกลุ่ม WH อยู่ (แบบ B) */
+  whExpanded: null,
+};
   dismissAllToasts();
   ["logoutModal", "draftModal"].forEach(id => {
     document.getElementById(id)?.remove();
@@ -2000,6 +2021,14 @@ function _allocResultKey(a) {
   return wh ? `${emp}|${wh}` : emp;
 }
 
+<<<<<<< Updated upstream
+=======
+function _employeeRowForAllocKey(key) {
+  const k = String(key || "").trim();
+  return (S.employees || []).find(e => _allocKey(e) === k) || null;
+}
+
+>>>>>>> Stashed changes
 function _yellowTargetPayloadRow(e) {
   const row = { emp_id: String(e.emp_id || "").trim(), yellow_target: S.yellow[_allocKey(e)] || 0 };
   if (e.wh_split && String(e.warehouse_code || "").trim()) {
@@ -2417,31 +2446,71 @@ function _renderEmpStep1() {
 
   const body = qs("#empTableBody");
   const supTh = qs("#empStep1SupTh");
+  const whTh = qs("#empStep1WhTh");
   if (supTh) supTh.style.display = S.aggregateMode ? "" : "none";
+  if (whTh) whTh.style.display = _teamHasWhSplit() ? "" : "none";
   if (!body) return;
-  const emps = Array.isArray(S.employees) ? S.employees : [];
+  const showWh = _teamHasWhSplit();
   const supCell = (e) => S.aggregateMode
     ? `<td><code class="admin-code">${escH(e.supervisor_code || "")}</code></td>`
     : "";
-  body.innerHTML = emps.map(e => {
+  const whCell = (e) => showWh
+    ? `<td class="mono" style="color:var(--text-3);font-size:12px;">${escH(e.warehouse_code || "—")}</td>`
+    : "";
+
+  const renderRow = (e, opts = {}) => {
     const tgt = Number(e.target_sun) || 0;
     const mid =
       _empStep1View === "ly"
         ? Number(e.ly_sales) || 0
         : Number(e.hist_avg_3m) || 0;
     const gHtml = _fmtEmpGrowthHtml(tgt, mid);
-    return `<tr>
+    const childCls = opts.child ? " emp-wh-child" : "";
+    const pad = opts.child ? ' style="padding-left:22px;"' : "";
+    return `<tr class="emp-wh-row${childCls}">
       ${supCell(e)}
-      <td>
-        <span class="emp-tag">${e.emp_id}</span>
-        ${e.emp_name ? `<div class="emp-name-sub">${e.emp_name}</div>` : ""}
+      <td${pad}>
+        ${opts.child ? "" : `<span class="emp-tag">${escH(e.emp_id)}</span>`}
+        ${!opts.child && e.emp_name ? `<div class="emp-name-sub">${escH(e.emp_name)}</div>` : ""}
+        ${opts.child ? `<span class="emp-wh-badge">W/H ${escH(e.warehouse_code || "—")}</span>` : ""}
         ${e.has_tga_rows === false ? `<div class="emp-name-sub" style="color:var(--amber);font-size:11px;">ไม่มีแถว TGA ในงวดนี้</div>` : ""}
       </td>
+      ${showWh && !opts.child ? whCell(e) : showWh && opts.child ? whCell(e) : ""}
       <td class="r mono">${baht(tgt)}</td>
       <td class="r mono" style="color:var(--text-3);">${baht(mid)}</td>
       <td class="r">${gHtml}</td>
     </tr>`;
-  }).join("");
+  };
+
+  const parts = [];
+  for (const g of _employeeWhGroups()) {
+    if (!g.isGroup) {
+      parts.push(renderRow(g.rows[0]));
+      continue;
+    }
+    const open = _whGroupExpanded(g.empId);
+    const icon = open ? "▼" : "▶";
+    const mid =
+      _empStep1View === "ly" ? g.totalLy : g.totalAvg3;
+    const gHtml = _fmtEmpGrowthHtml(g.totalTargetSun, mid);
+    parts.push(`<tr class="emp-wh-group-header" onclick="toggleWhGroup('${escH(g.empId)}')">
+      ${S.aggregateMode ? "<td></td>" : ""}
+      <td colspan="${showWh ? 1 : 1}">
+        <button type="button" class="emp-wh-toggle" aria-expanded="${open ? "true" : "false"}">${icon}</button>
+        <span class="emp-tag">${escH(g.empId)}</span>
+        ${g.name ? `<span class="emp-name-sub">${escH(g.name)}</span>` : ""}
+        <span class="emp-wh-group-meta">${g.rows.length} คลัง</span>
+      </td>
+      ${showWh ? `<td class="mono" style="color:var(--text-3);font-size:11px;">รวม</td>` : ""}
+      <td class="r mono"><strong>${baht(g.totalTargetSun)}</strong></td>
+      <td class="r mono" style="color:var(--text-3);">${baht(mid)}</td>
+      <td class="r">${gHtml}</td>
+    </tr>`);
+    if (open) {
+      for (const e of g.rows) parts.push(renderRow(e, { child: true }));
+    }
+  }
+  body.innerHTML = parts.join("");
 }
 
 function renderStep1() {
@@ -5560,9 +5629,10 @@ const ADMIN_ROLE_LABELS = {
   both: "Manager",
   regional_manager: "ผู้จัดการภูมิภาค",
   district_manager: "ผู้จัดการเขต",
-  supervisor_acc: "Supervisor (ACC)",
+  marketing: "Marketing (MKT)",
+  supervisor_acc: "Supervisor",
   manager_acc: "Manager",
-  acc_only: "ACC เท่านั้น",
+  acc_only: "สิทธิ์จำกัด",
   unknown: "ไม่ระบุบทบาท",
   none: "—",
 };
@@ -5574,11 +5644,12 @@ let _adminInlineVisTimer = null;
 let _adminSort = { col: "email", dir: "asc" };
 
 const ADMIN_LOGIN_KIND_OPTS = [
-  ["standard", "standard"],
-  ["supervisor_acc", "supervisor_acc"],
-  ["manager_acc", "manager_acc"],
-  ["regional_manager", "regional_manager"],
-  ["district_manager", "district_manager"],
+  ["standard", "มาตรฐาน"],
+  ["supervisor_acc", "Supervisor"],
+  ["manager_acc", "Manager"],
+  ["marketing", "Marketing (MKT)"],
+  ["regional_manager", "ผู้จัดการภูมิภาค"],
+  ["district_manager", "ผู้จัดการเขต"],
 ];
 
 const ADMIN_DIVISION_OPTS = ["", "Div.B", "Div.E", "Div.S"];
@@ -5613,12 +5684,17 @@ function updateAdminNavVisibility() {
   const loginBtn = document.getElementById("adminNavLoginBtn");
   const onLogin = document.getElementById("loginView")?.style.display !== "none";
   const inAdmin = document.getElementById("adminView")?.style.display !== "none";
-  const adminUi = S.isAdmin && !S.viewAsEmail;
+  const adminUi = (S.isAdmin || S.isMarketing) && !S.viewAsEmail;
   if (topBtn) {
     topBtn.style.display = adminUi && !onLogin && !inAdmin ? "inline-flex" : "none";
+    if (S.isMarketing && !S.isAdmin) {
+      topBtn.textContent = "ทีมพนักงาน";
+    } else {
+      topBtn.textContent = "แอดมิน";
+    }
   }
   if (loginBtn) {
-    loginBtn.style.display = adminUi && onLogin ? "block" : "none";
+    loginBtn.style.display = S.isAdmin && onLogin ? "block" : "none";
   }
 }
 
@@ -5672,8 +5748,9 @@ function _adminShowTablePlaceholder(message) {
     `<tr><td colspan="9" class="admin-empty">${escapeHtml(message || "กำลังโหลด…")}</td></tr>`;
 }
 
-function openAdminView() {
-  if (!S.isAdmin || S.viewAsEmail) return;
+function openAdminView(opts = {}) {
+  const teamOnly = opts.teamOnly === true || (S.isMarketing && !S.isAdmin);
+  if ((!S.isAdmin && !S.isMarketing) || S.viewAsEmail) return;
   const av = document.getElementById("adminView");
   const dash = document.getElementById("dashboardView");
   const login = document.getElementById("loginView");
@@ -5695,8 +5772,31 @@ function openAdminView() {
   adminCancelInlineEdit();
   _adminClearFilterInputs();
   _adminBindVisiblePreviewListeners();
+  _adminApplyTabAccess(teamOnly);
+  if (teamOnly) {
+    adminSwitchTab("team");
+    return;
+  }
   _adminShowTablePlaceholder("กำลังโหลดรายการ…");
+  adminSwitchTab("users");
   adminLoadRows();
+}
+
+function _adminApplyTabAccess(teamOnly) {
+  document.querySelectorAll(".admin-tab").forEach((btn) => {
+    const tab = btn.dataset.tab;
+    if (teamOnly) {
+      btn.style.display = tab === "team" ? "" : "none";
+    } else {
+      btn.style.display = "";
+    }
+  });
+  const usersActions = document.getElementById("adminTopActionsUsers");
+  const otherActions = document.getElementById("adminTopActionsOther");
+  if (teamOnly) {
+    if (usersActions) usersActions.style.display = "none";
+    if (otherActions) otherActions.style.display = "";
+  }
 }
 
 function closeAdminView(opts = {}) {
@@ -5719,6 +5819,10 @@ function closeAdminView(opts = {}) {
     } else if (Array.isArray(S.managers) && S.managers.length > 0) {
       populateLoginSupervisorSelect(S.managers);
     }
+  } else if (S.isMarketing && !S.isAdmin) {
+    if (login) login.style.display = "block";
+    document.body.classList.add("is-login");
+    _setPageScrollLocked(true);
   } else if (dash && login?.style.display === "none") {
     dash.style.display = "block";
     _setPageScrollLocked(false);
@@ -5726,13 +5830,234 @@ function closeAdminView(opts = {}) {
   updateAdminNavVisibility();
 }
 
+/* ── Admin tabs: ทีมพนักงาน / แหล่งข้อมูล ── */
+let _adminActiveTab = "users";
+let _adminSupervisorCodes = [];
+
+const ADMIN_TAB_META = {
+  users: { title: "สิทธิผู้ใช้", sub: "อีเมล + รหัส SL — แก้แล้วมีผลทันที" },
+  team: { title: "ทีมพนักงาน", sub: "รายชื่อพนักงานใต้ Supervisor จาก Fabric / cache" },
+  data: { title: "แหล่งข้อมูล", sub: "สรุปการดึง ใช้ และส่งข้อมูลในระบบ" },
+};
+
+function adminSwitchTab(tab) {
+  const teamOnly = S.isMarketing && !S.isAdmin;
+  if (teamOnly && tab !== "team") {
+    tab = "team";
+  }
+  _adminActiveTab = tab || "users";
+  document.querySelectorAll(".admin-tab").forEach((btn) => {
+    const on = btn.dataset.tab === _adminActiveTab;
+    btn.classList.toggle("admin-tab--active", on);
+    btn.setAttribute("aria-selected", on ? "true" : "false");
+  });
+  document.querySelectorAll(".admin-panel").forEach((p) => {
+    const on = p.dataset.panel === _adminActiveTab;
+    p.style.display = on ? (p.dataset.panel === "users" ? "flex" : "block") : "none";
+    if (on && p.dataset.panel === "users") {
+      p.style.flexDirection = "column";
+    }
+  });
+  const meta = ADMIN_TAB_META[_adminActiveTab] || ADMIN_TAB_META.users;
+  const titleEl = document.getElementById("adminViewTitle");
+  const subEl = document.getElementById("adminViewSub");
+  if (titleEl) titleEl.textContent = meta.title;
+  if (subEl) subEl.textContent = meta.sub;
+  const usersActions = document.getElementById("adminTopActionsUsers");
+  const otherActions = document.getElementById("adminTopActionsOther");
+  if (usersActions) usersActions.style.display = _adminActiveTab === "users" ? "" : "none";
+  if (otherActions) otherActions.style.display = _adminActiveTab === "users" ? "none" : "";
+  const stats = document.getElementById("adminStats");
+  if (stats) stats.style.display = _adminActiveTab === "users" ? "" : "none";
+  if (_adminActiveTab === "team") adminInitTeamPanel();
+  if (_adminActiveTab === "data") adminLoadInventory(false);
+}
+
+async function adminInitTeamPanel() {
+  const sel = document.getElementById("adminTeamSuper");
+  const monthSel = document.getElementById("adminTeamMonth");
+  const yearInp = document.getElementById("adminTeamYear");
+  if (!sel || !monthSel || !yearInp) return;
+  if (!monthSel.options.length) {
+    for (let m = 1; m <= 12; m++) {
+      const o = document.createElement("option");
+      o.value = String(m);
+      o.textContent = String(m).padStart(2, "0");
+      monthSel.appendChild(o);
+    }
+  }
+  const now = new Date();
+  if (!yearInp.value) yearInp.value = String(now.getFullYear());
+  if (!monthSel.value) monthSel.value = String(now.getMonth() + 1);
+  if (_adminSupervisorCodes.length) return;
+  try {
+    const res = await fetchWithTimeout(`${API_BASE_URL}/admin/supervisor-codes`, {}, 20000);
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    _adminSupervisorCodes = data.supervisors || [];
+    sel.innerHTML =
+      _adminSupervisorCodes
+        .map((s) => {
+          const sc = escapeHtml(s.supervisor_code || "");
+          const mc = s.manager_code ? ` (${escapeHtml(s.manager_code)})` : "";
+          return `<option value="${sc}">${sc}${mc}</option>`;
+        })
+        .join("") || '<option value="">— ไม่มีข้อมูล —</option>';
+  } catch (e) {
+    sel.innerHTML = '<option value="">โหลดรายการไม่สำเร็จ</option>';
+    console.warn("adminInitTeamPanel", e);
+  }
+}
+
+async function adminLoadTeam(forceRefresh) {
+  const sel = document.getElementById("adminTeamSuper");
+  const monthSel = document.getElementById("adminTeamMonth");
+  const yearInp = document.getElementById("adminTeamYear");
+  const body = document.getElementById("adminTeamBody");
+  const meta = document.getElementById("adminTeamMeta");
+  if (!sel || !monthSel || !yearInp || !body) return;
+  const superCode = (sel.value || "").trim();
+  const month = parseInt(monthSel.value, 10);
+  const year = parseInt(yearInp.value, 10);
+  if (!superCode) {
+    body.innerHTML = '<tr><td colspan="3" class="admin-empty">เลือก Supervisor</td></tr>';
+    return;
+  }
+  body.innerHTML = '<tr><td colspan="3" class="admin-empty">กำลังโหลด…</td></tr>';
+  if (meta) meta.textContent = "";
+  try {
+    const q = new URLSearchParams({
+      super_code: superCode,
+      month: String(month),
+      year: String(year),
+      force_refresh: forceRefresh ? "1" : "0",
+    });
+    const res = await fetchWithTimeout(`${API_BASE_URL}/admin/supervisor-team?${q}`, {}, 60000);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || res.statusText);
+    }
+    const data = await res.json();
+    const employees = data.employees || [];
+    if (!employees.length) {
+      body.innerHTML = '<tr><td colspan="3" class="admin-empty">ไม่พบพนักงาน</td></tr>';
+    } else {
+      body.innerHTML = employees
+        .map(
+          (e) =>
+            `<tr><td><code>${escapeHtml(e.emp_id)}</code></td><td>${escapeHtml(e.emp_name || "—")}</td><td>${escapeHtml(e.super_code || "")}</td></tr>`
+        )
+        .join("");
+    }
+    if (meta) {
+      const src = data.from_cache ? "จาก cache" : "ดึงจาก Fabric";
+      const badgeCls = data.from_cache ? "admin-badge--cache" : "admin-badge--fabric";
+      const when = data.from_cache ? data.cached_at : data.fetched_at;
+      const name = data.super_name ? ` · ${data.super_name}` : "";
+      meta.innerHTML = `<span class="admin-badge ${badgeCls}">${src}</span> <span class="admin-team-meta__detail">${data.employee_count} คน${escapeHtml(name)} · ${escapeHtml(when || "")}</span>`;
+      if (data.fabric_error) {
+        meta.innerHTML += ` <span class="admin-team-meta__warn">Fabric: ${escapeHtml(data.fabric_error)}</span>`;
+      }
+    }
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="3" class="admin-empty">${escapeHtml(String(e.message || e))}</td></tr>`;
+  }
+}
+
+function _adminRenderInventory(inv) {
+  const el = document.getElementById("adminInventoryBody");
+  if (!el || !inv) return;
+  const fc = inv.fabric || {};
+  const conn = fc.connection || {};
+  const local = inv.local_config || {};
+  const patterns = (inv.data_dir && inv.data_dir.patterns) || [];
+  const outbound = inv.outbound || {};
+  const apiMap = inv.api_map || [];
+
+  const connOk = conn.ok ? "เชื่อมต่อได้" : "เชื่อมต่อไม่ได้";
+  const connCls = conn.ok ? "admin-inv-ok" : "admin-inv-err";
+
+  el.innerHTML = `
+    <details class="admin-inv-block" open>
+      <summary>Semantic Model (Fabric)</summary>
+      <p class="${connCls}">${escapeHtml(connOk)}${conn.http_status != null ? ` (HTTP ${conn.http_status})` : ""}</p>
+      <p>Dataset: <code>${escapeHtml(conn.dataset_id || "—")}</code> · Workspace: <code>${escapeHtml(conn.workspace_id || "—")}</code></p>
+      ${conn.error ? `<p class="admin-inv-err">${escapeHtml(conn.error)}</p>` : ""}
+      <p><strong>ตารางที่ใช้:</strong> ${(fc.tables_runtime || []).map((t) => `<code>${escapeHtml(t)}</code>`).join(", ")}</p>
+      <p class="admin-inv-muted"><strong>ไม่ใช้แล้ว:</strong> ${(fc.tables_deprecated || []).map((t) => `<code>${escapeHtml(t)}</code>`).join(", ")}</p>
+    </details>
+    <details class="admin-inv-block" open>
+      <summary>ไฟล์ config บน server</summary>
+      <ul class="admin-inv-list">
+        <li>user_access: <b>${local.user_access_rows ?? 0}</b> แถว</li>
+        <li>access_hierarchy: <b>${local.access_hierarchy_supervisors ?? 0}</b> supervisor · <b>${local.access_hierarchy_managers ?? 0}</b> manager</li>
+        <li>อัปเดต hierarchy: ${escapeHtml(local.access_hierarchy_mtime || "—")}</li>
+        <li>managers_cache: ${escapeHtml(local.managers_cache_mtime || "—")}</li>
+      </ul>
+    </details>
+    <details class="admin-inv-block">
+      <summary>Cache ใน data/ (${patterns.length} ประเภท)</summary>
+      <table class="admin-table admin-table--compact">
+        <thead><tr><th>Pattern</th><th>จำนวน</th><th>ล่าสุด</th></tr></thead>
+        <tbody>
+          ${patterns
+            .map(
+              (p) =>
+                `<tr><td><code>${escapeHtml(p.pattern)}</code></td><td>${p.count}</td><td>${escapeHtml(p.latest_file || "—")}<br><small>${escapeHtml(p.latest_mtime || "")}</small></td></tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </details>
+    <details class="admin-inv-block">
+      <summary>ปลายทางส่งออก</summary>
+      <ul class="admin-inv-list">
+        <li>TargetSun: ${outbound.targetsun_configured ? "ตั้งค่าแล้ว" : "—"}<br><code class="admin-inv-url">${escapeHtml(outbound.targetsun_url || "")}</code></li>
+        <li>OneLake: ${outbound.onelake_configured ? "ตั้งค่าแล้ว" : "ยังไม่ตั้ง"}</li>
+      </ul>
+    </details>
+    <details class="admin-inv-block">
+      <summary>API → แหล่งข้อมูล (${apiMap.length})</summary>
+      <table class="admin-table admin-table--compact">
+        <thead><tr><th>Endpoint</th><th>Fabric</th><th>แหล่ง</th></tr></thead>
+        <tbody>
+          ${apiMap
+            .map(
+              (a) =>
+                `<tr><td><code>${escapeHtml(a.endpoint)}</code></td><td>${a.fabric ? "ใช่" : "ไม่"}</td><td>${escapeHtml((a.sources || []).join(", "))}</td></tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </details>
+    <p class="admin-inv-muted">สร้างเมื่อ ${escapeHtml(inv.generated_at || "")}</p>`;
+}
+
+async function adminLoadInventory(checkFabric) {
+  const loading = document.getElementById("adminInventoryLoading");
+  const body = document.getElementById("adminInventoryBody");
+  if (loading) loading.style.display = "block";
+  try {
+    const q = new URLSearchParams({ check_fabric: checkFabric ? "1" : "0" });
+    const res = await fetchWithTimeout(`${API_BASE_URL}/admin/data-inventory?${q}`, {}, 60000);
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    _adminRenderInventory(data);
+  } catch (e) {
+    if (body) body.innerHTML = `<p class="admin-inv-err">${escapeHtml(String(e.message || e))}</p>`;
+  } finally {
+    if (loading) loading.style.display = "none";
+  }
+}
+
 function adminRenderStats(rows) {
   const el = document.getElementById("adminStats");
   if (!el) return;
-  const counts = { total: rows.length, supervisor: 0, manager: 0, unknown: 0 };
+  const counts = { total: rows.length, supervisor: 0, manager: 0, marketing: 0, unknown: 0 };
   for (const r of rows) {
     const role = r.role || "";
-    if (role === "supervisor" || role === "supervisor_acc") counts.supervisor += 1;
+    if (role === "marketing") counts.marketing += 1;
+    else if (role === "supervisor" || role === "supervisor_acc") counts.supervisor += 1;
     else if (role === "manager" || role === "manager_acc" || role === "both") counts.manager += 1;
     else if (
       role === "unknown" ||
@@ -5747,6 +6072,7 @@ function adminRenderStats(rows) {
     <span class="admin-stat-pill admin-stat-pill--total"><b>${counts.total}</b> ทั้งหมด</span>
     <span class="admin-stat-pill admin-stat-pill--supervisor"><b>${counts.supervisor}</b> Sup</span>
     <span class="admin-stat-pill admin-stat-pill--manager"><b>${counts.manager}</b> Mgr</span>
+    <span class="admin-stat-pill admin-stat-pill--marketing"><b>${counts.marketing}</b> MKT</span>
     <span class="admin-stat-pill admin-stat-pill--muted"><b>${counts.unknown}</b> ไม่ระบุบทบาท</span>`;
 }
 
@@ -5839,6 +6165,9 @@ function adminResetTableFilters() {
 
 function _adminRowMatchesRoleFilter(role, roleFilter) {
   if (!roleFilter) return true;
+  if (roleFilter === "marketing") {
+    return role === "marketing";
+  }
   if (roleFilter === "supervisor") {
     return role === "supervisor" || role === "supervisor_acc";
   }

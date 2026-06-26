@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from ..deps import require_admin_user
+from ..deps import require_admin_or_marketing_team, require_admin_user
 from ..services.access_control import (
     enrich_user_access_rows,
     invalidate_user_access_cache,
@@ -23,6 +23,8 @@ from ..services.user_access_store import (
     upsert_row,
     write_rows,
 )
+from ..services.admin_team import list_supervisor_codes, load_supervisor_team
+from ..services.admin_inventory import build_data_inventory
 
 logger = logging.getLogger("target_allocation")
 
@@ -202,3 +204,33 @@ def set_targetsun_for_email(
         raise HTTPException(status_code=404, detail=str(e)) from e
     invalidate_user_access_cache()
     return {"ok": True, "email": em, "can_import_targetsun": body.enabled}
+
+
+@router.get("/supervisor-codes")
+def admin_supervisor_codes(_user: dict = Depends(require_admin_or_marketing_team)) -> dict[str, Any]:
+    codes = list_supervisor_codes()
+    return {"supervisors": codes, "count": len(codes)}
+
+
+@router.get("/supervisor-team")
+def admin_supervisor_team(
+    super_code: str = Query(..., min_length=1),
+    year: int = Query(..., ge=2000, le=2100),
+    month: int = Query(..., ge=1, le=12),
+    force_refresh: int = Query(0, ge=0, le=1),
+    _user: dict = Depends(require_admin_or_marketing_team),
+) -> dict[str, Any]:
+    return load_supervisor_team(
+        super_code,
+        target_year=year,
+        target_month=month,
+        force_refresh=bool(force_refresh),
+    )
+
+
+@router.get("/data-inventory")
+def admin_data_inventory(
+    check_fabric: int = Query(1, ge=0, le=1),
+    _admin: dict = Depends(require_admin_user),
+) -> dict[str, Any]:
+    return build_data_inventory(check_fabric=bool(check_fabric))

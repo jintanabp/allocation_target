@@ -43,7 +43,11 @@ allocation_target/
 │   ├── .env.example              # ตัวอย่างตัวแปร (ไม่มี secret) — คัดลอกเป็น `config/.env`
 │   ├── user_access.json          # สิทธิผู้ใช้ (runtime)
 │   ├── access_hierarchy.json     # ลำดับชั้น Manager → Supervisor
+<<<<<<< Updated upstream
 │   └── README.md                 # workflow อัปเดตสิทธิ์
+=======
+│   └── README.md                 # หมายเหตุการแพ็ก .env และความปลอดภัย
+>>>>>>> Stashed changes
 │
 ├── scripts/
 │   ├── access/                      # import / rebuild / validate สิทธิ
@@ -67,7 +71,11 @@ allocation_target/
 ├── Run_Local.bat           # (ทางเลือก) รันบนเครื่อง dev — ไม่ใช้บน server บริษัท
 ├── targetsun-importTargetSalesmanNextFromExcel.md   # คู่มือ API ส่ง Excel เข้า TargetSun (multipart)
 ├── docs/
+<<<<<<< Updated upstream
 │   ├── DATA_FLOW.md            # เอกสารการดึง/ใช้/ส่งข้อมูล (Semantic Model + API)
+=======
+│   ├── DATA_FLOW.md            # เอกสารการดึง/ใช้/ส่งข้อมูล
+>>>>>>> Stashed changes
 │   ├── user-manual-th.md       # ต้นฉบับคู่มือ (Markdown)
 │   ├── user-manual-th.html     # ฉบับจัดหน้าแล้ว — เปิดอ่าน / พิมพ์ PDF
 │   └── build-manual-html.py    # สร้าง HTML จาก .md
@@ -216,7 +224,9 @@ allocation_target/
 3. ทำ **ขั้นที่ 1 → 2 (ถ้าต้องการ) → 3** แล้วดาวน์โหลด Excel หรือ **ส่งเข้า Target Sun** (ถ้ามีสิทธิ)
 
 **ตรวจสอบว่าแอปรันอยู่:** `GET <URL>/health` · **API docs:** `<URL>/docs` · **Log:** `data/app.log`  
-**คู่มือผู้ใช้:** [`docs/user-manual-th.html`](docs/user-manual-th.html) — ฉบับจัดหน้าแล้ว อ่าน/พิมพ์ PDF ได้ทันที · สรุปในแอป: ปุ่ม **คู่มือ** **9 ขั้น**
+**เอกสารแหล่งข้อมูล:** [`docs/DATA_FLOW.md`](docs/DATA_FLOW.md) — ตาราง Semantic Model, cache, API, ปลายทางส่งออก
+
+**คู่มือผู้ใช้:** [`docs/user-manual-th.html`](docs/user-manual-th.html)
 
 ---
 
@@ -395,7 +405,7 @@ Swagger UI: `<URL แอปบน server>/docs`
 | Step 1 โหลดไม่ได้ / เป้าว่าง | Fabric ไม่ตอบหรือไม่มีเป้า TGA งวดนั้น | ตรวจ dataset / งวด; ดู `data/app.log` และ `GET /debug/fabric` (ถ้าเปิด) |
 | Dropdown Supervisor ว่าง | Fabric ไม่ตอบหรือ cache เก่า | ล็อกอินสำเร็จ, ตรวจ dataset; ลด `MANAGERS_CACHE_TTL_SEC` หรือลบ `data/managers_cache.json` บน server |
 | ส่งเข้า TargetSun แล้ว **502 / Timeout / SSL error** | server → UAT ไม่ถึง / SSL | ตรวจ `TARGETSUN_IMPORT_*` ใน `config/.env` บน server; ดู `data/app.log` (`post_upstream`) |
-| ปุ่ม **ส่งเข้า Target Sun** เป็นสีเทา | ไม่มีสิทธิส่ง หรือยังไม่มีผลขั้นที่ 3 | แก้ allowlist บน server (`acc_local_test.json` / `ALLOCATION_ADMIN_EMAILS`); กด "เริ่มคำนวณ" ก่อน |
+| ปุ่ม **ส่งเข้า Target Sun** เป็นสีเทา | ไม่มีสิทธิส่ง หรือยังไม่มีผลขั้นที่ 3 | ตั้ง `can_import_targetsun` ใน `user_access.json` หรือ `ALLOCATION_ADMIN_EMAILS`; กด "เริ่มคำนวณ" ก่อน |
 | ส่งแล้วแจ้ง **ไม่มีใน Target Sun** บางคู่ | ไม่มี grain ใน cache ขั้นที่ 1 | โหลด Step 1 ใหม่ แล้วกระจายหีบอีกครั้ง |
 | push แล้ว feature ใหม่ error import | ยังไม่ได้ `pip install` บน server | รัน `pip install -r requirements.txt` บน server แล้วรีสตาร์ท |
 

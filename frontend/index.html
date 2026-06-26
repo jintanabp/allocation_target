@@ -28,7 +28,7 @@
           <span id="topbarPeriodText">—</span>
         </div>
         <button id="adminNavBtn" class="btn-admin-nav" type="button" style="display:none;" onclick="openAdminView()">
-          จัดการสิทธิ์
+          แอดมิน
         </button>
         <button id="logoutBtn" class="btn-logout" style="display:none;" onclick="handleLogout()">
           กลับเลือก Supervisor
@@ -840,11 +840,11 @@
     <div class="admin-shell">
       <header class="admin-top">
         <div class="admin-top__title">
-          <h1 class="admin-view__title">จัดการสิทธิ์ผู้ใช้</h1>
-          <p class="admin-view__sub">อีเมล + รหัส SL — แก้แล้วมีผลทันที</p>
+          <h1 class="admin-view__title" id="adminViewTitle">แอดมิน</h1>
+          <p class="admin-view__sub" id="adminViewSub">จัดการระบบและดูข้อมูล</p>
         </div>
         <div id="adminStats" class="admin-stats admin-stats--compact" aria-live="polite"></div>
-        <div class="admin-top__actions">
+        <div class="admin-top__actions" id="adminTopActionsUsers">
           <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminShowAddForm()">+ เพิ่มผู้ใช้</button>
           <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" id="adminClearFilters" onclick="adminResetTableFilters()">ล้างตัวกรอง</button>
           <button type="button" class="admin-btn-back" id="adminBackBtn" onclick="closeAdminView()">
@@ -852,8 +852,21 @@
             <span id="adminBackBtnLabel">กลับแอป</span>
           </button>
         </div>
+        <div class="admin-top__actions" id="adminTopActionsOther" style="display:none;">
+          <button type="button" class="admin-btn-back" onclick="closeAdminView()">
+            <span class="admin-btn-back__icon" aria-hidden="true">←</span>
+            <span>กลับแอป</span>
+          </button>
+        </div>
       </header>
 
+      <nav class="admin-tabs" id="adminTabs" role="tablist" aria-label="เมนูแอดมิน">
+        <button type="button" class="admin-tab admin-tab--active" role="tab" data-tab="users" aria-selected="true" onclick="adminSwitchTab('users')">สิทธิผู้ใช้</button>
+        <button type="button" class="admin-tab" role="tab" data-tab="team" aria-selected="false" onclick="adminSwitchTab('team')">ทีมพนักงาน</button>
+        <button type="button" class="admin-tab" role="tab" data-tab="data" aria-selected="false" onclick="adminSwitchTab('data')">แหล่งข้อมูล</button>
+      </nav>
+
+      <div id="adminPanelUsers" class="admin-panel" data-panel="users">
       <section id="adminAddPanel" class="admin-card admin-card--add" style="display:none;">
         <h2 class="admin-card__title">เพิ่มผู้ใช้ใหม่</h2>
         <div class="admin-add-grid">
@@ -913,7 +926,10 @@
                   <select id="adminFRole" class="admin-col-filter admin-col-filter--select" onchange="adminFilterRows()">
                     <option value="">ทั้งหมด</option>
                     <option value="supervisor">Supervisor</option>
+                    <option value="supervisor_acc">Supervisor</option>
                     <option value="manager">Manager</option>
+                    <option value="manager_acc">Manager</option>
+                    <option value="marketing">Marketing (MKT)</option>
                     <option value="unknown">ไม่ระบุบทบาท</option>
                   </select>
                 </th>
@@ -973,6 +989,57 @@
         </div>
         <datalist id="adminRegionDatalist"></datalist>
       </section>
+      </div>
+
+      <div id="adminPanelTeam" class="admin-panel" data-panel="team" style="display:none;">
+        <section class="admin-card">
+          <h2 class="admin-card__title">พนักงานใต้ Supervisor</h2>
+          <p class="admin-card__hint">อ่านจาก cache ก่อน — หมดอายุหรือกดรีเฟรชจะดึงจาก Fabric (Dim_Salesman) อัตโนมัติ</p>
+          <div class="admin-team-toolbar">
+            <label>Supervisor
+              <select id="adminTeamSuper" class="field-input admin-team-select"></select>
+            </label>
+            <label>เดือน
+              <select id="adminTeamMonth" class="field-input admin-team-select--sm"></select>
+            </label>
+            <label>ปี
+              <input type="number" id="adminTeamYear" class="field-input admin-team-input--sm" min="2020" max="2100" />
+            </label>
+            <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminLoadTeam(false)">โหลด</button>
+            <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminLoadTeam(true)">รีเฟรชจาก Fabric</button>
+          </div>
+          <div id="adminTeamMeta" class="admin-team-meta" aria-live="polite"></div>
+          <div class="admin-table-wrap">
+            <table class="admin-table admin-table--team">
+              <thead>
+                <tr>
+                  <th>รหัสพนักงาน</th>
+                  <th>ชื่อ</th>
+                  <th>SuperCode</th>
+                </tr>
+              </thead>
+              <tbody id="adminTeamBody">
+                <tr><td colspan="3" class="admin-empty">เลือก Supervisor แล้วกดโหลด</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <div id="adminPanelData" class="admin-panel" data-panel="data" style="display:none;">
+        <section class="admin-card">
+          <div class="admin-data-head">
+            <h2 class="admin-card__title">แหล่งข้อมูลในระบบ</h2>
+            <div class="admin-data-actions">
+              <a href="/docs/DATA_FLOW.md" target="_blank" rel="noopener" class="admin-btn-ghost admin-btn-ghost--sm">เอกสารฉบับเต็ม</a>
+              <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminLoadInventory(true)">ทดสอบ Fabric</button>
+              <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminLoadInventory(false)">โหลดใหม่</button>
+            </div>
+          </div>
+          <div id="adminInventoryLoading" class="admin-loading" style="display:none;">กำลังโหลด…</div>
+          <div id="adminInventoryBody" class="admin-inventory"></div>
+        </section>
+      </div>
     </div>
   </div>
 

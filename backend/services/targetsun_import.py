@@ -24,13 +24,13 @@ from .lakehouse import prepare_lakehouse_xlsx
 logger = logging.getLogger("target_allocation")
 
 """TEST"""
-# _DEFAULT_UAT_URL = (
-#     "https://spcuatws.sahapat.com/spc/targetsun/importTargetSalesmanNextFromExcel"
-# )
-
 _DEFAULT_UAT_URL = (
-    "https://spcws.sahapat.com/spc/targetsun/importTargetSalesmanNextFromExcel"
+    "https://spcuatws.sahapat.com/spc/targetsun/importTargetSalesmanNextFromExcel"
 )
+
+# _DEFAULT_UAT_URL = (
+#     "https://spcws.sahapat.com/spc/targetsun/importTargetSalesmanNextFromExcel"
+# )
 
 _PREPARE_DIR = Path("data/ts_prepare")
 _PREPARE_TTL_SEC = 30 * 60

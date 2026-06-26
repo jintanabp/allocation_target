@@ -26,6 +26,7 @@ python scripts/access/repair_user_access.py
 - **Deploy ครั้งแรก:** ไฟล์ config อยู่ใน Git — server ได้รายชื่อพร้อมใช้หลัง `git pull`
 - **หลัง deploy:** แอดมินแก้ผ่านปุ่ม **「จัดการสิทธิ์」** (อีเมลใน `ALLOCATION_ADMIN_EMAILS`) — การแก้บน server ไม่ถูก commit อัตโนมัติ
 - ฟิลด์ `can_import_targetsun` กำหนดใครกด **ส่งเข้า Target Sun** ได้
+- ฟิลด์ `login_kind`: `marketing` = เข้าระบบแล้วเห็นแอดมินแท็บ **ทีมพนักงาน** เท่านั้น (ตั้ง `userpl` เป็น `MKT` หรือรหัสอ้างอิง)
 - ฟิลด์สำคัญ: `full_name`, `acc_division`, `acc_region`, `acc_unit`, `acc_scope` (`all`/`credit`/`van`/`self`), `login_kind`, `visible_supervisor_codes` (precompute)
 
 ### กฎสิทธิ์ (Excel roster)
@@ -42,6 +43,13 @@ python scripts/access/repair_user_access.py
 
 ตัวอย่างรูปแบบ: ดู `config/user_access.example.json`
 
+<<<<<<< Updated upstream
+=======
+## เอกสารแหล่งข้อมูล
+
+รายละเอียดการดึง/ใช้/ส่งข้อมูล (Semantic Model, cache, API): [`docs/DATA_FLOW.md`](../docs/DATA_FLOW.md)
+
+>>>>>>> Stashed changes
 ## ความปลอดภัย
 
 `.env` มี secret — อย่า commit; backup `user_access.json` บน server เป็นระยะหลังแอดมินแก้ผ่านเว็บ
