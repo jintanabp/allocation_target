@@ -1277,6 +1277,78 @@ ORDER BY 'cross_sold_history_2y_qu'[SalesmanCode], [cnt] DESC
             columns=["emp_id", "warehouse_code"])
         return df.drop_duplicates(subset="emp_id", keep="first")
 
+    def get_sales_amount_by_emp_wh(
+        self,
+        target_month: int,
+        target_year: int,
+        emp_list: list,
+        *,
+        n_months: int = 3,
+    ) -> pd.DataFrame:
+        """ยอดขาย (บาท) ราย emp×warehouse ย้อนหลัง n เดือน"""
+        if not emp_list:
+            return pd.DataFrame(columns=["emp_id", "warehouse_code", "hist_amount"])
+        n_months = max(1, min(int(n_months), 24))
+        prev_months = self._prev_months(target_month, target_year, n_months)
+        date_filter = self._dax_date_filter(prev_months)
+        emp_filter = self._emp_treatas(emp_list)
+        dax = f"""
+EVALUATE
+SUMMARIZECOLUMNS(
+    'cross_sold_history_2y_qu'[SalesmanCode],
+    'cross_sold_history_2y_qu'[WarehouseCode],
+    CALCULATETABLE(
+        FILTER('DimDate', {date_filter})
+    ),
+    {emp_filter}
+    "hist_amount", SUM('cross_sold_history_2y_qu'[Amount])
+)
+"""
+        rows = self._execute_dax(dax)
+        records = []
+        for r in rows:
+            emp = str(self._get(r, "cross_sold_history_2y_qu[SalesmanCode]", "[SalesmanCode]", default="")).strip()
+            wh = str(self._get(r, "cross_sold_history_2y_qu[WarehouseCode]", "[WarehouseCode]", default="")).strip()
+            amt = float(self._get(r, "[hist_amount]", default=0) or 0)
+            if emp:
+                records.append({"emp_id": emp, "warehouse_code": wh, "hist_amount": amt})
+        return pd.DataFrame(records) if records else pd.DataFrame(
+            columns=["emp_id", "warehouse_code", "hist_amount"]
+        )
+
+    def get_ly_same_month_amount_by_emp_wh(
+        self, target_month: int, target_year: int, emp_list: list
+    ) -> pd.DataFrame:
+        """ยอดขาย (บาท) ราย emp×warehouse เดือนเดียวกันปีที่แล้ว"""
+        if not emp_list:
+            return pd.DataFrame(columns=["emp_id", "warehouse_code", "hist_amount"])
+        ly_year = int(target_year) - 1
+        tm = int(target_month)
+        emp_filter = self._emp_treatas(emp_list)
+        dax = f"""
+EVALUATE
+SUMMARIZECOLUMNS(
+    'cross_sold_history_2y_qu'[SalesmanCode],
+    'cross_sold_history_2y_qu'[WarehouseCode],
+    CALCULATETABLE(
+        FILTER('DimDate', YEAR('DimDate'[Date]) = {ly_year}, MONTH('DimDate'[Date]) = {tm})
+    ),
+    {emp_filter}
+    "hist_amount", SUM('cross_sold_history_2y_qu'[Amount])
+)
+"""
+        rows = self._execute_dax(dax)
+        records = []
+        for r in rows:
+            emp = str(self._get(r, "cross_sold_history_2y_qu[SalesmanCode]", "[SalesmanCode]", default="")).strip()
+            wh = str(self._get(r, "cross_sold_history_2y_qu[WarehouseCode]", "[WarehouseCode]", default="")).strip()
+            amt = float(self._get(r, "[hist_amount]", default=0) or 0)
+            if emp:
+                records.append({"emp_id": emp, "warehouse_code": wh, "hist_amount": amt})
+        return pd.DataFrame(records) if records else pd.DataFrame(
+            columns=["emp_id", "warehouse_code", "hist_amount"]
+        )
+
     @staticmethod
     def _tga_scalar_blank(val) -> bool:
         """ค่า scalar จาก MAX(col) ว่าง/blank/null"""

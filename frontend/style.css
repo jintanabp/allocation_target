@@ -5992,3 +5992,18 @@ code {
   background: #E5E7EB !important;
   color: #9CA3AF !important;
 }
+
+/* ── WH split groups (แบบ B) ── */
+.emp-wh-group-header { cursor: pointer; background: #f8fafc; }
+.emp-wh-group-header:hover { background: #f1f5f9; }
+.emp-wh-toggle {
+  border: none; background: transparent; cursor: pointer; padding: 0 6px 0 0;
+  font-size: 11px; color: var(--text-3); vertical-align: middle;
+}
+.emp-wh-badge {
+  display: inline-block; font-size: 11px; font-weight: 700; color: #0369a1;
+  background: #e0f2fe; border-radius: 6px; padding: 2px 8px;
+}
+.emp-wh-group-meta { margin-left: 8px; font-size: 11px; color: var(--text-3); }
+.emp-wh-child td { background: #fcfdff; }
+.emp-wh-row.emp-wh-child td { border-top: 1px dashed #e2e8f0; }

@@ -1946,6 +1946,68 @@ function _showLogoutModal() {
   });
 }
 
+/* ── WH split (หลายคลังต่อพนักงาน) ── */
+function _allocKey(e) {
+  if (!e) return "";
+  const emp = String(e.emp_id || "").trim();
+  if (!e.wh_split) return emp;
+  const wh = String(e.warehouse_code || "").trim();
+  return wh ? `${emp}|${wh}` : emp;
+}
+
+function _teamHasWhSplit() {
+  return (S.employees || []).some(e => e.wh_split);
+}
+
+function _employeeWhGroups() {
+  const map = new Map();
+  for (const e of S.employees || []) {
+    const id = String(e.emp_id || "").trim();
+    if (!map.has(id)) map.set(id, []);
+    map.get(id).push(e);
+  }
+  return [...map.entries()].map(([empId, rows]) => {
+    const isGroup = rows.length > 1 || !!rows[0]?.wh_split;
+    return {
+      empId,
+      rows,
+      isGroup,
+      name: rows[0]?.emp_name || "",
+      totalTargetSun: rows.reduce((a, r) => a + (Number(r.target_sun) || 0), 0),
+      totalLy: rows.reduce((a, r) => a + (Number(r.ly_sales) || 0), 0),
+      totalAvg3: rows.reduce((a, r) => a + (Number(r.hist_avg_3m) || 0), 0),
+    };
+  });
+}
+
+function _whGroupExpanded(empId) {
+  if (!S.whExpanded) return true;
+  return S.whExpanded.has(empId);
+}
+
+function toggleWhGroup(empId) {
+  if (!S.whExpanded) S.whExpanded = new Set();
+  const id = String(empId || "").trim();
+  if (S.whExpanded.has(id)) S.whExpanded.delete(id);
+  else S.whExpanded.add(id);
+  _renderEmpStep1();
+  renderYellowTable();
+}
+
+function _allocResultKey(a) {
+  const emp = String(a?.emp_id || "").trim();
+  const wh = String(a?.warehouse_code || "").trim();
+  return wh ? `${emp}|${wh}` : emp;
+}
+
+function _yellowTargetPayloadRow(e) {
+  const row = { emp_id: String(e.emp_id || "").trim(), yellow_target: S.yellow[_allocKey(e)] || 0 };
+  if (e.wh_split && String(e.warehouse_code || "").trim()) {
+    row.warehouse_code = String(e.warehouse_code).trim();
+  }
+  return row;
+}
+
 /* ══════════════════════════════════════════════
    DATA LOAD
 ══════════════════════════════════════════════ */
@@ -1956,7 +2018,8 @@ function applyDataPayload(data) {
     const sa = String(a.supervisor_code || "");
     const sb = String(b.supervisor_code || "");
     if (sa !== sb) return sa.localeCompare(sb);
-    return String(a.emp_id).localeCompare(String(b.emp_id));
+    return String(a.emp_id).localeCompare(String(b.emp_id)) ||
+      String(a.warehouse_code || "").localeCompare(String(b.warehouse_code || ""));
   });
 
   S.aggregateMode = !!data.aggregate_mode;
@@ -1964,6 +2027,10 @@ function applyDataPayload(data) {
   S.histWindowMonths = 3;
   S.skus = data.skus;
   S.employees = data.employees;
+  S.whExpanded = new Set();
+  for (const e of S.employees) {
+    if (e.wh_split) S.whExpanded.add(String(e.emp_id || "").trim());
+  }
   _applyNewProductSkus(data.new_product_skus);
   S.supervisorName = (data.supervisor_name || "").trim();
   S.totalTarget = S.skus.reduce(
@@ -1991,7 +2058,7 @@ function applyDataPayload(data) {
   S.yellow = {};
   S.employees.forEach(e => {
     const base = Number(e.target_sun);
-    S.yellow[e.emp_id] = Number.isFinite(base) ? Math.max(0, base) : 0;
+    S.yellow[_allocKey(e)] = Number.isFinite(base) ? Math.max(0, base) : 0;
   });
   document.getElementById("totalTargetDisplay").textContent = baht(S.totalTarget);
   _updateAggregateModeUI();
@@ -2646,69 +2713,104 @@ function toggleSkuGroup(idx) {
 /* ══════════════════════════════════════════════
    STEP 2 — YELLOW TABLE
 ══════════════════════════════════════════════ */
-function renderYellowTable() {
+function _yellowRowHtml(e, opts = {}) {
   const ySum = sumYellow();
   const showBui = !!S.buiColumnOpen && !S.aggregateMode;
   const readOnly = !!S.aggregateMode;
-  qs("#yellowTableBody").innerHTML = S.employees.map(e => {
-    const y = S.yellow[e.emp_id] || 0;
-    const ly = e.ly_sales || 0;
-    const l3m = e.hist_avg_3m || 0;
-    const ts = e.target_sun || 0;
-    const isLocked = S.yellowLocked[e.emp_id];
-
-    const bui = Number(S.buiDeductions[e.emp_id]) || 0;
-    const lyBase = Math.max(0, ly - bui);  // ฐานคำนวณการเติบโต = LY - บิวเทรี่ยม
-    const growth = lyBase > 0 ? ((y - lyBase) / lyBase * 100) : null;
-    const pct = ySum > 0 ? (y / ySum * 100) : 0;
-    const gTag = growth !== null
-      ? `<span class="gtag ${growth >= 0 ? "gtag-up" : "gtag-down"}">${growth >= 0 ? "+" : ""}${growth.toFixed(1)}%</span>`
-      : `<span class="gtag" style="background:var(--bg-main);color:var(--text-3);border:1px solid var(--border);">—</span>`;
-
-    const rowStyle = isLocked ? "background-color: var(--amber-bg);" : "";
-    const lockIcon = isLocked
-      ? `<button class="unlock-btn" title="คลิกเพื่อปลดล็อก" onclick="unlockYellow('${e.emp_id}')">🔒 ล็อก</button>`
-      : "";
-
-    // LY cell — เมื่อเปิด bui ให้แสดง input หักบิวเทรี่ยมใต้ตัวเลข LY (inline ไม่เพิ่มคอลัมน์)
-    const lyCell = showBui
-      ? `<td class="r mono step2-ly-cell--bui">
-          <div class="step2-ly-val">${baht(ly)}</div>
-          <label class="step2-bui-row">
-            <span class="step2-bui-label">หัก</span>
-            <input class="bui-input step2-bui-input" type="text" inputmode="numeric"
-              value="${bui > 0 ? fmt(bui) : ''}"
-              placeholder="0"
-              data-emp="${e.emp_id}"
-              onfocus="this.value = this.value.replace(/,/g, '')"
-              onblur="onBuiChange(this)" />
-          </label>
-          ${bui > 0 ? `<div class="bui-net">=&nbsp;<strong>${baht(lyBase)}</strong></div>` : ""}
-        </td>`
-      : `<td class="r mono">${baht(ly)}</td>`;
-
-    return `<tr style="${rowStyle}">
-      <td>
-        <span class="emp-tag">${e.emp_id}</span>
-        ${e.emp_name ? `<span style="font-size:11px;color:var(--text-3);margin-left:4px;">${e.emp_name}</span>` : ""}
+  const akey = _allocKey(e);
+  const y = opts.displayYellow != null ? opts.displayYellow : (S.yellow[akey] || 0);
+  const ly = e.ly_sales || 0;
+  const l3m = e.hist_avg_3m || 0;
+  const ts = e.target_sun || 0;
+  const isLocked = S.yellowLocked[akey];
+  const bui = Number(S.buiDeductions[e.emp_id]) || 0;
+  const lyBase = Math.max(0, ly - (opts.groupHeader ? bui : 0));
+  const growth = lyBase > 0 ? ((y - lyBase) / lyBase * 100) : null;
+  const pct = ySum > 0 ? (y / ySum * 100) : 0;
+  const gTag = growth !== null
+    ? `<span class="gtag ${growth >= 0 ? "gtag-up" : "gtag-down"}">${growth >= 0 ? "+" : ""}${growth.toFixed(1)}%</span>`
+    : `<span class="gtag" style="background:var(--bg-main);color:var(--text-3);border:1px solid var(--border);">—</span>`;
+  const rowStyle = isLocked ? "background-color: var(--amber-bg);" : "";
+  const lockIcon = isLocked && !opts.groupHeader
+    ? `<button class="unlock-btn" title="คลิกเพื่อปลดล็อก" onclick="unlockYellow('${escH(akey)}')">🔒 ล็อก</button>`
+    : "";
+  const lyCell = showBui && opts.groupHeader
+    ? `<td class="r mono step2-ly-cell--bui">
+        <div class="step2-ly-val">${baht(ly)}</div>
+        <label class="step2-bui-row">
+          <span class="step2-bui-label">หัก</span>
+          <input class="bui-input step2-bui-input" type="text" inputmode="numeric"
+            value="${bui > 0 ? fmt(bui) : ''}"
+            placeholder="0"
+            data-emp="${escH(e.emp_id)}"
+            onfocus="this.value = this.value.replace(/,/g, '')"
+            onblur="onBuiChange(this)" />
+        </label>
+        ${bui > 0 ? `<div class="bui-net">=&nbsp;<strong>${baht(lyBase)}</strong></div>` : ""}
+      </td>`
+    : `<td class="r mono">${baht(ly)}</td>`;
+  const empCell = opts.groupHeader
+    ? `<td>
+        <button type="button" class="emp-wh-toggle" onclick="toggleWhGroup('${escH(e.emp_id)}')">${_whGroupExpanded(e.emp_id) ? "▼" : "▶"}</button>
+        <span class="emp-tag">${escH(e.emp_id)}</span>
+        ${e.emp_name ? `<span style="font-size:11px;color:var(--text-3);margin-left:4px;">${escH(e.emp_name)}</span>` : ""}
+        <span class="emp-wh-group-meta">${opts.childCount || ""} คลัง</span>
+      </td>`
+    : opts.child
+      ? `<td style="padding-left:22px;"><span class="emp-wh-badge">W/H ${escH(e.warehouse_code || "—")}</span>${lockIcon}</td>`
+      : `<td>
+        <span class="emp-tag">${escH(e.emp_id)}</span>
+        ${e.emp_name ? `<span style="font-size:11px;color:var(--text-3);margin-left:4px;">${escH(e.emp_name)}</span>` : ""}
         ${lockIcon}
-      </td>
-      ${lyCell}
-      <td class="r mono">${baht(l3m)}</td>
-      <td class="r mono">${baht(ts)}</td>
-      <td class="r">
+      </td>`;
+  const yellowInput = opts.groupHeader
+    ? `<td class="r mono">${baht(y)}</td>`
+    : `<td class="r">
         <input class="cell-input" type="text" inputmode="numeric"
           style="${isLocked ? 'color:var(--amber); border-color:var(--amber);' : ''}"
           value="${fmt(y)}"
-          data-emp="${e.emp_id}"
+          data-alloc-key="${escH(akey)}"
           ${readOnly ? "readonly disabled" : ""}
           onfocus="this.value = this.value.replace(/,/g, '')"
           onblur="onYellowChange(this)"/>
-      </td>
-      <td class="r" id="gTag_${e.emp_id}">${gTag}</td>
-      <td class="r mono" id="pct_${e.emp_id}">${pct.toFixed(1)}%</td>
-    </tr>`;
-  }).join("");
+      </td>`;
+  return `<tr class="${opts.child ? "emp-wh-child" : ""}${opts.groupHeader ? " emp-wh-group-header" : ""}" style="${rowStyle}">
+    ${empCell}
+    ${lyCell}
+    <td class="r mono">${baht(l3m)}</td>
+    <td class="r mono">${baht(ts)}</td>
+    ${yellowInput}
+    <td class="r" id="gTag_${escH(akey)}">${opts.groupHeader ? "—" : gTag}</td>
+    <td class="r mono" id="pct_${escH(akey)}">${opts.groupHeader ? "—" : pct.toFixed(1) + "%"}</td>
+  </tr>`;
+}
+
+function renderYellowTable() {
+  const ySum = sumYellow();
+  const showBui = !!S.buiColumnOpen && !S.aggregateMode;
+  const parts = [];
+  for (const g of _employeeWhGroups()) {
+    if (!g.isGroup) {
+      parts.push(_yellowRowHtml(g.rows[0]));
+      continue;
+    }
+    const open = _whGroupExpanded(g.empId);
+    const headerEmp = {
+      ...g.rows[0],
+      emp_id: g.empId,
+      emp_name: g.name,
+      ly_sales: g.totalLy,
+      hist_avg_3m: g.totalAvg3,
+      target_sun: g.totalTargetSun,
+      wh_split: false,
+    };
+    const headerYellow = g.rows.reduce((a, r) => a + (S.yellow[_allocKey(r)] || 0), 0);
+    parts.push(_yellowRowHtml(headerEmp, { groupHeader: true, childCount: g.rows.length, displayYellow: headerYellow }));
+    if (open) {
+      for (const e of g.rows) parts.push(_yellowRowHtml(e, { child: true }));
+    }
+  }
+  qs("#yellowTableBody").innerHTML = parts.join("");
 
   const tsSum = S.employees.reduce((a, e) => a + (e.target_sun || 0), 0);
   const totalLy = S.employees.reduce((a, e) => a + (e.ly_sales || 0), 0);
@@ -2730,27 +2832,28 @@ function renderYellowTable() {
 }
 
 function onYellowChange(input) {
-  const emp = input.dataset.emp;
+  const akey = input.dataset.allocKey || input.dataset.emp;
   const val = Math.max(0, parseFloat(input.value.replace(/,/g, "")) || 0);
 
-  S.yellow[emp] = val;
-  S.yellowLocked[emp] = true;
+  S.yellow[akey] = val;
+  S.yellowLocked[akey] = true;
 
-  const lockedEmps = S.employees.filter(e => S.yellowLocked[e.emp_id]);
-  const unlockedEmps = S.employees.filter(e => !S.yellowLocked[e.emp_id]);
+  const lockedRows = S.employees.filter(e => S.yellowLocked[_allocKey(e)]);
+  const unlockedRows = S.employees.filter(e => !S.yellowLocked[_allocKey(e)]);
 
-  const lockedSum = lockedEmps.reduce((acc, e) => acc + (S.yellow[e.emp_id] || 0), 0);
+  const lockedSum = lockedRows.reduce((acc, e) => acc + (S.yellow[_allocKey(e)] || 0), 0);
   let remainingTarget = S.totalTarget - lockedSum;
   if (remainingTarget < 0) remainingTarget = 0;
 
-  if (unlockedEmps.length > 0) {
-    const baseSum = unlockedEmps.reduce((acc, e) => acc + (e.ly_sales || 0.1), 0);
+  if (unlockedRows.length > 0) {
+    const baseSum = unlockedRows.reduce((acc, e) => acc + (e.ly_sales || 0.1), 0);
     let distributed = 0;
-    unlockedEmps.forEach((e, i) => {
-      if (i === unlockedEmps.length - 1) S.yellow[e.emp_id] = remainingTarget - distributed;
+    unlockedRows.forEach((e, i) => {
+      const k = _allocKey(e);
+      if (i === unlockedRows.length - 1) S.yellow[k] = remainingTarget - distributed;
       else {
         const share = remainingTarget * ((e.ly_sales || 0.1) / baseSum);
-        S.yellow[e.emp_id] = share;
+        S.yellow[k] = share;
         distributed += share;
       }
     });
@@ -2770,8 +2873,8 @@ function onYellowChange(input) {
   }
 }
 
-function unlockYellow(empId) {
-  delete S.yellowLocked[empId];
+function unlockYellow(allocKey) {
+  delete S.yellowLocked[allocKey];
   renderYellowTable();
   updateValidation();
 }
@@ -2782,7 +2885,7 @@ function resetYellowToTargetSun() {
     return;
   }
   const differs = S.employees.filter(e => {
-    const y = Number(S.yellow[e.emp_id]) || 0;
+    const y = Number(S.yellow[_allocKey(e)]) || 0;
     const ts = Number(e.target_sun) || 0;
     return Math.abs(y - ts) > 0.01;
   });
@@ -2801,7 +2904,7 @@ function resetYellowToTargetSun() {
   S.yellowLocked = {};
   S.employees.forEach(e => {
     const base = Number(e.target_sun);
-    S.yellow[e.emp_id] = Number.isFinite(base) ? Math.max(0, base) : 0;
+    S.yellow[_allocKey(e)] = Number.isFinite(base) ? Math.max(0, base) : 0;
   });
   renderYellowTable();
   updateValidation();
@@ -2893,7 +2996,12 @@ async function runOptimization() {
   btn.classList.remove("pulse-warn");
   const lockedEdits = S.allocations
     .filter(a => a.is_edited)
-    .map(a => ({ emp_id: a.emp_id, sku: a.sku, locked_boxes: a.allocated_boxes }));
+    .map(a => ({
+      emp_id: a.emp_id,
+      sku: a.sku,
+      locked_boxes: a.allocated_boxes,
+      warehouse_code: a.warehouse_code || null,
+    }));
 
   pushGlobalBusy(UX.busyAllocate, UX.busyAllocateHint);
   const allocs = await _doOptimize(lockedEdits);
@@ -2956,10 +3064,7 @@ async function _doOptimize(lockedEdits = []) {
 
   try {
     const payload = {
-      yellowTargets: S.employees.map(e => ({
-        emp_id: e.emp_id,
-        yellow_target: S.yellow[e.emp_id] || 0,
-      })),
+      yellowTargets: S.employees.map(e => _yellowTargetPayloadRow(e)),
       strategy,
       force_min_one: forceMinOne,
       new_products_even: newProductsEven,
@@ -3119,7 +3224,7 @@ function renderResult(allocs) {
   }
 
   const skus = skusObjArr.map(o => o.sku);
-  const emps = [...new Set(allocs.map(a => a.emp_id))];
+  const rowKeys = [...new Set(allocs.map(a => _allocResultKey(a)))];
 
   const lk = {};
   const lkHistRoll = {};
@@ -3128,20 +3233,21 @@ function renderResult(allocs) {
   const lkBaseline = {};
   const lkHistDev = {};
   for (const a of allocs) {
-    if (!lk[a.emp_id]) {
-      lk[a.emp_id] = {};
-      lkHistRoll[a.emp_id] = {};
-      lkHistLy[a.emp_id] = {};
-      lkHistPrev[a.emp_id] = {};
-      lkBaseline[a.emp_id] = {};
-      lkHistDev[a.emp_id] = {};
+    const rk = _allocResultKey(a);
+    if (!lk[rk]) {
+      lk[rk] = {};
+      lkHistRoll[rk] = {};
+      lkHistLy[rk] = {};
+      lkHistPrev[rk] = {};
+      lkBaseline[rk] = {};
+      lkHistDev[rk] = {};
     }
-    lk[a.emp_id][a.sku] = a.allocated_boxes || 0;
-    lkHistRoll[a.emp_id][a.sku] = a.hist_avg || 0;
-    lkHistLy[a.emp_id][a.sku] = Number(a.hist_ly_same_month) || 0;
-    lkHistPrev[a.emp_id][a.sku] = Number(a.hist_prev_month) || 0;
-    lkBaseline[a.emp_id][a.sku] = Number(a.baseline_boxes) || 0;
-    lkHistDev[a.emp_id][a.sku] = {
+    lk[rk][a.sku] = a.allocated_boxes || 0;
+    lkHistRoll[rk][a.sku] = a.hist_avg || 0;
+    lkHistLy[rk][a.sku] = Number(a.hist_ly_same_month) || 0;
+    lkHistPrev[rk][a.sku] = Number(a.hist_prev_month) || 0;
+    lkBaseline[rk][a.sku] = Number(a.baseline_boxes) || 0;
+    lkHistDev[rk][a.sku] = {
       status: a.hist_dev_status || "",
       pct: a.hist_dev_pct == null ? null : Number(a.hist_dev_pct),
       baseline: Number(a.baseline_boxes) || 0,
@@ -3192,8 +3298,9 @@ function renderResult(allocs) {
   // Pre-compute per-emp grand/brand totals — single O(n) pass แทน O(n²) filter loop
   const _empTotals = {};
   for (const a of allocs) {
-    if (!_empTotals[a.emp_id]) _empTotals[a.emp_id] = { grandBoxes: 0, grandValue: 0, brandBoxes: 0, brandValue: 0 };
-    const t = _empTotals[a.emp_id];
+    const rk = _allocResultKey(a);
+    if (!_empTotals[rk]) _empTotals[rk] = { grandBoxes: 0, grandValue: 0, brandBoxes: 0, brandValue: 0 };
+    const t = _empTotals[rk];
     const b = a.allocated_boxes || 0;
     const p = _skuPriceMap[a.sku] ?? Number(a.price_per_box) ?? 0;
     t.grandBoxes += b;
@@ -3206,26 +3313,27 @@ function renderResult(allocs) {
 
   // Pre-compute is_edited map กัน allocs.find() ใน inner loop
   const _editedSet = new Set(
-    allocs.filter(a => a.is_edited).map(a => `${a.emp_id}::${a.sku}`)
+    allocs.filter(a => a.is_edited).map(a => `${_allocResultKey(a)}::${a.sku}`)
   );
 
   const skuTotals = skus.map(() => 0);
 
-  qs("#resultBody").innerHTML = emps.map(emp => {
-    const empInfo = S.employees.find(e => e.emp_id === emp);
-    const wh = empInfo?.warehouse_code || "—";
+  qs("#resultBody").innerHTML = rowKeys.map(rk => {
+    const empInfo = (S.employees || []).find(e => _allocKey(e) === rk);
+    const empId = empInfo?.emp_id || (rk.includes("|") ? rk.split("|")[0] : rk);
+    const wh = empInfo?.warehouse_code || (rk.includes("|") ? rk.split("|")[1] : "") || "—";
     const empName = empInfo?.emp_name || "";
 
-    const boxes = skus.map(s => lk[emp]?.[s] ?? 0);
-    const histsRoll = skus.map(s => lkHistRoll[emp]?.[s] ?? 0);
-    const histsLy = skus.map(s => lkHistLy[emp]?.[s] ?? 0);
-    const histsPrev = skus.map(s => lkHistPrev[emp]?.[s] ?? 0);
+    const boxes = skus.map(s => lk[rk]?.[s] ?? 0);
+    const histsRoll = skus.map(s => lkHistRoll[rk]?.[s] ?? 0);
+    const histsLy = skus.map(s => lkHistLy[rk]?.[s] ?? 0);
+    const histsPrev = skus.map(s => lkHistPrev[rk]?.[s] ?? 0);
 
     boxes.forEach((b, i) => { skuTotals[i] += b; });
 
-    const { grandBoxes = 0, grandValue = 0, brandBoxes = 0, brandValue = 0 } = _empTotals[emp] || {};
+    const { grandBoxes = 0, grandValue = 0, brandBoxes = 0, brandValue = 0 } = _empTotals[rk] || {};
 
-    const yellowTarget = _effectiveYellowTarget(emp);
+    const yellowTarget = _effectiveYellowTarget(rk);
     const deviation = grandValue - yellowTarget;
     const devAbs = Math.abs(deviation);
     const deviationOk = devAbs <= 1000;
@@ -3234,8 +3342,8 @@ function renderResult(allocs) {
     const valTitle = yellowTarget > 0 ? (deviationOk ? `✓ ห่างจากเป้าเพียง ${baht(devAbs)} บาท` : `⚠️ ${word}เป้า ${baht(devAbs)} บาท`) : "";
 
     let rowHtml = `<tr>
-      <td><span class="emp-tag">${emp}</span>${empName ? `<div style="font-size:10px;margin-top:2px;">${empName}</div>` : ""}</td>
-      <td class="mono" style="color:var(--text-3);font-size:12px;">${wh}</td>`;
+      <td><span class="emp-tag">${escH(empId)}</span>${empName ? `<div style="font-size:10px;margin-top:2px;">${escH(empName)}</div>` : ""}</td>
+      <td class="mono" style="color:var(--text-3);font-size:12px;">${escH(wh)}</td>`;
 
     skus.forEach((s, i) => {
       const b = boxes[i];
@@ -3255,15 +3363,15 @@ function renderResult(allocs) {
 
       const hText = `<div class="hist-sub"><div>${lineRoll}</div><div>${linePrev}</div>${lineLyDiv}</div>`;
 
-      const colorClass = _editedSet.has(`${emp}::${s}`) ? "is-edited" : "";
-      const dev = lkHistDev[emp]?.[s] || { status: "", pct: null, baseline: 0 };
+      const colorClass = _editedSet.has(`${rk}::${s}`) ? "is-edited" : "";
+      const dev = lkHistDev[rk]?.[s] || { status: "", pct: null, baseline: 0 };
       const flagHtml = _histDevFlagHtml(dev.status, dev.pct, dev.baseline);
       const devLineHtml = _histDevLineHtml(dev.status, dev.pct, dev.baseline);
 
       rowHtml += `<td class="r result-cell" style="vertical-align:top;">
         <div class="result-box-wrap">
           <div class="result-box-num ${colorClass}" contenteditable="true"
-            data-emp="${emp}" data-sku="${s}" onblur="onResultEdit(this)"
+            data-emp="${escH(empId)}" data-wh="${escH(wh === "—" ? "" : wh)}" data-sku="${escH(s)}" onblur="onResultEdit(this)"
             onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
             onpaste="event.preventDefault();document.execCommand('insertText',false,parseInt(event.clipboardData.getData('text').replace(/,/g,''))||0)"
           >${b}</div>${flagHtml}
@@ -3277,14 +3385,14 @@ function renderResult(allocs) {
       rowHtml += `<td class="r num-total sticky-brand-box">${brandBoxes.toLocaleString()}</td>`;
       rowHtml += `<td class="r num-total sticky-brand-val">${baht(brandValue)}</td>`;
     }
-    rowHtml += `<td class="r num-total sticky-grand-box" id="rowtotal-${emp}">${grandBoxes.toLocaleString()}</td>`;
+    rowHtml += `<td class="r num-total sticky-grand-box" id="rowtotal-${escH(rk)}">${grandBoxes.toLocaleString()}</td>`;
     const devSub =
       yellowTarget > 0
         ? deviationOk
           ? `<div class="emp-dev-line dev-ok" title="${valTitle}">✓ ใกล้เป้า (ห่าง ${baht(devAbs)} บ.)</div>`
           : `<div class="emp-dev-line dev-bad" title="${valTitle}"><strong>${word}</strong> ${baht(devAbs)} บาท</div>`
         : `<div class="emp-dev-line dev-muted">—</div>`;
-    rowHtml += `<td class="r num-total sticky-grand-val grand-val-cell ${valClass}" id="rowval-${emp}" title="${valTitle}">` +
+    rowHtml += `<td class="r num-total sticky-grand-val grand-val-cell ${valClass}" id="rowval-${escH(rk)}" title="${valTitle}">` +
       `<div class="grand-val-cell-inner">` +
       `<div class="grand-val-amount">${baht(grandValue)}</div>${devSub}</div></td></tr>`;
 
@@ -3458,12 +3566,16 @@ let _rebalanceTimer = null;
 function onResultEdit(el) {
   const emp = el.dataset.emp;
   const sku = el.dataset.sku;
+  const wh = el.dataset.wh || "";
 
   const raw = parseInt(el.textContent.replace(/[^0-9]/g, "")) || 0;
   const val = Math.max(0, raw);
   el.textContent = val;
 
-  const alloc = S.allocations.find(a => a.emp_id === emp && a.sku === sku);
+  const alloc = S.allocations.find(
+    a => String(a.emp_id) === String(emp) && String(a.sku) === String(sku)
+      && String(a.warehouse_code || "") === String(wh || "")
+  );
   const prev = alloc ? (Number(alloc.allocated_boxes) || 0) : null;
   const wasEdited = Boolean(alloc?.is_edited);
 
@@ -3492,7 +3604,7 @@ function onResultEdit(el) {
   } else {
     const skuInfo = S.skus.find(x => x.sku === sku) || {};
     const row = {
-      emp_id: emp, sku, allocated_boxes: val, hist_avg: 0, hist_ly_same_month: 0, hist_prev_month: 0,
+      emp_id: emp, sku, warehouse_code: wh || undefined, allocated_boxes: val, hist_avg: 0, hist_ly_same_month: 0, hist_prev_month: 0,
       price_per_box: Number(skuInfo.price_per_box) || 0, brand_name_thai: skuInfo.brand_name_thai || "",
       brand_name_english: skuInfo.brand_name_english || "", product_name_thai: skuInfo.product_name_thai || "",
       baseline_boxes: 0, hist_dev_pct: null, hist_dev_status: "", is_edited: true,
@@ -3748,24 +3860,33 @@ function _lakehouseAllocationsFromStep3() {
   for (const a of S.allocations || []) {
     const emp = String(a.emp_id || "").trim();
     const sku = String(a.sku || "").trim();
+    const wh = String(a.warehouse_code || "").trim();
     if (!emp || !sku) continue;
-    byKey.set(`${emp}::${sku}`, {
+    const rk = wh ? `${emp}|${wh}` : emp;
+    byKey.set(`${rk}::${sku}`, {
       emp_id: emp,
       sku,
       allocated_boxes: Number(a.allocated_boxes) || 0,
-      warehouse_code: _empWarehouseForLakehouse(emp),
+      warehouse_code: wh || _empWarehouseForLakehouse(emp),
     });
   }
 
-  const emps = [...new Set((S.allocations || []).map(a => String(a.emp_id || "").trim()).filter(Boolean))];
+  const empRows = (S.employees || []).length
+    ? S.employees
+    : [...new Set((S.allocations || []).map(a => String(a.emp_id || "").trim()).filter(Boolean))]
+        .map(emp_id => ({ emp_id, warehouse_code: "", wh_split: false }));
   const skus = _lakehouseTargetSkus();
   const out = [];
-  for (const emp of emps) {
-    const wh = _empWarehouseForLakehouse(emp);
+  for (const e of empRows) {
+    const emp = String(e.emp_id || "").trim();
+    const wh = e.wh_split
+      ? String(e.warehouse_code || "").trim()
+      : (_empWarehouseForLakehouse(emp) || "");
+    const rk = wh ? `${emp}|${wh}` : emp;
     for (const sku of skus) {
-      const key = `${emp}::${sku}`;
+      const key = `${rk}::${sku}`;
       out.push(
-        byKey.get(key) || { emp_id: emp, sku, allocated_boxes: 0, warehouse_code: wh }
+        byKey.get(key) || { emp_id: emp, sku, allocated_boxes: 0, warehouse_code: wh || null }
       );
     }
   }
@@ -4138,7 +4259,7 @@ function _discardDraftStartFresh() {
   if (S.employees && S.employees.length) {
     S.employees.forEach(e => {
       const base = Number(e.target_sun);
-      S.yellow[e.emp_id] = Number.isFinite(base) ? Math.max(0, base) : 0;
+      S.yellow[_allocKey(e)] = Number.isFinite(base) ? Math.max(0, base) : 0;
     });
   }
   _undoStack = [];
@@ -4639,7 +4760,12 @@ async function runReAllocationKeepEdits() {
 
   const lockedEdits = S.allocations
     .filter(a => a.is_edited)
-    .map(a => ({ emp_id: a.emp_id, sku: a.sku, locked_boxes: a.allocated_boxes }));
+    .map(a => ({
+      emp_id: a.emp_id,
+      sku: a.sku,
+      locked_boxes: a.allocated_boxes,
+      warehouse_code: a.warehouse_code || null,
+    }));
 
   const allocs = await _doOptimize(lockedEdits);
   if (!allocs) return;
@@ -5033,7 +5159,7 @@ function onBuiChange(input) {
 function _negGrowthOffenders() {
   const offenders = [];
   (S.employees || []).forEach(e => {
-    const y = Number(S.yellow[e.emp_id]) || 0;
+    const y = Number(S.yellow[_allocKey(e)]) || 0;
     const ly = Number(e.ly_sales) || 0;
     const ts = Number(e.target_sun) || 0;
     const bui = Number(S.buiDeductions[e.emp_id]) || 0;

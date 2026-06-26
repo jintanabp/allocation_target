@@ -32,13 +32,66 @@ from ..core.paths import (
     hist_ly_same_month_cache_path,
     hist_prev_month_cache_path,
     result_path,
+    tga_grain_cache_path,
 )
 from ..core.targets import load_target_csv
 from ..generate_excel import create_target_excel
 from ..schemas import OptimizeRequest
 from ..fabric_dax_connector import FabricDAXConnector
+from .wh_split import (
+    alloc_key,
+    prepare_optimize_targets,
+    restore_allocation_emp_ids,
+    split_hist_dataframe,
+    tga_value_by_emp_wh,
+    value_shares_for_reverse_map,
+)
 
 logger = logging.getLogger("target_allocation")
+
+
+def _lock_or_emp_id(emp_id: str, warehouse_code: str | None) -> str:
+    em = str(emp_id or "").strip()
+    wh = str(warehouse_code or "").strip()
+    if wh:
+        return alloc_key(em, wh, wh_split=True)
+    return em
+
+
+def _wh_value_shares(
+    reverse_map: dict[str, tuple[str, str]],
+    sup_id: str,
+    target_month: int,
+    target_year: int,
+    df_sku: pd.DataFrame,
+) -> dict[tuple[str, str], float]:
+    path = tga_grain_cache_path(sup_id, target_month, target_year)
+    if not os.path.exists(path):
+        return value_shares_for_reverse_map(reverse_map, {})
+    try:
+        dg = pd.read_csv(path, dtype={"sku": str, "emp_id": str})
+        price_map = dict(
+            zip(
+                df_sku["sku"].astype(str).str.strip(),
+                pd.to_numeric(df_sku["price_per_box"], errors="coerce").fillna(0.0),
+            )
+        )
+        return value_shares_for_reverse_map(
+            reverse_map, tga_value_by_emp_wh(dg, price_map)
+        )
+    except Exception as e:
+        logger.warning("wh value shares from tga grain: %s", e)
+        return value_shares_for_reverse_map(reverse_map, {})
+
+
+def _maybe_split_hist(
+    df: pd.DataFrame,
+    reverse_map: dict[str, tuple[str, str]],
+    value_shares: dict[tuple[str, str], float],
+) -> pd.DataFrame:
+    if not reverse_map or not any("|" in k for k in reverse_map):
+        return df
+    return split_hist_dataframe(df, reverse_map, value_shares)
 
 
 def _read_hist_cache(path: str, emp_list: list[str]) -> pd.DataFrame:
@@ -273,14 +326,24 @@ def run_optimization_service(
                 "(ทุกคนเป้า 0 ในงวดนี้ / ตรวจสอบ Target Sun)"
             ),
         )
-    emp_list = df_emp_targets["emp_id"].astype(str).str.strip().tolist()
+    df_prepared, reverse_map = prepare_optimize_targets(df_emp_targets)
+    value_shares = _wh_value_shares(
+        reverse_map, sup_id, target_month, target_year, df_sku
+    )
+    real_emp_list = list(
+        {str(t.emp_id).strip() for t in req.yellowTargets if str(t.emp_id).strip()}
+    )
+    emp_list = df_prepared["or_emp_id"].astype(str).str.strip().tolist()
     eligible_set = set(emp_list)
+    df_emp_targets = df_prepared[["or_emp_id", "yellow_target"]].rename(
+        columns={"or_emp_id": "emp_id"}
+    )
 
     strategy_u = req.strategy.upper()
     cache_6 = hist_cache_path(sup_id, target_month, target_year, n_months=6)
     cache_3 = hist_cache_path(sup_id, target_month, target_year, n_months=3)
-    df_hist_3 = _read_hist_cache(cache_3, emp_list)
-    df_hist_6 = _read_hist_cache(cache_6, emp_list)
+    df_hist_3 = _read_hist_cache(cache_3, real_emp_list)
+    df_hist_6 = _read_hist_cache(cache_6, real_emp_list)
     if df_hist_3.empty and df_hist_6.empty:
         logger.warning("ไม่พบ hist cache → ใช้ตารางเปล่า")
     else:
@@ -296,7 +359,7 @@ def run_optimization_service(
     if os.path.exists(lysm_path):
         try:
             df_hist_lysm = pd.read_csv(lysm_path, dtype={"sku": str, "emp_id": str})
-            df_hist_lysm = df_hist_lysm[df_hist_lysm["emp_id"].isin(emp_list)]
+            df_hist_lysm = df_hist_lysm[df_hist_lysm["emp_id"].isin(real_emp_list)]
             logger.info(
                 "hist LY same-month loaded: %d rows (blend weight env ALLOC_HIST_LYM_WEIGHT, default 0.5)",
                 len(df_hist_lysm),
@@ -304,6 +367,10 @@ def run_optimization_service(
         except Exception as e:
             logger.warning("hist LY same-month cache read failed: %s", e)
             df_hist_lysm = pd.DataFrame()
+
+    df_hist_3 = _maybe_split_hist(df_hist_3, reverse_map, value_shares)
+    df_hist_6 = _maybe_split_hist(df_hist_6, reverse_map, value_shares)
+    df_hist_lysm = _maybe_split_hist(df_hist_lysm, reverse_map, value_shares)
 
     df_hist_input, hist_months = _hist_input_for_strategy(
         strategy_u,
@@ -321,11 +388,13 @@ def run_optimization_service(
     if os.path.exists(prev_path):
         try:
             df_hist_prev = pd.read_csv(prev_path, dtype={"sku": str, "emp_id": str})
-            df_hist_prev = df_hist_prev[df_hist_prev["emp_id"].isin(emp_list)]
+            df_hist_prev = df_hist_prev[df_hist_prev["emp_id"].isin(real_emp_list)]
             logger.info("hist prev-month loaded: %d rows", len(df_hist_prev))
         except Exception as e:
             logger.warning("hist prev-month cache read failed: %s", e)
             df_hist_prev = pd.DataFrame()
+
+    df_hist_prev = _maybe_split_hist(df_hist_prev, reverse_map, value_shares)
 
     logger.info(
         "Running strategy=%s for sup=%s (eligible emps for boxes: %d)",
@@ -334,13 +403,17 @@ def run_optimization_service(
         len(emp_list),
     )
     locked_edits_data = [
-        {"emp_id": le.emp_id, "sku": le.sku, "locked_boxes": le.locked_boxes}
+        {
+            "emp_id": _lock_or_emp_id(le.emp_id, le.warehouse_code),
+            "sku": le.sku,
+            "locked_boxes": le.locked_boxes,
+        }
         for le in req.locked_edits
-        if str(le.emp_id).strip() in eligible_set
+        if _lock_or_emp_id(le.emp_id, le.warehouse_code) in eligible_set
     ]
     sku_ids_opt = df_sku["sku"].astype(str).str.strip().tolist()
     new_product_skus_used, detection_mode = detect_new_product_skus(
-        sup_id, target_year, sku_ids_opt, df_hist
+        sup_id, target_year, sku_ids_opt, df_hist_3 if not df_hist_3.empty else df_hist_6
     )
     new_products_even_mode = detection_mode if new_product_skus_used else "off"
     new_skus_cy_ly: set[str] | None = set()
@@ -622,9 +695,14 @@ def run_optimization_service(
         for c in brand_cols:
             df_final[c] = df_final[c].fillna("" if "name" in c else 0)
 
+    df_final = restore_allocation_emp_ids(df_final, reverse_map)
+
     df_final.to_csv(result_path(sup_id), index=False)
 
-    yellow_map = {y.emp_id: y.yellow_target for y in req.yellowTargets}
+    yellow_map: dict[str, float] = {}
+    for y in req.yellowTargets:
+        em = str(y.emp_id).strip()
+        yellow_map[em] = yellow_map.get(em, 0.0) + float(y.yellow_target or 0)
     sku_checks = validate_allocation_vs_targets(df_final, df_sku)
     if sku_checks:
         logger.warning("allocation vs target mismatch: %s", sku_checks)

@@ -34,6 +34,7 @@ _SKU_OUTPUT_COLUMNS = [
     "product_name_english",
 ]
 from ..fabric_dax_connector import FabricDAXConnector
+from .wh_split import expand_employee_rows, warehouses_per_emp_from_tga
 from .employee_payload_cache import (
     read_cached_employee_payload,
     write_cached_employee_payload,
@@ -636,8 +637,70 @@ def load_employees_payload(
         sup_id, target_year, sku_ids_list, df_hist
     )
 
+    price_by_sku = dict(
+        zip(
+            df_sku["sku"].astype(str).str.strip(),
+            pd.to_numeric(df_sku["price_per_box"], errors="coerce").fillna(0.0),
+        )
+    )
+    ly_amount_by_emp_wh: dict[tuple[str, str], float] | None = None
+    avg3_amount_by_emp_wh: dict[tuple[str, str], float] | None = None
+    wh_split_emps = [
+        e
+        for e, whs in warehouses_per_emp_from_tga(df_tga_granular).items()
+        if len(set(whs)) >= 2
+    ]
+    if wh_split_emps and fabric is not None:
+        try:
+            df_ly_wh = fabric.get_ly_same_month_amount_by_emp_wh(
+                target_month, target_year, wh_split_emps
+            )
+            if not df_ly_wh.empty:
+                ly_amount_by_emp_wh = {
+                    (str(r["emp_id"]).strip(), str(r.get("warehouse_code") or "").strip()): float(
+                        r.get("hist_amount") or 0.0
+                    )
+                    for _, r in df_ly_wh.iterrows()
+                }
+        except Exception as e:
+            logger.warning("ly amount by emp×wh skipped: %s", e)
+        try:
+            df_3m_wh = fabric.get_sales_amount_by_emp_wh(
+                target_month, target_year, wh_split_emps, n_months=3
+            )
+            if not df_3m_wh.empty:
+                avg3_amount_by_emp_wh = {
+                    (str(r["emp_id"]).strip(), str(r.get("warehouse_code") or "").strip()): float(
+                        r.get("hist_amount") or 0.0
+                    )
+                    / 3.0
+                    for _, r in df_3m_wh.iterrows()
+                }
+        except Exception as e:
+            logger.warning("3M amount by emp×wh skipped: %s", e)
+
+    emp_records = expand_employee_rows(
+        _clean(df_emp),
+        df_tga_granular,
+        price_by_sku,
+        ly_amount_by_emp_wh=ly_amount_by_emp_wh,
+        avg3_amount_by_emp_wh=avg3_amount_by_emp_wh,
+    )
+    if wh_split_emps:
+        sku_warnings.append(
+            {
+                "type": "wh_split_active",
+                "sku": "",
+                "brand": "",
+                "message": (
+                    f"พนักงาน {len(wh_split_emps)} คนมีหลายคลัง — "
+                    "แสดงแยกตาม W/H ใน Dashboard"
+                ),
+            }
+        )
+
     payload = {
-        "employees": _clean(df_emp),
+        "employees": emp_records,
         "skus": _clean(df_sku),
         "sku_warnings": sku_warnings,
         "tga_period_status": tga_period_status,

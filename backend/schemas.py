@@ -10,12 +10,14 @@ _STRATEGY_PATTERN = "^(" + "|".join(map(re.escape, VALID_STRATEGIES)) + ")$"
 class YellowTargetInput(BaseModel):
     emp_id: str
     yellow_target: float = Field(ge=0)
+    warehouse_code: str | None = None
 
 
 class LockedEditInput(BaseModel):
     emp_id: str
     sku: str
     locked_boxes: int = Field(ge=0)
+    warehouse_code: str | None = None
 
 
 class OptimizeRequest(BaseModel):
@@ -62,6 +64,7 @@ class AllocationRow(BaseModel):
     emp_id: str
     sku: str
     allocated_boxes: int = Field(ge=0)
+    warehouse_code: str = ""
     hist_avg: float = 0.0
     hist_ly_same_month: float = 0.0
     hist_prev_month: float = 0.0
