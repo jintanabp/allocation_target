@@ -1354,7 +1354,7 @@ async function _pollServerStatus() {
       }
     } catch {
       dot.style.background  = "var(--red)";
-      text.textContent = "✗ Server ยังไม่ได้รัน — เปิด Run_Local.bat หรือ scripts\\start_server.bat";
+      text.textContent = "✗ Server ยังไม่ได้รัน — เปิด Run_Local.bat หรือ scripts\\dev\\start_server.bat";
       text.style.color = "var(--red)";
       _managersLoadedOnce = false;
     }
@@ -2111,7 +2111,7 @@ async function loadData(supId, targetMonth, targetYear) {
     const isFetch = err instanceof TypeError && err.message.toLowerCase().includes("fetch");
     const hint = isFetch
       ? "❌ เชื่อมต่อ server ไม่ได้\n\n" +
-        "✅ แก้ไข: เปิด Run_Local.bat หรือ scripts\\start_server.bat แล้วลองใหม่\n" +
+        "✅ แก้ไข: เปิด Run_Local.bat หรือ scripts\\dev\\start_server.bat แล้วลองใหม่\n" +
         "หรือรันด้วยมือ: uvicorn backend.main:app --host 127.0.0.1 --port 8000 แล้วเปิด http://localhost:8000/"
       : `❌ ${err.message}`;
     showLoginError(hint);

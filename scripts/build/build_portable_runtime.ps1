@@ -1,7 +1,7 @@
 # Portable Python embeddable + pip + requirements -> runtime\python\
-# Run: scripts\build_portable_runtime.bat
+# Run: scripts\build\build_portable_runtime.bat
 $ErrorActionPreference = "Stop"
-$Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$Root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $PyDir = Join-Path $Root "runtime\python"
 $PyVer = "3.11.9"
 $ZipUrl = "https://www.python.org/ftp/python/$PyVer/python-$PyVer-embed-amd64.zip"

@@ -3,14 +3,14 @@
 (ไม่รัน DAX — ใช้แค่ GET)
 
 จากรากโปรเจกต์:
-  python scripts/test_powerbi_access.py
+  python scripts/dev/test_powerbi_access.py
 """
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 

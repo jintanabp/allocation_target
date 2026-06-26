@@ -10,7 +10,7 @@ set "PORT_PY=%ROOT%runtime\python\python.exe"
 set "VPY=%ROOT%.venv\Scripts\python.exe"
 set "VPIP=%ROOT%.venv\Scripts\pip.exe"
 
-REM --- แบบไม่ติดตั้ง Python: ใช้ runtime ที่สร้างจาก scripts\build_portable_runtime.bat ---
+REM --- แบบไม่ติดตั้ง Python: ใช้ runtime ที่สร้างจาก scripts\build\build_portable_runtime.bat ---
 if exist "%PORT_PY%" (
   set "USE_PY=%PORT_PY%"
   REM Python embed ไม่ใส่ cwd ลง sys.path — บังคับให้เห็นแพ็กเกจ backend
@@ -71,7 +71,7 @@ echo.
 echo [ERROR] ไม่พบ Python แบบ portable และไม่มี Python สำหรับสร้าง .venv
 echo.
 echo ผู้ใช้ทั่วไป: ให้ได้รับโฟลเดอร์ที่รวม runtime\python\ แล้ว ^(สร้างจาก build_portable_runtime.bat^)
-echo ผู้ดูแล: รัน  scripts\build_portable_runtime.bat  บนเครื่อง Windows 64-bit ครั้งหนึ่ง
+echo ผู้ดูแล: รัน  scripts\build\build_portable_runtime.bat  บนเครื่อง Windows 64-bit ครั้งหนึ่ง
 echo           แล้ว zip ทั้งโปรเจกต์รวมโฟลเดอร์ runtime\ แจกจ่าย
 echo.
 pause

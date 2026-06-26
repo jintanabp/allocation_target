@@ -9,3 +9,7 @@ __pycache__/
 /build/main
 /build
 *.zip
+.vscode/
+# Generated manual assets (source: docs/images/, build: docs/build-manual-html.py)
+frontend/manual-images/
+docs/user-manual-th.pdf

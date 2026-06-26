@@ -13,15 +13,15 @@
 ### Workflow อัปเดตสิทธิ์
 
 ```bash
-python scripts/import_user_access_from_division_xlsx.py
-python scripts/rebuild_access_hierarchy.py
-python scripts/validate_access_with_dim.py
-python scripts/repair_user_access.py
+python scripts/access/import_user_access_from_division_xlsx.py
+python scripts/access/rebuild_access_hierarchy.py
+python scripts/access/validate_access_with_dim.py
+python scripts/access/repair_user_access.py
 # รีสตาร์ท server หลัง rebuild
 ```
 
 - **นำเข้าจาก Excel:**  
-  `python scripts/import_user_access_from_division_xlsx.py`  
+  `python scripts/access/import_user_access_from_division_xlsx.py`  
   (ไฟล์ใน Downloads: `Email และ รหัส SL ผจก.และซุปฯ B,E.xlsx` + `รหัสSL-Mail ทีมขายDiv.S.xlsx`)
 - **Deploy ครั้งแรก:** ไฟล์ config อยู่ใน Git — server ได้รายชื่อพร้อมใช้หลัง `git pull`
 - **หลัง deploy:** แอดมินแก้ผ่านปุ่ม **「จัดการสิทธิ์」** (อีเมลใน `ALLOCATION_ADMIN_EMAILS`) — การแก้บน server ไม่ถูก commit อัตโนมัติ
@@ -41,12 +41,6 @@ python scripts/repair_user_access.py
 **Dim_Salesman** ใช้เฉพาะดึงพนักงานใต้ `SuperCode` และ validate (`validate_access_with_dim.py`) — ไม่กำหนดสิทธิ login
 
 ตัวอย่างรูปแบบ: ดู `config/user_access.example.json`
-
-## ไฟล์ legacy (ไม่ใช้ใน runtime สิทธิ์)
-
-- `config/trf_select_supervisor.json`, `config/region_teams.json` — อ้างอิงเท่านั้น
-- `scripts/sync_trf_select_supervisor.py` — deprecate
-- `ALLOCATION_ALLOW_ACC_DEV_JSON` / `ACC_USER_CONTROL_DEV_JSON` — ไม่ใช้แล้ว
 
 ## ความปลอดภัย
 

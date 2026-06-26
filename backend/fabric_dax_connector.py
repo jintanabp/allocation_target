@@ -116,7 +116,7 @@ class FabricDAXConnector:
         """
         เรียก Power BI REST แบบ GET (ไม่รัน DAX) เพื่อแยกว่า 404 มาจาก
         \"ไม่เห็น workspace/dataset\" หรือเฉพาะ executeQueries
-        รันจาก project root: python scripts/test_powerbi_access.py
+        รันจาก project root: python scripts/dev/test_powerbi_access.py
         """
         token = self._get_access_token()
         headers = {"Authorization": f"Bearer {token}"}
@@ -223,7 +223,7 @@ class FabricDAXConnector:
                 msg += (
                     " | ถ้า GET dataset สำเร็จแต่ executeQueries 404: อาจเป็นโมเดล composite/"
                     "มี upstream semantic model — REST ไม่รองรับ (รัน "
-                    "python scripts/test_powerbi_access.py เพื่อดู contentProviderType)"
+                    "python scripts/dev/test_powerbi_access.py เพื่อดู contentProviderType)"
                 )
             raise Exception(msg)
 

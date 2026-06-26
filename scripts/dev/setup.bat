@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
 setlocal
-cd /d "%~dp0\.."
+cd /d "%~dp0\..\.."
 echo ============================================
 echo  Target Allocation - ติดตั้ง Environment
 echo ============================================
@@ -36,8 +36,8 @@ if "%CONDA_PATH%"=="" (
     echo   1. เปิด File Explorer หาโฟลเดอร์ที่มีไฟล์ conda.exe ^(มักชื่อ miniconda3 หรือ miniforge3^)
     echo   2. ตั้งค่าตัวแปรแล้วรัน setup อีกครั้ง ใน cmd:
     echo      set CONDA_PATH=C:\เส้นทาง\ไป\miniconda3
-    echo      scripts\setup.bat
-    echo   หรือเพิ่ม Miniconda ใน PATH แล้วรัน scripts\setup.bat ใหม่
+    echo      scripts\dev\setup.bat
+    echo   หรือเพิ่ม Miniconda ใน PATH แล้วรัน scripts\dev\setup.bat ใหม่
     echo.
     echo ดาวน์โหลด Miniconda: https://docs.conda.io/en/latest/miniconda.html
     echo.
@@ -102,6 +102,6 @@ if errorlevel 1 (
 
 echo.
 echo ============================================
-echo  ติดตั้งเสร็จแล้ว! รัน scripts\start_server.bat หรือ Run_Local.bat
+echo  ติดตั้งเสร็จแล้ว! รัน scripts\dev\start_server.bat หรือ Run_Local.bat
 echo ============================================
 pause

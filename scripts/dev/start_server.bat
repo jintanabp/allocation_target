@@ -1,14 +1,14 @@
 @echo off
 chcp 65001 >nul
 setlocal
-cd /d "%~dp0\.."
+cd /d "%~dp0\..\.."
 echo ============================================
 echo  Target Allocation - เริ่ม Server
 echo ============================================
 REM Force UTF-8 for Python stdout/stderr (avoid 'charmap' codec issues on Windows consoles)
 set "PYTHONUTF8=1"
 
-REM การหา conda — ให้ตรงกับ scripts\setup.bat (รองรับ LocalAppData, miniforge, conda ใน PATH)
+REM การหา conda — ให้ตรงกับ scripts\dev\setup.bat (รองรับ LocalAppData, miniforge, conda ใน PATH)
 if "%CONDA_PATH%"=="" if exist "%USERPROFILE%\miniconda3\Scripts\conda.exe" set CONDA_PATH=%USERPROFILE%\miniconda3
 if "%CONDA_PATH%"=="" if exist "%USERPROFILE%\Miniconda3\Scripts\conda.exe" set CONDA_PATH=%USERPROFILE%\Miniconda3
 if "%CONDA_PATH%"=="" if exist "%LOCALAPPDATA%\miniconda3\Scripts\conda.exe" set CONDA_PATH=%LOCALAPPDATA%\miniconda3
@@ -57,11 +57,11 @@ exit /b 0
 echo.
 echo [ERROR] ไม่พบ Miniconda/Anaconda ใน path ที่สคริปต์รู้จัก
 echo.
-echo ถ้า scripts\setup.bat รันผ่านแล้ว ลองตั้งค่าแล้วรันใหม่:
+echo ถ้า scripts\dev\setup.bat รันผ่านแล้ว ลองตั้งค่าแล้วรันใหม่:
 echo   set CONDA_PATH=C:\เส้นทาง\ไป\โฟลเดอร์ miniconda3
-echo   scripts\start_server.bat
+echo   scripts\dev\start_server.bat
 echo.
-echo หรือเปิด Miniconda Prompt แล้ว cd มาที่โฟลเดอร์โปรเจกต์ แล้วรัน scripts\start_server.bat
+echo หรือเปิด Miniconda Prompt แล้ว cd มาที่โฟลเดอร์โปรเจกต์ แล้วรัน scripts\dev\start_server.bat
 echo.
 pause
 exit /b 1
@@ -69,7 +69,7 @@ exit /b 1
 :ERR_NO_CONDA_BAT
 echo.
 echo [ERROR] ไม่พบ conda.bat ใน %CONDA_PATH%
-echo กรุณารัน scripts\setup.bat ใหม่ หรือ reinstall Miniconda/Anaconda
+echo กรุณารัน scripts\dev\setup.bat ใหม่ หรือ reinstall Miniconda/Anaconda
 echo.
 pause
 exit /b 1
@@ -77,7 +77,7 @@ exit /b 1
 :ERR_NO_ENV
 echo.
 echo [ERROR] ไม่พบ environment: allocation_env
-echo กรุณารัน scripts\setup.bat (ครั้งแรก) ก่อน
+echo กรุณารัน scripts\dev\setup.bat (ครั้งแรก) ก่อน
 echo.
 pause
 exit /b 1
@@ -85,7 +85,7 @@ exit /b 1
 :ERR_ACTIVATE
 echo.
 echo [ERROR] activate allocation_env ไม่สำเร็จ
-echo ลองปิดหน้าต่างแล้วเปิดใหม่ จากนั้นรัน scripts\start_server.bat อีกครั้ง
+echo ลองปิดหน้าต่างแล้วเปิดใหม่ จากนั้นรัน scripts\dev\start_server.bat อีกครั้ง
 echo.
 pause
 exit /b 1

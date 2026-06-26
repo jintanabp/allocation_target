@@ -13,7 +13,7 @@ import os
 import sys
 from typing import Any
 
-REPO = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
+REPO = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, REPO)
 
 from backend.services.access_hierarchy import (  # noqa: E402

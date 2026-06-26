@@ -14,7 +14,7 @@ import os
 import sys
 from typing import Any
 
-REPO = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
+REPO = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, REPO)
 
 from backend.services.user_access_store import user_access_json_path  # noqa: E402
