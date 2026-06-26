@@ -34,15 +34,7 @@ _SKU_OUTPUT_COLUMNS = [
     "product_name_english",
 ]
 from ..fabric_dax_connector import FabricDAXConnector
-<<<<<<< Updated upstream
 from .wh_split import expand_employee_rows, warehouses_per_emp_from_tga
-=======
-from .wh_split import (
-    expand_employee_rows,
-    tga_value_by_emp_wh,
-    warehouses_per_emp_from_tga,
-)
->>>>>>> Stashed changes
 from .employee_payload_cache import (
     read_cached_employee_payload,
     write_cached_employee_payload,
@@ -665,16 +657,9 @@ def load_employees_payload(
             )
             if not df_ly_wh.empty:
                 ly_amount_by_emp_wh = {
-<<<<<<< Updated upstream
                     (str(r["emp_id"]).strip(), str(r.get("warehouse_code") or "").strip()): float(
                         r.get("hist_amount") or 0.0
                     )
-=======
-                    (
-                        str(r["emp_id"]).strip(),
-                        str(r.get("warehouse_code") or "").strip(),
-                    ): float(r.get("hist_amount") or 0.0)
->>>>>>> Stashed changes
                     for _, r in df_ly_wh.iterrows()
                 }
         except Exception as e:
@@ -685,17 +670,10 @@ def load_employees_payload(
             )
             if not df_3m_wh.empty:
                 avg3_amount_by_emp_wh = {
-<<<<<<< Updated upstream
                     (str(r["emp_id"]).strip(), str(r.get("warehouse_code") or "").strip()): float(
                         r.get("hist_amount") or 0.0
                     )
                     / 3.0
-=======
-                    (
-                        str(r["emp_id"]).strip(),
-                        str(r.get("warehouse_code") or "").strip(),
-                    ): float(r.get("hist_amount") or 0.0) / 3.0
->>>>>>> Stashed changes
                     for _, r in df_3m_wh.iterrows()
                 }
         except Exception as e:
@@ -708,17 +686,7 @@ def load_employees_payload(
         ly_amount_by_emp_wh=ly_amount_by_emp_wh,
         avg3_amount_by_emp_wh=avg3_amount_by_emp_wh,
     )
-<<<<<<< Updated upstream
     if wh_split_emps:
-=======
-    wh_split_rows = sum(1 for e in emp_records if e.get("wh_split"))
-    if wh_split_rows:
-        logger.info(
-            "WH split: %d alloc rows (%d พนักงานมีหลายคลัง)",
-            len(emp_records),
-            len(wh_split_emps),
-        )
->>>>>>> Stashed changes
         sku_warnings.append(
             {
                 "type": "wh_split_active",

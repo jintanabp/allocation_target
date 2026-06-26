@@ -2021,14 +2021,11 @@ function _allocResultKey(a) {
   return wh ? `${emp}|${wh}` : emp;
 }
 
-<<<<<<< Updated upstream
-=======
 function _employeeRowForAllocKey(key) {
   const k = String(key || "").trim();
   return (S.employees || []).find(e => _allocKey(e) === k) || null;
 }
 
->>>>>>> Stashed changes
 function _yellowTargetPayloadRow(e) {
   const row = { emp_id: String(e.emp_id || "").trim(), yellow_target: S.yellow[_allocKey(e)] || 0 };
   if (e.wh_split && String(e.warehouse_code || "").trim()) {

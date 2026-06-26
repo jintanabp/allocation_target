@@ -43,11 +43,7 @@ allocation_target/
 │   ├── .env.example              # ตัวอย่างตัวแปร (ไม่มี secret) — คัดลอกเป็น `config/.env`
 │   ├── user_access.json          # สิทธิผู้ใช้ (runtime)
 │   ├── access_hierarchy.json     # ลำดับชั้น Manager → Supervisor
-<<<<<<< Updated upstream
 │   └── README.md                 # workflow อัปเดตสิทธิ์
-=======
-│   └── README.md                 # หมายเหตุการแพ็ก .env และความปลอดภัย
->>>>>>> Stashed changes
 │
 ├── scripts/
 │   ├── access/                      # import / rebuild / validate สิทธิ
@@ -71,11 +67,7 @@ allocation_target/
 ├── Run_Local.bat           # (ทางเลือก) รันบนเครื่อง dev — ไม่ใช้บน server บริษัท
 ├── targetsun-importTargetSalesmanNextFromExcel.md   # คู่มือ API ส่ง Excel เข้า TargetSun (multipart)
 ├── docs/
-<<<<<<< Updated upstream
 │   ├── DATA_FLOW.md            # เอกสารการดึง/ใช้/ส่งข้อมูล (Semantic Model + API)
-=======
-│   ├── DATA_FLOW.md            # เอกสารการดึง/ใช้/ส่งข้อมูล
->>>>>>> Stashed changes
 │   ├── user-manual-th.md       # ต้นฉบับคู่มือ (Markdown)
 │   ├── user-manual-th.html     # ฉบับจัดหน้าแล้ว — เปิดอ่าน / พิมพ์ PDF
 │   └── build-manual-html.py    # สร้าง HTML จาก .md
