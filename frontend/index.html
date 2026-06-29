@@ -4,6 +4,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
   <title>Target Allocation</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link
@@ -40,6 +43,10 @@
   <div id="viewAsBanner" class="view-as-banner" style="display:none;" role="status" aria-live="polite">
     <span id="viewAsBannerText"></span>
     <button type="button" class="view-as-banner__exit" onclick="exitViewAsMode()">กลับหน้าแอดมิน</button>
+  </div>
+
+  <div id="peerViewBanner" class="view-as-banner peer-view-banner" style="display:none;" role="status" aria-live="polite">
+    <span id="peerViewBannerText"></span>
   </div>
 
   <div class="page">
@@ -257,6 +264,7 @@
                   aria-selected="false" onclick="setEmpStep1View('ly')">เทียบปีที่แล้ว</button>
               </div>
             </div>
+        <div id="empStep1ViewOnlyNotice" class="emp-view-only-banner" style="display:none;" role="status"></div>
             <div class="panel-scroll panel-scroll--emp">
               <table class="tbl tbl--emp-step1">
                 <thead>
@@ -390,6 +398,7 @@
         </div>
 
         <!-- Step 2 toolbar: bui-teriam toggle -->
+        <div id="step2ViewOnlyNotice" class="emp-view-only-banner" style="display:none;" role="status"></div>
         <div class="step2-toolbar">
           <button type="button" id="toggleBuiBtn" class="btn-bui" onclick="toggleBuiColumn()" aria-pressed="false">
             <span class="btn-bui__icon" aria-hidden="true">➖</span>
@@ -731,6 +740,12 @@
                 <option value="price_desc">เรียงตาม ราคา/หีบ (มากไปน้อย)</option>
               </select>
 
+              <button type="button" id="toggleSkuProductNamesBtn" class="btn-dl btn-dl--toggle"
+                style="color:var(--text-2); border-color:var(--border-md); background:var(--bg-main);"
+                onclick="toggleSkuProductNames()"
+                aria-pressed="false"
+                title="แสดง/ซ่อนแถวชื่อสินค้าในหัวตาราง">ชื่อสินค้า ▶</button>
+
               <select id="brandSelect" class="field-select"
                 style="min-width: 180px; padding: 6px 30px 6px 12px; height: auto; border-radius: 6px; font-weight: 600; color: var(--accent); border-color: var(--accent-brd); background-color: var(--accent-bg);"
                 onchange="switchBrand(this.value)"></select>
@@ -862,8 +877,10 @@
 
       <nav class="admin-tabs" id="adminTabs" role="tablist" aria-label="เมนูแอดมิน">
         <button type="button" class="admin-tab admin-tab--active" role="tab" data-tab="users" aria-selected="true" onclick="adminSwitchTab('users')">สิทธิผู้ใช้</button>
+        <button type="button" class="admin-tab" role="tab" data-tab="slLinks" aria-selected="false" onclick="adminSwitchTab('slLinks')">ผูกรหัส SL</button>
         <button type="button" class="admin-tab" role="tab" data-tab="team" aria-selected="false" onclick="adminSwitchTab('team')">ทีมพนักงาน</button>
         <button type="button" class="admin-tab" role="tab" data-tab="data" aria-selected="false" onclick="adminSwitchTab('data')">แหล่งข้อมูล</button>
+        <button type="button" class="admin-tab" role="tab" data-tab="skuLinks" aria-selected="false" onclick="adminSwitchTab('skuLinks')">ผูกรหัส SKU</button>
       </nav>
 
       <div id="adminPanelUsers" class="admin-panel" data-panel="users">
@@ -872,6 +889,32 @@
         <div class="admin-add-grid">
           <label>อีเมล<input type="email" id="adminAddEmail" class="field-input" placeholder="user@sahapat.co.th" /></label>
           <label>รหัส SL<input type="text" id="adminAddUserpl" class="field-input" placeholder="SL330" /></label>
+          <label>ตำแหน่ง / บทบาท
+            <select id="adminAddLoginKind" class="field-input">
+              <option value="standard">มาตรฐาน (ตาม SL / trf)</option>
+              <option value="supervisor_acc">Supervisor</option>
+              <option value="manager_acc">Manager</option>
+              <option value="marketing">Marketing (MKT)</option>
+              <option value="regional_manager">ผู้จัดการภูมิภาค</option>
+              <option value="district_manager">ผู้จัดการเขต</option>
+            </select>
+          </label>
+          <label>Division
+            <select id="adminAddAccDivision" class="field-input">
+              <option value="">—</option>
+              <option value="Div.B">Div.B</option>
+              <option value="Div.E">Div.E</option>
+              <option value="Div.S">Div.S</option>
+            </select>
+          </label>
+          <label>ภูมิภาค<input type="text" id="adminAddAccRegion" class="field-input" placeholder="เช่น อีสาน" /></label>
+          <label>ขอบเขตสิทธิ
+            <select id="adminAddAccScope" class="field-input">
+              <option value="">—</option>
+              <option value="self">เฉพาะทีมตัวเอง</option>
+              <option value="region_peers">ดูภาคเดียวกัน (กระจายได้เฉพาะทีมตัวเอง)</option>
+            </select>
+          </label>
           <label class="admin-check-label"><input type="checkbox" id="adminAddTargetSun" /> ส่ง Target Sun ได้</label>
           <label>หมายเหตุ<input type="text" id="adminAddNote" class="field-input" placeholder="ไม่บังคับ" /></label>
           <label class="admin-visible-label">ดูได้ (SL)
@@ -926,9 +969,7 @@
                   <select id="adminFRole" class="admin-col-filter admin-col-filter--select" onchange="adminFilterRows()">
                     <option value="">ทั้งหมด</option>
                     <option value="supervisor">Supervisor</option>
-                    <option value="supervisor_acc">Supervisor</option>
                     <option value="manager">Manager</option>
-                    <option value="manager_acc">Manager</option>
                     <option value="marketing">Marketing (MKT)</option>
                     <option value="unknown">ไม่ระบุบทบาท</option>
                   </select>
@@ -991,6 +1032,48 @@
       </section>
       </div>
 
+      <div id="adminPanelSlLinks" class="admin-panel" data-panel="slLinks" style="display:none;">
+        <section class="admin-card">
+          <div class="admin-data-head">
+            <h2 class="admin-card__title">ผูกรหัส SL (รหัสใหม่ ↔ เก่า)</h2>
+            <div class="admin-data-actions">
+              <button type="button" class="admin-btn-primary admin-btn-primary--sm" id="adminSlLinkAddBtn" onclick="adminSlLinkShowAdd()">+ เพิ่มกลุ่ม</button>
+              <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminLoadSlLinks()">โหลดใหม่</button>
+            </div>
+          </div>
+          <p class="admin-inv-muted">รหัส canonical (เก่า/หลัก) ใช้ดึงทีมและสิทธิจาก user_access — alias คือรหัสใหม่ที่ล็อกอินได้ · มีผลทันทีหลังบันทึก (logout/login ใหม่ถ้ายังไม่เห็นทีม)</p>
+          <div id="adminSlLinkError" class="admin-alert admin-alert--error" style="display:none;"></div>
+          <div id="adminSlLinkLoading" class="admin-loading" style="display:none;">กำลังโหลด…</div>
+          <div id="adminSlLinkAddPanel" class="admin-card admin-card--add" style="display:none;">
+            <h3 class="admin-card__title">เพิ่ม / แก้ไขกลุ่มผูกรหัส SL</h3>
+            <div class="admin-add-grid">
+              <label>รหัสหลัก (canonical)<input type="text" id="adminSlLinkCanon" class="field-input" placeholder="SL508" /></label>
+              <label>ผูกกับรหัส (alias คั่นด้วย ,)<input type="text" id="adminSlLinkAliases" class="field-input" placeholder="SL508, SL524" /></label>
+              <label>หมายเหตุ<input type="text" id="adminSlLinkNote" class="field-input" placeholder="ไม่บังคับ" /></label>
+            </div>
+            <div class="admin-add-actions">
+              <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminSlLinkSave()">บันทึก</button>
+              <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminSlLinkHideAdd()">ยกเลิก</button>
+            </div>
+          </div>
+          <div class="admin-table-wrap">
+            <table class="admin-table admin-table--compact" id="adminSlLinkTable">
+              <thead>
+                <tr>
+                  <th>รหัสหลัก</th>
+                  <th>ผูกกับรหัส</th>
+                  <th>หมายเหตุ</th>
+                  <th class="admin-th-actions">จัดการ</th>
+                </tr>
+              </thead>
+              <tbody id="adminSlLinkBody">
+                <tr><td colspan="4" class="admin-empty">กำลังโหลด…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
       <div id="adminPanelTeam" class="admin-panel" data-panel="team" style="display:none;">
         <section class="admin-card">
           <h2 class="admin-card__title">พนักงานใต้ Supervisor</h2>
@@ -1040,12 +1123,92 @@
           <div id="adminInventoryBody" class="admin-inventory"></div>
         </section>
       </div>
+
+      <div id="adminPanelSkuLinks" class="admin-panel" data-panel="skuLinks" style="display:none;">
+        <section class="admin-card">
+          <div class="admin-data-head">
+            <h2 class="admin-card__title">ผูกรหัส SKU (รวมประวัติขาย)</h2>
+            <div class="admin-data-actions">
+              <button type="button" class="admin-btn-primary admin-btn-primary--sm" id="adminSkuLinkAddBtn" onclick="adminSkuLinkShowAdd()">+ เพิ่มกลุ่ม</button>
+              <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminLoadSkuLinks()">โหลดใหม่</button>
+            </div>
+          </div>
+          <p class="admin-inv-muted">รหัส canonical ใช้ใน Dashboard งวดนี้ · alias คือรหัสเก่าใน cross_sold_history — หลังบันทึกให้โหลด Dashboard ใหม่ (refresh)</p>
+          <div id="adminSkuCatalogHead" class="admin-data-head" style="margin-top:8px;">
+            <h3 class="admin-card__title">สินค้าในงวด (จาก cache Dashboard)</h3>
+            <div class="admin-data-actions">
+              <label class="admin-inline-label">Supervisor<input type="text" id="adminSkuCatalogSup" class="field-input field-input--sm" placeholder="SL532" style="width:88px;" /></label>
+              <label class="admin-inline-label">เดือน<select id="adminSkuCatalogMonth" class="field-input field-input--sm" style="width:64px;"></select></label>
+              <label class="admin-inline-label">ปี<input type="number" id="adminSkuCatalogYear" class="field-input field-input--sm" min="2000" max="2100" style="width:72px;" /></label>
+              <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminLoadSkuCatalog()">โหลดใหม่</button>
+            </div>
+          </div>
+          <p id="adminSkuCatalogHint" class="admin-inv-muted"></p>
+          <div id="adminSkuCatalogLoading" class="admin-loading" style="display:none;">กำลังโหลดรายการสินค้า…</div>
+          <div class="admin-table-wrap admin-table-wrap--scroll" id="adminSkuCatalogWrap" style="max-height:280px;margin-bottom:12px;">
+            <table class="admin-table admin-table--compact" id="adminSkuCatalogTable">
+              <thead>
+                <tr>
+                  <th>รหัส</th>
+                  <th>ชื่อสินค้า</th>
+                  <th>เป้า (หีบ)</th>
+                  <th>ผูกรหัส</th>
+                </tr>
+              </thead>
+              <tbody id="adminSkuCatalogBody">
+                <tr><td colspan="4" class="admin-empty">เปิดแท็บนี้จะโหลดรายการอัตโนมัติ</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div id="adminSkuLinkError" class="admin-alert admin-alert--error" style="display:none;"></div>
+          <div id="adminSkuLinkLoading" class="admin-loading" style="display:none;">กำลังโหลด…</div>
+          <div id="adminSkuLinkAddPanel" class="admin-card admin-card--add" style="display:none;">
+            <h3 class="admin-card__title">เพิ่ม / แก้ไขกลุ่มผูกรหัส</h3>
+            <div class="admin-add-grid">
+              <label>รหัส (canonical)<input type="text" id="adminSkuLinkCanon" class="field-input" placeholder="266932" /></label>
+              <label>ชื่อสินค้า<input type="text" id="adminSkuLinkName" class="field-input" placeholder="ไม่บังคับ" /></label>
+              <label>ผูกกับรหัส (alias คั่นด้วย ,)<input type="text" id="adminSkuLinkAliases" class="field-input" placeholder="266932, OLD001" /></label>
+              <label>หมายเหตุ<input type="text" id="adminSkuLinkNote" class="field-input" placeholder="ไม่บังคับ" /></label>
+            </div>
+            <div class="admin-add-actions">
+              <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminSkuLinkSave()">บันทึก</button>
+              <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminSkuLinkHideAdd()">ยกเลิก</button>
+            </div>
+          </div>
+          <div class="admin-table-wrap">
+            <table class="admin-table admin-table--compact" id="adminSkuLinkTable">
+              <thead>
+                <tr>
+                  <th>รหัส</th>
+                  <th>ชื่อสินค้า</th>
+                  <th>ผูกกับรหัส</th>
+                  <th class="admin-th-actions">จัดการ</th>
+                </tr>
+              </thead>
+              <tbody id="adminSkuLinkBody">
+                <tr><td colspan="4" class="admin-empty">กำลังโหลด…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+        <section class="admin-card" style="margin-top:12px;">
+          <h3 class="admin-card__title">ทดสอบยอดประวัติ (preview)</h3>
+          <div class="admin-add-grid">
+            <label>Supervisor<input type="text" id="adminSkuPreviewSup" class="field-input" placeholder="SL382" /></label>
+            <label>รหัส SKU<input type="text" id="adminSkuPreviewSku" class="field-input" placeholder="266932" /></label>
+            <label>เดือน<select id="adminSkuPreviewMonth" class="field-input"></select></label>
+            <label>ปี<input type="number" id="adminSkuPreviewYear" class="field-input" min="2000" max="2100" /></label>
+          </div>
+          <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminSkuLinkPreview()">ดูยอด 3M / LY</button>
+          <pre id="adminSkuPreviewOut" class="admin-preview-out" style="display:none;"></pre>
+        </section>
+      </div>
     </div>
   </div>
 
   <!-- ใช้ไฟล์ในโปรเจกต์ — เครือข่ายองค์กรมักบล็อก alcdn.msauth.net ทำให้ msal ไม่โหลด -->
   <script src="vendor/msal-browser.min.js"></script>
-  <script src="app.js?v=202606261"></script>
+  <script src="app.js?v=2026062617"></script>
 </body>
 
 </html>

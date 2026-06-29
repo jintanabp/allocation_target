@@ -16,7 +16,7 @@ from backend.services.access_hierarchy import (  # noqa: E402
     enrich_rows_with_visibility,
     persist_hierarchy,
 )
-from backend.services.user_access_store import user_access_json_path  # noqa: E402
+from backend.services.user_access_store import user_access_json_path, write_rows  # noqa: E402
 
 
 def main() -> int:
@@ -35,6 +35,7 @@ def main() -> int:
         return 1
 
     enriched = enrich_rows_with_visibility(rows)
+    write_rows(enriched)
     payload = build_hierarchy_payload(enriched)
     path = persist_hierarchy(payload)
 

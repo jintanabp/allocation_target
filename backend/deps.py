@@ -13,6 +13,7 @@ from .services.access_control import (
     unrestricted_user_context,
     user_can_import_targetsun,
 )
+from .services.sl_link_store import expand_sl_codes, resolve_to_canonical
 
 logger = logging.getLogger("target_allocation")
 
@@ -123,10 +124,37 @@ def ensure_supervisor_allowed(user: dict, sup_id: str) -> None:
     if allowed is None:
         return
     sid = (sup_id or "").strip().upper()
-    if sid not in allowed:
+    allowed_set = {str(x).strip().upper() for x in allowed}
+    if sid in allowed_set:
+        return
+    if sid in expand_sl_codes(allowed_set):
+        return
+    if resolve_to_canonical(sid) in allowed_set:
+        return
+    raise HTTPException(
+        status_code=403,
+        detail="บัญชีนี้ไม่มีสิทธิ์เข้าถึงรหัส Supervisor นี้",
+    )
+
+
+def ensure_own_supervisor_write(user: dict, sup_id: str) -> None:
+    """ห้ามกระจายหีบ/ส่งผลเมื่อดูทีม supervisor คนอื่น (peer read-only)"""
+    ensure_supervisor_allowed(user, sup_id)
+    if user.get("auth_disabled") or user.get("acc_admin_full_access"):
+        return
+    home = user.get("home_supervisor_codes")
+    if home is None:
+        return
+    home_set = {str(x).strip().upper() for x in home}
+    if not home_set:
+        return
+    sid = (sup_id or "").strip().upper()
+    if sid not in home_set:
         raise HTTPException(
             status_code=403,
-            detail="บัญชีนี้ไม่มีสิทธิ์เข้าถึงรหัส Supervisor นี้",
+            detail=(
+                "โหมดดูอย่างเดียว — กระจายหีบและส่งผลได้เฉพาะทีม Supervisor ของคุณ"
+            ),
         )
 
 

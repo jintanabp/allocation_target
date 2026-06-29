@@ -15,6 +15,11 @@ from ..core.paths import (
     hist_prev_month_cache_path,
     tga_grain_cache_path,
 )
+from ..core.employee_filter import (
+    drop_van_employees,
+    filter_employees_for_display,
+    is_allocation_eligible,
+)
 from ..core.targets import load_target_csv
 from ..core.tga_period import (
     enforce_tga_has_targets_for_period,
@@ -34,6 +39,12 @@ _SKU_OUTPUT_COLUMNS = [
     "product_name_english",
 ]
 from ..fabric_dax_connector import FabricDAXConnector
+from .sku_link_store import (
+    collapse_hist_to_canonical,
+    expand_skus_for_dax,
+    extra_aliases_for_canonical,
+    read_links,
+)
 from .wh_split import expand_employee_rows, warehouses_per_emp_from_tga
 from .employee_payload_cache import (
     read_cached_employee_payload,
@@ -161,6 +172,21 @@ def _clean(df: pd.DataFrame) -> list:
     return df.where(pd.notna(df), None).to_dict(orient="records")
 
 
+def _enrich_employee_allocation_flags(
+    emp_records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """คำนวณ allocation_eligible / include_in_allocation ทุกครั้ง (รวม cache เก่า)"""
+    for rec in emp_records:
+        eligible = is_allocation_eligible(
+            bool(rec.get("has_tga_rows")),
+            float(rec.get("target_sun") or 0),
+        )
+        rec["allocation_eligible"] = eligible
+        rec["include_in_allocation"] = eligible
+        rec["view_only"] = not eligible
+    return emp_records
+
+
 def load_employees_payload(
     sup_id: str,
     target_month: int,
@@ -177,6 +203,11 @@ def load_employees_payload(
     if not regen_target and not refresh:
         cached = read_cached_employee_payload(sup_id, target_month, target_year)
         if cached is not None:
+            emps = cached.get("employees")
+            if isinstance(emps, list):
+                cached["employees"] = _enrich_employee_allocation_flags(
+                    [dict(e) for e in emps]
+                )
             return cached
 
     os.makedirs("data", exist_ok=True)
@@ -202,6 +233,19 @@ def load_employees_payload(
 
     if df_emp_fabric.empty:
         raise HTTPException(404, detail=f"ไม่พบพนักงานใต้ SuperCode '{sup_id}'")
+
+    df_emp_fabric, van_excluded = drop_van_employees(df_emp_fabric)
+    if van_excluded:
+        logger.info(
+            "ตัดรหัส V (Van — ไม่แสดง/ไม่คำนวณ): %d คน ใต้ %s",
+            van_excluded,
+            sup_id,
+        )
+    if df_emp_fabric.empty:
+        raise HTTPException(
+            404,
+            detail=f"ไม่พบพนักงานใต้ SuperCode '{sup_id}' (หลังตัดรหัส V)",
+        )
 
     emp_list = df_emp_fabric["emp_id"].tolist()
     df_emp_fabric.to_csv(emp_cache_path(sup_id, target_month, target_year), index=False)
@@ -324,13 +368,27 @@ def load_employees_payload(
                 sold_only_excluded,
             )
         if not sku_union:
-            logger.warning("ไม่มี SKU ที่มีเป้า TGA ในงวดที่เลือก")
+            logger.warning(
+                "SuperCode=%s period=%02d/%d | team=%d | tga_granular=%d | ไม่มี SKU เป้า",
+                sup_id,
+                target_month,
+                target_year,
+                len(emp_list),
+                len(df_tga_granular) if df_tga_granular is not None else 0,
+            )
             enforce_tga_has_targets_for_period(
                 fabric,
                 target_month,
                 target_year,
                 df_tga,
                 0,
+                debug={
+                    "supervisor_code": sup_id,
+                    "team_size": len(emp_list),
+                    "tga_granular_rows": int(
+                        len(df_tga_granular) if df_tga_granular is not None else 0
+                    ),
+                },
             )
 
         df_sku_base = pd.DataFrame()
@@ -399,27 +457,79 @@ def load_employees_payload(
         df_emp["has_tga_rows"] = True
 
     df_emp["target_sun"] = pd.to_numeric(df_emp["target_sun"], errors="coerce").fillna(0.0)
-    emp_list = df_emp["emp_id"].astype(str).str.strip().tolist()
-    excluded_from_allocation = int((df_emp["target_sun"] <= 0).sum())
-    if excluded_from_allocation > 0:
+    team_size_fabric = len(df_emp)
+
+    ly_sales_by_emp: dict[str, float] = {}
+    team_ids_for_ly = df_emp["emp_id"].astype(str).str.strip().tolist()
+    if team_ids_for_ly:
+        if fabric is None:
+            try:
+                fabric = FabricDAXConnector()
+            except Exception as e:
+                logger.warning("Fabric unavailable for LY visibility: %s", e)
+        if fabric is not None:
+            try:
+                df_ly_team = fabric.get_ly_sales(
+                    target_month, target_year, emp_list=team_ids_for_ly
+                )
+                if df_ly_team is not None and not df_ly_team.empty:
+                    ly_sales_by_emp = {
+                        str(r["emp_id"]).strip(): float(r["ly_sales"] or 0.0)
+                        for _, r in df_ly_team.iterrows()
+                        if str(r.get("emp_id") or "").strip()
+                    }
+            except Exception as e:
+                logger.warning("get_ly_sales (employee visibility) failed: %s", e)
+
+    df_emp, hidden_no_target, ly_only_shown = filter_employees_for_display(
+        df_emp, ly_sales_by_emp
+    )
+    df_emp["allocation_eligible"] = (
+        df_emp["has_tga_rows"].astype(bool) & (df_emp["target_sun"] > 0)
+    )
+    if hidden_no_target > 0 or ly_only_shown > 0:
         logger.info(
-            "Excluded from allocation (target_sun <= 0): %d คน (ยังแสดงใน Dashboard)",
-            excluded_from_allocation,
+            "กรองพนักงานงวด %02d/%d: ซ่อน %d | แสดงจากยอด LY ไม่มีเป้า %d | เหลือ %d จาก %d คน",
+            target_month,
+            target_year,
+            hidden_no_target,
+            ly_only_shown,
+            len(df_emp),
+            team_size_fabric,
         )
+    if df_emp.empty:
+        logger.warning(
+            "SuperCode=%s | team=%d | ไม่มีพนักงานที่มีเป้าในงวด %02d/%d",
+            sup_id,
+            team_size_fabric,
+            target_month,
+            target_year,
+        )
+    emp_list = df_emp["emp_id"].astype(str).str.strip().tolist()
+    excluded_from_allocation = 0
 
     # ── Step 4: History caches (3M/6M + LY same-month + prev-month) ──
     sku_warnings: list[dict] = []
+    sku_links = read_links()
+    dax_sku_list = expand_skus_for_dax(sku_list, sku_links)
+    if len(dax_sku_list) > len(sku_list):
+        logger.info(
+            "sku_links: ขยาย SKU สำหรับ DAX %d → %d รหัส",
+            len(sku_list),
+            len(dax_sku_list),
+        )
     df_hist = pd.DataFrame(columns=["emp_id", "sku", "hist_boxes", "hist_amount"])
     df_lysm = pd.DataFrame(columns=["emp_id", "sku", "hist_boxes", "hist_amount"])
     try:
         df_hist = fabric.get_historical_sales(
             target_month,
             target_year,
-            sku_list=sku_list,
+            sku_list=dax_sku_list,
             emp_list=emp_list,
             n_months=3,
         )
         if df_hist is not None and not df_hist.empty:
+            df_hist = collapse_hist_to_canonical(df_hist, sku_links)
             df_hist.to_csv(
                 hist_cache_path(sup_id, target_month, target_year, n_months=3),
                 index=False,
@@ -432,11 +542,12 @@ def load_employees_payload(
         df_hist6 = fabric.get_historical_sales(
             target_month,
             target_year,
-            sku_list=sku_list,
+            sku_list=dax_sku_list,
             emp_list=emp_list,
             n_months=6,
         )
         if df_hist6 is not None and not df_hist6.empty:
+            df_hist6 = collapse_hist_to_canonical(df_hist6, sku_links)
             df_hist6.to_csv(
                 hist_cache_path(sup_id, target_month, target_year, n_months=6),
                 index=False,
@@ -447,9 +558,10 @@ def load_employees_payload(
 
     try:
         df_lysm = fabric.get_same_month_prior_year_by_emp_sku(
-            target_month, target_year, sku_list=sku_list, emp_list=emp_list
+            target_month, target_year, sku_list=dax_sku_list, emp_list=emp_list
         )
         if df_lysm is not None and not df_lysm.empty:
+            df_lysm = collapse_hist_to_canonical(df_lysm, sku_links)
             p_lysm = hist_ly_same_month_cache_path(sup_id, target_month, target_year)
             df_lysm.to_csv(p_lysm, index=False)
             logger.info("historical LY same-month cache saved: %d rows → %s", len(df_lysm), p_lysm)
@@ -458,9 +570,10 @@ def load_employees_payload(
 
     try:
         df_prev = fabric.get_prev_month_by_emp_sku(
-            target_month, target_year, sku_list=sku_list, emp_list=emp_list
+            target_month, target_year, sku_list=dax_sku_list, emp_list=emp_list
         )
         if df_prev is not None and not df_prev.empty:
+            df_prev = collapse_hist_to_canonical(df_prev, sku_links)
             p_prev = hist_prev_month_cache_path(sup_id, target_month, target_year)
             df_prev.to_csv(p_prev, index=False)
             logger.info("historical prev-month cache saved: %d rows → %s", len(df_prev), p_prev)
@@ -471,10 +584,11 @@ def load_employees_payload(
     try:
         for cy in (int(target_year), int(target_year) - 1):
             df_cy = fabric.get_calendar_year_sales_by_emp_sku(
-                cy, sku_list=sku_list, emp_list=emp_list
+                cy, sku_list=dax_sku_list, emp_list=emp_list
             )
             pcy = hist_calendar_year_cache_path(sup_id, cy)
             if df_cy is not None and not df_cy.empty:
+                df_cy = collapse_hist_to_canonical(df_cy, sku_links)
                 df_cy.to_csv(pcy, index=False)
                 logger.info(
                     "historical calendar-year %d cache: %d rows → %s",
@@ -492,19 +606,34 @@ def load_employees_payload(
 
     # ── Step 5b: เติมตัวเลขสรุปให้หน้า Step1 (LY ยอดขาย / เฉลี่ย 3M) ─────────
     # Frontend ใช้ฟิลด์ชื่อ: ly_sales, hist_avg_3m
-    df_emp["ly_sales"] = 0.0
+    df_emp["ly_sales"] = (
+        df_emp["emp_id"]
+        .astype(str)
+        .str.strip()
+        .map(lambda e: float(ly_sales_by_emp.get(e, 0.0)))
+        .fillna(0.0)
+    )
     df_emp["hist_avg_3m"] = 0.0
 
     try:
         if df_lysm is not None and not df_lysm.empty:
-            ly_by_emp = (
+            ly_by_emp_sku = (
                 df_lysm.groupby("emp_id", as_index=True)["hist_amount"]
                 .sum()
                 .astype(float)
                 .to_dict()
             )
+            for emp_id, amt in ly_by_emp_sku.items():
+                eid = str(emp_id).strip()
+                cur = float(ly_sales_by_emp.get(eid, 0.0) or 0.0)
+                if float(amt or 0.0) > cur:
+                    ly_sales_by_emp[eid] = float(amt)
             df_emp["ly_sales"] = (
-                df_emp["emp_id"].astype(str).str.strip().map(ly_by_emp).fillna(0.0)
+                df_emp["emp_id"]
+                .astype(str)
+                .str.strip()
+                .map(lambda e: float(ly_sales_by_emp.get(e, 0.0)))
+                .fillna(0.0)
             )
             df_emp["ly_sales"] = pd.to_numeric(df_emp["ly_sales"], errors="coerce").fillna(0.0)
     except Exception as e:
@@ -544,15 +673,41 @@ def load_employees_payload(
 
     logger.info("Response: %d emp, %d sku", len(df_emp), len(df_sku))
 
-    if excluded_from_allocation > 0:
+    if van_excluded > 0:
         sku_warnings.append(
             {
-                "type": "employees_excluded_no_tga",
+                "type": "employees_excluded_van_code",
                 "sku": "",
                 "brand": "",
                 "message": (
-                    f"พนักงาน {excluded_from_allocation} คนมีเป้าเงิน (Target Sun) เป็น 0 — "
-                    "ยังแสดงใน Dashboard แต่จะไม่ถูกนำไปเกลี่ยหีบเมื่อกดปุ่มนั้น"
+                    f"ตัดพนักงานรหัส V (Van) {van_excluded} คน — ไม่แสดงและไม่นำมาคำนวณ"
+                ),
+            }
+        )
+
+    if ly_only_shown > 0:
+        sku_warnings.append(
+            {
+                "type": "employees_shown_ly_no_target",
+                "sku": "",
+                "brand": "",
+                "message": (
+                    f"แสดงใน Step 1 เท่านั้น {ly_only_shown} คน "
+                    f"(เคยขายเดือนเดียวกันปีที่แล้ว แต่ไม่มีเป้างวดนี้) "
+                    f"— ไม่เข้าขั้นกำหนดเป้าและไม่กระจายหีบ"
+                ),
+            }
+        )
+
+    if hidden_no_target > 0:
+        sku_warnings.append(
+            {
+                "type": "employees_hidden_no_target",
+                "sku": "",
+                "brand": "",
+                "message": (
+                    f"ซ่อนพนักงาน {hidden_no_target} คนที่ไม่มีเป้าและไม่มียอดขายปีที่แล้ว "
+                    f"(แสดง {len(df_emp)} คน)"
                 ),
             }
         )
@@ -611,6 +766,11 @@ def load_employees_payload(
             target_year,
             df_tga,
             total_sup_boxes,
+            debug={
+                "supervisor_code": sup_id,
+                "team_with_targets": int(df_emp["allocation_eligible"].sum()),
+                "sku_count": len(df_sku),
+            },
         )
 
     if sku_warnings:
@@ -632,7 +792,30 @@ def load_employees_payload(
             <= 0
         )
 
+    linked_skus = {
+        row["canonical_sku"]: extra_aliases_for_canonical(row["canonical_sku"], sku_links)
+        for row in sku_links
+        if extra_aliases_for_canonical(row["canonical_sku"], sku_links)
+    }
     sku_ids_list = df_sku["sku"].astype(str).str.strip().tolist()
+    if linked_skus:
+        df_sku["linked_history_skus"] = df_sku["sku"].astype(str).str.strip().map(
+            lambda s: linked_skus.get(s, [])
+        )
+        sku_id_set = set(sku_ids_list)
+        for canon, aliases in linked_skus.items():
+            if canon in sku_id_set:
+                sku_warnings.append(
+                    {
+                        "type": "sku_linked_history",
+                        "sku": canon,
+                        "brand": "",
+                        "message": (
+                            f"SKU {canon} ผูกประวัติรหัสเก่า: {', '.join(aliases)}"
+                        ),
+                    }
+                )
+
     new_product_skus, new_products_detection_mode = detect_new_product_skus(
         sup_id, target_year, sku_ids_list, df_hist
     )
@@ -686,6 +869,7 @@ def load_employees_payload(
         ly_amount_by_emp_wh=ly_amount_by_emp_wh,
         avg3_amount_by_emp_wh=avg3_amount_by_emp_wh,
     )
+    emp_records = _enrich_employee_allocation_flags(emp_records)
     if wh_split_emps:
         sku_warnings.append(
             {
@@ -754,6 +938,7 @@ def merge_employees_payloads(
             new_products.add(str(np).strip())
 
     employees.sort(key=lambda e: (str(e.get("supervisor_code") or ""), str(e.get("emp_id") or "")))
+    employees = _enrich_employee_allocation_flags(employees)
     skus = sorted(sku_map.values(), key=lambda s: str(s.get("sku") or ""))
 
     warnings.insert(
@@ -764,7 +949,7 @@ def merge_employees_payloads(
             "brand": "",
             "message": (
                 f"โหมดดูรวม ({aggregate_label}) — {len(aggregate_sup_ids)} ซุป, "
-                f"{len(employees)} พนักงาน · ไม่สามารถกระจายหีบในโหมดนี้"
+                f"{len(employees)} พนักงาน · ผู้จัดการกระจายหีบทั้งภาคได้ · ซุปดูอย่างเดียว"
             ),
         },
     )

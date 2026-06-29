@@ -13,8 +13,9 @@ set "VPIP=%ROOT%.venv\Scripts\pip.exe"
 REM --- แบบไม่ติดตั้ง Python: ใช้ runtime ที่สร้างจาก scripts\build\build_portable_runtime.bat ---
 if exist "%PORT_PY%" (
   set "USE_PY=%PORT_PY%"
-  REM Python embed ไม่ใส่ cwd ลง sys.path — บังคับให้เห็นแพ็กเกจ backend
+  REM Python embed ไม่ใส่ cwd / PYTHONPATH ลง sys.path — ติดตั้ง .pth ให้เห็น backend + tests
   set "PYTHONPATH=%ROOT%"
+  "%PORT_PY%" "%ROOT%scripts\dev\install_repo_pythonpath.py" >nul 2>&1
   goto :START_SERVER
 )
 

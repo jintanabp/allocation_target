@@ -34,13 +34,17 @@ FABRIC_TABLES_DEPRECATED = [
 API_MAP = [
     {"endpoint": "GET /managers", "fabric": False, "sources": ["access_hierarchy.json", "managers_cache.json"]},
     {"endpoint": "GET /data/employees", "fabric": True, "sources": ["Dim_Salesman", "tga_target_salesman_next", "Dim_Product", "cross_sold_history_2y_qu", "cfm_*"]},
-    {"endpoint": "GET /data/employees/aggregate", "fabric": True, "sources": ["เหมือน /data/employees"]},
+    {"endpoint": "GET /data/employees/region-peers", "fabric": True, "sources": ["เหมือน /data/employees/aggregate สำหรับ supervisor region_peers"]},
     {"endpoint": "POST /optimize", "fabric": True, "sources": ["tga_target_salesman_next (period check)"]},
     {"endpoint": "POST /lakehouse/export-csv", "fabric": True, "sources": ["tga_target_salesman_next", "cache tga_lines_*"]},
     {"endpoint": "POST /lakehouse/import-targetsun", "fabric": True, "sources": ["tga grain + dims"]},
     {"endpoint": "POST /lakehouse/upload", "fabric": True, "sources": ["OneLake ADLS"]},
     {"endpoint": "GET /admin/supervisor-team", "fabric": True, "sources": ["Dim_Salesman", "emp_cache_*"]},
     {"endpoint": "GET /admin/user-access", "fabric": False, "sources": ["user_access.json"]},
+    {"endpoint": "GET /admin/sku-links", "fabric": False, "sources": ["sku_links.json"]},
+    {"endpoint": "GET /admin/sku-links/catalog", "fabric": False, "sources": ["employee_payload_cache", "sku_links.json"]},
+    {"endpoint": "GET /admin/sku-links/preview", "fabric": True, "sources": ["cross_sold_history_2y_qu", "Dim_Salesman"]},
+    {"endpoint": "GET /admin/sl-links", "fabric": False, "sources": ["sl_links.json"]},
 ]
 
 _CACHE_PATTERNS = [
@@ -167,6 +171,7 @@ def build_data_inventory(*, check_fabric: bool = True) -> dict[str, Any]:
         "local_config": {
             "user_access_rows": len(rows),
             "user_access_path": os.environ.get("USER_ACCESS_JSON_PATH") or "config/user_access.json",
+            "sku_links_path": os.environ.get("SKU_LINKS_JSON_PATH") or "config/sku_links.json",
             "access_hierarchy_supervisors": len(supervisors),
             "access_hierarchy_managers": len(manager_codes),
             "access_hierarchy_path": hierarchy_path,

@@ -193,7 +193,27 @@ TTL: `EMPLOYEE_PAYLOAD_CACHE_TTL_SEC`, `MANAGERS_CACHE_TTL_SEC`, `ADMIN_TEAM_CAC
 | `GET /admin/user-access` | ไม่ | จัดการสิทธิ |
 | `GET /admin/supervisor-team` | ใช่ | รายชื่อพนักงานใต้ Supervisor |
 | `GET /admin/data-inventory` | บางส่วน | สรุปแหล่งข้อมูล |
+| `GET /admin/sku-links` | ไม่ | รายการผูกรหัส SKU (`config/sku_links.json`) |
+| `GET /admin/sku-links/preview` | ใช่ | ทดสอบยอดประวัติ 3M/LY หลังรวม alias |
 | `GET /debug/fabric` | ใช่ | debug (`ENABLE_DEBUG_ENDPOINTS=1`) |
+
+---
+
+## 3b. ผูกรหัส SKU (sku_links)
+
+เมื่อเปลี่ยนรหัสสินค้า ประวัติใน `cross_sold_history_2y_qu` อาจอยู่รหัสเก่า แต่เป้า TGA ใช้รหัสใหม่
+
+| รายการ | ค่า |
+|--------|-----|
+| ไฟล์ config | `config/sku_links.json` |
+| Service | `backend/services/sku_link_store.py` |
+| Admin UI | แท็บ **ผูกรหัส SKU** |
+
+**ขั้นตอน runtime**
+
+1. `employees.py` Step 4 — `expand_skus_for_dax()` ก่อนเรียก DAX, `collapse_hist_to_canonical()` ก่อนเขียน `hist_*` cache
+2. `optimize.py` — `collapse_hist_to_canonical()` ตอนอ่าน cache (กรณีแก้ link หลัง cache เก่า)
+3. หลังบันทึก link ใน Admin — โหลด Dashboard ใหม่ (`refresh=true`) เพื่อ rebuild ประวัติ
 
 ---
 

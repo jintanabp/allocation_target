@@ -38,6 +38,7 @@ from ..core.targets import load_target_csv
 from ..generate_excel import create_target_excel
 from ..schemas import OptimizeRequest
 from ..fabric_dax_connector import FabricDAXConnector
+from .sku_link_store import collapse_hist_to_canonical
 from .wh_split import (
     alloc_key,
     prepare_optimize_targets,
@@ -98,7 +99,8 @@ def _read_hist_cache(path: str, emp_list: list[str]) -> pd.DataFrame:
     if not os.path.exists(path):
         return pd.DataFrame(columns=["emp_id", "sku", "hist_boxes"])
     df = pd.read_csv(path, dtype={"sku": str, "emp_id": str})
-    return df[df["emp_id"].isin(emp_list)]
+    df = df[df["emp_id"].isin(emp_list)]
+    return collapse_hist_to_canonical(df)
 
 
 def _maybe_split_hist(
@@ -370,6 +372,7 @@ def run_optimization_service(
         try:
             df_hist_lysm = pd.read_csv(lysm_path, dtype={"sku": str, "emp_id": str})
             df_hist_lysm = df_hist_lysm[df_hist_lysm["emp_id"].isin(real_emp_list)]
+            df_hist_lysm = collapse_hist_to_canonical(df_hist_lysm)
             logger.info(
                 "hist LY same-month loaded: %d rows (blend weight env ALLOC_HIST_LYM_WEIGHT, default 0.5)",
                 len(df_hist_lysm),
@@ -399,6 +402,7 @@ def run_optimization_service(
         try:
             df_hist_prev = pd.read_csv(prev_path, dtype={"sku": str, "emp_id": str})
             df_hist_prev = df_hist_prev[df_hist_prev["emp_id"].isin(real_emp_list)]
+            df_hist_prev = collapse_hist_to_canonical(df_hist_prev)
             logger.info("hist prev-month loaded: %d rows", len(df_hist_prev))
         except Exception as e:
             logger.warning("hist prev-month cache read failed: %s", e)

@@ -124,6 +124,58 @@ class TestVisibleSupervisors(unittest.TestCase):
         row = next(r for r in self.enriched if r["userpl"] == "SL314")
         self.assertEqual(row["visible_supervisor_codes"], ["SL314"])
 
+    def test_supervisor_region_peers_same_division_region(self):
+        rows = [
+            {
+                "email": "a@x.com",
+                "userpl": "SL901",
+                "acc_division": "Div.S",
+                "acc_region": "อีสาน",
+                "login_kind": "supervisor_acc",
+                "acc_scope": "region_peers",
+            },
+            {
+                "email": "b@x.com",
+                "userpl": "SL902",
+                "acc_division": "Div.S",
+                "acc_region": "อีสาน",
+                "login_kind": "supervisor_acc",
+                "acc_scope": "self",
+            },
+            {
+                "email": "c@x.com",
+                "userpl": "SL903",
+                "acc_division": "Div.E",
+                "acc_region": "อีสาน",
+                "login_kind": "supervisor_acc",
+                "acc_scope": "region_peers",
+            },
+        ]
+        enriched = enrich_rows_with_visibility(rows)
+        sl901 = next(r for r in enriched if r["userpl"] == "SL901")
+        vis = set(sl901["visible_supervisor_codes"])
+        self.assertEqual(vis, {"SL901", "SL902"})
+        self.assertNotIn("SL903", vis)
+
+    def test_div_b_central_region_peers(self):
+        """SL382 ภาคกลาง Div.B เห็นซุปภาคเดียวกันทั้ง 6 รหัส"""
+        central_codes = {"SL341", "SL375", "SL381", "SL382", "SL418", "SL528"}
+        rows = [
+            {
+                "email": f"{c.lower()}@x.com",
+                "userpl": c,
+                "acc_division": "Div.B",
+                "acc_region": "กลาง",
+                "login_kind": "supervisor_acc",
+                "acc_scope": "region_peers" if c == "SL382" else "self",
+            }
+            for c in sorted(central_codes)
+        ]
+        enriched = enrich_rows_with_visibility(rows)
+        sl382 = next(r for r in enriched if r["userpl"] == "SL382")
+        vis = set(sl382["visible_supervisor_codes"])
+        self.assertEqual(vis, central_codes)
+
     def test_sl330_force_supervisor_bkk(self):
         rows = [
             {

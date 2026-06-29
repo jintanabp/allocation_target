@@ -76,3 +76,42 @@ def get_employees_aggregate(
         aggregate_label=label,
         refresh=bool(refresh),
     )
+
+
+@router.get("/data/employees/region-peers")
+def get_employees_region_peers(
+    user: dict = Depends(require_authenticated_user),
+    sup_id: str = Query(..., description="รหัส Supervisor ที่ล็อกอิน (ทีมตัวเอง)"),
+    target_month: int = Query(..., ge=1, le=12),
+    target_year: int = Query(..., ge=2020, le=2100),
+    refresh: bool = Query(
+        False,
+        description="บังคับดึงจาก Fabric ใหม่ (ข้าม payload cache)",
+    ),
+):
+    """รวมข้อมูลทุกซุปในภาคเดียวกัน — สำหรับ supervisor_acc + region_peers (ดูอย่างเดียว)"""
+    sid = sup_id.strip().upper()
+    ensure_supervisor_allowed(user, sid)
+    home = {str(x).strip().upper() for x in (user.get("home_supervisor_codes") or ())}
+    if home and sid not in home:
+        raise HTTPException(
+            status_code=403,
+            detail="โหลดรวมภาคได้เฉพาะจากรหัสทีมตัวเอง",
+        )
+    allowed = user.get("allowed_supervisor_codes")
+    if not allowed:
+        raise HTTPException(status_code=403, detail="ไม่มีสิทธิ์ดูภาคเดียวกัน")
+    sup_ids = sorted({str(x).strip().upper() for x in allowed if str(x).strip()})
+    if len(sup_ids) <= 1:
+        raise HTTPException(
+            status_code=400,
+            detail="มีเพียงทีมเดียวในภาค — ใช้มุมมองรายคน",
+        )
+    label = f"รวมภาค ({sid})"
+    return load_employees_bulk(
+        sup_ids,
+        target_month,
+        target_year,
+        aggregate_label=label,
+        refresh=bool(refresh),
+    )

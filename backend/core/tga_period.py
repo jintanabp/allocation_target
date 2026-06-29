@@ -180,6 +180,8 @@ def enforce_tga_has_targets_for_period(
     target_year: int,
     df_tga: pd.DataFrame | None,
     total_sup_boxes: int,
+    *,
+    debug: dict | None = None,
 ) -> None:
     """ไม่มีเป้าหีบในงวดที่เลือก (หลังกรอง EFFECTIVEDATE) → 409 ห้ามเข้า Dashboard"""
     has_positive = df_tga is not None and not df_tga.empty
@@ -201,6 +203,7 @@ def enforce_tga_has_targets_for_period(
             "title": title,
             "message": msg,
             "selected": {"month": int(target_month), "year": int(target_year)},
+            "debug": debug or {},
         },
     )
 

@@ -17,6 +17,7 @@ from .access_hierarchy import (
     parse_hierarchy_metadata,
 )
 from .manager_views import build_manager_view_options, build_manager_views_map
+from .sl_link_store import expand_sl_codes, hierarchy_manager_code, read_links as read_sl_links
 from .user_access_store import (
     emails_with_targetsun,
     normalized_email,
@@ -142,9 +143,9 @@ def _full_rows_by_email_userpl() -> dict[tuple[str, str], dict[str, Any]]:
 
 def _visible_codes_for_row(row: dict[str, Any], all_rows: list[dict[str, Any]]) -> set[str]:
     upl = str(row.get("userpl") or "").strip().upper()
-    precomputed = row.get("visible_supervisor_codes")
-    if isinstance(precomputed, list) and precomputed:
-        vis = {str(x).strip().upper() for x in precomputed if x}
+    stored = row.get("visible_supervisor_codes")
+    if isinstance(stored, list) and stored:
+        vis = {str(x).strip().upper() for x in stored if str(x).strip()}
     else:
         vis = set(compute_visible_supervisors_for_row(row, all_rows=all_rows))
     if upl:
@@ -209,16 +210,24 @@ def compute_allowed_supervisor_codes(
     full_rows = read_rows()
     ne = normalized_email(email)
 
+    sl_links = read_sl_links()
     allowed: set[str] = set()
     for upl in userpls:
-        meta = meta_map.get((ne, upl))
-        if meta:
-            allowed.update(_visible_codes_for_row(meta, full_rows))
-        elif upl:
+        check_upls = expand_sl_codes({upl}, sl_links)
+        merged = False
+        for check in sorted(check_upls):
+            meta = meta_map.get((ne, check))
+            if meta:
+                allowed.update(_visible_codes_for_row(meta, full_rows))
+                merged = True
+            elif check:
+                allowed.add(check)
+        if not merged and upl:
             allowed.add(upl)
             logger.info("USERPL=%s ใช้รหัสตัวเองเป็น fallback", upl)
+        allowed.add(upl)
 
-    return allowed
+    return expand_sl_codes(allowed, sl_links)
 
 
 def load_acc_rows() -> list[dict]:
@@ -257,6 +266,7 @@ def unrestricted_user_context() -> dict[str, Any]:
         "auth_disabled": True,
         "email": None,
         "allowed_supervisor_codes": None,
+        "home_supervisor_codes": None,
         "can_import_targetsun": True,
         "is_admin": False,
     }
@@ -276,10 +286,12 @@ def build_user_access_context(email: str, *, allow_admin_bypass: bool = True) ->
             "email": ne,
             "acc_admin_full_access": True,
             "allowed_supervisor_codes": None,
+            "home_supervisor_codes": None,
             "userpls_supervisor_pick": set(),
             "userpls_manager_pick": set(),
             "can_import_targetsun": True,
             "is_admin": True,
+            "is_marketing": False,
         }
 
     full_rows = read_rows()
@@ -295,6 +307,7 @@ def build_user_access_context(email: str, *, allow_admin_bypass: bool = True) ->
             "is_admin": False,
             "is_marketing": True,
             "allowed_supervisor_codes": set(),
+            "home_supervisor_codes": set(),
             "userpls_supervisor_pick": set(),
             "userpls_manager_pick": set(),
             "can_import_targetsun": False,
@@ -339,13 +352,24 @@ def build_user_access_context(email: str, *, allow_admin_bypass: bool = True) ->
             "ตรวจสอบ USERPL ใน user_access.json ให้ตรงกับรหัสในระบบ"
         )
 
+    home_supervisor_codes: set[str] = set()
+    for upl in userpls:
+        meta = meta_map.get((ne, upl))
+        lk = str((meta or {}).get("login_kind") or "")
+        if lk == "manager_acc":
+            continue
+        if upl in supervisors or lk == "supervisor_acc":
+            home_supervisor_codes.add(upl)
+
     ctx = {
         "auth_disabled": False,
         "email": ne,
         "allowed_supervisor_codes": allowed,
+        "home_supervisor_codes": home_supervisor_codes,
         "userpls_supervisor_pick": sup_pick,
         "userpls_manager_pick": mgr_pick,
         "is_admin": False,
+        "is_marketing": False,
     }
     ctx["can_import_targetsun"] = user_can_import_targetsun(ctx)
     return ctx
@@ -416,9 +440,18 @@ def filter_managers_payload_for_user(full: dict, user: dict[str, Any]) -> dict:
     hierarchy_supervisors, hierarchy_manager_codes, raw_bm_from_meta = parse_hierarchy_metadata(full)
     sup_pick = {str(x).strip().upper() for x in (user.get("userpls_supervisor_pick") or ())}
     mgr_pick = {str(x).strip().upper() for x in (user.get("userpls_manager_pick") or ())}
+    sl_links = read_sl_links()
 
     raw_bm_src = full.get("by_manager") or raw_bm_from_meta or {}
     raw_bm = _normalized_by_manager(raw_bm_src)
+
+    def _mgr_team(mgr_code: str) -> list[str]:
+        """ทีมจาก by_manager — alias SL ใช้ทีมของ canonical"""
+        hier = hierarchy_manager_code(mgr_code, sl_links)
+        team = list(raw_bm.get(hier, []) or raw_bm.get(mgr_code, []))
+        if not team and hier != mgr_code:
+            team = list(raw_bm.get(mgr_code, []))
+        return team
 
     rows_f: list[dict] = []
     bad_dep = {"NONE", "0", "(BLANK)"}
@@ -440,16 +473,21 @@ def filter_managers_payload_for_user(full: dict, user: dict[str, Any]) -> dict:
         for s in sorted(sup_pick):
             rows_f.append({"supervisor_code": s, "depend_on": "NONE"})
         for m in sorted(mgr_pick):
-            for s in raw_bm.get(m, []):
+            for s in _mgr_team(m):
                 rows_f.append({"supervisor_code": s, "depend_on": m})
 
     allowed_codes = user.get("allowed_supervisor_codes")
+    home_codes = {
+        str(x).strip().upper() for x in (user.get("home_supervisor_codes") or ())
+    }
+    allowed_set: set[str] = set()
     if allowed_codes:
         allowed_set = {str(x).strip().upper() for x in allowed_codes}
+        # หน้า login เลือกแค่รหัสตัวเอง (home) — peer สลับได้หลัง login ใน dashboard
         if not rows_f:
-            for sc in sorted(allowed_set):
+            seed = home_codes if home_codes else sup_pick
+            for sc in sorted(seed):
                 rows_f.append({"supervisor_code": sc, "depend_on": "NONE"})
-                sup_pick.add(sc)
         else:
             rows_f = [
                 row
@@ -458,11 +496,8 @@ def filter_managers_payload_for_user(full: dict, user: dict[str, Any]) -> dict:
             ]
 
     by_manager_f: dict[str, list[str]] = {}
-    allowed_set: set[str] = set()
-    if allowed_codes:
-        allowed_set = {str(x).strip().upper() for x in allowed_codes}
     for m in sorted(mgr_pick):
-        team = sorted(raw_bm.get(m, []))
+        team = sorted(_mgr_team(m))
         if team:
             by_manager_f[m] = [s for s in team if not allowed_set or s in allowed_set]
         elif allowed_set:
@@ -489,4 +524,10 @@ def filter_managers_payload_for_user(full: dict, user: dict[str, Any]) -> dict:
     out["manager_views"] = manager_views
     out["filtered_by_acc"] = True
     out["filtered_by_userpl_only"] = True
+    out["home_supervisor_codes"] = sorted(home_codes)
+    out["peer_supervisor_codes"] = sorted(
+        (allowed_set - home_codes) & hierarchy_supervisors
+        if allowed_codes and home_codes
+        else set()
+    )
     return out

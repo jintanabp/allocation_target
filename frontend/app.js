@@ -6,6 +6,7 @@
  * - Auto Rebalance (เป้าเงิน + เป้าหีบ)
  * - Sorting & Sticky Columns
  */
+console.info("[allocation_target] app.js build 2026062616");
 
 /**
  * API ชี้ไปที่ origin เดียวกับหน้าเว็บเสมอ (ยกเว้นเปิดไฟล์ file://)
@@ -490,6 +491,8 @@ let S = {
   activeBrand: "ALL",
   /** null | "near" | "far" — กรองคอลัมน์ SKU ในตารางผลตามสัญลักษณ์ ◆ / ⚠ */
   histDevFilter: null,
+  /** แสดงแถวชื่อสินค้าในหัวตารางผลขั้น 3 */
+  showSkuProductNames: false,
   targetMonth: null,
   targetYear: null,
   supId: null,
@@ -499,11 +502,16 @@ let S = {
   loginRole: null,
   managerCode: null,
   supervisorChoices: [],
+  homeSupervisorCodes: [],
+  peerSupervisorCodes: [],
+  viewingPeer: false,
   managerViews: {},
   managerViewOptions: null,
   managerViewMode: "individual",
   managerViewRegion: "",
   aggregateMode: false,
+  /** รหัส SL ในโหมดรวม (manager) — ใช้กระจายหีบทีละซุป */
+  aggregateSupIds: [],
   supervisorRows: [],
   byManager: {},
   _loginPickMap: null,
@@ -549,7 +557,13 @@ function fmt(n) {
   if (n == null || Number.isNaN(Number(n))) return "—";
   return Number(n).toLocaleString("th-TH");
 }
-const sumYellow = () => Object.values(S.yellow).reduce((a, b) => a + b, 0);
+const sumYellow = () => {
+  let total = 0;
+  for (const e of _allocEligibleEmployees()) {
+    total += Number(S.yellow[_allocKey(e)]) || 0;
+  }
+  return total;
+};
 
 /** Step 2: ส่วนต่างเป้าเงินรวมที่ยังกด «กระจายหีบ» ได้ (บาท) */
 const YELLOW_TOTAL_TOLERANCE_OK_BAHT = 10;
@@ -781,6 +795,41 @@ function _syncManagerViewOptionsFromLogin() {
   }
 }
 
+/** Supervisor + region_peers — มุมมองรายคน / รวมทั้งภาค (ดูอย่างเดียว) */
+function _supervisorRegionPeersView() {
+  return S.loginRole === "supervisor"
+    && Array.isArray(S.peerSupervisorCodes)
+    && S.peerSupervisorCodes.length > 0;
+}
+
+function _syncSupervisorRegionViewOptions() {
+  if (!_supervisorRegionPeersView()) {
+    if (S.loginRole === "supervisor") {
+      S.managerViewOptions = null;
+      S.managerViewMode = "individual";
+      S.managerViewRegion = "";
+    }
+    return;
+  }
+  const home = String(
+    (S.homeSupervisorCodes && S.homeSupervisorCodes[0]) || S.supId || ""
+  ).trim().toUpperCase();
+  const allCodes = [
+    ...new Set([
+      ...((S.homeSupervisorCodes || []).map((c) => String(c).trim().toUpperCase())),
+      ...(S.peerSupervisorCodes || []).map((c) => String(c).trim().toUpperCase()),
+      home,
+    ].filter(Boolean)),
+  ].sort();
+  S.managerViewOptions = {
+    scope_kind: "region",
+    modes: ["individual", "region"],
+    regions: [{ id: "__peers__", label: "ทั้งภาค", supervisor_codes: allCodes }],
+    supervisor_codes: allCodes,
+    supervisor_region_peers: true,
+  };
+}
+
 function _regionLabelFromId(regionId) {
   const r = String(regionId || "").trim();
   if (!r) return "ไม่ระบุภาค";
@@ -827,12 +876,16 @@ function updateManagerViewControlsUI() {
   const supSel = document.getElementById("supervisorSwitchSelect");
   const opts = S.managerViewOptions;
   const isMgr = S.loginRole === "manager" && !!opts;
+  const isSupRegion = _supervisorRegionPeersView() && !!opts;
+  const showModeSelect = isMgr || isSupRegion;
 
   if (modeSel) {
-    modeSel.style.display = isMgr ? "" : "none";
-    if (isMgr) {
-      const modes = Array.isArray(opts.modes) ? opts.modes : ["individual"];
-      [...modeSel.options].forEach(o => {
+    modeSel.style.display = showModeSelect ? "" : "none";
+    if (showModeSelect) {
+      const modes = isSupRegion
+        ? ["individual", "region"]
+        : (Array.isArray(opts.modes) ? opts.modes : ["individual"]);
+      [...modeSel.options].forEach((o) => {
         o.disabled = !modes.includes(o.value);
         o.hidden = !modes.includes(o.value);
       });
@@ -842,7 +895,9 @@ function updateManagerViewControlsUI() {
       const regOpt = modeSel.querySelector('option[value="region"]');
       if (allOpt) allOpt.textContent = "รวมทั้งหมด";
       if (regOpt) {
-        regOpt.textContent = opts.scope_kind === "division" ? "รวมตามภาค" : "ทั้งภาค";
+        regOpt.textContent = isSupRegion
+          ? "ทั้งภาค"
+          : (opts.scope_kind === "division" ? "รวมตามภาค" : "ทั้งภาค");
       }
     }
   }
@@ -857,40 +912,107 @@ function updateManagerViewControlsUI() {
   }
 
   if (supSel) {
-    const showSup = isMgr && S.managerViewMode === "individual";
+    const showSup = (isMgr || isSupRegion) && S.managerViewMode === "individual";
     supSel.style.display = showSup ? "" : "none";
   }
 
   const hint = document.querySelector(".sup-switch__hint");
   if (hint) {
-    if (!isMgr) {
+    if (isSupRegion) {
+      if (S.managerViewMode === "individual") {
+        hint.textContent = "เลือกทีมในภาค (กระจายได้เฉพาะทีมตัวเอง)";
+      } else {
+        hint.textContent = "รวมทั้งภาค — ดูอย่างเดียว · สลับเป็นรายคนเพื่อกระจายหีบ";
+      }
+    } else if (!isMgr) {
       hint.textContent = S.loginRole === "manager"
         ? "กำลังโหลดตัวเลือกมุมมอง — ลองรีเฟรชหน้าหรือเข้าใหม่"
         : "เลือกทีมที่ต้องการดูข้อมูล";
     } else if (S.managerViewMode === "individual") {
       hint.textContent = "เลือก Supervisor รายคน";
     } else if (S.managerViewMode === "all") {
-      hint.textContent = "รวมทุกซุปในขอบเขต — ดูอย่างเดียว";
+      hint.textContent = "รวมทุกซุปในขอบเขต — กระจายหีบทั้งภาคได้";
     } else if (showRegPicker) {
       hint.textContent = "เลือกภาคจากรายการ แล้วระบบจะโหลดข้อมูลรวมของภาคนั้น";
     } else {
-      hint.textContent = "รวมทั้งภาค — ดูอย่างเดียว";
+      hint.textContent = "รวมทั้งภาค — กระจายหีบทั้งภาคได้";
     }
   }
 }
 
+/** Manager ในโหมดรวมภาค/รวมทั้งหมด — กระจายหีบได้ (ต่างจากซุป region_peers ที่ดู peer อย่างเดียว) */
+function _managerAggregateWritable() {
+  return S.loginRole === "manager" && !!S.aggregateMode;
+}
+
+/** โหมดรวมที่ปิดการแก้ไข/กระจาย (ซุปไม่ใช้ aggregate; manager ยกเว้น) */
+function _aggregateBlocksWrite() {
+  return !!S.aggregateMode && !_managerAggregateWritable();
+}
+
+function _employeesGroupedBySupervisor() {
+  const map = new Map();
+  for (const e of _allocEligibleEmployees()) {
+    const sup = String(e.supervisor_code || "").trim().toUpperCase();
+    if (!sup) continue;
+    if (!map.has(sup)) map.set(sup, []);
+    map.get(sup).push(e);
+  }
+  return map;
+}
+
+function _lockedEditsForEmployees(lockedEdits, emps) {
+  const keys = new Set((emps || []).map((e) => _allocKey(e)));
+  return (lockedEdits || []).filter((lock) => {
+    const wh = String(lock.warehouse_code || "").trim();
+    const k = wh
+      ? `${String(lock.emp_id || "").trim()}|${wh}`
+      : String(lock.emp_id || "").trim();
+    return keys.has(k);
+  });
+}
+
+function _aggregateSupervisorOrder() {
+  const fromData = (S.aggregateSupIds || [])
+    .map((c) => String(c).trim().toUpperCase())
+    .filter(Boolean);
+  if (fromData.length) return [...new Set(fromData)].sort();
+  return [..._employeesGroupedBySupervisor().keys()].sort();
+}
+
+function _supervisorCodeForAllocRow(a) {
+  if (a?.supervisor_code) return String(a.supervisor_code).trim().toUpperCase();
+  const emp = String(a?.emp_id || "").trim();
+  const wh = String(a?.warehouse_code || "").trim();
+  const key = wh ? `${emp}|${wh}` : emp;
+  const row = (S.employees || []).find((e) => _allocKey(e) === key);
+  return String(row?.supervisor_code || S.supId || "").trim().toUpperCase();
+}
+
 function _updateAggregateModeUI() {
+  const mgrWrite = _managerAggregateWritable();
+  const readOnlyAgg = _aggregateBlocksWrite();
   const banner = document.getElementById("aggregateModeBanner");
-  if (banner) banner.style.display = S.aggregateMode ? "block" : "none";
+  if (banner) {
+    banner.style.display = S.aggregateMode ? "block" : "none";
+    if (S.aggregateMode) {
+      banner.textContent = mgrWrite
+        ? "โหมดรวมภาค (ผู้จัดการ) — กำหนดเป้าและกระจายหีบได้ทั้งภาค · ส่ง Target Sun ทีละซุปอัตโนมัติ"
+        : (_supervisorRegionPeersView()
+          ? "โหมดดูรวมภาค — ดูทุกซุปในภาค · กระจายหีบได้เฉพาะทีมตัวเอง (สลับเป็น「รายคน」)"
+          : "โหมดดูรวม — แสดงข้อมูลสรุปเท่านั้น ไม่สามารถกระจายหีบ · สลับเป็น「รายคน」เพื่อดำเนินการ");
+    }
+  }
   document.body.classList.toggle("is-aggregate-view", !!S.aggregateMode);
+  document.body.classList.toggle("is-aggregate-view--manager-write", mgrWrite);
 
   const step3 = document.getElementById("step3Section");
-  if (step3) step3.setAttribute("aria-disabled", S.aggregateMode ? "true" : "false");
+  if (step3) step3.setAttribute("aria-disabled", readOnlyAgg ? "true" : "false");
 
   const step3Body = document.getElementById("step3Body");
   if (step3Body) {
     step3Body.querySelectorAll("input, select, button, textarea").forEach((el) => {
-      if (S.aggregateMode) {
+      if (readOnlyAgg) {
         el.setAttribute("disabled", "");
         el.setAttribute("aria-disabled", "true");
       } else {
@@ -903,7 +1025,7 @@ function _updateAggregateModeUI() {
   const runBtn = qs("#runBtn");
   const runTitle = qs("#runTitle");
   const runSub = qs("#runSub");
-  if (S.aggregateMode) {
+  if (readOnlyAgg) {
     if (runBtn) {
       runBtn.disabled = true;
       runBtn.title = "โหมดดูรวม — สลับเป็นรายคนเพื่อกระจายหีบ";
@@ -912,8 +1034,14 @@ function _updateAggregateModeUI() {
     if (runSub) runSub.textContent = "สลับเป็น「รายคน」เพื่อกระจายหีบ";
   } else if (runBtn) {
     runBtn.removeAttribute("title");
-    if (runTitle && !S.allocations?.length) runTitle.textContent = "พร้อมกระจายหีบ";
-    if (runSub && !S.allocations?.length) runSub.textContent = "ตรวจสอบยอดรวมเป้าเงินก่อนกดเริ่มคำนวณ";
+    if (runTitle && !S.allocations?.length) {
+      runTitle.textContent = mgrWrite ? "พร้อมกระจายหีบทั้งภาค" : "พร้อมกระจายหีบ";
+    }
+    if (runSub && !S.allocations?.length) {
+      runSub.textContent = mgrWrite
+        ? "ระบบจะคำนวณทีละ Supervisor ในภาค"
+        : "ตรวจสอบยอดรวมเป้าเงินก่อนกดเริ่มคำนวณ";
+    }
   }
 }
 
@@ -922,11 +1050,16 @@ async function onManagerViewModeChange() {
   const mode = String(modeSel?.value || "individual");
   if (mode === S.managerViewMode) return;
   S.managerViewMode = mode;
-  if (mode === "region" && S.managerViewOptions?.scope_kind === "division") {
-    S.managerViewRegion = "";
+  if (mode === "region") {
+    if (S.managerViewOptions?.scope_kind === "division" && S.loginRole === "manager") {
+      S.managerViewRegion = "";
+    } else if (_supervisorRegionPeersView()) {
+      S.managerViewRegion = "__peers__";
+    }
   }
   updateManagerViewControlsUI();
-  if (mode === "region" && S.managerViewOptions?.scope_kind === "division" && !S.managerViewRegion) {
+  if (mode === "region" && S.loginRole === "manager"
+      && S.managerViewOptions?.scope_kind === "division" && !S.managerViewRegion) {
     toast("เลือกภาคที่ต้องการดูแบบรวม", "amber");
     return;
   }
@@ -946,7 +1079,12 @@ async function onManagerViewRegionChange() {
 }
 
 async function refreshManagerDashboardData() {
-  if (S.loginRole !== "manager" || !S.managerCode) return;
+  const supRegion = _supervisorRegionPeersView();
+  if (S.loginRole === "manager") {
+    if (!S.managerCode) return;
+  } else if (!supRegion) {
+    return;
+  }
   if (S._hasUnsaved && S.managerViewMode !== "individual") {
     const ok = window.confirm("มีการแก้ไขที่ยังไม่ได้บันทึก — ต้องการเปลี่ยนมุมมองต่อหรือไม่?");
     if (!ok) {
@@ -961,6 +1099,8 @@ async function refreshManagerDashboardData() {
     let ok = false;
     if (S.managerViewMode === "individual") {
       ok = await loadData(S.supId, S.targetMonth, S.targetYear);
+    } else if (S.loginRole === "supervisor" && supRegion) {
+      ok = await loadSupervisorRegionAggregate();
     } else if (S.managerViewMode === "region" && S.managerViewOptions?.scope_kind === "division" && !S.managerViewRegion) {
       toast("กรุณาเลือกภาค", "amber");
       return;
@@ -1001,17 +1141,32 @@ function updateSupervisorSwitcherUI() {
   }
   _suppressSupSwitchUiEvent = true;
   try {
-    if (S.loginRole === "manager" && Array.isArray(S.supervisorChoices) && S.supervisorChoices.length > 0) {
+    if ((S.loginRole === "manager" && Array.isArray(S.supervisorChoices) && S.supervisorChoices.length > 0)
+        || (S.loginRole === "supervisor" && (_supervisorRegionPeersView()
+          || (Array.isArray(S.supervisorChoices) && S.supervisorChoices.length > 1)))) {
       wrap.style.display = "flex";
-      updateManagerViewControlsUI();
-      const showSup = S.managerViewMode === "individual";
+      if (S.loginRole === "manager" || _supervisorRegionPeersView()) {
+        updateManagerViewControlsUI();
+      }
+      const showSup = S.loginRole === "supervisor"
+        ? (S.managerViewMode === "individual" || !_supervisorRegionPeersView())
+        : (S.loginRole !== "manager" || S.managerViewMode === "individual");
       const cur = String(S.supId ?? "").trim();
+      const homeSet = new Set(
+        (S.homeSupervisorCodes || []).map(c => String(c).trim().toUpperCase())
+      );
       if (showSup) {
-        const teamOnly = S.supervisorChoices.filter(c => String(c).toUpperCase() !== String(S.managerCode || "").toUpperCase());
-        const list = teamOnly.length ? teamOnly : S.supervisorChoices;
+        let list = S.supervisorChoices;
+        if (S.loginRole === "manager") {
+          const teamOnly = list.filter(
+            c => String(c).toUpperCase() !== String(S.managerCode || "").toUpperCase()
+          );
+          list = teamOnly.length ? teamOnly : list;
+        }
         sel.innerHTML = list.map(c => {
           const cs = String(c);
-          return `<option value="${cs}"${cs === cur ? " selected" : ""}>${cs}</option>`;
+          const label = homeSet.has(cs.toUpperCase()) ? `${cs} (ทีมของฉัน)` : cs;
+          return `<option value="${cs}"${cs === cur ? " selected" : ""}>${escapeHtml(label)}</option>`;
         }).join("");
         if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
       } else {
@@ -1073,6 +1228,9 @@ function updateDashboardSupBadge() {
           : "";
     document.getElementById("currentSupName").textContent =
       `Manager ${S.managerCode}${modeLabel} · ${base}`;
+  } else if (S.loginRole === "supervisor" && S.managerViewMode === "region" && S.aggregateMode) {
+    document.getElementById("currentSupName").textContent =
+      `(${S.supId}) · รวมทั้งภาค`;
   } else {
     document.getElementById("currentSupName").textContent = base;
   }
@@ -1082,7 +1240,7 @@ async function switchSupervisorContext(newSupId) {
   const ns = String(newSupId ?? "").trim();
   const cur = String(S.supId ?? "").trim();
   if (!ns || ns === cur) return;
-  if (S.managerViewMode !== "individual") return;
+  if (S.loginRole === "manager" && S.managerViewMode !== "individual") return;
   if (S._hasUnsaved) {
     const ok = window.confirm("มีการแก้ไขที่ยังไม่ได้บันทึกหรือดาวน์โหลด — ต้องการสลับ Supervisor ต่อหรือไม่?");
     if (!ok) {
@@ -1124,6 +1282,7 @@ async function switchSupervisorContext(newSupId) {
     _setUndoEnabled();
     updateDashboardSupBadge();
     updateSupervisorSwitcherUI();
+    syncViewingPeerState();
     buildBrandTabs(S.allocations);
     renderResult(S.allocations);
   } catch (err) {
@@ -1681,6 +1840,12 @@ async function loadManagers(force = false) {
       S.managerViews = (data.manager_views && typeof data.manager_views === "object")
         ? data.manager_views
         : {};
+      S.homeSupervisorCodes = Array.isArray(data.home_supervisor_codes)
+        ? data.home_supervisor_codes.map(c => String(c).trim().toUpperCase()).filter(Boolean)
+        : [];
+      S.peerSupervisorCodes = Array.isArray(data.peer_supervisor_codes)
+        ? data.peer_supervisor_codes.map(c => String(c).trim().toUpperCase()).filter(Boolean)
+        : [];
       if (data.by_manager && typeof data.by_manager === "object") {
         for (const [k, v] of Object.entries(data.by_manager)) {
           const mk = String(k).trim().toUpperCase();
@@ -1786,8 +1951,17 @@ async function handleLogin() {
     } else {
       S.loginRole = "supervisor";
       S.managerCode = null;
-      S.supervisorChoices = [];
+      const home = S.homeSupervisorCodes?.length
+        ? [...S.homeSupervisorCodes]
+        : [pick.code];
+      const peers = S.peerSupervisorCodes || [];
+      S.supervisorChoices = [...new Set([...home, ...peers, pick.code])]
+        .map(c => String(c).trim().toUpperCase())
+        .filter(Boolean)
+        .sort();
       S.supId = pick.code;
+      _syncSupervisorRegionViewOptions();
+      S.managerViewMode = "individual";
     }
 
     loginBtn.textContent = "กำลังเข้าสู่ระบบ…";
@@ -1830,6 +2004,8 @@ async function handleLogin() {
       _setUndoEnabled();
       updateSupervisorSwitcherUI();
       _bindSupervisorSwitchOnce();
+      _bindManagerViewControlsOnce();
+      syncViewingPeerState();
     } catch (err) {
       console.error("RENDER ERROR:", err);
       alert("Render error: " + err.message);
@@ -1967,6 +2143,55 @@ function _showLogoutModal() {
   });
 }
 
+function syncViewingPeerState() {
+  const home = new Set(
+    (S.homeSupervisorCodes || []).map(c => String(c).trim().toUpperCase()).filter(Boolean)
+  );
+  const sup = String(S.supId || "").trim().toUpperCase();
+  S.viewingPeer = !S.aggregateMode && home.size > 0 && !!sup && !home.has(sup);
+  const bar = document.getElementById("peerViewBanner");
+  const txt = document.getElementById("peerViewBannerText");
+  if (bar && txt) {
+    if (S.viewingPeer) {
+      const mine = [...home].join(", ");
+      txt.textContent =
+        `กำลังดูทีม ${sup} (โหมดดูอย่างเดียว) — กระจายหีบและส่ง Target Sun ใช้ได้เฉพาะทีม ${mine} เท่านั้น`;
+      bar.style.display = "flex";
+      document.body.classList.add("has-peer-view-banner");
+    } else {
+      bar.style.display = "none";
+      document.body.classList.remove("has-peer-view-banner");
+    }
+  }
+  syncPeerReadOnlyUI();
+}
+
+function syncPeerReadOnlyUI() {
+  const ro = !!S.viewingPeer;
+  const runBtn = document.getElementById("runBtn");
+  if (runBtn) {
+    if (ro) {
+      runBtn.disabled = true;
+      runBtn.title = "โหมดดูอย่างเดียว — สลับกลับทีมของคุณเพื่อกระจายหีบ";
+    } else if (!runBtn.classList.contains("disabled-by-validation")) {
+      runBtn.removeAttribute("title");
+    }
+  }
+  document.querySelectorAll(".yellow-input").forEach(el => {
+    el.disabled = ro;
+  });
+  document.querySelectorAll(".bui-deduct-input").forEach(el => {
+    el.disabled = ro;
+  });
+  syncLakehouseButton();
+}
+
+function _allocMatchLock(alloc, lock) {
+  const wh = String(lock.warehouse_code || "").trim();
+  const lockKey = wh ? `${String(lock.emp_id).trim()}|${wh}` : String(lock.emp_id).trim();
+  return _allocResultKey(alloc) === lockKey && alloc.sku === lock.sku;
+}
+
 /* ── WH split (หลายคลังต่อพนักงาน) ── */
 function _allocKey(e) {
   if (!e) return "";
@@ -1976,13 +2201,82 @@ function _allocKey(e) {
   return wh ? `${emp}|${wh}` : emp;
 }
 
-function _teamHasWhSplit() {
-  return (S.employees || []).some(e => e.wh_split);
+function _enrichEmployeeAllocFlags(e) {
+  if (!e) return e;
+  const ts = Number(e.target_sun) || 0;
+  const hasTga = e.has_tga_rows === true;
+  const eligible = hasTga && ts > 0;
+  e.allocation_eligible = eligible;
+  e.include_in_allocation = eligible;
+  e.view_only = !eligible;
+  return e;
 }
 
-function _employeeWhGroups() {
+function _isAllocEligible(e) {
+  if (!e) return false;
+  const ts = Number(e.target_sun) || 0;
+  if (ts <= 0) return false;
+  if (e.has_tga_rows !== true) return false;
+  if (e.view_only === true) return false;
+  if (e.include_in_allocation === false || e.allocation_eligible === false) return false;
+  return true;
+}
+
+function _filterAllocationsEligibleOnly(allocs) {
+  return (allocs || []).filter(_allocRowIsEligible);
+}
+
+/** จับคู่แถวผลกระจายหีบกับพนักงานที่มีเป้า — รองรับ WH split (C348|R337) */
+function _allocRowIsEligible(a) {
+  if (!a) return false;
+  const key = _allocResultKey(a);
+  const eligibleKeys = new Set(_allocEligibleEmployees().map(e => _allocKey(e)));
+  if (eligibleKeys.has(key)) return true;
+  const emp = String(a.emp_id || "").trim();
+  const wh = String(a.warehouse_code || "").trim();
+  if (!emp) return false;
+  if (wh) {
+    const whRow = (S.employees || []).find(
+      e => String(e.emp_id).trim() === emp && String(e.warehouse_code || "").trim() === wh
+    );
+    if (whRow && _isAllocEligible(whRow)) return true;
+    return (S.employees || []).some(e => String(e.emp_id).trim() === emp && _isAllocEligible(e));
+  }
+  return eligibleKeys.has(emp);
+}
+
+function _sanitizeYellowForEligibleOnly() {
+  const eligibleKeys = new Set(_allocEligibleEmployees().map(e => _allocKey(e)));
+  for (const key of Object.keys(S.yellow || {})) {
+    if (!eligibleKeys.has(key)) {
+      S.yellow[key] = 0;
+      if (S.yellowLocked) delete S.yellowLocked[key];
+    }
+  }
+}
+
+function _allocEligibleEmployees() {
+  return (S.employees || []).filter(_isAllocEligible);
+}
+
+function _viewOnlyEmployees() {
+  return (S.employees || []).filter(e => !_isAllocEligible(e));
+}
+
+function _empViewOnlyNoteHtml(e) {
+  if (_isAllocEligible(e)) return "";
+  return `<div class="emp-view-only-note">*ไม่นำไปกระจายเป้า</div>`;
+}
+
+function _teamHasWhSplit() {
+  return _allocEligibleEmployees().some(e => e.wh_split);
+}
+
+function _employeeWhGroups(opts = {}) {
+  const allocOnly = !!opts.allocOnly;
+  const source = allocOnly ? _allocEligibleEmployees() : (S.employees || []);
   const map = new Map();
-  for (const e of S.employees || []) {
+  for (const e of source) {
     const id = String(e.emp_id || "").trim();
     if (!map.has(id)) map.set(id, []);
     map.get(id).push(e);
@@ -2027,6 +2321,7 @@ function _employeeRowForAllocKey(key) {
 }
 
 function _yellowTargetPayloadRow(e) {
+  if (!_isAllocEligible(e)) return null;
   const row = { emp_id: String(e.emp_id || "").trim(), yellow_target: S.yellow[_allocKey(e)] || 0 };
   if (e.wh_split && String(e.warehouse_code || "").trim()) {
     row.warehouse_code = String(e.warehouse_code).trim();
@@ -2049,10 +2344,13 @@ function applyDataPayload(data) {
   });
 
   S.aggregateMode = !!data.aggregate_mode;
+  S.aggregateSupIds = Array.isArray(data.aggregate_sup_ids)
+    ? data.aggregate_sup_ids.map((c) => String(c).trim().toUpperCase()).filter(Boolean)
+    : [];
   S.yellowLocked = {};
   S.histWindowMonths = 3;
   S.skus = data.skus;
-  S.employees = data.employees;
+  S.employees = (data.employees || []).map(_enrichEmployeeAllocFlags);
   S.whExpanded = new Set();
   for (const e of S.employees) {
     if (e.wh_split) S.whExpanded.add(String(e.emp_id || "").trim());
@@ -2083,12 +2381,43 @@ function applyDataPayload(data) {
 
   S.yellow = {};
   S.employees.forEach(e => {
-    const base = Number(e.target_sun);
+    const base = _isAllocEligible(e) ? Number(e.target_sun) : 0;
     S.yellow[_allocKey(e)] = Number.isFinite(base) ? Math.max(0, base) : 0;
   });
+  _sanitizeYellowForEligibleOnly();
   document.getElementById("totalTargetDisplay").textContent = baht(S.totalTarget);
   _updateAggregateModeUI();
+  if (typeof renderYellowTable === "function") renderYellowTable();
   return true;
+}
+
+async function loadSupervisorRegionAggregate() {
+  const home = String(
+    (S.homeSupervisorCodes && S.homeSupervisorCodes[0]) || S.supId || ""
+  ).trim().toUpperCase();
+  if (!home) return false;
+  try {
+    const url =
+      `${API_BASE_URL}/data/employees/region-peers?sup_id=${encodeURIComponent(home)}` +
+      `&target_month=${S.targetMonth}&target_year=${S.targetYear}`;
+    const res = await fetchWithTimeout(url, {}, 300000);
+    if (!res.ok) {
+      let detail = "โหลดข้อมูลรวมภาคไม่สำเร็จ";
+      try {
+        const j = await res.json();
+        detail = _formatApiErrorDetail(j) || detail;
+      } catch (_) { /* ignore */ }
+      showLoginError(`❌ ${_userFacingError(detail, "โหลดข้อมูลรวมภาคไม่สำเร็จ")}`);
+      return false;
+    }
+    const data = await res.json();
+    S.supId = home;
+    S.managerViewRegion = "__peers__";
+    return applyDataPayload(data);
+  } catch (err) {
+    showLoginError(`❌ ${err.message || err}`);
+    return false;
+  }
 }
 
 async function loadAggregateData(viewMode, regionKey) {
@@ -2124,6 +2453,7 @@ async function loadAggregateData(viewMode, regionKey) {
 
 async function loadData(supId, targetMonth, targetYear) {
   S.aggregateMode = false;
+  S.aggregateSupIds = [];
   try {
     const url = `${API_BASE_URL}/data/employees?sup_id=${supId}&target_month=${targetMonth}&target_year=${targetYear}`;
     const res = await fetchWithTimeout(url, {}, 120000);
@@ -2241,6 +2571,10 @@ function _showSkuWarnings() {
   const empMismatch = warnings.filter(w => w.type === "emp_mismatch");
   const noTgaEmp    = warnings.filter(w => w.type === "no_tga_employee");
   const excludedNoTga = warnings.filter(w => w.type === "employees_excluded_no_tga");
+  const hiddenNoTarget = warnings.filter(w => w.type === "employees_hidden_no_target");
+  const lyNoTarget = warnings.filter(w => w.type === "employees_shown_ly_no_target");
+  const vanExcluded = warnings.filter(w => w.type === "employees_excluded_van_code");
+  const whSplitActive = warnings.filter(w => w.type === "wh_split_active");
   const soldOnlyExcluded = warnings.filter(w => w.type === "sold_only_skus_excluded");
   const zeroTotal   = warnings.filter(w => w.type === "zero_total");
   const tgaNotUpdated = warnings.filter(w => w.type === "tga_period_not_updated");
@@ -2284,6 +2618,30 @@ function _showSkuWarnings() {
   if (excludedNoTga.length > 0) {
     html += `<li><strong style="color:var(--accent)">ℹ️ พนักงานที่ไม่ร่วมกระจายหีบ</strong><br>`;
     html += excludedNoTga.map(w => escH(_friendlyMsg(w.message))).join("<br>");
+    html += `</li>`;
+  }
+
+  if (vanExcluded.length > 0) {
+    html += `<li><strong style="color:var(--accent)">ℹ️ ตัดรหัส V (Van)</strong><br>`;
+    html += vanExcluded.map(w => escH(_friendlyMsg(w.message))).join("<br>");
+    html += `</li>`;
+  }
+
+  if (lyNoTarget.length > 0) {
+    html += `<li><strong style="color:var(--accent)">ℹ️ แสดงจากยอดขายปีที่แล้ว</strong><br>`;
+    html += lyNoTarget.map(w => escH(_friendlyMsg(w.message))).join("<br>");
+    html += `</li>`;
+  }
+
+  if (hiddenNoTarget.length > 0) {
+    html += `<li><strong style="color:var(--accent)">ℹ️ กรองพนักงานไม่มีเป้า</strong><br>`;
+    html += hiddenNoTarget.map(w => escH(_friendlyMsg(w.message))).join("<br>");
+    html += `</li>`;
+  }
+
+  if (whSplitActive.length > 0) {
+    html += `<li><strong style="color:var(--accent)">📦 หลายคลัง (W/H)</strong><br>`;
+    html += whSplitActive.map(w => escH(_friendlyMsg(w.message))).join("<br>");
     html += `</li>`;
   }
 
@@ -2462,15 +2820,16 @@ function _renderEmpStep1() {
         ? Number(e.ly_sales) || 0
         : Number(e.hist_avg_3m) || 0;
     const gHtml = _fmtEmpGrowthHtml(tgt, mid);
+    const viewOnlyCls = !_isAllocEligible(e) ? " emp-row--view-only" : "";
     const childCls = opts.child ? " emp-wh-child" : "";
     const pad = opts.child ? ' style="padding-left:22px;"' : "";
-    return `<tr class="emp-wh-row${childCls}">
+    return `<tr class="emp-wh-row${childCls}${viewOnlyCls}">
       ${supCell(e)}
       <td${pad}>
         ${opts.child ? "" : `<span class="emp-tag">${escH(e.emp_id)}</span>`}
         ${!opts.child && e.emp_name ? `<div class="emp-name-sub">${escH(e.emp_name)}</div>` : ""}
         ${opts.child ? `<span class="emp-wh-badge">W/H ${escH(e.warehouse_code || "—")}</span>` : ""}
-        ${e.has_tga_rows === false ? `<div class="emp-name-sub" style="color:var(--amber);font-size:11px;">ไม่มีแถว TGA ในงวดนี้</div>` : ""}
+        ${_empViewOnlyNoteHtml(e)}
       </td>
       ${showWh && !opts.child ? whCell(e) : showWh && opts.child ? whCell(e) : ""}
       <td class="r mono">${baht(tgt)}</td>
@@ -2516,8 +2875,28 @@ function renderStep1() {
   const empCountEl = qs("#empCount");
   const skuCountEl = qs("#skuCount");
   const emps = Array.isArray(S.employees) ? S.employees : [];
+  const allocN = _allocEligibleEmployees().length;
+  const viewOnlyN = _viewOnlyEmployees().length;
   const skus = Array.isArray(S.skus) ? S.skus : [];
-  if (empCountEl) empCountEl.textContent = `${emps.length} คน`;
+  if (empCountEl) {
+    empCountEl.textContent = viewOnlyN > 0
+      ? `${emps.length} คน (${allocN} กระจายได้)`
+      : `${emps.length} คน`;
+  }
+  const viewOnlyBanner = qs("#empStep1ViewOnlyNotice");
+  if (viewOnlyBanner) {
+    if (viewOnlyN > 0) {
+      const names = _viewOnlyEmployees()
+        .map(e => `${e.emp_id}${e.emp_name ? ` (${e.emp_name})` : ""}`)
+        .join(", ");
+      viewOnlyBanner.style.display = "";
+      viewOnlyBanner.textContent =
+        `พนักงาน ${viewOnlyN} คน (${names}) — *ไม่นำไปกระจายเป้า`;
+    } else {
+      viewOnlyBanner.style.display = "none";
+      viewOnlyBanner.textContent = "";
+    }
+  }
   if (skuCountEl) skuCountEl.textContent = `${skus.length} SKU`;
 
   _renderEmpStep1();
@@ -2613,6 +2992,13 @@ function _updateSec1SortHeaders() {
   });
 }
 
+function _skuLinkedBadgeHtml(s) {
+  const aliases = s?.linked_history_skus || [];
+  if (!aliases.length) return "";
+  const tip = `รวมประวัติรหัส: ${aliases.join(", ")}`;
+  return `<span class="sku-linked-badge" title="${escH(tip)}">ผูกประวัติ</span>`;
+}
+
 function _skuProductInnerHtml(s) {
   const code = String(s.sku || "");
   const nTh = String(s.product_name_thai || "").trim();
@@ -2620,7 +3006,7 @@ function _skuProductInnerHtml(s) {
   const sub = nTh || nEn;
   const subHtml = sub ? `<div class="sku-cell-name">${escH(sub)}</div>` : "";
   return `<div class="sku-cell-product">
-    <div class="sku-cell-code">${escH(code)} ${_skuNewBadgeHtml(s.sku)}</div>
+    <div class="sku-cell-code">${escH(code)} ${_skuNewBadgeHtml(s.sku)}${_skuLinkedBadgeHtml(s)}</div>
     ${subHtml}
   </div>`;
 }
@@ -2780,9 +3166,10 @@ function toggleSkuGroup(idx) {
    STEP 2 — YELLOW TABLE
 ══════════════════════════════════════════════ */
 function _yellowRowHtml(e, opts = {}) {
+  if (!opts.groupHeader && !_isAllocEligible(e)) return "";
   const ySum = sumYellow();
-  const showBui = !!S.buiColumnOpen && !S.aggregateMode;
-  const readOnly = !!S.aggregateMode;
+  const showBui = !!S.buiColumnOpen && !_aggregateBlocksWrite();
+  const readOnly = !!S.viewingPeer || _aggregateBlocksWrite();
   const akey = _allocKey(e);
   const y = opts.displayYellow != null ? opts.displayYellow : (S.yellow[akey] || 0);
   const ly = e.ly_sales || 0;
@@ -2852,11 +3239,34 @@ function _yellowRowHtml(e, opts = {}) {
 }
 
 function renderYellowTable() {
+  _sanitizeYellowForEligibleOnly();
   const ySum = sumYellow();
-  const showBui = !!S.buiColumnOpen && !S.aggregateMode;
+  const showBui = !!S.buiColumnOpen && !_aggregateBlocksWrite();
+  const eligible = _allocEligibleEmployees();
+  const viewOnlyN = _viewOnlyEmployees().length;
+  const step2Notice = qs("#step2ViewOnlyNotice");
+  if (step2Notice) {
+    if (viewOnlyN > 0) {
+      const names = _viewOnlyEmployees()
+        .map(e => `${e.emp_id}${e.emp_name ? ` (${e.emp_name})` : ""}`)
+        .join(", ");
+      step2Notice.style.display = "";
+      step2Notice.textContent =
+        `ขั้นนี้แสดงเฉพาะพนักงานที่มีเป้า — ซ่อน ${viewOnlyN} คน (${names}) ที่ไม่นำไปกระจายเป้า`;
+    } else {
+      step2Notice.style.display = "none";
+      step2Notice.textContent = "";
+    }
+  }
   const parts = [];
-  for (const g of _employeeWhGroups()) {
+  if (eligible.length === 0) {
+    qs("#yellowTableBody").innerHTML =
+      `<tr><td colspan="7" style="padding:16px;color:var(--text-3);text-align:center;">ไม่มีพนักงานที่มีเป้าในงวดนี้ — ปรับเป้าเงินไม่ได้</td></tr>`;
+    return;
+  }
+  for (const g of _employeeWhGroups({ allocOnly: true })) {
     if (!g.isGroup) {
+      if (!_isAllocEligible(g.rows[0])) continue;
       parts.push(_yellowRowHtml(g.rows[0]));
       continue;
     }
@@ -2873,14 +3283,17 @@ function renderYellowTable() {
     const headerYellow = g.rows.reduce((a, r) => a + (S.yellow[_allocKey(r)] || 0), 0);
     parts.push(_yellowRowHtml(headerEmp, { groupHeader: true, childCount: g.rows.length, displayYellow: headerYellow }));
     if (open) {
-      for (const e of g.rows) parts.push(_yellowRowHtml(e, { child: true }));
+      for (const e of g.rows) {
+        if (!_isAllocEligible(e)) continue;
+        parts.push(_yellowRowHtml(e, { child: true }));
+      }
     }
   }
   qs("#yellowTableBody").innerHTML = parts.join("");
 
-  const tsSum = S.employees.reduce((a, e) => a + (e.target_sun || 0), 0);
-  const totalLy = S.employees.reduce((a, e) => a + (e.ly_sales || 0), 0);
-  const totalBui = S.employees.reduce((a, e) => a + (Number(S.buiDeductions[e.emp_id]) || 0), 0);
+  const tsSum = eligible.reduce((a, e) => a + (e.target_sun || 0), 0);
+  const totalLy = eligible.reduce((a, e) => a + (e.ly_sales || 0), 0);
+  const totalBui = eligible.reduce((a, e) => a + (Number(S.buiDeductions[e.emp_id]) || 0), 0);
   const lyBaseTotal = Math.max(0, totalLy - totalBui);
   const totalG = lyBaseTotal > 0 ? ((ySum - lyBaseTotal) / lyBaseTotal * 100) : null;
 
@@ -2904,8 +3317,8 @@ function onYellowChange(input) {
   S.yellow[akey] = val;
   S.yellowLocked[akey] = true;
 
-  const lockedRows = S.employees.filter(e => S.yellowLocked[_allocKey(e)]);
-  const unlockedRows = S.employees.filter(e => !S.yellowLocked[_allocKey(e)]);
+  const lockedRows = _allocEligibleEmployees().filter(e => S.yellowLocked[_allocKey(e)]);
+  const unlockedRows = _allocEligibleEmployees().filter(e => !S.yellowLocked[_allocKey(e)]);
 
   const lockedSum = lockedRows.reduce((acc, e) => acc + (S.yellow[_allocKey(e)] || 0), 0);
   let remainingTarget = S.totalTarget - lockedSum;
@@ -2950,7 +3363,7 @@ function resetYellowToTargetSun() {
     toast("ยังไม่มีรายชื่อพนักงาน — โหลดข้อมูล Step 1 ก่อน", "red");
     return;
   }
-  const differs = S.employees.filter(e => {
+  const differs = _allocEligibleEmployees().filter(e => {
     const y = Number(S.yellow[_allocKey(e)]) || 0;
     const ts = Number(e.target_sun) || 0;
     return Math.abs(y - ts) > 0.01;
@@ -2968,7 +3381,7 @@ function resetYellowToTargetSun() {
     return;
   }
   S.yellowLocked = {};
-  S.employees.forEach(e => {
+  _allocEligibleEmployees().forEach(e => {
     const base = Number(e.target_sun);
     S.yellow[_allocKey(e)] = Number.isFinite(base) ? Math.max(0, base) : 0;
   });
@@ -3033,18 +3446,39 @@ function updateValidation() {
     btn.disabled = true;
   }
 
-  if (S.aggregateMode && btn) {
+  if (_aggregateBlocksWrite() && btn) {
     btn.disabled = true;
     btn.title = "โหมดดูรวม — สลับเป็นรายคนเพื่อกระจายหีบ";
+  }
+  if (S.viewingPeer && btn) {
+    btn.disabled = true;
+    btn.title = "โหมดดูอย่างเดียว — สลับกลับทีมของคุณเพื่อกระจายหีบ";
   }
 }
 
 /* ══════════════════════════════════════════════
    STEP 3 — RUN AI
 ══════════════════════════════════════════════ */
+function _showOptimizeSuccessUi(strategyLabel) {
+  const btn = qs("#runBtn");
+  if (btn) {
+    btn.textContent = "คำนวณใหม่";
+    btn.disabled = false;
+    btn.classList.remove("pulse-warn");
+  }
+  qs("#runEmoji").textContent = "✅";
+  qs("#runTitle").textContent = "กระจายหีบสำเร็จ";
+  qs("#runSub").textContent =
+    `วิธี: ${strategyLabel || "—"} — ตรวจผล แก้ตัวเลข หรือดาวน์โหลด Excel ได้`;
+}
+
 async function runOptimization() {
   const btn = qs("#runBtn");
-  if (S.aggregateMode) return;
+  if (_aggregateBlocksWrite()) return;
+  if (S.viewingPeer) {
+    toast("โหมดดูอย่างเดียว — สลับกลับทีมของคุณเพื่อกระจายหีบ", "amber");
+    return;
+  }
 
   // กันเริ่มคำนวณถ้ายังไม่ใส่เหตุผลกรณีติดลบ
   if (_negGrowthOffenders().length > 0 && (S.negGrowthReason || "").trim().length < 8) {
@@ -3070,34 +3504,115 @@ async function runOptimization() {
     }));
 
   pushGlobalBusy(UX.busyAllocate, UX.busyAllocateHint);
-  const allocs = await _doOptimize(lockedEdits);
-  popGlobalBusy();
-  if (!allocs) return;
+  let allocs;
+  try {
+    allocs = await _doOptimize(lockedEdits);
+    if (!allocs || !allocs.length) return;
 
-  S.allocations = allocs;
-  autoRebalance(true); // เกลี่ยเศษหีบตกหล่น
+    let displayAllocs = _filterAllocationsEligibleOnly(allocs);
+    if (!displayAllocs.length) {
+      console.warn("[optimize] filter removed all rows — using server payload (WH split?)");
+      displayAllocs = allocs;
+    }
+    S.allocations = displayAllocs;
 
-  const selectedStrategies = _getSelectedStrategies();
-  const strategyLabel = _strategySummaryTh(selectedStrategies);
-  qs("#runEmoji").textContent = "✅";
-  qs("#runTitle").textContent = "กระจายหีบสำเร็จ";
-  qs("#runSub").textContent = `วิธี: ${strategyLabel} — ตรวจผล แก้ตัวเลข หรือดาวน์โหลด Excel ได้`;
-  btn.textContent = "คำนวณใหม่";
-  btn.disabled = false;
+    const strategyLabel = _strategySummaryTh(_getSelectedStrategies());
+    _showOptimizeSuccessUi(strategyLabel);
 
-  S.activeBrand = "ALL";
-  S.histDevFilter = null;
-  buildBrandTabs(allocs);
-  qs("#resultBlock").style.display = "block";
-  renderResult(allocs);
-  syncLakehouseButton();
-  qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
-  saveDraft(true); // บันทึกแบบร่างอัตโนมัติหลัง AI + เกลี่ยเศษ
+    S.activeBrand = "ALL";
+    S.histDevFilter = null;
+    buildBrandTabs(displayAllocs);
+    qs("#resultBlock").style.display = "block";
+
+    try {
+      autoRebalance(true, { skipRender: true });
+    } catch (e) {
+      console.error("autoRebalance:", e);
+    }
+    try {
+      renderResult(S.allocations);
+      syncLakehouseButton();
+      qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
+      saveDraft(true);
+    } catch (e) {
+      console.error("renderResult:", e);
+      toast("กระจายหีบสำเร็จ แต่แสดงตารางไม่ครบ — ลองกดคำนวณใหม่หรือรีเฟรชหน้า", "amber");
+    }
+  } finally {
+    popGlobalBusy();
+  }
 }
 
 /* ══════════════════════════════════════════════
    CORE OPTIMIZE ENGINE (shared by runOptimization & runReAllocationKeepEdits)
 ══════════════════════════════════════════════ */
+async function _callOptimizeApi(supId, payload) {
+  const url =
+    `${API_BASE_URL}/optimize?sup_id=${encodeURIComponent(supId)}` +
+    `&target_month=${S.targetMonth}&target_year=${S.targetYear}`;
+  const res = await fetchWithTimeout(
+    url,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    180000
+  );
+  if (!res.ok) {
+    const j = await res.json().catch(() => ({}));
+    throw new Error(
+      _userFacingError({ message: j.detail }, `กระจายหีบไม่สำเร็จ (${supId})`)
+    );
+  }
+  return res.json();
+}
+
+function _applyOptimizeMetaFromJson(json) {
+  const mw = Number(json.hist_window_months);
+  if (mw === 1) S.histWindowMonths = 1;
+  else if (mw === 6) S.histWindowMonths = 6;
+  else S.histWindowMonths = 3;
+  S.newProductsEvenMode = String(json.new_products_even_mode || "off");
+  if (Array.isArray(json.new_product_skus)) {
+    _applyNewProductSkus(json.new_product_skus);
+  }
+  S.tierFlexSkus = new Set(
+    Array.isArray(json.tier_flex_skus) ? json.tier_flex_skus.map((x) => String(x).trim()) : []
+  );
+  S.tierStrictSkuCount = Number(json.tier_strict_sku_count) || 0;
+  const rs = Number(json.revenue_scale);
+  S.revenueScale = Number.isFinite(rs) && rs > 0 ? rs : 1;
+}
+
+function _mergeLockedEditsIntoAllocs(allocs, lockedEdits) {
+  allocs.forEach((a) => { a.is_edited = false; });
+  lockedEdits.forEach((lock) => {
+    const found = allocs.find((a) => _allocMatchLock(a, lock));
+    if (found) {
+      found.allocated_boxes = lock.locked_boxes;
+      found.is_edited = true;
+    } else {
+      const skuInfo = S.skus.find((x) => x.sku === lock.sku) || {};
+      allocs.push({
+        emp_id: lock.emp_id,
+        sku: lock.sku,
+        warehouse_code: lock.warehouse_code || "",
+        allocated_boxes: lock.locked_boxes,
+        is_edited: true,
+        price_per_box: Number(skuInfo.price_per_box) || 0,
+        brand_name_thai: skuInfo.brand_name_thai || "",
+        brand_name_english: skuInfo.brand_name_english || "",
+        product_name_thai: skuInfo.product_name_thai || "",
+        hist_avg: 0,
+        hist_ly_same_month: 0,
+        hist_prev_month: 0,
+      });
+    }
+  });
+  return allocs;
+}
+
 async function _doOptimize(lockedEdits = []) {
   const btn = qs("#runBtn");
   btn.disabled = true;
@@ -3129,13 +3644,10 @@ async function _doOptimize(lockedEdits = []) {
   const newProductsEven = document.getElementById("newProductsEvenBox")?.checked || false;
 
   try {
-    const payload = {
-      yellowTargets: S.employees.map(e => _yellowTargetPayloadRow(e)),
+    const basePayload = {
       strategy,
       force_min_one: forceMinOne,
       new_products_even: newProductsEven,
-      locked_edits: lockedEdits,
-      // ── ส่งฟิลด์เพิ่มเติม (backend จะใช้ถ้ารองรับ; ถ้าไม่รองรับจะถูกเพิกเฉย) ──
       brand_strategy_map: isMulti ? { ...S.brandStrategyMap } : {},
       bui_deductions: Object.fromEntries(
         Object.entries(S.buiDeductions || {}).filter(([, v]) => Number(v) > 0)
@@ -3147,66 +3659,55 @@ async function _doOptimize(lockedEdits = []) {
       tier_pct: 0.80,
     };
 
-    const url = `${API_BASE_URL}/optimize?sup_id=${S.supId}&target_month=${S.targetMonth}&target_year=${S.targetYear}`;
-    const res = await fetchWithTimeout(
-      url,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      },
-      180000
-    );
-    if (!res.ok) {
-      const j = await res.json().catch(() => ({}));
-      throw new Error(_userFacingError({ message: j.detail }, "กระจายหีบไม่สำเร็จ"));
-    }
+    let allocs = [];
 
-    const json = await res.json();
-    {
-      const mw = Number(json.hist_window_months);
-      /* ต้องรองรับ 1 เดือน (กลยุทธ์ LY — เกณฑ์กระจายหีบ) อย่ามารวมเป็น 3 — ถ้ามารวม UI จะเขียนว่า "3M" ทั้งที่ข้อมูลคือปีแล้วเดือนเดียวกัน */
-      if (mw === 1) S.histWindowMonths = 1;
-      else if (mw === 6) S.histWindowMonths = 6;
-      else S.histWindowMonths = 3;
-    }
-    S.newProductsEvenMode = String(json.new_products_even_mode || "off");
-    if (Array.isArray(json.new_product_skus)) {
-      _applyNewProductSkus(json.new_product_skus);
-    }
-    S.tierFlexSkus = new Set(
-      Array.isArray(json.tier_flex_skus) ? json.tier_flex_skus.map(x => String(x).trim()) : []
-    );
-    S.tierStrictSkuCount = Number(json.tier_strict_sku_count) || 0;
-    const rs = Number(json.revenue_scale);
-    S.revenueScale = Number.isFinite(rs) && rs > 0 ? rs : 1;
-    const allocs = json.allocations;
-    allocs.forEach(a => { a.is_edited = false; });
-
-    // แปะสถานะ is_edited กลับคืน เพื่อให้ไฮไลต์สีเหลืองยังอยู่
-    lockedEdits.forEach(lock => {
-      const found = allocs.find(a => a.emp_id === lock.emp_id && a.sku === lock.sku);
-      if (found) {
-        found.allocated_boxes = lock.locked_boxes;
-        found.is_edited = true;
-      } else {
-        // กรณี SKU นี้ถูกลบออกจากผลลัพธ์ แต่ผู้ใช้เคย lock ไว้ — เพิ่มกลับ
-        const skuInfo = S.skus.find(x => x.sku === lock.sku) || {};
-        allocs.push({
-          emp_id: lock.emp_id, sku: lock.sku,
-          allocated_boxes: lock.locked_boxes, is_edited: true,
-          price_per_box: Number(skuInfo.price_per_box) || 0,
-          brand_name_thai: skuInfo.brand_name_thai || "",
-          brand_name_english: skuInfo.brand_name_english || "",
-          product_name_thai: skuInfo.product_name_thai || "",
-          hist_avg: 0,
-          hist_ly_same_month: 0,
-          hist_prev_month: 0,
-        });
+    if (_managerAggregateWritable()) {
+      const grouped = _employeesGroupedBySupervisor();
+      const supOrder = _aggregateSupervisorOrder().filter((sid) => grouped.has(sid));
+      if (!supOrder.length) {
+        throw new Error("ไม่พบพนักงานใต้ Supervisor ในโหมดรวมภาค");
       }
-    });
+      for (let i = 0; i < supOrder.length; i++) {
+        const supId = supOrder[i];
+        const emps = grouped.get(supId) || [];
+        const yellowTargets = emps.map((e) => _yellowTargetPayloadRow(e)).filter(Boolean);
+        if (!yellowTargets.length) continue;
+        qs("#runSub").textContent =
+          `กำลังกระจาย ${supId} (${i + 1}/${supOrder.length})…`;
+        const json = await _callOptimizeApi(supId, {
+          ...basePayload,
+          yellowTargets,
+          locked_edits: _lockedEditsForEmployees(lockedEdits, emps),
+        });
+        _applyOptimizeMetaFromJson(json);
+        const part = Array.isArray(json.allocations) ? json.allocations : [];
+        part.forEach((a) => { a.supervisor_code = supId; });
+        allocs.push(...part);
+      }
+      if (!allocs.length) {
+        throw new Error("ไม่ได้รับผลกระจายหีบจากเซิร์ฟเวอร์ (ทุกซุป)");
+      }
+      allocs = _mergeLockedEditsIntoAllocs(allocs, lockedEdits);
+    } else {
+      const payload = {
+        ...basePayload,
+        yellowTargets: _allocEligibleEmployees()
+          .map((e) => _yellowTargetPayloadRow(e))
+          .filter(Boolean),
+        locked_edits: lockedEdits,
+      };
+      const json = await _callOptimizeApi(S.supId, payload);
+      _applyOptimizeMetaFromJson(json);
+      allocs = Array.isArray(json.allocations) ? json.allocations : [];
+      if (!allocs.length) {
+        throw new Error("ไม่ได้รับผลกระจายหีบจากเซิร์ฟเวอร์");
+      }
+      allocs = _mergeLockedEditsIntoAllocs(allocs, lockedEdits);
+    }
 
     qs(`#${steps[steps.length - 1]}`).className = "prog-row done";
+    btn.disabled = false;
+    btn.textContent = "คำนวณใหม่";
     _saveAllocationSnapshot();
     checkSnapshotChanges();
     return allocs;
@@ -3254,6 +3755,23 @@ function switchBrand(brand) {
 /* ══════════════════════════════════════════════
    RESULT TABLE
 ══════════════════════════════════════════════ */
+function _skuDisplayName(info) {
+  const th = String(info?.product_name_thai || "").trim();
+  const en = String(info?.product_name_english || "").trim();
+  return th || en || "";
+}
+
+function toggleSkuProductNames() {
+  S.showSkuProductNames = !S.showSkuProductNames;
+  const btn = document.getElementById("toggleSkuProductNamesBtn");
+  if (btn) {
+    btn.textContent = S.showSkuProductNames ? "ชื่อสินค้า ▼" : "ชื่อสินค้า ▶";
+    btn.setAttribute("aria-pressed", S.showSkuProductNames ? "true" : "false");
+    btn.classList.toggle("btn-dl--toggle-on", S.showSkuProductNames);
+  }
+  if (S.allocations?.length) renderResult(S.allocations);
+}
+
 function renderResult(allocs) {
   if (allocs?.length) _recomputeAllHistDev(allocs);
   const isFiltered = S.activeBrand !== "ALL";
@@ -3290,7 +3808,11 @@ function renderResult(allocs) {
   }
 
   const skus = skusObjArr.map(o => o.sku);
-  const rowKeys = [...new Set(allocs.map(a => _allocResultKey(a)))];
+  const eligibleKeys = new Set(_allocEligibleEmployees().map(e => _allocKey(e)));
+  let rowKeys = [...new Set((allocs || []).map(a => _allocResultKey(a)).filter(Boolean))];
+  if (!rowKeys.length) {
+    rowKeys = [...eligibleKeys];
+  }
 
   const lk = {};
   const lkHistRoll = {};
@@ -3337,7 +3859,10 @@ function renderResult(allocs) {
     qs("#brandSummary").innerHTML = "";
   }
 
-  let headerHtml = `<tr><th>S/M</th><th>W/H</th>`;
+  let headerHtml = "";
+  const showNames = !!S.showSkuProductNames;
+  const smWhRowspan = showNames ? ' rowspan="2"' : "";
+  headerHtml += `<tr><th${smWhRowspan}>S/M</th><th${smWhRowspan}>W/H</th>`;
   skus.forEach(s => {
     const info = S.skus.find(x => x.sku === s) || {};
     const price = _skuPriceMap[s] ?? 0;
@@ -3345,21 +3870,36 @@ function renderResult(allocs) {
     const tierBadge = _skuTierBadgeHtml(s);
     headerHtml += `<th class="r sku-th">` +
       `<div class="sku-th-code">${s} ${newBadge}${tierBadge}</div>` +
-      `<div class="sku-th-brand">${info.brand_name_thai || info.brand_name_english || ""}</div>` +
+      `<div class="sku-th-brand">${escH(info.brand_name_thai || info.brand_name_english || "")}</div>` +
       `<div class="sku-th-price">${fmt(price)} <span class="muted">บาท/หีบ</span></div>` +
       `</th>`;
   });
-  // gap เพื่อกันคอลัมน์ sticky ทับข้อมูล (อยู่ก่อนคอลัมน์รวมยอด)
-  headerHtml += `<th class="sticky-gap"></th>`;
+  headerHtml += `<th class="sticky-gap"${smWhRowspan}></th>`;
   if (isFiltered) {
-    headerHtml += `<th class="r sticky-brand-box">รวมหีบ<div style="font-size:9px;color:var(--accent)">${S.activeBrand}</div></th>`;
-    headerHtml += `<th class="r sticky-brand-val">มูลค่ารวม<div style="font-size:9px;color:var(--accent)">${S.activeBrand}</div></th>`;
+    headerHtml += `<th class="r sticky-brand-box"${smWhRowspan}>รวมหีบ<div style="font-size:9px;color:var(--accent)">${escH(S.activeBrand)}</div></th>`;
+    headerHtml += `<th class="r sticky-brand-val"${smWhRowspan}>มูลค่ารวม<div style="font-size:9px;color:var(--accent)">${escH(S.activeBrand)}</div></th>`;
   }
-  headerHtml += `<th class="r sticky-grand-box">รวมหีบ<div style="font-size:9px;color:var(--text-3)">ทุกแบรนด์</div></th>`;
-  headerHtml += `<th class="r sticky-grand-val">มูลค่ารวม<div style="font-size:9px;color:var(--text-3)">ทุกแบรนด์</div>` +
+  headerHtml += `<th class="r sticky-grand-box"${smWhRowspan}>รวมหีบ<div style="font-size:9px;color:var(--text-3)">ทุกแบรนด์</div></th>`;
+  headerHtml += `<th class="r sticky-grand-val"${smWhRowspan}>มูลค่ารวม<div style="font-size:9px;color:var(--text-3)">ทุกแบรนด์</div>` +
     `<div class="sku-th-dev-hint">ขาด / เกิน เป้าหมายที่กำหนดเอง<br><span style="font-weight:500">(เกณฑ์ ±1,000 บ.)</span></div></th>`;
   headerHtml += `</tr>`;
+  if (showNames) {
+    headerHtml += `<tr class="sku-th-row--names">`;
+    skus.forEach(s => {
+      const info = S.skus.find(x => x.sku === s) || {};
+      const pname = _skuDisplayName(info);
+      headerHtml += `<th class="r sku-th sku-th--product" title="${escH(pname)}">` +
+        `<div class="sku-th-product">${escH(pname || "—")}</div></th>`;
+    });
+    headerHtml += `</tr>`;
+  }
   qs("#resultHead").innerHTML = headerHtml;
+  const nameBtn = document.getElementById("toggleSkuProductNamesBtn");
+  if (nameBtn) {
+    nameBtn.textContent = showNames ? "ชื่อสินค้า ▼" : "ชื่อสินค้า ▶";
+    nameBtn.setAttribute("aria-pressed", showNames ? "true" : "false");
+    nameBtn.classList.toggle("btn-dl--toggle-on", showNames);
+  }
 
   // Pre-compute per-emp grand/brand totals — single O(n) pass แทน O(n²) filter loop
   const _empTotals = {};
@@ -3465,7 +4005,7 @@ function renderResult(allocs) {
     return rowHtml;
   }).join("");
 
-  renderResultFooter(skus, skuTotals, emps);
+  renderResultFooter(skus, skuTotals);
   _renderHistDevSummary(allocs, skus.length);
   syncStep3ResultFabricNote();
   syncStep3TieredNote();
@@ -3579,7 +4119,7 @@ function syncStep3TieredNote() {
 }
 
 // 🔴 ตรึงคอลัมน์ S/M กับ W/H ไว้ด้วยกัน ไม่ให้ตารางเบี้ยว 
-function renderResultFooter(skus, skuTotals, emps) {
+function renderResultFooter(skus, skuTotals) {
   const isFiltered = S.activeBrand !== "ALL";
   // Reuse single-pass price map — no extra filter loops needed
   const _p = Object.fromEntries(S.skus.map(x => [x.sku, Number(x.price_per_box) || 0]));
@@ -3688,7 +4228,8 @@ function onResultEdit(el) {
   }, 250);
 }
 
-function autoRebalance(silent = false) {
+function autoRebalance(silent = false, opts = {}) {
+  const skipRender = !!(opts && opts.skipRender);
   if (!S.allocations || S.allocations.length === 0) return;
 
   const skus = [...new Set(S.allocations.map(a => a.sku))];
@@ -3760,7 +4301,9 @@ function autoRebalance(silent = false) {
     }
   });
 
-  renderResult(S.allocations); // วาดตารางใหม่เสมอ ให้ยอดอัปเดต
+  if (!skipRender) {
+    renderResult(S.allocations);
+  }
   if (changed && !silent) toast("⚖️ เกลี่ยส่วนต่างหีบสำเร็จ (แจกจ่ายให้พนักงานอื่นแล้ว)", "green");
   if (changed) saveDraft(true); // บันทึกแบบร่างหลังเกลี่ยอัตโนมัติ
 }
@@ -3809,12 +4352,14 @@ function syncLakehouseButton() {
   const btn = document.getElementById("lakehouseOpenBtn");
   if (!btn) return;
   const has = Array.isArray(S.allocations) && S.allocations.length > 0;
-  const allowed = S.canImportTargetSun !== false;
+  const allowed = S.canImportTargetSun !== false && !S.viewingPeer;
   const on = has && allowed;
   btn.disabled = !on;
   btn.classList.toggle("btn-dl--disabled", !on);
   btn.setAttribute("aria-disabled", on ? "false" : "true");
-  if (!allowed) {
+  if (S.viewingPeer) {
+    btn.title = "โหมดดูอย่างเดียว — สลับกลับทีมของคุณเพื่อส่ง Target Sun";
+  } else if (!allowed) {
     btn.title = "เฉพาะผู้ที่ได้รับอนุญาตเท่านั้น (ตั้ง can_import_targetsun ใน user_access.json หรือผู้ดูแลระบบ)";
   } else if (!has) {
     btn.title = "ส่งผลการกระจายหีบเข้า Target Sun — ต้องมีผลขั้นที่ 3 ก่อน";
@@ -3829,6 +4374,10 @@ function _lakehouseUserCode() {
 }
 
 function showLakehouseUploadModal() {
+  if (S.viewingPeer) {
+    toast("โหมดดูอย่างเดียว — สลับกลับทีมของคุณเพื่อส่ง Target Sun", "amber");
+    return;
+  }
   if (S.canImportTargetSun === false) {
     toast("บัญชีนี้ยังไม่มีสิทธิ์ส่งเข้า Target Sun — ติดต่อผู้ดูแลระบบ", "red");
     return;
@@ -3921,9 +4470,11 @@ function _lakehouseTargetSkus() {
 }
 
 /** ส่งเฉพาะ SKU ที่มีเป้า TGA — ครบทุกคู่ emp×sku รวมหีบ 0 เพื่อทับเป้าเดิมใน DB */
-function _lakehouseAllocationsFromStep3() {
+function _lakehouseAllocationsFromStep3(filterSupId = null) {
+  const filterSup = filterSupId ? String(filterSupId).trim().toUpperCase() : "";
   const byKey = new Map();
   for (const a of S.allocations || []) {
+    if (filterSup && _supervisorCodeForAllocRow(a) !== filterSup) continue;
     const emp = String(a.emp_id || "").trim();
     const sku = String(a.sku || "").trim();
     const wh = String(a.warehouse_code || "").trim();
@@ -3937,13 +4488,16 @@ function _lakehouseAllocationsFromStep3() {
     });
   }
 
-  const empRows = (S.employees || []).length
-    ? S.employees
+  const empRows = _allocEligibleEmployees().length
+    ? _allocEligibleEmployees()
     : [...new Set((S.allocations || []).map(a => String(a.emp_id || "").trim()).filter(Boolean))]
         .map(emp_id => ({ emp_id, warehouse_code: "", wh_split: false }));
+  const scopedEmpRows = filterSup
+    ? empRows.filter((e) => String(e.supervisor_code || "").trim().toUpperCase() === filterSup)
+    : empRows;
   const skus = _lakehouseTargetSkus();
   const out = [];
-  for (const e of empRows) {
+  for (const e of scopedEmpRows) {
     const emp = String(e.emp_id || "").trim();
     const wh = e.wh_split
       ? String(e.warehouse_code || "").trim()
@@ -3959,13 +4513,26 @@ function _lakehouseAllocationsFromStep3() {
   return out;
 }
 
-function _lakehouseExportPayload() {
+function _lakehouseSupIdsForExport() {
+  if (_managerAggregateWritable()) {
+    const fromAllocs = [...new Set(
+      (S.allocations || []).map((a) => _supervisorCodeForAllocRow(a)).filter(Boolean)
+    )];
+    const order = _aggregateSupervisorOrder();
+    const ordered = order.filter((s) => fromAllocs.includes(s));
+    return ordered.length ? ordered : fromAllocs.sort();
+  }
+  return [String(S.supId || "").trim()].filter(Boolean);
+}
+
+function _lakehouseExportPayload(supId = null) {
+  const sid = supId || S.supId;
   return {
-    sup_id: S.supId,
+    sup_id: sid,
     target_month: S.targetMonth,
     target_year: S.targetYear,
     upload_user_code: _lakehouseUserCode(),
-    allocations: _lakehouseAllocationsFromStep3(),
+    allocations: _lakehouseAllocationsFromStep3(supId),
   };
 }
 
@@ -4102,59 +4669,73 @@ async function _importTargetSunLegacy(basePayload) {
   }
 }
 
+async function _importTargetSunForPayload(basePayload) {
+  setGlobalBusyProgress(12, UX.busySendTarget, `กำลังส่ง ${basePayload.sup_id}…`);
+  _startTargetSunProgressCreep(18, 88, UX.busySendTarget, UX.busySendTargetHint);
+  const { res, j } = await _fetchTargetSunImport(basePayload);
+  _clearTargetSunProgressTimer();
+  setGlobalBusyProgress(95, "กำลังสรุปผล…", UX.busySendTargetHint);
+  return _handleTargetSunImportResponse(res, j);
+}
+
 async function doLakehouseUpload() {
   const btn = document.getElementById("lakehouseUploadBtn");
   if (btn) { btn.textContent = "กำลังส่ง…"; btn.disabled = true; }
   const uploadBtnLabel = UX.lakehouseSendBtn;
-  const basePayload = _lakehouseExportPayload();
+  const supIds = _lakehouseSupIdsForExport();
   pushGlobalBusy(UX.busySendStep1, UX.busySendTargetHint);
   setGlobalBusyProgress(5, UX.busySendStep1, UX.busySendTargetHint);
   try {
-    setGlobalBusyProgress(8, UX.busySendStep1, UX.busySendTargetHint);
-    const prepRes = await fetchWithTimeout(
-      `${API_BASE_URL}/lakehouse/prepare-targetsun`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(basePayload),
-      },
-      600000
-    );
-    const prep = await prepRes.json().catch(() => ({}));
+    for (let i = 0; i < supIds.length; i++) {
+      const supId = supIds[i];
+      const basePayload = _lakehouseExportPayload(supId);
+      if (!basePayload.allocations?.length) continue;
+      setGlobalBusyProgress(8, UX.busySendStep1,
+        supIds.length > 1 ? `เตรียม ${supId} (${i + 1}/${supIds.length})…` : UX.busySendTargetHint);
+      const prepRes = await fetchWithTimeout(
+        `${API_BASE_URL}/lakehouse/prepare-targetsun`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(basePayload),
+        },
+        600000
+      );
+      const prep = await prepRes.json().catch(() => ({}));
 
-    if (_targetSunPrepareUnsupported(prepRes.status)) {
-      await _importTargetSunLegacy(basePayload);
-      return;
-    }
-
-    if (!prepRes.ok) {
-      const detail = prep.detail;
-      if (detail && typeof detail === "object") {
-        const n = Number(detail.rows_not_in_targetsun_count) || 0;
-        if (n > 0) _showNotInTargetSunModal(n, detail.rows_not_in_targetsun);
+      if (_targetSunPrepareUnsupported(prepRes.status)) {
+        if (!(await _importTargetSunForPayload(basePayload))) return;
+        continue;
       }
-      throw new Error(_userFacingError(_formatApiErrorDetail(prep), "เตรียมไฟล์ไม่สำเร็จ"));
-    }
-    const token = prep.prepare_token;
-    if (!token) throw new Error("เตรียมไฟล์ไม่สำเร็จ — ไม่ได้ prepare_token จาก server");
 
-    setGlobalBusyProgress(50, UX.busySendStep2, UX.busySendTargetHint);
-    _startTargetSunProgressCreep(52, 88, UX.busySendStep2, UX.busySendTargetHint);
+      if (!prepRes.ok) {
+        const detail = prep.detail;
+        if (detail && typeof detail === "object") {
+          const n = Number(detail.rows_not_in_targetsun_count) || 0;
+          if (n > 0) _showNotInTargetSunModal(n, detail.rows_not_in_targetsun);
+        }
+        throw new Error(_userFacingError(_formatApiErrorDetail(prep), `เตรียมไฟล์ไม่สำเร็จ (${supId})`));
+      }
+      const token = prep.prepare_token;
+      if (!token) throw new Error(`เตรียมไฟล์ไม่สำเร็จ — ไม่ได้ prepare_token (${supId})`);
 
-    const importBody = {
-      sup_id: basePayload.sup_id,
-      target_month: basePayload.target_month,
-      target_year: basePayload.target_year,
-      upload_user_code: basePayload.upload_user_code,
-      allocations: [],
-      prepare_token: token,
-    };
-    const { res, j } = await _fetchTargetSunImport(importBody);
-    _clearTargetSunProgressTimer();
-    setGlobalBusyProgress(95, "กำลังสรุปผล…", UX.busySendTargetHint);
-    if (_handleTargetSunImportResponse(res, j)) {
-      setGlobalBusyProgress(100, "ส่งเข้า Target Sun เสร็จแล้ว", "");
+      setGlobalBusyProgress(50, UX.busySendStep2, UX.busySendTargetHint);
+      _startTargetSunProgressCreep(52, 88, UX.busySendStep2, UX.busySendTargetHint);
+
+      const importBody = {
+        sup_id: basePayload.sup_id,
+        target_month: basePayload.target_month,
+        target_year: basePayload.target_year,
+        upload_user_code: basePayload.upload_user_code,
+        allocations: [],
+        prepare_token: token,
+      };
+      const { res, j } = await _fetchTargetSunImport(importBody);
+      _clearTargetSunProgressTimer();
+      setGlobalBusyProgress(95, "กำลังสรุปผล…", UX.busySendTargetHint);
+      if (!_handleTargetSunImportResponse(res, j)) return;
     }
+    setGlobalBusyProgress(100, "ส่งเข้า Target Sun เสร็จแล้ว", "");
   } catch (err) {
     toast("❌ ส่งข้อมูลไม่สำเร็จ: " + _userFacingError(err), "red");
   } finally {
@@ -4169,47 +4750,52 @@ async function doLakehouseDownloadXlsxOnly() {
   if (btn) { btn.disabled = true; }
   pushGlobalBusy(UX.busyExcel);
   try {
-    const res = await fetchWithTimeout(
-      `${API_BASE_URL}/lakehouse/export-csv`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(_lakehouseExportPayload()),
-      },
-      180000
-    );
-    if (!res.ok) {
-      const jd = await res.json().catch(() => ({}));
-      throw new Error(_userFacingError(_formatApiErrorDetail(jd), "ดาวน์โหลดไม่สำเร็จ"));
-    }
-    const blob = await res.blob();
-    const cd = res.headers.get("Content-Disposition") || "";
-    let fname = `alloc_${S.supId}_${S.targetYear}_${String(S.targetMonth).padStart(2, "0")}.xlsx`;
-    const m = /filename="?([^";]+)"?/i.exec(cd);
-    if (m) fname = m[1];
-    dl(blob, fname);
-    const rows = res.headers.get("X-Export-Rows");
-    const zeroRows = res.headers.get("X-Export-Zero-Rows");
-    const droppedDims = res.headers.get("X-Export-Dropped-Missing-Dims");
-    const rowN = rows != null && rows !== "" ? Number(rows) : NaN;
-    if (!Number.isNaN(rowN) && rowN === 0) {
-      toast(
-        "❌ ไฟล์ว่าง — ไม่มีแถวในชีต TGA (ลองโหลดข้อมูลขั้นที่ 1 ใหม่ แล้วกระจายหีบอีกครั้ง)",
-        "red"
+    const supIds = _lakehouseSupIdsForExport();
+    for (let i = 0; i < supIds.length; i++) {
+      const payload = _lakehouseExportPayload(supIds[i]);
+      if (!payload.allocations?.length) continue;
+      const res = await fetchWithTimeout(
+        `${API_BASE_URL}/lakehouse/export-csv`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+        180000
       );
-      return;
+      if (!res.ok) {
+        const jd = await res.json().catch(() => ({}));
+        throw new Error(_userFacingError(_formatApiErrorDetail(jd), `ดาวน์โหลดไม่สำเร็จ (${supIds[i]})`));
+      }
+      const blob = await res.blob();
+      const cd = res.headers.get("Content-Disposition") || "";
+      let fname = `alloc_${supIds[i]}_${S.targetYear}_${String(S.targetMonth).padStart(2, "0")}.xlsx`;
+      const m = /filename="?([^";]+)"?/i.exec(cd);
+      if (m) fname = m[1];
+      dl(blob, fname);
+      const rows = res.headers.get("X-Export-Rows");
+      const zeroRows = res.headers.get("X-Export-Zero-Rows");
+      const droppedDims = res.headers.get("X-Export-Dropped-Missing-Dims");
+      const rowN = rows != null && rows !== "" ? Number(rows) : NaN;
+      if (!Number.isNaN(rowN) && rowN === 0) {
+        toast(
+          `❌ ${supIds[i]}: ไฟล์ว่าง — ไม่มีแถวในชีต TGA`,
+          "red"
+        );
+        continue;
+      }
+      const zeroPart =
+        zeroRows != null && zeroRows !== ""
+          ? ` · หีบ 0 = ${Number(zeroRows).toLocaleString("th-TH")} แถว`
+          : "";
+      if (droppedDims != null && Number(droppedDims) > 0) {
+        _showNotInTargetSunModal(Number(droppedDims), []);
+      }
+      toast(
+        `✅ ดาวน์โหลด: ${fname}${rows ? ` (ชีต TGA ${Number(rows).toLocaleString("th-TH")} แถว${zeroPart})` : ""}`,
+        "green"
+      );
     }
-    const zeroPart =
-      zeroRows != null && zeroRows !== ""
-        ? ` · หีบ 0 = ${Number(zeroRows).toLocaleString("th-TH")} แถว`
-        : "";
-    if (droppedDims != null && Number(droppedDims) > 0) {
-      _showNotInTargetSunModal(Number(droppedDims), []);
-    }
-    toast(
-      `✅ ดาวน์โหลด: ${fname}${rows ? ` (ชีต TGA ${Number(rows).toLocaleString("th-TH")} แถว${zeroPart})` : ""}`,
-      "green"
-    );
   } catch (err) {
     toast("❌ ดาวน์โหลดไม่สำเร็จ: " + _userFacingError(err), "red");
   } finally {
@@ -4323,7 +4909,7 @@ function _discardDraftStartFresh() {
   S.yellowLocked = {};
   S._hasUnsaved = false;
   if (S.employees && S.employees.length) {
-    S.employees.forEach(e => {
+    _allocEligibleEmployees().forEach(e => {
       const base = Number(e.target_sun);
       S.yellow[_allocKey(e)] = Number.isFinite(base) ? Math.max(0, base) : 0;
     });
@@ -4479,7 +5065,8 @@ function checkAndLoadDraft() {
 
       S.yellow = draftData.yellow || S.yellow;
       S.yellowLocked = draftData.yellowLocked || {};
-      S.allocations = draftData.allocations || [];
+      _sanitizeYellowForEligibleOnly();
+      S.allocations = _filterAllocationsEligibleOnly(draftData.allocations || []);
       {
         const hwm = Number(draftData.histWindowMonths);
         if (hwm === 1) S.histWindowMonths = 1;
@@ -4701,7 +5288,7 @@ function mergeDraftIncreasedOfficialTargets() {
       });
     } else {
       const empsWithRow = new Set(rows.map(a => a.emp_id));
-      const others = S.employees.filter(e => !empsWithRow.has(e.emp_id));
+      const others = _allocEligibleEmployees().filter(e => !empsWithRow.has(e.emp_id));
       if (others.length > 0) {
         const portions = _distributeIntEven(delta, others.length);
         const skuInfo = S.skus.find(x => x.sku === sku) || {};
@@ -4838,17 +5425,22 @@ async function runReAllocationKeepEdits() {
 
   const strategy = document.querySelector('[name="strategy"]:checked')?.value || "L3M";
   S.allocations = allocs;
-  autoRebalance(true);
-  buildBrandTabs(allocs);
-  document.getElementById("changeBanner")?.remove();
 
-  await wait(200);
   qs("#runEmoji").textContent = "✅";
   qs("#runTitle").textContent = "กระจายหีบใหม่สำเร็จ";
   qs("#runSub").textContent = `วิธี: ${_strategySummaryTh([strategy])} — ตัวเลขที่แก้เองยังคงอยู่`;
   qs("#runBtn").textContent = "คำนวณใหม่";
   qs("#runBtn").disabled = false;
+  buildBrandTabs(allocs);
+  document.getElementById("changeBanner")?.remove();
   qs("#resultBlock").style.display = "block";
+
+  try {
+    autoRebalance(true, { skipRender: true });
+  } catch (e) {
+    console.error("autoRebalance:", e);
+  }
+  await wait(200);
   renderResult(allocs);
   requestAnimationFrame(() => adjustResultStickyGap());
   qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -5224,7 +5816,7 @@ function onBuiChange(input) {
  */
 function _negGrowthOffenders() {
   const offenders = [];
-  (S.employees || []).forEach(e => {
+  _allocEligibleEmployees().forEach(e => {
     const y = Number(S.yellow[_allocKey(e)]) || 0;
     const ly = Number(e.ly_sales) || 0;
     const ts = Number(e.target_sun) || 0;
@@ -5499,8 +6091,17 @@ function _revenueScaleFactor() {
   return totalPossible > 0 && totalYellow > 0 ? totalPossible / totalYellow : 1;
 }
 
-function _effectiveYellowTarget(emp) {
-  const raw = Number(S.yellow[emp]) || 0;
+function _effectiveYellowTarget(allocKeyOrEmp) {
+  const k = String(allocKeyOrEmp || "").trim();
+  let raw = Number(S.yellow[k]) || 0;
+  if (raw <= 0 && k.includes("|")) {
+    const [emp, wh] = k.split("|", 2);
+    const row = (S.employees || []).find(
+      e => String(e.emp_id).trim() === emp && String(e.warehouse_code || "").trim() === (wh || "")
+    );
+    if (row) raw = Number(S.yellow[_allocKey(row)]) || Number(row.target_sun) || 0;
+    else raw = Number(S.yellow[emp]) || 0;
+  }
   const scale = _revenueScaleFactor();
   return raw > 0 ? raw * scale : 0;
 }
@@ -5651,6 +6252,14 @@ const ADMIN_LOGIN_KIND_OPTS = [
 
 const ADMIN_DIVISION_OPTS = ["", "Div.B", "Div.E", "Div.S"];
 const ADMIN_UNIT_OPTS = ["", "van", "credit"];
+const ADMIN_SCOPE_OPTS = [
+  ["", "—"],
+  ["self", "เฉพาะทีมตัวเอง"],
+  ["region_peers", "ดูภาคเดียวกัน (กระจายได้เฉพาะทีมตัวเอง)"],
+  ["all", "ทั้งหมด (Manager)"],
+  ["credit", "credit"],
+  ["van", "van"],
+];
 
 function _adminRowKey(email, userpl) {
   return `${String(email || "").trim().toLowerCase()}|${String(userpl || "").trim().toUpperCase()}`;
@@ -5783,7 +6392,7 @@ function _adminApplyTabAccess(teamOnly) {
   document.querySelectorAll(".admin-tab").forEach((btn) => {
     const tab = btn.dataset.tab;
     if (teamOnly) {
-      btn.style.display = tab === "team" ? "" : "none";
+      btn.style.display = (tab === "team" || tab === "skuLinks" || tab === "slLinks") ? "" : "none";
     } else {
       btn.style.display = "";
     }
@@ -5833,13 +6442,20 @@ let _adminSupervisorCodes = [];
 
 const ADMIN_TAB_META = {
   users: { title: "สิทธิผู้ใช้", sub: "อีเมล + รหัส SL — แก้แล้วมีผลทันที" },
+  slLinks: { title: "ผูกรหัส SL", sub: "รหัสใหม่สืบทอดสิทธิ/ทีมจากรหัสเก่า — เช่น SL524 → SL508" },
   team: { title: "ทีมพนักงาน", sub: "รายชื่อพนักงานใต้ Supervisor จาก Fabric / cache" },
   data: { title: "แหล่งข้อมูล", sub: "สรุปการดึง ใช้ และส่งข้อมูลในระบบ" },
+  skuLinks: { title: "ผูกรหัส SKU", sub: "รวมประวัติขายข้ามรหัสเก่า — แสดงรายการสินค้าทันทีเมื่อเปิดแท็บ" },
 };
+
+let _adminSkuLinkRows = [];
+let _adminSkuLinkEditCanon = null;
+let _adminSlLinkRows = [];
+let _adminSlLinkEditCanon = null;
 
 function adminSwitchTab(tab) {
   const teamOnly = S.isMarketing && !S.isAdmin;
-  if (teamOnly && tab !== "team") {
+  if (teamOnly && tab !== "team" && tab !== "skuLinks" && tab !== "slLinks") {
     tab = "team";
   }
   _adminActiveTab = tab || "users";
@@ -5868,6 +6484,411 @@ function adminSwitchTab(tab) {
   if (stats) stats.style.display = _adminActiveTab === "users" ? "" : "none";
   if (_adminActiveTab === "team") adminInitTeamPanel();
   if (_adminActiveTab === "data") adminLoadInventory(false);
+  if (_adminActiveTab === "slLinks") adminInitSlLinksPanel();
+  if (_adminActiveTab === "skuLinks") adminInitSkuLinksPanel();
+}
+
+function adminInitSkuLinksPanel() {
+  const monthSel = document.getElementById("adminSkuPreviewMonth");
+  const yearInp = document.getElementById("adminSkuPreviewYear");
+  const catMonth = document.getElementById("adminSkuCatalogMonth");
+  const catYear = document.getElementById("adminSkuCatalogYear");
+  const catSup = document.getElementById("adminSkuCatalogSup");
+  if (monthSel && !monthSel.options.length) {
+    for (let m = 1; m <= 12; m++) {
+      const opt = document.createElement("option");
+      opt.value = String(m);
+      opt.textContent = String(m).padStart(2, "0");
+      monthSel.appendChild(opt);
+    }
+  }
+  if (catMonth && !catMonth.options.length) {
+    for (let m = 1; m <= 12; m++) {
+      const opt = document.createElement("option");
+      opt.value = String(m);
+      opt.textContent = String(m).padStart(2, "0");
+      catMonth.appendChild(opt);
+    }
+  }
+  if (monthSel && S.targetMonth) monthSel.value = String(S.targetMonth);
+  if (yearInp && S.targetYear) yearInp.value = String(S.targetYear);
+  if (catMonth && S.targetMonth) catMonth.value = String(S.targetMonth);
+  if (catYear && S.targetYear) catYear.value = String(S.targetYear);
+  if (catSup && S.supId && !catSup.value.trim()) catSup.value = String(S.supId).trim();
+  const addBtn = document.getElementById("adminSkuLinkAddBtn");
+  if (addBtn) addBtn.style.display = S.isAdmin ? "" : "none";
+  adminLoadSkuLinks();
+  adminLoadSkuCatalog();
+}
+
+function _adminSkuLinkShowErr(msg) {
+  const el = document.getElementById("adminSkuLinkError");
+  if (!el) return;
+  if (!msg) {
+    el.style.display = "none";
+    el.textContent = "";
+    return;
+  }
+  el.style.display = "";
+  el.textContent = msg;
+}
+
+async function _adminJsonFetch(path, { method = "GET", body = null, timeout = 20000 } = {}) {
+  const opts = { method, headers: { "Content-Type": "application/json" } };
+  if (body != null) opts.body = JSON.stringify(body);
+  const res = await fetchWithTimeout(`${API_BASE_URL}${path}`, opts, timeout);
+  if (!res.ok) {
+    let d = "คำขอไม่สำเร็จ";
+    try {
+      const j = await res.json();
+      if (j.detail) d = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
+    } catch (_) { /* ignore */ }
+    throw new Error(d);
+  }
+  return res.json();
+}
+
+async function adminLoadSkuLinks() {
+  const body = document.getElementById("adminSkuLinkBody");
+  const loading = document.getElementById("adminSkuLinkLoading");
+  if (loading) loading.style.display = "";
+  _adminSkuLinkShowErr("");
+  try {
+    const data = await _adminJsonFetch("/admin/sku-links");
+    _adminSkuLinkRows = data.links || [];
+    adminRenderSkuLinks();
+  } catch (e) {
+    if (body) body.innerHTML = `<tr><td colspan="4" class="admin-empty">โหลดไม่สำเร็จ</td></tr>`;
+    _adminSkuLinkShowErr(e.message || String(e));
+  } finally {
+    if (loading) loading.style.display = "none";
+  }
+}
+
+function adminRenderSkuLinks() {
+  const body = document.getElementById("adminSkuLinkBody");
+  if (!body) return;
+  if (!_adminSkuLinkRows.length) {
+    body.innerHTML = `<tr><td colspan="4" class="admin-empty">ยังไม่มีกลุ่มผูกรหัส</td></tr>`;
+    return;
+  }
+  const canEdit = !!S.isAdmin;
+  body.innerHTML = _adminSkuLinkRows.map((r) => {
+    const aliases = (r.alias_skus || []).join(", ");
+    const canonEsc = escapeHtml(r.canonical_sku);
+    const actions = canEdit
+      ? `<button type="button" class="admin-btn-ghost admin-btn-ghost--sm" data-canonical="${canonEsc}" onclick="adminSkuLinkEdit(this.dataset.canonical)">แก้ไข</button>` +
+        `<button type="button" class="admin-btn-ghost admin-btn-ghost--sm" data-canonical="${canonEsc}" onclick="adminSkuLinkDelete(this.dataset.canonical)">ลบ</button>`
+      : `<span class="admin-inv-muted">ดูอย่างเดียว</span>`;
+    return `<tr>
+      <td><code class="admin-code">${escapeHtml(r.canonical_sku)}</code></td>
+      <td>${escapeHtml(r.product_name || "—")}</td>
+      <td class="mono" style="font-size:12px;">${escapeHtml(aliases)}</td>
+      <td class="admin-td-actions">${actions}</td>
+    </tr>`;
+  }).join("");
+}
+
+function adminSkuLinkShowAdd() {
+  _adminSkuLinkEditCanon = null;
+  const panel = document.getElementById("adminSkuLinkAddPanel");
+  if (panel) panel.style.display = "";
+  const c = document.getElementById("adminSkuLinkCanon");
+  const n = document.getElementById("adminSkuLinkName");
+  const a = document.getElementById("adminSkuLinkAliases");
+  const t = document.getElementById("adminSkuLinkNote");
+  if (c) { c.value = ""; c.disabled = false; }
+  if (n) n.value = "";
+  if (a) a.value = "";
+  if (t) t.value = "";
+}
+
+function adminSkuLinkHideAdd() {
+  const panel = document.getElementById("adminSkuLinkAddPanel");
+  if (panel) panel.style.display = "none";
+  _adminSkuLinkEditCanon = null;
+}
+
+function adminSkuLinkEdit(canon) {
+  const row = _adminSkuLinkRows.find((r) => r.canonical_sku === canon);
+  if (!row) return;
+  _adminSkuLinkEditCanon = canon;
+  adminSkuLinkShowAdd();
+  const c = document.getElementById("adminSkuLinkCanon");
+  const n = document.getElementById("adminSkuLinkName");
+  const a = document.getElementById("adminSkuLinkAliases");
+  const t = document.getElementById("adminSkuLinkNote");
+  if (c) { c.value = row.canonical_sku; c.disabled = true; }
+  if (n) n.value = row.product_name || "";
+  if (a) a.value = (row.alias_skus || []).join(", ");
+  if (t) t.value = row.note || "";
+}
+
+function _parseAliasInput(raw, canon) {
+  const parts = String(raw || "").split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean);
+  if (!parts.length && canon) parts.push(canon);
+  if (canon && !parts.includes(canon)) parts.unshift(canon);
+  return [...new Set(parts)];
+}
+
+async function adminSkuLinkSave() {
+  if (!S.isAdmin) return;
+  const canon = (document.getElementById("adminSkuLinkCanon")?.value || "").trim();
+  const name = (document.getElementById("adminSkuLinkName")?.value || "").trim();
+  const aliases = _parseAliasInput(document.getElementById("adminSkuLinkAliases")?.value, canon);
+  const note = (document.getElementById("adminSkuLinkNote")?.value || "").trim();
+  if (!canon) {
+    _adminSkuLinkShowErr("กรุณาระบุรหัส canonical");
+    return;
+  }
+  _adminSkuLinkShowErr("");
+  const body = { canonical_sku: canon, alias_skus: aliases, product_name: name, note };
+  try {
+    if (_adminSkuLinkEditCanon) {
+      await _adminJsonFetch("/admin/sku-links", { method: "PUT", body });
+    } else {
+      await _adminJsonFetch("/admin/sku-links", { method: "POST", body });
+    }
+    adminSkuLinkHideAdd();
+    await adminLoadSkuLinks();
+    alert("บันทึกแล้ว — โหลด Dashboard ใหม่ (refresh) เพื่อ rebuild ประวัติขาย");
+  } catch (e) {
+    _adminSkuLinkShowErr(e.message || String(e));
+  }
+}
+
+async function adminSkuLinkDelete(canon) {
+  if (!S.isAdmin) return;
+  if (!confirm(`ลบกลุ่มผูกรหัส ${canon}?`)) return;
+  try {
+    await _adminJsonFetch("/admin/sku-links", { method: "DELETE", body: { canonical_sku: canon } });
+    await adminLoadSkuLinks();
+  } catch (e) {
+    _adminSkuLinkShowErr(e.message || String(e));
+  }
+}
+
+async function adminLoadSkuCatalog() {
+  const body = document.getElementById("adminSkuCatalogBody");
+  const loading = document.getElementById("adminSkuCatalogLoading");
+  const hint = document.getElementById("adminSkuCatalogHint");
+  const sup = (document.getElementById("adminSkuCatalogSup")?.value || S.supId || "").trim();
+  const month = parseInt(document.getElementById("adminSkuCatalogMonth")?.value || S.targetMonth || "0", 10);
+  const year = parseInt(document.getElementById("adminSkuCatalogYear")?.value || S.targetYear || "0", 10);
+  if (!sup || !month || !year) {
+    if (body) body.innerHTML = `<tr><td colspan="4" class="admin-empty">ระบุ Supervisor และงวด</td></tr>`;
+    return;
+  }
+  if (loading) loading.style.display = "";
+  if (hint) hint.textContent = "";
+  try {
+    const q = new URLSearchParams({ super_code: sup, month: String(month), year: String(year) });
+    const data = await _adminJsonFetch(`/admin/sku-links/catalog?${q}`);
+    const rows = data.skus || [];
+    if (hint) {
+      const src = data.source_supervisor_code && data.source_supervisor_code !== data.supervisor_code
+        ? ` (cache จาก ${data.source_supervisor_code})`
+        : "";
+      hint.textContent = rows.length
+        ? `${rows.length.toLocaleString("th-TH")} SKU · ${month.toString().padStart(2, "0")}/${year}${src}`
+        : (data.hint || "ไม่พบสินค้า");
+    }
+    if (!body) return;
+    if (!rows.length) {
+      body.innerHTML = `<tr><td colspan="4" class="admin-empty">${escapeHtml(data.hint || "ไม่มีรายการ")}</td></tr>`;
+      return;
+    }
+    body.innerHTML = rows.map((r) => {
+      const name = (r.product_name_thai || r.product_name_english || "").trim() || "—";
+      const link = r.has_sku_link
+        ? `<span class="sku-linked-badge" title="${escapeHtml((r.linked_aliases || []).join(", "))}">ผูก</span>`
+        : "—";
+      return `<tr>
+        <td><code>${escapeHtml(r.sku)}</code></td>
+        <td>${escapeHtml(name)}</td>
+        <td class="num">${Number(r.target_boxes || 0).toLocaleString("th-TH", { maximumFractionDigits: 1 })}</td>
+        <td>${link}</td>
+      </tr>`;
+    }).join("");
+  } catch (e) {
+    if (body) body.innerHTML = `<tr><td colspan="4" class="admin-empty">โหลดไม่สำเร็จ</td></tr>`;
+    if (hint) hint.textContent = e.message || String(e);
+  } finally {
+    if (loading) loading.style.display = "none";
+  }
+}
+
+function adminInitSlLinksPanel() {
+  const addBtn = document.getElementById("adminSlLinkAddBtn");
+  if (addBtn) addBtn.style.display = S.isAdmin ? "" : "none";
+  adminLoadSlLinks();
+}
+
+function _adminSlLinkShowErr(msg) {
+  const el = document.getElementById("adminSlLinkError");
+  if (!el) return;
+  if (!msg) {
+    el.style.display = "none";
+    el.textContent = "";
+    return;
+  }
+  el.style.display = "";
+  el.textContent = msg;
+}
+
+async function adminLoadSlLinks() {
+  const body = document.getElementById("adminSlLinkBody");
+  const loading = document.getElementById("adminSlLinkLoading");
+  if (loading) loading.style.display = "";
+  _adminSlLinkShowErr("");
+  try {
+    const data = await _adminJsonFetch("/admin/sl-links");
+    _adminSlLinkRows = data.links || [];
+    adminRenderSlLinks();
+  } catch (e) {
+    if (body) body.innerHTML = `<tr><td colspan="4" class="admin-empty">โหลดไม่สำเร็จ</td></tr>`;
+    _adminSlLinkShowErr(e.message || String(e));
+  } finally {
+    if (loading) loading.style.display = "none";
+  }
+}
+
+function adminRenderSlLinks() {
+  const body = document.getElementById("adminSlLinkBody");
+  if (!body) return;
+  if (!_adminSlLinkRows.length) {
+    body.innerHTML = `<tr><td colspan="4" class="admin-empty">ยังไม่มีกลุ่มผูกรหัส SL</td></tr>`;
+    return;
+  }
+  const canEdit = !!S.isAdmin;
+  body.innerHTML = _adminSlLinkRows.map((r) => {
+    const aliases = (r.alias_sls || []).join(", ");
+    const canonEsc = escapeHtml(r.canonical_sl);
+    const btns = canEdit
+      ? `<button type="button" class="admin-btn-ghost admin-btn-ghost--sm" data-canonical="${canonEsc}" onclick="adminSlLinkEdit(this.dataset.canonical)">แก้ไข</button>` +
+        `<button type="button" class="admin-btn-ghost admin-btn-ghost--sm" data-canonical="${canonEsc}" onclick="adminSlLinkDelete(this.dataset.canonical)">ลบ</button>`
+      : "";
+    return `<tr>
+      <td><code>${canonEsc}</code></td>
+      <td>${escapeHtml(aliases)}</td>
+      <td>${escapeHtml(r.note || "")}</td>
+      <td class="admin-td-actions">${btns}</td>
+    </tr>`;
+  }).join("");
+}
+
+function adminSlLinkShowAdd() {
+  _adminSlLinkEditCanon = null;
+  const panel = document.getElementById("adminSlLinkAddPanel");
+  if (panel) panel.style.display = "";
+  const c = document.getElementById("adminSlLinkCanon");
+  const a = document.getElementById("adminSlLinkAliases");
+  const t = document.getElementById("adminSlLinkNote");
+  if (c) { c.value = ""; c.readOnly = false; }
+  if (a) a.value = "";
+  if (t) t.value = "";
+}
+
+function adminSlLinkHideAdd() {
+  const panel = document.getElementById("adminSlLinkAddPanel");
+  if (panel) panel.style.display = "none";
+  _adminSlLinkEditCanon = null;
+}
+
+function adminSlLinkEdit(canon) {
+  const row = _adminSlLinkRows.find((r) => r.canonical_sl === canon);
+  if (!row) return;
+  _adminSlLinkEditCanon = canon;
+  adminSlLinkShowAdd();
+  const c = document.getElementById("adminSlLinkCanon");
+  const a = document.getElementById("adminSlLinkAliases");
+  const t = document.getElementById("adminSlLinkNote");
+  if (c) { c.value = row.canonical_sl; c.readOnly = true; }
+  if (a) a.value = (row.alias_sls || []).join(", ");
+  if (t) t.value = row.note || "";
+}
+
+async function adminSlLinkSave() {
+  if (!S.isAdmin) return;
+  const canon = (document.getElementById("adminSlLinkCanon")?.value || "").trim().toUpperCase();
+  const aliases = _parseAliasInput(document.getElementById("adminSlLinkAliases")?.value, canon)
+    .map((s) => s.toUpperCase());
+  const note = (document.getElementById("adminSlLinkNote")?.value || "").trim();
+  if (!canon) {
+    _adminSlLinkShowErr("กรุณาระบุรหัส canonical");
+    return;
+  }
+  _adminSlLinkShowErr("");
+  const body = { canonical_sl: canon, alias_sls: aliases, note };
+  try {
+    if (_adminSlLinkEditCanon) {
+      await _adminJsonFetch("/admin/sl-links", { method: "PUT", body });
+    } else {
+      await _adminJsonFetch("/admin/sl-links", { method: "POST", body });
+    }
+    adminSlLinkHideAdd();
+    const c = document.getElementById("adminSlLinkCanon");
+    if (c) c.readOnly = false;
+    await adminLoadSlLinks();
+    alert("บันทึกแล้ว — ผู้ใช้รหัส alias ควร logout/login ใหม่ถ้ายังไม่เห็นทีม");
+  } catch (e) {
+    _adminSlLinkShowErr(e.message || String(e));
+  }
+}
+
+async function adminSlLinkDelete(canon) {
+  if (!S.isAdmin) return;
+  if (!confirm(`ลบกลุ่มผูกรหัส SL ${canon}?`)) return;
+  try {
+    await _adminJsonFetch("/admin/sl-links", { method: "DELETE", body: { canonical_sl: canon } });
+    await adminLoadSlLinks();
+  } catch (e) {
+    _adminSlLinkShowErr(e.message || String(e));
+  }
+}
+
+async function adminSkuLinkPreview() {
+  const sup = (document.getElementById("adminSkuPreviewSup")?.value || "").trim();
+  const sku = (document.getElementById("adminSkuPreviewSku")?.value || "").trim();
+  const month = Number(document.getElementById("adminSkuPreviewMonth")?.value) || S.targetMonth;
+  const year = Number(document.getElementById("adminSkuPreviewYear")?.value) || S.targetYear;
+  const out = document.getElementById("adminSkuPreviewOut");
+  if (!sup || !sku) {
+    _adminSkuLinkShowErr("ระบุ Supervisor และรหัส SKU สำหรับ preview");
+    return;
+  }
+  _adminSkuLinkShowErr("");
+  if (out) {
+    out.style.display = "";
+    out.textContent = "กำลังโหลด…";
+  }
+  try {
+    const q = new URLSearchParams({
+      super_code: sup,
+      canonical_sku: sku,
+      month: String(month),
+      year: String(year),
+    });
+    const data = await _adminJsonFetch(`/admin/sku-links/preview?${q}`, { timeout: 90000 });
+    const lines = [
+      `Supervisor: ${data.supervisor_code} · พนักงาน ${data.employee_count} คน`,
+      `Canonical: ${data.canonical_sku} · alias: ${(data.alias_skus || []).join(", ")}`,
+      "",
+      "ประวัติ 3 เดือน:",
+      `  ก่อนรวม — หีบ ${data.hist_3m?.before_merge?.hist_boxes ?? 0}, บาท ${data.hist_3m?.before_merge?.hist_amount ?? 0}`,
+      `  หลังรวม — หีบ ${data.hist_3m?.after_merge?.hist_boxes ?? 0}, บาท ${data.hist_3m?.after_merge?.hist_amount ?? 0}`,
+      "",
+      "LY เดือนเดียวกัน:",
+      `  ก่อนรวม — หีบ ${data.hist_ly_same_month?.before_merge?.hist_boxes ?? 0}, บาท ${data.hist_ly_same_month?.before_merge?.hist_amount ?? 0}`,
+      `  หลังรวม — หีบ ${data.hist_ly_same_month?.after_merge?.hist_boxes ?? 0}, บาท ${data.hist_ly_same_month?.after_merge?.hist_amount ?? 0}`,
+    ];
+    if (data.fabric_error) lines.push("", `Fabric: ${data.fabric_error}`);
+    lines.push("", data.refresh_hint || "");
+    if (out) out.textContent = lines.join("\n");
+  } catch (e) {
+    if (out) out.textContent = "";
+    _adminSkuLinkShowErr(e.message || String(e));
+  }
 }
 
 async function adminInitTeamPanel() {
@@ -6211,7 +7232,7 @@ function _adminRenderVisiblePreview(el, vis) {
     .join("");
 }
 
-async function _adminFetchVisiblePreview(userpl, loginKind, accRegion, accDivision, targetEl) {
+async function _adminFetchVisiblePreview(userpl, loginKind, accRegion, accDivision, targetEl, accScope) {
   const upl = (userpl || "").trim().toUpperCase();
   if (!upl) {
     _adminRenderVisiblePreview(targetEl, []);
@@ -6223,6 +7244,7 @@ async function _adminFetchVisiblePreview(userpl, loginKind, accRegion, accDivisi
       login_kind: loginKind || "standard",
       acc_region: accRegion || "",
       acc_division: accDivision || "",
+      acc_scope: accScope || "",
     });
     const res = await fetchWithTimeout(
       `${API_BASE_URL}/admin/user-access/preview-visible?${q}`,
@@ -6246,13 +7268,18 @@ function _adminScheduleVisiblePreview(mode) {
   clearTimeout(_adminVisiblePreviewTimer);
   _adminVisiblePreviewTimer = setTimeout(() => {
     const uplEl = document.getElementById("adminAddUserpl");
+    const lkEl = document.getElementById("adminAddLoginKind");
+    const scopeEl = document.getElementById("adminAddAccScope");
+    const divEl = document.getElementById("adminAddAccDivision");
+    const regEl = document.getElementById("adminAddAccRegion");
     const targetEl = document.getElementById("adminAddVisible");
     _adminFetchVisiblePreview(
       uplEl?.value,
-      "standard",
-      "",
-      "",
-      targetEl
+      lkEl?.value || "standard",
+      regEl?.value || "",
+      divEl?.value || "",
+      targetEl,
+      scopeEl?.value || ""
     );
   }, 280);
 }
@@ -6262,6 +7289,14 @@ function _adminBindVisiblePreviewListeners() {
   _adminVisiblePreviewBound = true;
   document.getElementById("adminAddUserpl")?.addEventListener("input", () => {
     _adminScheduleVisiblePreview("add");
+  });
+  document.getElementById("adminAddLoginKind")?.addEventListener("change", () => {
+    _adminScheduleVisiblePreview("add");
+  });
+  ["adminAddAccScope", "adminAddAccDivision", "adminAddAccRegion"].forEach((id) => {
+    document.getElementById(id)?.addEventListener("change", () => {
+      _adminScheduleVisiblePreview("add");
+    });
   });
 }
 
@@ -6304,6 +7339,7 @@ function adminStartInlineEdit(row) {
       acc_division: row.acc_division || "",
       acc_region: row.acc_region || "",
       acc_unit: row.acc_unit || "",
+      acc_scope: row.acc_scope || "",
       can_import_targetsun: !!row.can_import_targetsun,
       note: row.note || "",
     },
@@ -6341,8 +7377,9 @@ function _adminScheduleInlineVisiblePreview(tr) {
     const loginKind = tr.querySelector('[data-f="login_kind"]')?.value || "standard";
     const accRegion = tr.querySelector('[data-f="acc_region"]')?.value || "";
     const accDivision = tr.querySelector('[data-f="acc_division"]')?.value || "";
+    const accScope = tr.querySelector('[data-f="acc_scope"]')?.value || "";
     const targetEl = tr.querySelector('[data-f="visible"]');
-    _adminFetchVisiblePreview(upl, loginKind, accRegion, accDivision, targetEl);
+    _adminFetchVisiblePreview(upl, loginKind, accRegion, accDivision, targetEl, accScope);
   }, 280);
 }
 
@@ -6360,6 +7397,7 @@ function _adminReadInlineEditRow(tr) {
     acc_division: String(val("acc_division") || "").trim(),
     acc_region: String(val("acc_region") || "").trim(),
     acc_unit: String(val("acc_unit") || "").trim(),
+    acc_scope: String(val("acc_scope") || "").trim(),
     can_import_targetsun: !!val("can_import_targetsun"),
     note: String(val("note") || "").trim(),
   };
@@ -6382,6 +7420,7 @@ async function adminSaveInlineEdit() {
     acc_region: draft.acc_region,
     acc_division: draft.acc_division,
     acc_unit: draft.acc_unit,
+    acc_scope: draft.acc_scope || null,
   };
   if (draft.email !== _adminInlineEdit.origEmail) body.new_email = draft.email;
   if (draft.userpl !== _adminInlineEdit.origUserpl) body.new_userpl = draft.userpl;
@@ -6562,6 +7601,7 @@ function _adminRenderTableRowView(tr, r) {
 function _adminRenderTableRowEdit(tr, edit) {
   const d = edit.draft;
   const lkOpts = ADMIN_LOGIN_KIND_OPTS.map(([v, l]) => [v, ADMIN_ROLE_LABELS[v] || l || v]);
+  const scopeOpts = ADMIN_SCOPE_OPTS;
   const divOpts = ADMIN_DIVISION_OPTS.map((v) => [v, v || "—"]);
   const unitOpts = ADMIN_UNIT_OPTS.map((v) => [v, v || "—"]);
   const visHtml = (edit.visible || [])
@@ -6571,7 +7611,7 @@ function _adminRenderTableRowEdit(tr, edit) {
   tr.innerHTML = `
     <td><input type="email" class="admin-cell-input" data-f="email" value="${escapeHtml(d.email)}" /></td>
     <td><input type="text" class="admin-cell-input admin-cell-input--code" data-f="userpl" value="${escapeHtml(d.userpl)}" /></td>
-    <td>${_adminSelectHtml("adminInlineLk", lkOpts, d.login_kind, "login_kind")}</td>
+    <td class="admin-td-role-stack">${_adminSelectHtml("adminInlineLk", lkOpts, d.login_kind, "login_kind")}${_adminSelectHtml("adminInlineScope", scopeOpts, d.acc_scope, "acc_scope")}</td>
     <td>${_adminSelectHtml("adminInlineDiv", divOpts, d.acc_division, "acc_division")}</td>
     <td><input type="text" class="admin-cell-input" data-f="acc_region" list="adminRegionDatalist" value="${escapeHtml(d.acc_region)}" placeholder="ภูมิภาค" /></td>
     <td>${_adminSelectHtml("adminInlineUnit", unitOpts, d.acc_unit, "acc_unit")}</td>
@@ -6644,17 +7684,28 @@ function escapeHtml(s) {
 async function adminSubmitAdd() {
   const email = (document.getElementById("adminAddEmail")?.value || "").trim();
   const userpl = (document.getElementById("adminAddUserpl")?.value || "").trim().toUpperCase();
+  const loginKind = (document.getElementById("adminAddLoginKind")?.value || "standard").trim();
+  const accDivision = (document.getElementById("adminAddAccDivision")?.value || "").trim();
+  const accRegion = (document.getElementById("adminAddAccRegion")?.value || "").trim();
+  const accScope = (document.getElementById("adminAddAccScope")?.value || "").trim();
   const canTs = !!document.getElementById("adminAddTargetSun")?.checked;
   const note = (document.getElementById("adminAddNote")?.value || "").trim();
   if (!email || !userpl) {
     _adminShowError("กรุณากรอกอีเมลและรหัส SL");
     return;
   }
+  const payload = { email, userpl, can_import_targetsun: canTs, note };
+  if (loginKind && loginKind !== "standard") {
+    payload.login_kind = loginKind;
+  }
+  if (accDivision) payload.acc_division = accDivision;
+  if (accRegion) payload.acc_region = accRegion;
+  if (accScope) payload.acc_scope = accScope;
   try {
     const res = await fetchWithTimeout(`${API_BASE_URL}/admin/user-access`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, userpl, can_import_targetsun: canTs, note }),
+      body: JSON.stringify(payload),
     }, 15000);
     if (!res.ok) {
       let d = "เพิ่มไม่สำเร็จ";
@@ -6671,6 +7722,8 @@ async function adminSubmitAdd() {
     });
     const ts = document.getElementById("adminAddTargetSun");
     if (ts) ts.checked = false;
+    const lk = document.getElementById("adminAddLoginKind");
+    if (lk) lk.value = "standard";
     await adminLoadRows();
   } catch (e) {
     _adminShowError(e?.message || String(e));

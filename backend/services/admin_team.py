@@ -10,6 +10,7 @@ from typing import Any
 import pandas as pd
 from fastapi import HTTPException
 
+from ..core.employee_filter import drop_van_employees
 from ..core.paths import emp_cache_path
 from .access_hierarchy import load_hierarchy_payload, parse_hierarchy_metadata
 
@@ -92,6 +93,7 @@ def _fetch_from_fabric(super_code: str) -> tuple[pd.DataFrame, str]:
 
     fabric = FabricDAXConnector()
     df = fabric.get_employees_by_manager(super_code)
+    df, _ = drop_van_employees(df)
     try:
         sup_name = fabric.get_supervisor_name(super_code)
     except Exception:
@@ -118,6 +120,7 @@ def load_supervisor_team(
     if not force_refresh:
         df_cached, cached_at = _read_fresh_emp_cache(cache_path, ttl)
         if df_cached is not None and not df_cached.empty:
+            df_cached, _ = drop_van_employees(df_cached)
             return {
                 "super_code": sc,
                 "super_name": sup_name,
@@ -136,6 +139,7 @@ def load_supervisor_team(
     except Exception as e:
         df_stale, cached_at = _read_fresh_emp_cache(cache_path, ttl_sec=10**9)
         if df_stale is not None and not df_stale.empty:
+            df_stale, _ = drop_van_employees(df_stale)
             logger.warning("Fabric failed — stale emp cache %s: %s", cache_path, e)
             return {
                 "super_code": sc,

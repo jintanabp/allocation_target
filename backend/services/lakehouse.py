@@ -430,12 +430,11 @@ def _normalize_allocation_payload(df: pd.DataFrame) -> pd.DataFrame:
     if "warehouse_code" not in df.columns:
         df = df.copy()
         df["warehouse_code"] = ""
+    df = df.copy()
+    df["warehouse_code"] = df["warehouse_code"].fillna("").astype(str).str.strip()
     g = (
-        df.groupby(["emp_id", "sku"], as_index=False)
-        .agg(
-            allocated_boxes=("allocated_boxes", "sum"),
-            warehouse_code=("warehouse_code", "first"),
-        )
+        df.groupby(["emp_id", "sku", "warehouse_code"], as_index=False)
+        .agg(allocated_boxes=("allocated_boxes", "sum"))
         .reset_index(drop=True)
     )
     g["allocated_boxes"] = g["allocated_boxes"].astype(int)

@@ -32,7 +32,7 @@ def _norm_wh(val: Any) -> str:
 
 
 def warehouses_per_emp_from_tga(df_tga: pd.DataFrame | None) -> dict[str, list[str]]:
-    """emp_id → รายการ WH ที่ไม่ซ้ำ (เรียง) จาก TGA grain"""
+    """emp_id → รายการ WH ที่ไม่ซ้ำ (เรียง) จาก TGA grain — ไม่นับคลังว่าง"""
     if df_tga is None or df_tga.empty:
         return {}
     d = df_tga.copy()
@@ -42,10 +42,10 @@ def warehouses_per_emp_from_tga(df_tga: pd.DataFrame | None) -> dict[str, list[s
     d["warehouse_code"] = d["warehouse_code"].map(_norm_wh)
     out: dict[str, set[str]] = {}
     for emp, wh in zip(d["emp_id"], d["warehouse_code"]):
-        if not emp:
+        if not emp or not wh:
             continue
         out.setdefault(emp, set()).add(wh)
-    return {e: sorted(ws, key=lambda x: (x == "", x)) for e, ws in out.items()}
+    return {e: sorted(ws) for e, ws in out.items()}
 
 
 def tga_value_by_emp_wh(

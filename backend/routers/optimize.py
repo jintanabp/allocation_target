@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Query
 
-from ..deps import ensure_supervisor_allowed, require_authenticated_user
+from ..deps import ensure_own_supervisor_write, ensure_supervisor_allowed, require_authenticated_user
 from ..schemas import OptimizeRequest
 from ..services.optimize import run_optimization_service
 
@@ -16,6 +16,7 @@ def run_optimization(
     target_year: int = Query(..., ge=2020, le=2100),
 ):
     ensure_supervisor_allowed(user, sup_id)
+    ensure_own_supervisor_write(user, sup_id)
     return run_optimization_service(
         req=req,
         sup_id=sup_id,

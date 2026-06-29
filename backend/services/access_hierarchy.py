@@ -178,6 +178,10 @@ def compute_visible_supervisors_for_row(
             return _mgr_team(allowed)
 
     if login_kind == "supervisor_acc":
+        if scope == "region_peers" and div and region:
+            peers = division_index.get((div, region), set())
+            if peers:
+                return sorted(peers)
         return [upl] if upl else []
 
     if upl:

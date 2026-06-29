@@ -9,6 +9,8 @@ import os
 from pathlib import Path
 
 from fastapi.staticfiles import StaticFiles
+from starlette.staticfiles import StaticFiles as StarletteStaticFiles
+from starlette.types import Scope
 
 from .app_factory import create_app
 from .load_env import load_project_dotenv
@@ -40,6 +42,18 @@ logging.basicConfig(
 
 app = create_app()
 
+
+class _NoCacheFrontendStaticFiles(StarletteStaticFiles):
+    """ห้าเบราว์เซอร์ cache JS/CSS เก่าหลัง Run_Local — มักทำให้ Step 2 ยังโชว์คนไม่มีเป้า"""
+
+    async def get_response(self, path: str, scope: Scope):
+        response = await super().get_response(path, scope)
+        if path.endswith((".js", ".css", ".html")) or path in ("", "index.html"):
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+        return response
+
+
 _DOCS_DIR = Path(__file__).resolve().parent.parent / "docs"
 if _DOCS_DIR.is_dir():
     app.mount("/docs", StaticFiles(directory=str(_DOCS_DIR)), name="docs")
@@ -47,7 +61,11 @@ if _DOCS_DIR.is_dir():
 # เสิร์ฟ frontend จาก http://127.0.0.1:8000/ (ลงท้าย — ให้ API routes ถูกจับก่อน)
 _FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 if _FRONTEND_DIR.is_dir():
-    app.mount("/", StaticFiles(directory=str(_FRONTEND_DIR), html=True), name="frontend")
+    app.mount(
+        "/",
+        _NoCacheFrontendStaticFiles(directory=str(_FRONTEND_DIR), html=True),
+        name="frontend",
+    )
 
 
 if __name__ == "__main__":

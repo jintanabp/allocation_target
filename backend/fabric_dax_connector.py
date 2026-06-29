@@ -1542,8 +1542,19 @@ CALCULATETABLE(
                 "sku": sku,
                 "qty": qty,
             }
-            for alias, _col in dim_items:
-                rec[alias] = str(self._get(r, f"[{alias}]", alias, default="") or "").strip()
+            for alias, col in dim_items:
+                rec[alias] = str(
+                    self._get(
+                        r,
+                        f"{t}[{col}]",
+                        f"'{t}'[{col}]",
+                        f"[{col}]",
+                        f"[{alias}]",
+                        alias,
+                        default="",
+                    )
+                    or ""
+                ).strip()
             records.append(rec)
 
         df = pd.DataFrame(records) if records else pd.DataFrame(columns=empty_cols)

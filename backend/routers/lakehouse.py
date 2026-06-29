@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 
 from ..deps import (
+    ensure_own_supervisor_write,
     ensure_supervisor_allowed,
     ensure_targetsun_import_allowed,
     require_authenticated_user,
@@ -24,6 +25,7 @@ def export_lakehouse_csv(
 ):
     """ดาวน์โหลด Excel (.xlsx) รูปแบบ tga_target_salesman_next (รวม QUANTITYCASE=0)"""
     ensure_supervisor_allowed(user, req.sup_id)
+    ensure_own_supervisor_write(user, req.sup_id)
     out = export_allocations_excel(req)
     return Response(
         content=out["content"],
@@ -43,6 +45,7 @@ def upload_to_lakehouse(
     user: dict = Depends(require_authenticated_user),
 ):
     ensure_supervisor_allowed(user, req.sup_id)
+    ensure_own_supervisor_write(user, req.sup_id)
     return upload_allocations_to_lakehouse(req)
 
 
@@ -53,6 +56,7 @@ def prepare_targetsun_from_allocations(
 ):
     """ขั้นที่ 1: สร้าง Excel TGA เก็บชั่วคราว — คืน prepare_token สำหรับขั้นส่ง"""
     ensure_supervisor_allowed(user, req.sup_id)
+    ensure_own_supervisor_write(user, req.sup_id)
     ensure_targetsun_import_allowed(user)
     return prepare_targetsun_import(req)
 
@@ -68,6 +72,7 @@ def import_targetsun_from_allocations(
     - ไม่มี: สร้าง Excel + POST ในคำขอเดียว (เดิม)
     """
     ensure_supervisor_allowed(user, req.sup_id)
+    ensure_own_supervisor_write(user, req.sup_id)
     ensure_targetsun_import_allowed(user)
     if (req.prepare_token or "").strip():
         return import_prepared_targetsun(req)
