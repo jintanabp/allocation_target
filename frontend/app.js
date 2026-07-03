@@ -1779,9 +1779,14 @@ function _managerAggregateWritable() {
   );
 }
 
-/** โหมดรวมที่ปิดการแก้ไข/กระจาย (ซุปไม่ใช้ aggregate; manager ยกเว้น) */
+/** โหมดรวมที่ปิดการแก้ไข/กระจาย (ซุปไม่ใช่ aggregate; manager ยกเว้น) */
 function _aggregateBlocksWrite() {
   return !!S.aggregateMode && !_managerAggregateWritable();
+}
+
+/** Step 2 — ปิดแก้เป้าเงินเมื่อดูทีมอื่น/สแนปช็อต หรือโหมดรวมภาค (ซุป) */
+function _isStep2ReadOnlyView() {
+  return _isAllocReadOnlyView() || _aggregateBlocksWrite();
 }
 
 function _employeesGroupedBySupervisor() {
@@ -3326,7 +3331,7 @@ function syncPeerReadOnlyUI() {
 }
 
 function syncStep2ReadOnlyUI() {
-  const ro = _isAllocReadOnlyView();
+  const ro = _isStep2ReadOnlyView();
   document.body.classList.toggle("is-step2-readonly", ro);
 
   const selectors = [
@@ -3358,9 +3363,11 @@ function syncStep2ReadOnlyUI() {
   if (roNotice) {
     if (ro) {
       roNotice.style.display = "block";
-      roNotice.textContent = S.viewingPeer
-        ? "โหมดดูผลกระจายทีมอื่น — แก้เป้าเงินไม่ได้ · สลับกลับทีมของคุณเพื่อแก้ไข"
-        : "โหมดดูอย่างเดียว — แก้เป้าเงินไม่ได้ · สลับทีมเพื่อแก้ไข";
+      roNotice.textContent = _aggregateBlocksWrite()
+        ? "โหมดดูรวมทั้งภาค — แก้เป้าเงินไม่ได้ · สลับ「รายคน」เพื่อแก้ไข"
+        : S.viewingPeer
+          ? "โหมดดูผลกระจายทีมอื่น — แก้เป้าเงินไม่ได้ · สลับกลับทีมของคุณเพื่อแก้ไข"
+          : "โหมดดูอย่างเดียว — แก้เป้าเงินไม่ได้ · สลับทีมเพื่อแก้ไข";
     } else {
       roNotice.style.display = "none";
     }
@@ -4460,7 +4467,7 @@ function _yellowRowHtml(e, opts = {}) {
   if (!opts.groupHeader && !_isAllocEligible(e)) return "";
   const ySum = sumYellow();
   const showBui = !!S.buiColumnOpen && !_aggregateBlocksWrite();
-  const readOnly = _isAllocReadOnlyView() || _aggregateBlocksWrite();
+  const readOnly = _isStep2ReadOnlyView();
   const akey = _allocKey(e);
   const y = opts.displayYellow != null ? opts.displayYellow : (S.yellow[akey] || 0);
   const ly = e.ly_sales || 0;
@@ -4604,7 +4611,7 @@ function renderYellowTable() {
 }
 
 function onYellowChange(input) {
-  if (_isAllocReadOnlyView()) return;
+  if (_isStep2ReadOnlyView()) return;
   const akey = input.dataset.allocKey || input.dataset.emp;
   const val = Math.max(0, parseFloat(input.value.replace(/,/g, "")) || 0);
 
@@ -4647,14 +4654,14 @@ function onYellowChange(input) {
 }
 
 function unlockYellow(allocKey) {
-  if (_isAllocReadOnlyView()) return;
+  if (_isStep2ReadOnlyView()) return;
   delete S.yellowLocked[allocKey];
   renderYellowTable();
   updateValidation();
 }
 
 function resetYellowToTargetSun() {
-  if (_isAllocReadOnlyView()) return;
+  if (_isStep2ReadOnlyView()) return;
   if (!S.employees || S.employees.length === 0) {
     toast("ยังไม่มีรายชื่อพนักงาน — โหลดข้อมูล Step 1 ก่อน", "red");
     return;
@@ -8490,7 +8497,7 @@ function _manualGoTo(idx) {
    STEP 2 — บิวเทรี่ยม (deduction column)
 ════════════════════════════════════════════════════════════════════════════ */
 function toggleBuiColumn() {
-  if (_isAllocReadOnlyView()) return;
+  if (_isStep2ReadOnlyView()) return;
   S.buiColumnOpen = !S.buiColumnOpen;
   const btn = document.getElementById("toggleBuiBtn");
   const hint = document.getElementById("buiHint");
@@ -8508,7 +8515,7 @@ function toggleBuiColumn() {
 }
 
 function onBuiChange(input) {
-  if (_isAllocReadOnlyView()) return;
+  if (_isStep2ReadOnlyView()) return;
   const emp = input.dataset.emp;
   const val = Math.max(0, parseFloat(String(input.value).replace(/,/g, "")) || 0);
   if (val > 0) S.buiDeductions[emp] = val;
