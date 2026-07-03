@@ -1570,6 +1570,7 @@ async function _finalizeDashboardAfterLoad(gen) {
 
   renderStep1();
   renderYellowTable();
+  _updateAggregateModeUI();
   updateSupervisorSwitcherUI();
   syncViewingPeerState();
   updateValidation();
@@ -1779,9 +1780,20 @@ function _managerAggregateWritable() {
   );
 }
 
+/** Supervisor เลือกมุมมอง「ทั้งภาค」— ดูอย่างเดียว (ไม่พึ่ง aggregate_mode จาก API อย่างเดียว) */
+function _supervisorRegionAggregateView() {
+  return (
+    S.loginRole === "supervisor"
+    && S.managerViewMode === "region"
+    && _supervisorRegionPeersView()
+  );
+}
+
 /** โหมดรวมที่ปิดการแก้ไข/กระจาย (ซุปไม่ใช่ aggregate; manager ยกเว้น) */
 function _aggregateBlocksWrite() {
-  return !!S.aggregateMode && !_managerAggregateWritable();
+  if (_managerAggregateWritable()) return false;
+  if (_supervisorRegionAggregateView()) return true;
+  return !!S.aggregateMode;
 }
 
 /** Step 2 — ปิดแก้เป้าเงินเมื่อดูทีมอื่น/สแนปช็อต หรือโหมดรวมภาค (ซุป) */
@@ -1907,8 +1919,12 @@ async function onManagerViewModeChange() {
     }
   } else if (mode === "individual") {
     S.supId = _resolveIndividualSupId();
+    S.aggregateMode = false;
+    S.aggregateSupIds = [];
   }
   updateManagerViewControlsUI();
+  _updateAggregateModeUI();
+  renderYellowTable();
   _populateSupervisorSwitchSelect();
   if (mode === "region" && S.loginRole === "manager"
       && S.managerViewOptions?.scope_kind === "division" && !S.managerViewRegion) {
@@ -4515,14 +4531,13 @@ function _yellowRowHtml(e, opts = {}) {
         ${e.emp_name ? `<span style="font-size:11px;color:var(--text-3);margin-left:4px;">${escH(e.emp_name)}</span>` : ""}
         ${lockIcon}
       </td>`;
-  const yellowInput = opts.groupHeader
-    ? `<td class="r mono">${baht(y)}</td>`
+  const yellowInput = opts.groupHeader || readOnly
+    ? `<td class="r mono${readOnly && !opts.groupHeader ? " step2-yellow-readonly" : ""}">${baht(y)}</td>`
     : `<td class="r">
         <input class="cell-input" type="text" inputmode="numeric"
           style="${isLocked ? 'color:var(--amber); border-color:var(--amber);' : ''}"
           value="${fmt(y)}"
           data-alloc-key="${escH(akey)}"
-          ${readOnly ? "readonly disabled" : ""}
           onfocus="this.value = this.value.replace(/,/g, '')"
           onblur="onYellowChange(this)"/>
       </td>`;

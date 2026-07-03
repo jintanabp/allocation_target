@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 TARGETSUN_PROD_BASE = "https://spcws.sahapat.com/spc/targetsun"
 TARGETSUN_UAT_BASE = "https://spcuatws.sahapat.com/spc/targetsun"
 
-# Default ช่วงทดสอบก่อน go-live: อ่านเป้า Prod · ส่งผล UAT
+# Default: UAT ทั้งคู่ (อ่านเป้า + ส่งผล)
 TARGETSUN_READ_API_BASE = TARGETSUN_UAT_BASE
 TARGETSUN_IMPORT_API_BASE = TARGETSUN_UAT_BASE
 

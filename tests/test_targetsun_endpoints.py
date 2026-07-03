@@ -16,11 +16,11 @@ from backend.services import app_runtime_settings as ars  # noqa: E402
 
 
 class TestTargetSunEndpointSplit(unittest.TestCase):
-    def test_code_defaults_read_prod_send_uat(self):
+    def test_code_defaults_read_uat_send_uat(self):
         read_b, import_b = tse._code_default_bases()
-        self.assertIn("spcws", read_b)
+        self.assertIn("spcuatws", read_b)
         self.assertIn("spcuatws", import_b)
-        self.assertNotEqual(read_b, import_b)
+        self.assertEqual(read_b, import_b)
 
     def test_import_url_uses_import_base_not_read(self):
         with patch.object(tse, "resolve_endpoint_bases", return_value=(

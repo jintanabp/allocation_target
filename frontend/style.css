@@ -6040,11 +6040,13 @@ body.is-admin-login-only #msLogoutBtn {
 }
 
 .is-step2-readonly #step2Table .cell-input:disabled,
-.is-step2-readonly #step2Table .step2-bui-input:disabled {
+.is-step2-readonly #step2Table .step2-bui-input:disabled,
+.is-step2-readonly #step2Table .step2-yellow-readonly {
   opacity: 1;
   color: var(--text-1);
   background: var(--bg-main);
   cursor: default;
+  pointer-events: none;
 }
 
 .is-step2-readonly #step2Section .editable-th::after {
