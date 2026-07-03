@@ -5,6 +5,14 @@
 
 **การใช้งานจริง:** พัฒนาแล้ว **push ขึ้น GitHub** → server บริษัท deploy อัตโนมัติ — ผู้ใช้เปิด URL บน server (ไม่ต้องติดตั้งแอปบนเครื่องตัวเอง) · ดู [Deploy ผ่าน GitHub → Server บริษัท](#deploy-ผ่าน-github--server-บริษัท-แนวทางหลัก)
 
+### อัปเดตล่าสุด (ก.ค. 2026)
+
+- **MSAL localStorage** — เปิดเบราว์เซอร์ใหม่ยังล็อกอิน Microsoft ได้ (จนกว่า token หมดอายุ) · ปุ่ม **ออกจากบัญชี Microsoft** บนหน้า login
+- **แอดมิน** — หลังล็อกอิน MS เห็นปุ่ม **เข้าสู่ระบบแอดมิน** อย่างเดียว (ไม่ต้องเลือก Supervisor/งวด)
+- **ผูกรหัส SKU** — catalog ใช้งวดปัจจุบันอัตโนมัติ (ไม่ต้องเลือกเดือน/ปี)
+- **ดูผลกระจาย peer** — สลับดูทีมอื่นในภาคโหลดเฉพาะ snapshot ผลกระจาย (ไม่ดึง Fabric ทั้งก้อน) · สรุปทุก SL มี cache/prefetch
+- **UX** — ปุ่ม Dashboard ปิดจนกว่าล็อกอิน MS, มือถือจัด header/sup-switch แนวตั้ง
+
 ---
 
 ## โครงสร้างโฟลเดอร์
@@ -160,9 +168,9 @@ allocation_target/
 | `MANAGERS_CACHE_TTL_SEC` | `86400` | อายุ cache ของ `GET /managers` (วินาที) — หมดอายุแล้วจะลองดึงจาก Fabric ใหม่ |
 | `ENABLE_DEBUG_ENDPOINTS` | ปิด | ตั้งเป็น `1` / `true` / `yes` เพื่อเปิด `GET /debug/fabric` (ใช้เฉพาะตอนวินิจฉัย) |
 | `USE_LEGACY_TARGET_CSV` | ปิด | **dev เท่านั้น** — ตั้ง `1` ถ้ามี `data/target_boxes.csv` + `target_sun.csv` วางมือเองแทนการดึงเป้าจาก Fabric (ไม่มี UI อัปโหลดในแอป) |
-| `LP_HIST_ANCHOR` | `0.15` | น้ำหนัก anchor ประวัติในกลยุทธ์ **LP** (`backend/OR_engine.py`) |
 | `TGA_TABLE_NAME`, `TGA_COL_*`, `TGA_FILTER_BY_EFFECTIVE`, **`TGA_EFFECTIVE_IMPLIED_TARGET`** (`same`\|`next`), `TGA_ENFORCE_EFFECTIVE_WINDOW`, `TGA_COL_EFFECTIVE_FALLBACK` | `fabric_dax_connector.py`, `backend/core/tga_period.py`, `config/.env.example` | เป้า TGA และกติกางวดจาก **EFFECTIVEDATE** (ค่าเริ่มต้น `same` = งวดเป้าตรงเดือนเดียวกับวันที่อ้างอิง; `next` = เดือนถัดจากวันที่เหมือนพฤติกรรมเก่า); fallback `UPDATEDATE` เมื่อ EFFECTIVEDATE ว่าง |
-| **`TARGETSUN_IMPORT_EXCEL_URL`**, `TARGETSUN_IMPORT_TIMEOUT_SEC`, `TARGETSUN_IMPORT_VERIFY_SSL`, `TARGETSUN_IMPORT_AUTH_HEADER` | `config/.env.example`, `backend/services/targetsun_import.py` | หลังกระจายหีบแล้ว **ส่งไฟล์รูปแบบ TGA** ไป API ฝั่ง SPC (Oracle ที่ service กำหนด — ไม่ต่อ DB จากโค้ดแอปนี้) — รายละเอียดใน `targetsun-importTargetSalesmanNextFromExcel.md` |
+| **Target Sun Read/Send URL** | `backend/services/targetsun_endpoints.py`, `config/app_runtime.json` | **ไม่ใช่ .env** — อ่านเป้า (Read) กับส่งผล (Import) แยก host ได้; สลับ preset จากแอดมิน (ทดสอบ: อ่าน Prod · ส่ง UAT) |
+| `TARGETSUN_IMPORT_TIMEOUT_SEC`, `TARGETSUN_IMPORT_VERIFY_SSL`, `TARGETSUN_IMPORT_AUTH_HEADER` | `config/.env.example`, `backend/services/targetsun_import.py` | หลังกระจายหีบแล้ว **ส่งไฟล์รูปแบบ TGA** ไป API ฝั่ง SPC — URL มาจาก `targetsun_endpoints.py` + runtime preset |
 | **`LAKEHOUSE_COL_*`**, `ONELAKE_*` | `config/.env.example`, `backend/services/lakehouse.py` | ชื่อคอลัมน์ grain + **`POST /lakehouse/upload`** ส่ง CSV เข้า OneLake (API เท่านั้น — ไม่มีปุ่มใน UI; ผู้ใช้ทั่วไปใช้ **ส่งเข้า Target Sun**) |
 
 ### ล็อกอิน Microsoft (Entra) และสิทธิ์จาก roster
@@ -190,8 +198,8 @@ allocation_target/
 | `ALLOCATION_ADMIN_EMAILS` | ทางเลือก — รายการอีเมล (คั่นด้วย comma) ที่เข้ามองได้ทุกรหัสและเรียก API ได้ทุก `sup_id` |
 | `SL_LINKS_JSON_PATH` | ทางเลือก — path แทน `config/sl_links.json` (ผูกรหัส SL) |
 | `SKU_LINKS_JSON_PATH` | ทางเลือก — path แทน `config/sku_links.json` (ผูกรหัส SKU) |
-| `ALLOCATION_ALLOW_ACC_DEV_JSON` + `ACC_USER_CONTROL_DEV_JSON` | ทางเลือก **dev เท่านั้น** — เปิดเป็น `1` และชี้ path JSON จำลอง (legacy dev; สิทธิจริงใช้ `user_access.json`) |
-| **`config/acc_local_test.json`** | ไม่ใช่ env — รายการ `{email, userpl}` สำหรับ dev; **อีเมลในไฟล์นี้** (และ path ใน `ACC_USER_CONTROL_DEV_JSON` ถ้ามี) ใช้กำหนด **ใครกดส่ง Target Sun ได้** คู่กับ `ALLOCATION_ADMIN_EMAILS` (ดูหัวข้อด้านล่าง) |
+| `ALLOCATION_ALLOW_ACC_DEV_JSON` + `ACC_USER_CONTROL_DEV_JSON` | ทางเลือก **dev เท่านั้น** — legacy dev JSON (สิทธิจริงใช้ `user_access.json`) |
+| `can_import_targetsun` ใน `user_access.json` | กำหนดใครกด **ส่งเข้า Target Sun** ได้ (แอดมินแก้ผ่าน UI หรือ import script) |
 | `AZURE_AUTH_DISABLED=1` | ปิดการบังคับล็อกอิน (ใช้ตอนพัฒนา) |
 
 **ถ้า Sign-in ขึ้น `AADSTS50011` (redirect URI mismatch):** ใน Entra ให้ใส่ Redirect URI ให้ตรงกับที่แอปส่ง — ค่าเริ่มต้นคือ **`http://localhost:8000/`** (มี `/` ท้าย) ภายใต้ **Single-page application**
@@ -342,18 +350,17 @@ API `POST /optimize` และไฟล์ Excel สามารถมีฟิ�
 | ใคร | กระจายหีบ / ใช้แอป | กด **ส่งเข้า Target Sun** |
 |-----|---------------------|---------------------------|
 | อีเมลใน **`ALLOCATION_ADMIN_EMAILS`** | ✅ (ทุกรหัส) | ✅ |
-| อีเมลใน **`config/acc_local_test.json`** (หรือไฟล์ที่ `ACC_USER_CONTROL_DEV_JSON` ชี้) | ✅ (ตาม ACC / dev JSON) | ✅ |
+| แถวใน **`user_access.json`** ที่ `can_import_targetsun: true` | ✅ (ตาม USERPL) | ✅ |
 | ผู้ใช้อื่นที่ล็อกอินได้ | ✅ | ❌ ปุ่มเทา / API 403 |
 
-- ไม่ต้องตั้ง env แยกสำหรับ allowlist — **แก้รายชื่ออีเมลใน JSON** แล้วรีสตาร์ท server
-- รูปแบบ JSON: `[{"email":"user@sahapat.co.th","userpl":"SL330"}, ...]`
+- แก้สิทธิส่งผ่านแอดมินแท็บ **จัดการสิทธิ์** หรือแก้ JSON แล้วรีสตาร์ท server
 - **`POST /lakehouse/export-csv`** (ดาวน์โหลด Excel อย่างเดียว) — ยังใช้ได้ตามสิทธิ์ Supervisor ปกติ (ไม่จำกัดแคบเท่าการส่ง)
 - Frontend อ่าน **`can_import_targetsun`** จาก **`GET /managers`** หลังล็อกอิน
 
 ### ส่งผลเข้า TargetSun (SPC)
 
 - กด **📤 ส่งเข้า Target Sun** → ใน modal กด **ส่งเข้า Target Sun** (ไม่ต้องแนบไฟล์) → **`POST /lakehouse/import-targetsun`**
-- Backend สร้าง Excel ในหน่วยความจำ (ใช้ **xlsxwriter** ถ้าติดตั้งแล้ว) แล้ว POST **multipart** ไป **`TARGETSUN_IMPORT_EXCEL_URL`** (ค่าเริ่มต้น UAT — ดู `targetsun-importTargetSalesmanNextFromExcel.md`)
+- Backend สร้าง Excel ในหน่วยความจำ (ใช้ **xlsxwriter** ถ้าติดตั้งแล้ว) แล้ว POST **multipart** ไป URL จาก **`targetsun_import_excel_url()`** (ค่าเริ่มต้นช่วงทดสอบ: UAT — สลับ preset ในแอดมินก่อน go-live)
 - **แอปไม่เชื่อม Oracle โดยตรง** — insert/update อยู่ฝั่งบริการ SPC หลัง import สำเร็จ
 - คู่ที่ไม่มี grain ใน TGA ณ ตอนส่ง → **ไม่ส่ง** และแสดงจำนวนใน response / modal (**ไม่มีใน Target Sun ณ ตอนนี้**)
 - **Performance (ดู `data/app.log`):** แยกเวลา `build_xlsx` (เตรียมข้อมูล + Excel) กับ `post_upstream` (รอ UAT) — ถ้า grain cache ครบทุกแถว ระบบข้าม Fabric DAX ซ้ำ; ถ้ายังมีแถว dim ว่างจะดึง Fabric ~2–3 วินาทีก่อนส่ง
@@ -444,7 +451,7 @@ Swagger UI: `<URL แอปบน server>/docs`
 | Step 1 โหลดไม่ได้ / เป้าว่าง | Fabric ไม่ตอบหรือไม่มีเป้า TGA งวดนั้น | ตรวจ dataset / งวด; ดู `data/app.log` และ `GET /debug/fabric` (ถ้าเปิด) |
 | Dropdown Supervisor ว่าง | ไม่มีสิทธิ / hierarchy ไม่ตรง / รหัสใหม่ยังไม่มีทีม | ตรวจ `user_access.json`, `access_hierarchy.json`; ใช้ **ผูกรหัส SL** ถ้าเป็นรหัสใหม่แทนเก่า |
 | ล็อกอินรหัส SL ใหม่แล้วไม่มีทีม | ยังไม่ผูกกับรหัสเก่า หรือ Fabric ไม่มีพนักงานใต้ SuperCode นั้น | แอดมิน → **ผูกรหัส SL** (เช่น SL524 → SL508) · เลือก Supervisor ที่มีพนักงานจริง (เช่น SL532) |
-| แท็บสินค้าในแอดมินว่าง | ยังไม่มี cache งวดนั้น | เปิด Dashboard โหลด Step 1 ก่อน แล้วกลับแท็บ **ผูกรหัส SKU** |
+| แท็บสินค้าในแอดมินว่าง / 422 | server เก่าหรือยังไม่มีเป้างวด | **รีสตาร์ท server** หลัง deploy; แท็บ SKU ใช้งวดปัจจุบันอัตโนมัติ |
 | ส่งเข้า TargetSun แล้ว **502 / Timeout / SSL error** | server → UAT ไม่ถึง / SSL | ตรวจ `TARGETSUN_IMPORT_*` ใน `config/.env` บน server; ดู `data/app.log` (`post_upstream`) |
 | ปุ่ม **ส่งเข้า Target Sun** เป็นสีเทา | ไม่มีสิทธิส่ง หรือยังไม่มีผลขั้นที่ 3 | ตั้ง `can_import_targetsun` ใน `user_access.json` หรือ `ALLOCATION_ADMIN_EMAILS`; กด "เริ่มคำนวณ" ก่อน |
 | ส่งแล้วแจ้ง **ไม่มีใน Target Sun** บางคู่ | ไม่มี grain ใน cache ขั้นที่ 1 | โหลด Step 1 ใหม่ แล้วกระจายหีบอีกครั้ง |

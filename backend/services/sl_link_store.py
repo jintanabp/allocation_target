@@ -34,21 +34,28 @@ def normalize_sl(s: str | None) -> str:
 def _normalize_link(row: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(row, dict):
         return None
-    canonical = normalize_sl(row.get("canonical_sl"))
-    if not canonical:
+    old_sl = normalize_sl(row.get("old_sl") or row.get("canonical_sl"))
+    if not old_sl:
         return None
+    new_raw = row.get("new_sls")
+    new_sls: list[str] = []
+    if isinstance(new_raw, list):
+        for a in new_raw:
+            aa = normalize_sl(a)
+            if aa and aa != old_sl and aa not in new_sls:
+                new_sls.append(aa)
     aliases_raw = row.get("alias_sls")
-    aliases: list[str] = []
     if isinstance(aliases_raw, list):
         for a in aliases_raw:
             aa = normalize_sl(a)
-            if aa and aa not in aliases:
-                aliases.append(aa)
-    if canonical not in aliases:
-        aliases.insert(0, canonical)
+            if aa and aa != old_sl and aa not in new_sls:
+                new_sls.append(aa)
+    alias_sls = [old_sl, *new_sls]
     out: dict[str, Any] = {
-        "canonical_sl": canonical,
-        "alias_sls": aliases,
+        "old_sl": old_sl,
+        "canonical_sl": old_sl,
+        "new_sls": new_sls,
+        "alias_sls": alias_sls,
         "note": str(row.get("note") or "").strip(),
     }
     updated_by = str(row.get("updated_by") or "").strip()
@@ -65,7 +72,7 @@ def validate_links(links: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for raw in links:
         row = _normalize_link(raw)
         if not row:
-            raise ValueError("แถวผูกรหัส SL ไม่ถูกต้อง (ต้องมี canonical_sl)")
+            raise ValueError("แถวผูกรหัส SL ไม่ถูกต้อง (ต้องมี old_sl / canonical_sl)")
         canon = row["canonical_sl"]
         if canon in seen_canonical:
             raise ValueError(f"canonical_sl ซ้ำ: {canon}")
@@ -106,7 +113,13 @@ def read_links_unlocked() -> list[dict[str, Any]]:
         raise PermissionError(f"รูปแบบ sl_links JSON ไม่ถูกต้อง: {path}")
     if not isinstance(links, list):
         raise PermissionError("รูปแบบ sl_links JSON ไม่ถูกต้อง (links ต้องเป็น array)")
-    return validate_links(links)
+    cleaned: list[dict[str, Any]] = []
+    for item in links:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("old_sl") or item.get("canonical_sl") or "").strip():
+            cleaned.append(item)
+    return validate_links(cleaned)
 
 
 def read_links() -> list[dict[str, Any]]:
@@ -174,6 +187,44 @@ def hierarchy_manager_code(code: str, links: list[dict[str, Any]] | None = None)
     return resolve_to_canonical(code, links)
 
 
+def manager_codes_to_exclude_from_team(
+    manager_code: str,
+    manager_pick: set[str] | list[str],
+    links: list[dict[str, Any]] | None = None,
+) -> set[str]:
+    """
+    รหัส Manager ที่ไม่ควรอยู่ในรายการ Supervisor ใต้ manager_code
+    (รหัสที่ล็อกอิน + รหัสเก่าที่ผูก sl_links) — ไม่ตัด Manager ทั้งองค์กร
+    """
+    mgr = normalize_sl(manager_code)
+    picks = {normalize_sl(c) for c in manager_pick if normalize_sl(c)}
+    old = hierarchy_manager_code(mgr, links)
+    out = {mgr}
+    if old:
+        out.add(old)
+    out &= picks | {old, mgr}
+    return out
+
+
+def supervisor_team_for_manager(
+    team: list[str],
+    manager_code: str,
+    manager_pick: set[str] | list[str],
+    links: list[dict[str, Any]] | None = None,
+) -> list[str]:
+    """ทีม Supervisor จริง — ตัดเฉพาะรหัส Manager ที่เกี่ยวข้อง (ไม่รวม Sup ที่มีทีม)"""
+    picks = {normalize_sl(c) for c in manager_pick if normalize_sl(c)}
+    exclude = manager_codes_to_exclude_from_team(manager_code, picks, links)
+    exclude |= {normalize_sl(c) for c in team if normalize_sl(c) in picks}
+    return sorted(
+        {
+            normalize_sl(c)
+            for c in team
+            if normalize_sl(c) and normalize_sl(c) not in exclude
+        }
+    )
+
+
 def find_link(canonical_sl: str, links: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
     canon = normalize_sl(canonical_sl)
     for row in links or read_links():
@@ -222,7 +273,69 @@ def upsert_link(
 
 def delete_link(links: list[dict[str, Any]], canonical_sl: str) -> list[dict[str, Any]]:
     canon = normalize_sl(canonical_sl)
-    kept = [r for r in links if r["canonical_sl"] != canon]
+    kept = [r for r in links if r.get("old_sl") != canon and r.get("canonical_sl") != canon]
     if len(kept) == len(links):
         raise ValueError(f"ไม่พบกลุ่มผูกรหัส SL: {canon}")
     return write_links(kept)
+
+
+def link_row_for_api(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "old_sl": row.get("old_sl") or row.get("canonical_sl"),
+        "new_sls": list(row.get("new_sls") or []),
+        "canonical_sl": row.get("canonical_sl"),
+        "alias_sls": list(row.get("alias_sls") or []),
+        "note": row.get("note") or "",
+        "updated_by": row.get("updated_by") or "",
+    }
+
+
+def preferred_login_manager_code(
+    manager_codes: set[str] | list[str],
+    links: list[dict[str, Any]] | None = None,
+) -> str | None:
+    """เลือกรหัส Manager ที่ควร default ตอน login — ให้รหัสใหม่ก่อนรหัสเก่า"""
+    codes = {normalize_sl(c) for c in manager_codes if normalize_sl(c)}
+    if not codes:
+        return None
+    data = links if links is not None else read_links()
+    for row in data:
+        for new_sl in row.get("new_sls") or []:
+            n = normalize_sl(new_sl)
+            if n in codes:
+                return n
+    return sorted(codes)[0]
+
+
+def manager_pick_label(code: str, links: list[dict[str, Any]] | None = None) -> str:
+    """ป้าย login สำหรับ Manager — ระบุรหัสใหม่/เก่าถ้ามีการผูก"""
+    c = normalize_sl(code)
+    data = links if links is not None else read_links()
+    for row in data:
+        old = normalize_sl(row.get("old_sl") or row.get("canonical_sl"))
+        new_set = {normalize_sl(x) for x in (row.get("new_sls") or [])}
+        if c in new_set:
+            return f"{c} (Manager · รหัสใหม่)"
+        if c == old and new_set:
+            return f"{c} (Manager · รหัสเก่า)"
+    return f"{c} (Manager)"
+
+
+def sync_by_manager_for_sl_links(
+    by_manager: dict[str, list[str]],
+    manager_codes: set[str] | list[str],
+    links: list[dict[str, Any]] | None = None,
+) -> dict[str, list[str]]:
+    """คัดลอกทีมจากรหัสเก่าไปรหัสใหม่เมื่อ manager ล็อกอินด้วยรหัสใหม่"""
+    out = {k: list(v) for k, v in by_manager.items()}
+    codes = {normalize_sl(c) for c in manager_codes if normalize_sl(c)}
+    for row in links or read_links():
+        old = normalize_sl(row.get("old_sl") or row.get("canonical_sl"))
+        team = out.get(old) or []
+        if not team:
+            continue
+        for new_sl in row.get("new_sls") or []:
+            n = normalize_sl(new_sl)
+            if n in codes:
+                out[n] = list(team)
+    return out

@@ -20,17 +20,9 @@ from requests import exceptions as req_exc
 
 from ..schemas import LakehouseUploadRequest
 from .lakehouse import prepare_lakehouse_xlsx
+from .targetsun_endpoints import targetsun_import_excel_url
 
 logger = logging.getLogger("target_allocation")
-
-"""TEST"""
-_DEFAULT_UAT_URL = (
-    "https://spcuatws.sahapat.com/spc/targetsun/importTargetSalesmanNextFromExcel"
-)
-
-# _DEFAULT_UAT_URL = (
-#     "https://spcws.sahapat.com/spc/targetsun/importTargetSalesmanNextFromExcel"
-# )
 
 _PREPARE_DIR = Path("data/ts_prepare")
 _PREPARE_TTL_SEC = 30 * 60
@@ -184,12 +176,7 @@ def _post_targetsun_multipart(
     not_in_ts: list,
     import_url: str | None = None,
 ) -> dict:
-    url = (import_url or os.environ.get("TARGETSUN_IMPORT_EXCEL_URL") or _DEFAULT_UAT_URL).strip()
-    if not url:
-        raise HTTPException(
-            500,
-            detail="ยังไม่ได้ตั้งค่า TARGETSUN_IMPORT_EXCEL_URL",
-        )
+    url = (import_url or targetsun_import_excel_url()).strip()
 
     try:
         timeout = int(os.environ.get("TARGETSUN_IMPORT_TIMEOUT_SEC", "600"))
@@ -260,7 +247,7 @@ def _post_targetsun_multipart(
                 "message": str(e),
                 "error_kind": "connection",
                 "hint_th": (
-                    "เชื่อมถึงโฮสต์ไม่ได้ — ตรวจ VPN / firewall / ว่า URL ใน TARGETSUN_IMPORT_EXCEL_URL ถูกต้อง และเครื่องรัน backend เข้าอินเทอร์เน็ตได้"
+                    "เชื่อมถึงโฮสต์ไม่ได้ — ตรวจ VPN / firewall / URL ใน backend/services/targetsun_endpoints.py และเครื่องรัน backend เข้าอินเทอร์เน็ตได้"
                 ),
             },
         ) from e
@@ -305,7 +292,7 @@ def _post_targetsun_multipart(
                 "body_preview": text_head[:800],
                 "hint_th": (
                     "มักเกิดเมื่อ URL ชี้ผิด หรือ reverse proxy คืนหน้า HTML/502 — "
-                    "ลองเปิด URL เดียวกันจาก Postman และตรวจ TARGETSUN_IMPORT_EXCEL_URL"
+                    "ลองเปิด URL เดียวกันจาก Postman และตรวจ backend/services/targetsun_endpoints.py"
                 ),
             },
         )
@@ -387,13 +374,7 @@ def import_allocations_to_targetsun(req: LakehouseUploadRequest) -> dict:
     if (req.prepare_token or "").strip():
         return import_prepared_targetsun(req)
 
-    url = (os.environ.get("TARGETSUN_IMPORT_EXCEL_URL") or _DEFAULT_UAT_URL).strip()
-    if not url:
-        raise HTTPException(
-            500,
-            detail="ยังไม่ได้ตั้งค่า TARGETSUN_IMPORT_EXCEL_URL",
-        )
-
+    url = targetsun_import_excel_url().strip()
     t0 = time.perf_counter()
     logger.info("TargetSun import: start allocations_in=%d", len(req.allocations or []))
 

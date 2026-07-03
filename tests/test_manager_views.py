@@ -52,6 +52,20 @@ class TestManagerViews(unittest.TestCase):
         self.assertIn("SL350", codes)
         self.assertNotIn("SL360", codes)
 
+    def test_manager_code_excluded_from_supervisor_team(self):
+        from backend.services.manager_views import team_supervisor_codes
+        from backend.services.sl_link_store import manager_codes_to_exclude_from_team
+
+        team = ["SL508", "SL532"]
+        excl = manager_codes_to_exclude_from_team(
+            "SL524",
+            {"SL508", "SL524"},
+            [{"old_sl": "SL508", "canonical_sl": "SL508", "new_sls": ["SL524"], "alias_sls": ["SL508", "SL524"]}],
+        )
+        supers = team_supervisor_codes(team, "SL524", excl)
+        self.assertEqual(supers, ["SL532"])
+        self.assertNotIn("SL508", supers)
+
 
 if __name__ == "__main__":
     unittest.main()

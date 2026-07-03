@@ -35,9 +35,187 @@ def normalize_userpl(s: str | None) -> str:
     return (s or "").strip().upper()
 
 
+MANAGER_LEVELS = frozenset({"regional", "division"})
+NONE_SENTINEL = "none"
+
+
+def _clean_none_sentinel(value: Any) -> Any:
+    if isinstance(value, str) and value.strip().lower() == NONE_SENTINEL:
+        return ""
+    return value
+
+
+def _clean_row_sentinels(row: dict[str, Any]) -> dict[str, Any]:
+    return {k: _clean_none_sentinel(v) for k, v in row.items()}
+
+
+def _opt_canonical_str(row: dict[str, Any], key: str, *, required: bool = False) -> str:
+    raw = row.get(key)
+    if raw is None:
+        return "" if required else NONE_SENTINEL
+    s = str(raw).strip()
+    if not s or s.lower() == NONE_SENTINEL:
+        return "" if required else NONE_SENTINEL
+    return s
+
+
+def canonicalize_user_access_row(row: dict[str, Any]) -> dict[str, Any]:
+    """จัดรูปแบบแถวให้ฟิลด์ครบ — ค่าว่างใช้ 'none' (ยกเว้น note)"""
+    work = _clean_row_sentinels(dict(row))
+    em = normalized_email(work.get("email"))
+    upl = normalize_userpl(work.get("userpl"))
+    if not em or "@" not in em or not upl:
+        raise ValueError("email/userpl ไม่ถูกต้อง")
+    work["email"] = em
+    work["userpl"] = upl
+    apply_inferred_access_fields(work)
+
+    lk = str(work.get("login_kind") or "standard").strip() or "standard"
+    ml = str(work.get("manager_level") or "").strip().lower()
+    if lk != "manager_acc" or ml not in MANAGER_LEVELS:
+        ml_out = NONE_SENTINEL
+    else:
+        ml_out = ml
+
+    unit_raw = str(work.get("acc_unit") or "").strip().lower()
+    if lk == "supervisor_acc" and unit_raw in ("van", "credit"):
+        unit_out = unit_raw
+    else:
+        unit_out = NONE_SENTINEL
+
+    region_raw = str(work.get("acc_region") or "").strip()
+    if lk == "manager_acc" and ml_out == "division":
+        region_out = NONE_SENTINEL
+    elif region_raw:
+        region_out = region_raw
+    else:
+        region_out = NONE_SENTINEL
+
+    if lk in ("manager_acc", "supervisor_acc"):
+        acc_type = str(work.get("acc_type") or "NON").strip() or "NON"
+        acc_joblevel = str(work.get("acc_joblevel") or "1").strip() or "1"
+    else:
+        acc_type = _opt_canonical_str(work, "acc_type")
+        acc_joblevel = _opt_canonical_str(work, "acc_joblevel")
+
+    vis = work.get("visible_supervisor_codes")
+    if not isinstance(vis, list):
+        vis = []
+    vis_out = sorted({str(x).strip().upper() for x in vis if str(x).strip()})
+
+    scope = str(work.get("acc_scope") or "").strip()
+    if not scope:
+        scope = NONE_SENTINEL
+
+    return {
+        "email": em,
+        "userpl": upl,
+        "can_import_targetsun": bool(work.get("can_import_targetsun")),
+        "note": str(work.get("note") or "").strip(),
+        "full_name": _opt_canonical_str(work, "full_name"),
+        "acc_region": region_out,
+        "acc_type": acc_type,
+        "acc_joblevel": acc_joblevel,
+        "login_kind": lk,
+        "manager_level": ml_out,
+        "acc_division": (
+            str(work.get("acc_division") or "").strip()
+            if str(work.get("acc_division") or "").strip()
+            else NONE_SENTINEL
+        ),
+        "acc_unit": unit_out,
+        "acc_position": _opt_canonical_str(work, "acc_position"),
+        "acc_scope": scope,
+        "visible_supervisor_codes": vis_out,
+    }
+
+
+def canonicalize_user_access_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        canon = canonicalize_user_access_row(row)
+        key = (canon["email"], canon["userpl"])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(canon)
+    out.sort(key=lambda r: (r["email"], r["userpl"]))
+    return out
+
+
+def _apply_login_kind_manager_level(row: dict[str, Any]) -> None:
+    """รวม legacy login_kind เป็นตำแหน่ง + ระดับ Manager"""
+    lk = str(row.get("login_kind") or "standard").strip().lower()
+    ml = str(row.get("manager_level") or "").strip().lower()
+    if ml == NONE_SENTINEL:
+        ml = ""
+    if lk == "regional_manager":
+        row["login_kind"] = "manager_acc"
+        row["manager_level"] = "regional"
+    elif lk == "district_manager":
+        row["login_kind"] = "manager_acc"
+        row["manager_level"] = "division"
+    elif lk == "manager_acc":
+        if ml in MANAGER_LEVELS:
+            row["manager_level"] = ml
+        else:
+            row.pop("manager_level", None)
+    else:
+        row.pop("manager_level", None)
+
+
+def _infer_manager_level(row: dict[str, Any]) -> None:
+    """เติม manager_level จาก division/ภาค เมื่อแอดมินไม่ได้ระบุ"""
+    if str(row.get("login_kind") or "") != "manager_acc":
+        return
+    ml = str(row.get("manager_level") or "").strip().lower()
+    if ml in MANAGER_LEVELS:
+        return
+    div = str(row.get("acc_division") or "").strip()
+    region = str(row.get("acc_region") or "").strip()
+    if div == "Div.S" and not region:
+        row["manager_level"] = "division"
+    elif div in ("Div.E", "Div.S") and not region:
+        row["manager_level"] = "division"
+    elif region:
+        row["manager_level"] = "regional"
+
+
+def _apply_inferred_acc_scope(row: dict[str, Any]) -> None:
+    """ขอบเขตดู — อนุมานจากตำแหน่ง (ไม่ให้แอดมินเลือกเอง)"""
+    lk = str(row.get("login_kind") or "standard").strip().lower()
+    if lk in ("marketing", "standard"):
+        row.pop("acc_scope", None)
+        return
+    if lk == "manager_acc":
+        row["acc_scope"] = "all"
+        return
+    if lk == "supervisor_acc":
+        unit = str(row.get("acc_unit") or "").strip().lower()
+        if unit == "credit":
+            row["acc_scope"] = "credit"
+        elif unit == "van":
+            row["acc_scope"] = "van"
+        else:
+            row["acc_scope"] = "region_peers"
+        return
+    row.pop("acc_scope", None)
+
+
+def apply_inferred_access_fields(row: dict[str, Any]) -> None:
+    """เติม manager_level + acc_scope ตามกฎสิทธิมาตรฐาน"""
+    _apply_login_kind_manager_level(row)
+    _infer_manager_level(row)
+    _apply_inferred_acc_scope(row)
+
+
 def _normalize_row(row: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(row, dict):
         return None
+    row = _clean_row_sentinels(row)
     em = normalized_email(row.get("email") or row.get("EMAIL"))
     upl = normalize_userpl(row.get("userpl") if row.get("userpl") is not None else row.get("USERPL"))
     if not em or "@" not in em or not upl:
@@ -60,6 +238,7 @@ def _normalize_row(row: dict[str, Any]) -> dict[str, Any] | None:
         "acc_type",
         "acc_joblevel",
         "login_kind",
+        "manager_level",
         "acc_division",
         "acc_unit",
         "acc_position",
@@ -68,6 +247,7 @@ def _normalize_row(row: dict[str, Any]) -> dict[str, Any] | None:
         val = row.get(key)
         if val is not None and str(val).strip():
             out[key] = str(val).strip()
+    apply_inferred_access_fields(out)
     vis = row.get("visible_supervisor_codes")
     if isinstance(vis, list) and vis:
         out["visible_supervisor_codes"] = [str(x).strip().upper() for x in vis if x]

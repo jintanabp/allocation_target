@@ -70,3 +70,8 @@ def export_result_path(sup_id: str, brand: str) -> str:
     brand_safe = safe_id(brand) if brand != "ALL" else "ALL"
     return f"data/export_{safe_id(sup_id)}_{brand_safe}.csv"
 
+
+def allocation_snapshot_path(sup_id: str, month: int, year: int) -> str:
+    """JSON snapshot ผลกระจายหีบต่อ (sup, งวด)"""
+    return f"data/allocations/{safe_id(sup_id)}_{int(year)}_{int(month):02d}.json"
+

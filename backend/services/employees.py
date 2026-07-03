@@ -50,6 +50,7 @@ from .employee_payload_cache import (
     read_cached_employee_payload,
     write_cached_employee_payload,
 )
+from . import targetsun_read
 
 logger = logging.getLogger("target_allocation")
 
@@ -167,6 +168,85 @@ def _build_sku_and_sun_from_tga(
     return df_sku, df_sun, emp_with_tga
 
 
+def _build_allocations_preview_from_grain(
+    df_granular: pd.DataFrame | None,
+    df_sku: pd.DataFrame,
+    emp_list: list[str],
+) -> list[dict[str, Any]]:
+    """แถว emp×sku (และคลังถ้ามี) สำหรับแสดงตารางก่อนกระจายหีบ"""
+    team_set = {str(e).strip() for e in emp_list if str(e).strip()}
+    if not team_set or df_granular is None or df_granular.empty:
+        return []
+
+    dg = df_granular.copy()
+    dg["emp_id"] = dg["emp_id"].astype(str).str.strip()
+    dg["sku"] = dg["sku"].astype(str).str.strip()
+    dg = dg[dg["emp_id"].isin(team_set)]
+    dg["qty"] = pd.to_numeric(dg["qty"], errors="coerce").fillna(0)
+    dg = dg[dg["qty"] != 0]
+    if dg.empty:
+        return []
+
+    if "warehouse_code" not in dg.columns:
+        dg["warehouse_code"] = ""
+    else:
+        dg["warehouse_code"] = dg["warehouse_code"].fillna("").astype(str).str.strip()
+
+    grouped = (
+        dg.groupby(["emp_id", "sku", "warehouse_code"], as_index=False)["qty"]
+        .sum()
+    )
+
+    sku_meta: dict[str, dict[str, Any]] = {}
+    if df_sku is not None and not df_sku.empty:
+        for row in df_sku.to_dict(orient="records"):
+            sku_meta[str(row.get("sku") or "").strip()] = row
+
+    out: list[dict[str, Any]] = []
+    for row in grouped.to_dict(orient="records"):
+        sku = str(row.get("sku") or "").strip()
+        emp_id = str(row.get("emp_id") or "").strip()
+        if not sku or not emp_id:
+            continue
+        boxes = int(round(float(row.get("qty") or 0)))
+        if boxes <= 0:
+            continue
+        meta = sku_meta.get(sku, {})
+        out.append(
+            {
+                "emp_id": emp_id,
+                "sku": sku,
+                "warehouse_code": str(row.get("warehouse_code") or "").strip(),
+                "allocated_boxes": boxes,
+                "price_per_box": float(meta.get("price_per_box") or 0),
+                "brand_name_thai": str(meta.get("brand_name_thai") or ""),
+                "brand_name_english": str(meta.get("brand_name_english") or ""),
+                "product_name_thai": str(meta.get("product_name_thai") or ""),
+                "baseline_boxes": boxes,
+            }
+        )
+    return out
+
+
+def _preview_from_grain_cache(
+    sup_id: str,
+    target_month: int,
+    target_year: int,
+    skus: list[dict[str, Any]],
+    emp_list: list[str],
+) -> list[dict[str, Any]]:
+    p_grain = tga_grain_cache_path(sup_id, target_month, target_year)
+    if not os.path.isfile(p_grain):
+        return []
+    try:
+        dg = pd.read_csv(p_grain, dtype={"emp_id": str, "sku": str})
+    except Exception as e:
+        logger.warning("read grain cache for preview %s: %s", p_grain, e)
+        return []
+    df_sku = pd.DataFrame(skus) if skus else pd.DataFrame()
+    return _build_allocations_preview_from_grain(dg, df_sku, emp_list)
+
+
 def _clean(df: pd.DataFrame) -> list:
     """แปลง NaN → None ก่อน serialize เพื่อกัน JSON invalid"""
     return df.where(pd.notna(df), None).to_dict(orient="records")
@@ -203,12 +283,22 @@ def load_employees_payload(
     if not regen_target and not refresh:
         cached = read_cached_employee_payload(sup_id, target_month, target_year)
         if cached is not None:
-            emps = cached.get("employees")
-            if isinstance(emps, list):
-                cached["employees"] = _enrich_employee_allocation_flags(
-                    [dict(e) for e in emps]
+            current_src = targetsun_read.get_target_read_source()
+            cached_src = str(cached.get("target_read_source") or "fabric").strip().lower()
+            if cached_src != current_src:
+                logger.info(
+                    "payload cache skip %s — source %s != %s",
+                    sup_id,
+                    cached_src,
+                    current_src,
                 )
-            return cached
+            else:
+                emps = cached.get("employees")
+                if isinstance(emps, list):
+                    cached["employees"] = _enrich_employee_allocation_flags(
+                        [dict(e) for e in emps]
+                    )
+                return cached
 
     os.makedirs("data", exist_ok=True)
 
@@ -297,8 +387,29 @@ def load_employees_payload(
                     503,
                     detail=f"ไม่สามารถเชื่อมต่อ Fabric สำหรับดึงเป้าและประวัติ: {e}",
                 )
+        ts_div = ts_st = None
+        ts_max_effective: dict | None = None
+        if targetsun_read.is_enabled():
+            ts_div, ts_st = targetsun_read.resolve_targetsun_scope(sup_id, fabric=fabric)
+            try:
+                ts_max_effective = targetsun_read.fetch_max_effective_date(ts_div, ts_st)
+            except HTTPException:
+                if not targetsun_read.fallback_to_fabric():
+                    raise
+                logger.warning(
+                    "TargetSun maxEffectiveDate failed — skip period pre-check"
+                )
+                ts_div = ts_st = None
+            except Exception as e:
+                logger.warning("TargetSun maxEffectiveDate error: %s", e)
+                ts_div = ts_st = None
+
         enforce_tga_selection_matches_effective_window(
-            fabric, target_month, target_year
+            fabric,
+            target_month,
+            target_year,
+            division_code=ts_div if targetsun_read.is_enabled() else None,
+            sales_type=ts_st if targetsun_read.is_enabled() else None,
         )
         sold_skus: list[str] = []
         try:
@@ -311,15 +422,42 @@ def load_employees_payload(
 
         df_tga = pd.DataFrame()
         df_tga_granular = pd.DataFrame()
-        try:
-            df_tga_granular = fabric.get_tga_target_salesman_granular(
-                emp_list, target_month, target_year
+        if targetsun_read.is_enabled():
+            df_ts = targetsun_read.try_granular_df_for_team(
+                emp_list,
+                target_month,
+                target_year,
+                sup_id=sup_id,
+                fabric=fabric,
             )
-        except Exception as e:
-            logger.warning(
-                "get_tga_target_salesman_granular error: %s — เป้าจะเป็น 0 ทั้งหมด",
-                e,
-            )
+            if df_ts is not None:
+                df_tga_granular = df_ts
+                logger.info(
+                    "เป้า TGA จาก Target Sun: sup=%s period=%02d/%d rows=%d",
+                    sup_id,
+                    target_month,
+                    target_year,
+                    len(df_tga_granular),
+                )
+            else:
+                try:
+                    df_tga_granular = fabric.get_tga_target_salesman_granular(
+                        emp_list, target_month, target_year
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Fabric TGA fallback error: %s — เป้าจะเป็น 0 ทั้งหมด", e
+                    )
+        else:
+            try:
+                df_tga_granular = fabric.get_tga_target_salesman_granular(
+                    emp_list, target_month, target_year
+                )
+            except Exception as e:
+                logger.warning(
+                    "get_tga_target_salesman_granular error: %s — เป้าจะเป็น 0 ทั้งหมด",
+                    e,
+                )
 
         grain_cols = [
             "emp_id",
@@ -389,35 +527,60 @@ def load_employees_payload(
                         len(df_tga_granular) if df_tga_granular is not None else 0
                     ),
                 },
+                max_effective=ts_max_effective,
             )
 
         df_sku_base = pd.DataFrame()
-        try:
-            df_sku_base = fabric.get_product_info(sku_list=sku_union)
-        except Exception as e:
-            logger.warning("get_product_info error: %s", e)
-            df_sku_base = pd.DataFrame({"sku": sku_union})
+        from . import fabric_cache as fc
 
-        if df_sku_base.empty:
-            df_sku_base = pd.DataFrame({"sku": sku_union})
-
-        price_latest = {}
-        try:
-            df_price = fabric.get_latest_price_per_box_by_sku(
-                target_month, target_year, sku_union
+        if sku_union:
+            cached_product = fc.read_product_info_df(target_year, target_month)
+            sku_set = (
+                set(cached_product["sku"].astype(str))
+                if cached_product is not None and not cached_product.empty
+                else set()
             )
-            if df_price is not None and not df_price.empty:
-                price_latest = dict(
-                    zip(
-                        df_price["sku"].astype(str),
-                        df_price["price_per_box"].astype(float),
-                    )
+            if sku_set and all(str(s) in sku_set for s in sku_union):
+                df_sku_base = cached_product[cached_product["sku"].astype(str).isin(sku_union)].copy()
+            else:
+                try:
+                    df_fresh = fabric.get_product_info(sku_list=sku_union)
+                    if df_fresh is not None and not df_fresh.empty:
+                        if cached_product is not None and not cached_product.empty:
+                            merged = pd.concat([cached_product, df_fresh]).drop_duplicates(
+                                subset=["sku"], keep="last"
+                            )
+                        else:
+                            merged = df_fresh
+                        fc.write_product_info_df(target_year, target_month, merged)
+                        df_sku_base = merged[merged["sku"].astype(str).isin(sku_union)].copy()
+                except Exception as e:
+                    logger.warning("get_product_info error: %s", e)
+
+        if df_sku_base.empty and sku_union:
+            df_sku_base = pd.DataFrame({"sku": sku_union})
+
+        price_latest = fc.read_price_map(target_year, target_month) or {}
+        missing_price_skus = [s for s in sku_union if str(s) not in price_latest]
+        if missing_price_skus:
+            try:
+                df_price = fabric.get_latest_price_per_box_by_sku(
+                    target_month, target_year, sku_union
                 )
-        except Exception as e:
-            logger.warning(
-                "get_latest_price_per_box_by_sku error: %s (price จะเป็น 0 + flag missing)",
-                e,
-            )
+                if df_price is not None and not df_price.empty:
+                    fetched = dict(
+                        zip(
+                            df_price["sku"].astype(str),
+                            df_price["price_per_box"].astype(float),
+                        )
+                    )
+                    price_latest = {**price_latest, **fetched}
+                    fc.write_price_map(target_year, target_month, price_latest)
+            except Exception as e:
+                logger.warning(
+                    "get_latest_price_per_box_by_sku error: %s (price จะเป็น 0 + flag missing)",
+                    e,
+                )
 
         df_sku, df_sun_csv, emp_with_tga = _build_sku_and_sun_from_tga(
             df_tga, df_sku_base, emp_list, sku_union, price_latest_by_sku=price_latest
@@ -771,6 +934,7 @@ def load_employees_payload(
                 "team_with_targets": int(df_emp["allocation_eligible"].sum()),
                 "sku_count": len(df_sku),
             },
+            max_effective=ts_max_effective if targetsun_read.is_enabled() else None,
         )
 
     if sku_warnings:
@@ -891,6 +1055,7 @@ def load_employees_payload(
         "supervisor_name": sup_name,
         "new_product_skus": new_product_skus,
         "new_products_detection_mode": new_products_detection_mode,
+        "target_read_source": targetsun_read.get_target_read_source(),
         "data_from_cache": False,
         "data_cached_at": None,
     }
@@ -933,7 +1098,10 @@ def merge_employees_payloads(
                 sku_map[sku] = dict(s)
                 sku_map[sku]["supervisor_target_boxes"] = boxes
         for w in p.get("sku_warnings") or []:
-            warnings.append(dict(w))
+            row = dict(w)
+            if sid and str(row.get("type") or "") != "aggregate_view":
+                row["sup_id"] = sid
+            warnings.append(row)
         for np in p.get("new_product_skus") or []:
             new_products.add(str(np).strip())
 
@@ -1009,4 +1177,171 @@ def load_employees_bulk(
     )
     merged["skipped_supervisors"] = skipped
     return merged
+
+
+def load_live_targets_payload(
+    sup_id: str,
+    target_month: int,
+    target_year: int,
+    *,
+    refresh: bool = False,
+) -> dict[str, Any]:
+    """ดึงเฉพาะเป้าหีบล่าสุดจาก Target Sun — สำหรับ refresh ใน Step 3"""
+    if not targetsun_read.is_enabled():
+        raise HTTPException(
+            status_code=400,
+            detail="ยังไม่ได้เปิด Target Sun Read API (TARGETSUN_READ_ENABLED)",
+        )
+
+    sid = str(sup_id or "").strip().upper()
+    if not refresh:
+        cached = targetsun_read.read_live_cache(sid, target_month, target_year)
+        if cached is not None:
+            if not cached.get("allocations_preview"):
+                emp_ids = [
+                    str(e.get("emp_id") or "").strip()
+                    for e in (cached.get("employees") or [])
+                    if str(e.get("emp_id") or "").strip()
+                ]
+                cached = dict(cached)
+                cached["allocations_preview"] = _preview_from_grain_cache(
+                    sid,
+                    target_month,
+                    target_year,
+                    cached.get("skus") or [],
+                    emp_ids,
+                )
+            return cached
+
+    cached_emp = read_cached_employee_payload(sid, target_month, target_year)
+    emp_list: list[str] = []
+    if cached_emp and cached_emp.get("employees"):
+        emp_list = sorted(
+            {
+                str(e.get("emp_id") or "").strip()
+                for e in cached_emp["employees"]
+                if str(e.get("emp_id") or "").strip()
+            }
+        )
+
+    if not emp_list:
+        emp_path = emp_cache_path(sid, target_month, target_year)
+        if os.path.exists(emp_path):
+            try:
+                df_cached = pd.read_csv(emp_path, dtype={"emp_id": str})
+                emp_list = df_cached["emp_id"].astype(str).str.strip().tolist()
+            except Exception as e:
+                logger.warning("read emp cache for live targets: %s", e)
+
+    if not emp_list:
+        raise HTTPException(
+            status_code=404,
+            detail="ยังไม่มีรายชื่อพนักงาน — โหลด Dashboard ก่อน",
+        )
+
+    fabric = None
+    try:
+        fabric = FabricDAXConnector()
+    except Exception as e:
+        logger.warning("Fabric connector for live targets scope: %s", e)
+
+    df_granular = targetsun_read.granular_df_for_team(
+        emp_list,
+        target_month,
+        target_year,
+        sup_id=sid,
+        fabric=fabric,
+    )
+
+    grain_cols = [
+        "emp_id",
+        "sku",
+        "qty",
+        "salestype",
+        "divisioncode",
+        "areacode",
+        "provincecode",
+        "warehouse_code",
+    ]
+    try:
+        p_grain = tga_grain_cache_path(sid, target_month, target_year)
+        if df_granular is None or df_granular.empty:
+            pd.DataFrame(columns=grain_cols).to_csv(p_grain, index=False)
+        else:
+            df_granular.to_csv(p_grain, index=False)
+    except Exception as e:
+        logger.warning("live targets grain cache write: %s", e)
+
+    if df_granular is not None and not df_granular.empty:
+        df_tga = (
+            df_granular.groupby(["emp_id", "sku"], as_index=False)["qty"].sum()
+        )
+        df_tga = df_tga[df_tga["qty"] != 0]
+    else:
+        df_tga = pd.DataFrame(columns=["emp_id", "sku", "qty"])
+
+    sku_union = (
+        df_tga["sku"].dropna().astype(str).str.strip().unique().tolist()
+        if not df_tga.empty
+        else []
+    )
+
+    df_product = pd.DataFrame()
+    price_latest: dict[str, float] = {}
+    if cached_emp and cached_emp.get("skus"):
+        df_product = pd.DataFrame(cached_emp["skus"])
+        if not df_product.empty and "sku" in df_product.columns:
+            df_product = df_product.copy()
+            df_product["sku"] = df_product["sku"].astype(str).str.strip()
+            price_latest = dict(
+                zip(
+                    df_product["sku"].astype(str),
+                    pd.to_numeric(df_product["price_per_box"], errors="coerce").fillna(
+                        0.0
+                    ),
+                )
+            )
+    if sku_union and df_product.empty:
+        df_product = pd.DataFrame({"sku": sku_union})
+
+    df_sku, df_sun, emp_with_tga = _build_sku_and_sun_from_tga(
+        df_tga,
+        df_product,
+        emp_list,
+        list(sku_union),
+        price_latest_by_sku=price_latest,
+    )
+
+    sun_map = {
+        str(r["emp_id"]).strip(): float(r.get("target_sun") or 0)
+        for r in df_sun.to_dict(orient="records")
+    }
+    employees_out = [
+        {
+            "emp_id": eid,
+            "target_sun": sun_map.get(eid, 0.0),
+            "has_tga_rows": eid in emp_with_tga,
+        }
+        for eid in emp_list
+    ]
+
+    allocations_preview = _build_allocations_preview_from_grain(
+        df_granular,
+        df_sku,
+        emp_list,
+    )
+
+    payload: dict[str, Any] = {
+        "source": "targetsun",
+        "sup_id": sid,
+        "target_year": int(target_year),
+        "target_month": int(target_month),
+        "row_count": int(len(df_granular)),
+        "tga_grain_rows": int(len(df_granular)),
+        "skus": _clean(df_sku),
+        "employees": employees_out,
+        "allocations_preview": allocations_preview,
+    }
+    targetsun_read.write_live_cache(sid, target_month, target_year, payload)
+    return payload
 

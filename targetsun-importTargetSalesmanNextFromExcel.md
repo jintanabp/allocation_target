@@ -148,6 +148,7 @@ The entire batch runs in a single transaction — any error rolls back all chang
 The **Target allocation** web app calls the same import API from the backend (not from the browser):
 
 - **Route:** `POST /lakehouse/import-targetsun` (JSON body = same payload as Excel export; server builds `.xlsx` and posts `multipart/form-data` field `file`).
-- **Config:** `TARGETSUN_IMPORT_EXCEL_URL` (default: UAT URL above), `TARGETSUN_IMPORT_TIMEOUT_SEC`, optional `TARGETSUN_IMPORT_AUTH_HEADER`, `TARGETSUN_IMPORT_VERIFY_SSL`.
+- **URL:** `targetsun_import_excel_url()` in `backend/services/targetsun_endpoints.py` (overridable via admin preset in `config/app_runtime.json` — not `.env`).
+- **Env:** `TARGETSUN_IMPORT_TIMEOUT_SEC`, optional `TARGETSUN_IMPORT_AUTH_HEADER`, `TARGETSUN_IMPORT_VERIFY_SSL`.
 
 The UI button **TargetSun (TGA)** sends the file to this API; Oracle host for UAT remains **10.109.9.41** as configured on the SPC service side.

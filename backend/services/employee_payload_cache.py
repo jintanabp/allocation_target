@@ -20,11 +20,11 @@ def employee_payload_cache_ttl_sec() -> int:
     อายุ cache (วินาที). ค่าเริ่มต้น 900 (15 นาที).
     ตั้ง 0 หรือติดลบ = ปิดการอ่าน/เขียน cache JSON นี้ (ยังยิง DAX ทุกครั้ง).
     """
-    raw = (os.environ.get("EMPLOYEE_PAYLOAD_CACHE_TTL_SEC") or "900").strip()
+    raw = (os.environ.get("EMPLOYEE_PAYLOAD_CACHE_TTL_SEC") or "3600").strip()
     try:
         return int(raw)
     except ValueError:
-        return 900
+        return 3600
 
 
 def _cache_enabled() -> bool:

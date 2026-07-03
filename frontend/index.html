@@ -12,7 +12,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Instrument+Serif:ital@0;1&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=202606117" />
+  <link rel="stylesheet" href="style.css?v=2026070220" />
 </head>
 
 <body>
@@ -98,6 +98,7 @@
             <div id="msAuthBlock" class="ms-auth-block" style="display: none;" aria-live="polite">
               <button type="button" id="msLoginBtn" class="btn-ms">ล็อกอินด้วย Microsoft</button>
               <p id="msUserLine" class="ms-user-line" style="display: none;"></p>
+              <button type="button" id="msLogoutBtn" class="btn-ms-logout" style="display: none;" onclick="handleMsLogout()">ออกจากบัญชี Microsoft</button>
               <p class="ms-auth-hint">เมื่อล็อกอินบัญชีองค์กรคุณสามารถเข้าใช้งานได้ตามสิทธิที่คุณมี</p>
             </div>
 
@@ -170,12 +171,16 @@
             <button type="button" class="btn-run login-btn" id="loginBtn">
               เข้าสู่ระบบ Dashboard
             </button>
-            <button type="button" id="adminNavLoginBtn" class="btn-admin-login" style="display:none;" onclick="openAdminView()">
-              จัดการสิทธิ์ผู้ใช้ (แอดมิน)
-            </button>
             <div class="login-error" id="loginError" style="display:none;"></div>
 
             </div><!-- /loginFormBlock -->
+
+            <p id="adminLoginWait" class="login-managers-wait" style="display:none;" role="status" aria-live="polite">
+              ⏳ กำลังตรวจสอบสิทธิ์แอดมิน…
+            </p>
+            <button type="button" id="adminNavLoginBtn" class="btn-admin-login" style="display:none;" onclick="openAdminView()">
+              เข้าสู่ระบบแอดมิน
+            </button>
           </div>
         </main>
       </div>
@@ -195,6 +200,7 @@
         <div class="page-header-top">
           <h1 class="page-title" id="dashboardMainTitle">ระบบกระจายเป้าหมายยอดขาย</h1>
           <span id="currentSupName" class="page-sup-badge"></span>
+          <button type="button" id="dashboardRefreshBtn" class="admin-btn-ghost admin-btn-ghost--sm dashboard-refresh-btn" style="display:none;" onclick="refreshDashboardData(true)" title="ดึงข้อมูลล่าสุดจากแหล่งข้อมูล">↻ ดึงข้อมูลใหม่</button>
           <div id="supervisorSwitchWrap" class="sup-switch" style="display:none;" role="region" aria-label="สลับ Supervisor" aria-busy="false">
             <div class="sup-switch__card">
               <span class="sup-switch__emoji" aria-hidden="true">👥</span>
@@ -224,6 +230,14 @@
         <div id="aggregateModeBanner" class="aggregate-mode-banner" style="display:none;" role="status">
           โหมดดูรวม — แสดงข้อมูลสรุปเท่านั้น ไม่สามารถกระจายหีบ · สลับเป็น「รายคน」เพื่อดำเนินการ
         </div>
+        <div id="allocationSummaryWrap" class="alloc-summary-wrap" style="display:none;" role="region" aria-label="สรุปผลกระจายหีบล่าสุด">
+          <div class="alloc-summary-wrap__head" onclick="toggleAllocationSummaryExpand()" role="button" tabindex="0" aria-expanded="false" id="allocationSummaryHead">
+            <span class="alloc-summary-wrap__title">ผลกระจายหีบล่าสุด (server)</span>
+            <span class="alloc-summary-wrap__toggle" id="allocationSummaryToggle" aria-hidden="true">▶</span>
+            <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="event.stopPropagation(); loadAllocationSummary(true)">รีเฟรช</button>
+          </div>
+          <div id="allocationSummaryBody" class="alloc-summary-wrap__body" style="display:none;"></div>
+        </div>
       </div>
 
       <!-- ══ STEP 1 ══ -->
@@ -234,6 +248,10 @@
             <h2 class="step-title">ข้อมูลตั้งต้น</h2>
             <p class="step-desc" id="step1Desc">ประวัติการขาย และ เป้าหมายของเดือนที่เลือก</p>
           </div>
+        </div>
+
+        <div id="peerStep1Notice" class="peer-step1-notice" style="display:none;" role="status">
+          โหมดดูผลกระจายอย่างเดียว — ข้อมูลพนักงาน/เป้าเต็มจะโหลดเมื่อสลับกลับทีมของคุณ
         </div>
 
         <div class="step1-target-hero" id="step1TargetHero" aria-live="polite">
@@ -249,7 +267,7 @@
           </p>
         </div>
 
-        <div class="two-col two-col--step1">
+        <div class="two-col two-col--step1" id="step1Content">
           <div class="panel">
             <div class="panel-head panel-head--stack">
               <div class="panel-head__row">
@@ -359,7 +377,7 @@
       <div class="divider"></div>
 
       <!-- ══ STEP 2 ══ -->
-      <section class="step-section">
+      <section class="step-section" id="step2Section">
         <div class="step-label-row">
           <span class="step-num">2</span>
           <div>
@@ -371,7 +389,7 @@
           </div>
         </div>
 
-        <div class="status-bar" id="statusBar">
+        <div class="status-bar" id="statusBar" role="status" aria-live="polite">
           <div class="status-left">
             <span class="status-icon-wrap" id="statusIcon">○</span>
             <span id="statusText">กำลังโหลด...</span>
@@ -398,6 +416,9 @@
         </div>
 
         <!-- Step 2 toolbar: bui-teriam toggle -->
+        <div id="step2AllocReadOnlyNotice" class="peer-step1-notice" style="display:none;" role="status">
+          โหมดดูอย่างเดียว — แก้เป้าเงิน (Step 2) ไม่ได้ · สลับกลับทีมของคุณเพื่อแก้ไข
+        </div>
         <div id="step2ViewOnlyNotice" class="emp-view-only-banner" style="display:none;" role="status"></div>
         <div class="step2-toolbar">
           <button type="button" id="toggleBuiBtn" class="btn-bui" onclick="toggleBuiColumn()" aria-pressed="false">
@@ -705,6 +726,13 @@
           </div>
         </details>
 
+        <div class="step3-live-targets-wrap" id="step3LiveTargetsWrap" style="display:none;margin-bottom:12px;">
+          <button type="button" id="step3LiveTargetsBtn" class="admin-btn-ghost admin-btn-ghost--sm" onclick="loadLiveTargetsFromTargetSun()">
+            ↻ โหลดเป้าหีบล่าสุด (Target Sun)
+          </button>
+          <span class="step3-live-targets-hint" style="font-size:12px;color:var(--text-3);margin-left:8px;">ดึงเป้า emp×SKU จาก Target Sun มาแสดงตารางก่อนกระจาย — แก้บางช่องได้แล้วค่อยกดเริ่มคำนวณ</span>
+        </div>
+
         <div id="fabricChangeStep3Notice" class="fabric-change-inline" style="display:none;" aria-live="polite"></div>
 
         <div class="run-card">
@@ -753,6 +781,9 @@
               <button class="btn-dl"
                 style="color:var(--text-2); border-color:var(--border-md); background:var(--bg-main);"
                 onclick="saveDraft()">💾 บันทึกร่าง</button>
+              <button type="button" class="btn-dl" id="restartAllocBtn"
+                style="color:var(--red); border-color:var(--red-brd); background:var(--red-bg); display:none;"
+                onclick="confirmRestartAllocation()">🔄 เริ่มกระจายใหม่</button>
               <button class="btn-dl" id="undoBtn"
                 style="color:var(--text-2); border-color:var(--border-md); background:var(--bg-main);"
                 onclick="undoLastEdit()" disabled>↩️ Undo</button>
@@ -766,11 +797,14 @@
 
           <div id="histDevSummary" class="hist-dev-bar" style="display:none;" aria-live="polite"></div>
 
+          <div id="step3SnapshotBadge" class="alloc-snapshot-badge" style="display:none;" aria-live="polite"></div>
           <div id="step3ResultTargetNote" class="fabric-change-inline" style="display:none;margin-bottom:12px;" aria-live="polite"></div>
+          <div id="compositeAllocLegend" class="composite-alloc-legend" style="display:none;margin-bottom:12px;" role="note" aria-live="polite"></div>
 
           <div id="step3TieredNote" class="tiered-result-note" style="display:none;margin-bottom:12px;" aria-live="polite"></div>
 
           <div id="step3RevenueScaleNote" class="revenue-scale-note-wrap" style="display:none;margin-bottom:12px;" aria-live="polite"></div>
+          <div id="step3ReviewNotes" class="step3-review-notes" style="display:none;margin-bottom:12px;" aria-live="polite"></div>
 
           <!-- brand summary bar (แสดงเมื่อ filter) -->
           <div class="brand-summary" id="brandSummary"></div>
@@ -795,9 +829,9 @@
   </div><!-- /page -->
 
   <!-- ─── EXPORT MODAL ─── -->
-  <div id="exportModal" class="modal-overlay" style="display:none;" onclick="closeModalOnBg(event)">
+  <div id="exportModal" class="modal-overlay" style="display:none;" onclick="closeModalOnBg(event)" role="dialog" aria-modal="true" aria-labelledby="exportModalTitle">
     <div class="modal-card">
-      <div class="modal-title">📥 เลือกแบรนด์ที่ต้องการดาวน์โหลด</div>
+      <div class="modal-title" id="exportModalTitle">📥 เลือกแบรนด์ที่ต้องการดาวน์โหลด</div>
       <div class="modal-body" id="exportOpts"></div>
       <div class="modal-foot">
         <button class="btn-run" onclick="doExport()">ดาวน์โหลด Excel</button>
@@ -848,6 +882,7 @@
 
   <div class="footer">
     หากมีปัญหาในการใช้งาน กรุณาติดต่อ IT
+    <span id="appBuildInfo" class="footer-build" title="เวอร์ชัน server"></span>
   </div>
 
   <!-- ─── ADMIN VIEW ─── -->
@@ -855,12 +890,15 @@
     <div class="admin-shell">
       <header class="admin-top">
         <div class="admin-top__title">
+          <p class="admin-view__breadcrumb" id="adminViewBreadcrumb">สิทธิ์ / สิทธิผู้ใช้</p>
           <h1 class="admin-view__title" id="adminViewTitle">แอดมิน</h1>
           <p class="admin-view__sub" id="adminViewSub">จัดการระบบและดูข้อมูล</p>
         </div>
         <div id="adminStats" class="admin-stats admin-stats--compact" aria-live="polite"></div>
         <div class="admin-top__actions" id="adminTopActionsUsers">
           <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminShowAddForm()">+ เพิ่มผู้ใช้</button>
+          <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminExportUserAccess()" title="ดาวน์โหลดไฟล์ JSON รายชื่อผู้ใช้ทั้งหมด — เก็บสำรองก่อนแก้บน production">ดาวน์โหลดสำรองรายชื่อผู้ใช้</button>
+          <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminRebuildHierarchy()" title="คำนวณใหม่ว่า Manager/Supervisor ดูทีม SL ไหนได้ — หลังเพิ่มหรือแก้ผู้ใช้">อัปเดตลำดับสิทธิ์</button>
           <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" id="adminClearFilters" onclick="adminResetTableFilters()">ล้างตัวกรอง</button>
           <button type="button" class="admin-btn-back" id="adminBackBtn" onclick="closeAdminView()">
             <span class="admin-btn-back__icon" aria-hidden="true">←</span>
@@ -875,32 +913,60 @@
         </div>
       </header>
 
-      <nav class="admin-tabs" id="adminTabs" role="tablist" aria-label="เมนูแอดมิน">
-        <button type="button" class="admin-tab admin-tab--active" role="tab" data-tab="users" aria-selected="true" onclick="adminSwitchTab('users')">สิทธิผู้ใช้</button>
-        <button type="button" class="admin-tab" role="tab" data-tab="slLinks" aria-selected="false" onclick="adminSwitchTab('slLinks')">ผูกรหัส SL</button>
-        <button type="button" class="admin-tab" role="tab" data-tab="team" aria-selected="false" onclick="adminSwitchTab('team')">ทีมพนักงาน</button>
-        <button type="button" class="admin-tab" role="tab" data-tab="data" aria-selected="false" onclick="adminSwitchTab('data')">แหล่งข้อมูล</button>
-        <button type="button" class="admin-tab" role="tab" data-tab="skuLinks" aria-selected="false" onclick="adminSwitchTab('skuLinks')">ผูกรหัส SKU</button>
+      <div class="admin-layout">
+      <nav class="admin-sidebar" id="adminSidebar" aria-label="เมนูแอดมิน">
+        <div class="admin-nav-group">
+          <div class="admin-nav-group__label">สิทธิ์</div>
+          <button type="button" class="admin-nav-item admin-nav-item--active" role="tab" data-tab="users" aria-selected="true" onclick="adminSwitchTab('users')">ผู้ใช้</button>
+        </div>
+        <div class="admin-nav-group">
+          <div class="admin-nav-group__label">การผูกรหัส</div>
+          <button type="button" class="admin-nav-item" role="tab" data-tab="slLinks" aria-selected="false" onclick="adminSwitchTab('slLinks')">ผูกรหัส SL <span id="adminSlReadOnlyBadge" class="admin-ro-badge" style="display:none;">ดูอย่างเดียว</span></button>
+          <button type="button" class="admin-nav-item" role="tab" data-tab="skuLinks" aria-selected="false" onclick="adminSwitchTab('skuLinks')">ผูกรหัส SKU <span id="adminSkuReadOnlyBadge" class="admin-ro-badge" style="display:none;">ดูอย่างเดียว</span></button>
+        </div>
+        <div class="admin-nav-group">
+          <div class="admin-nav-group__label">ข้อมูล</div>
+          <button type="button" class="admin-nav-item" role="tab" data-tab="data" aria-selected="false" onclick="adminSwitchTab('data')">แหล่งข้อมูล</button>
+        </div>
+        <div class="admin-nav-group">
+          <div class="admin-nav-group__label">ปฏิบัติการ</div>
+          <button type="button" class="admin-nav-item" role="tab" data-tab="allocations" aria-selected="false" onclick="adminSwitchTab('allocations')">ผลการกระจาย</button>
+          <button type="button" class="admin-nav-item" role="tab" data-tab="usageLogs" aria-selected="false" onclick="adminSwitchTab('usageLogs')">บันทึกความผิดพลาด</button>
+        </div>
+        <div class="admin-nav-group">
+          <div class="admin-nav-group__label">ทีม</div>
+          <button type="button" class="admin-nav-item" role="tab" data-tab="team" aria-selected="false" onclick="adminSwitchTab('team')">ทีมพนักงาน</button>
+        </div>
       </nav>
 
+      <div class="admin-content">
       <div id="adminPanelUsers" class="admin-panel" data-panel="users">
+      <div class="admin-help-strip">
+        <p class="admin-help-strip__title">ปุ่มด้านบนทำอะไร?</p>
+        <ul class="admin-help-strip__list">
+          <li><strong>ดาวน์โหลดสำรองรายชื่อผู้ใช้</strong> — เก็บไฟล์ <code>user_access.json</code> ไว้ก่อนแก้สิทธิบน server (กู้คืนได้ถ้าแก้ผิด)</li>
+          <li><strong>อัปเดตลำดับสิทธิ์</strong> — หลังเพิ่ม/แก้ผู้ใช้ ให้ระบบคำนวณใหม่ว่าแต่ละคน <em>ดูทีม SL ไหนได้</em> (เขียนไฟล์ <code>access_hierarchy.json</code>)</li>
+        </ul>
+      </div>
       <section id="adminAddPanel" class="admin-card admin-card--add" style="display:none;">
         <h2 class="admin-card__title">เพิ่มผู้ใช้ใหม่</h2>
         <div class="admin-add-grid">
           <label>อีเมล<input type="email" id="adminAddEmail" class="field-input" placeholder="user@sahapat.co.th" /></label>
           <label>รหัส SL<input type="text" id="adminAddUserpl" class="field-input" placeholder="SL330" /></label>
           <label>ตำแหน่ง / บทบาท
-            <select id="adminAddLoginKind" class="field-input">
+            <select id="adminAddLoginKind" class="field-input" onchange="adminSyncManagerLevelField()">
               <option value="standard">มาตรฐาน (ตาม SL / trf)</option>
               <option value="supervisor_acc">Supervisor</option>
               <option value="manager_acc">Manager</option>
               <option value="marketing">Marketing (MKT)</option>
-              <option value="regional_manager">ผู้จัดการภูมิภาค</option>
-              <option value="district_manager">ผู้จัดการเขต</option>
             </select>
           </label>
+          <label id="adminAddManagerLevelWrap" style="display:none;">ระดับ Manager
+            <select id="adminAddManagerLevel" class="field-input" required></select>
+            <span class="admin-visible-help">Division = ดูซุปทั้ง Div.E/S · ภาค = ดูซุปทั้งภาค (Div.B ใช้ภาคเท่านั้น)</span>
+          </label>
           <label>Division
-            <select id="adminAddAccDivision" class="field-input">
+            <select id="adminAddAccDivision" class="field-input" onchange="adminSyncManagerLevelField()">
               <option value="">—</option>
               <option value="Div.B">Div.B</option>
               <option value="Div.E">Div.E</option>
@@ -908,12 +974,13 @@
             </select>
           </label>
           <label>ภูมิภาค<input type="text" id="adminAddAccRegion" class="field-input" placeholder="เช่น อีสาน" /></label>
-          <label>ขอบเขตสิทธิ
-            <select id="adminAddAccScope" class="field-input">
-              <option value="">—</option>
-              <option value="self">เฉพาะทีมตัวเอง</option>
-              <option value="region_peers">ดูภาคเดียวกัน (กระจายได้เฉพาะทีมตัวเอง)</option>
+          <label id="adminAddAccUnitWrap" style="display:none;">หน่วย (ซุป)
+            <select id="adminAddAccUnit" class="field-input">
+              <option value="">— ทั่วไป</option>
+              <option value="van">van</option>
+              <option value="credit">credit</option>
             </select>
+            <span class="admin-visible-help">มีหน่วย = ดูซุปหน่วยเดียวกันในภาค · ไม่ระบุ = ดูซุปทั้งภาค</span>
           </label>
           <label class="admin-check-label"><input type="checkbox" id="adminAddTargetSun" /> ส่ง Target Sun ได้</label>
           <label>หมายเหตุ<input type="text" id="adminAddNote" class="field-input" placeholder="ไม่บังคับ" /></label>
@@ -927,8 +994,6 @@
           <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminHideAddForm()">ยกเลิก</button>
         </div>
       </section>
-
-      <section id="adminEditPanel" class="admin-card admin-card--add" style="display:none;" aria-hidden="true"></section>
 
       <div id="adminError" class="admin-alert admin-alert--error" style="display:none;"></div>
       <div id="adminLoading" class="admin-loading" style="display:none;">กำลังโหลด…</div>
@@ -969,7 +1034,8 @@
                   <select id="adminFRole" class="admin-col-filter admin-col-filter--select" onchange="adminFilterRows()">
                     <option value="">ทั้งหมด</option>
                     <option value="supervisor">Supervisor</option>
-                    <option value="manager">Manager</option>
+                    <option value="mgr_division">Mgr · Division</option>
+                    <option value="mgr_regional">Mgr · ภูมิภาค</option>
                     <option value="marketing">Marketing (MKT)</option>
                     <option value="unknown">ไม่ระบุบทบาท</option>
                   </select>
@@ -1008,8 +1074,8 @@
                     <option value="__none__">—</option>
                   </select>
                 </th>
-                <th class="admin-th-stack admin-th-stack--static">
-                  <span class="admin-th-static-label">ดูได้ (SL)</span>
+                <th class="admin-th-stack admin-th-stack--note">
+                  <span class="admin-th-static-label">หมายเหตุ</span>
                 </th>
                 <th class="admin-th-stack admin-th-stack--narrow">
                   <button type="button" class="admin-sort-btn" onclick="adminToggleSort('targetsun')">
@@ -1041,14 +1107,14 @@
               <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminLoadSlLinks()">โหลดใหม่</button>
             </div>
           </div>
-          <p class="admin-inv-muted">รหัส canonical (เก่า/หลัก) ใช้ดึงทีมและสิทธิจาก user_access — alias คือรหัสใหม่ที่ล็อกอินได้ · มีผลทันทีหลังบันทึก (logout/login ใหม่ถ้ายังไม่เห็นทีม)</p>
+          <p class="admin-inv-muted">รหัสเก่า = สิทธิ/ทีมในระบบเดิม · รหัสใหม่ = default ตอน login (เปลี่ยนกลับรหัสเก่าได้ใน dropdown) · มีผลทันทีหลังบันทึก</p>
           <div id="adminSlLinkError" class="admin-alert admin-alert--error" style="display:none;"></div>
           <div id="adminSlLinkLoading" class="admin-loading" style="display:none;">กำลังโหลด…</div>
           <div id="adminSlLinkAddPanel" class="admin-card admin-card--add" style="display:none;">
             <h3 class="admin-card__title">เพิ่ม / แก้ไขกลุ่มผูกรหัส SL</h3>
             <div class="admin-add-grid">
-              <label>รหัสหลัก (canonical)<input type="text" id="adminSlLinkCanon" class="field-input" placeholder="SL508" /></label>
-              <label>ผูกกับรหัส (alias คั่นด้วย ,)<input type="text" id="adminSlLinkAliases" class="field-input" placeholder="SL508, SL524" /></label>
+              <label>รหัสเก่า<input type="text" id="adminSlLinkOld" class="field-input" placeholder="SL508" /></label>
+              <label>รหัสใหม่ (คั่นด้วย ,)<input type="text" id="adminSlLinkNew" class="field-input" placeholder="SL524" /></label>
               <label>หมายเหตุ<input type="text" id="adminSlLinkNote" class="field-input" placeholder="ไม่บังคับ" /></label>
             </div>
             <div class="admin-add-actions">
@@ -1060,8 +1126,8 @@
             <table class="admin-table admin-table--compact" id="adminSlLinkTable">
               <thead>
                 <tr>
-                  <th>รหัสหลัก</th>
-                  <th>ผูกกับรหัส</th>
+                  <th>รหัสเก่า</th>
+                  <th>รหัสใหม่</th>
                   <th>หมายเหตุ</th>
                   <th class="admin-th-actions">จัดการ</th>
                 </tr>
@@ -1115,12 +1181,128 @@
             <h2 class="admin-card__title">แหล่งข้อมูลในระบบ</h2>
             <div class="admin-data-actions">
               <a href="/docs/DATA_FLOW.md" target="_blank" rel="noopener" class="admin-btn-ghost admin-btn-ghost--sm">เอกสารฉบับเต็ม</a>
+              <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminRunDeepHealth()" title="ทดสอบว่าเชื่อม Fabric และอ่าน Target Sun ได้หรือไม่ — ไม่ส่งข้อมูล">ทดสอบการเชื่อมต่อ</button>
               <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminLoadInventory(true)">ทดสอบ Fabric</button>
               <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminLoadInventory(false)">โหลดใหม่</button>
             </div>
           </div>
+          <div class="admin-help-strip admin-help-strip--compact">
+            <p><strong>ทดสอบการเชื่อมต่อ</strong> = ยิงสั้นๆ ไป Fabric (ดึงเป้า TGA) และ Target Sun read ว่าตอบกลับปกติหรือไม่ — ใช้ไล่ปัญหาเมื่อ user โหลดทีมไม่ได้ (ไม่ส่งเป้าเข้า Target Sun)</p>
+          </div>
+          <div id="adminDeepHealthBody" class="admin-deep-health" aria-live="polite"></div>
           <div id="adminInventoryLoading" class="admin-loading" style="display:none;">กำลังโหลด…</div>
           <div id="adminInventoryBody" class="admin-inventory"></div>
+        </section>
+        <section class="admin-card admin-card--tga">
+          <div class="admin-card-header">
+            <div>
+              <h2 class="admin-card__title">แหล่งเป้าหีบ (TGA)</h2>
+              <p class="admin-card__hint">ค่าเริ่มต้น = Target Sun (Oracle) — สลับเป็น Fabric ชั่วคราวได้เมื่อทดสอบ</p>
+            </div>
+          </div>
+          <div class="admin-target-source-row">
+            <label class="admin-radio-pill"><input type="radio" name="adminTargetSource" value="targetsun" checked /> Target Sun (Oracle)</label>
+            <label class="admin-radio-pill"><input type="radio" name="adminTargetSource" value="fabric" /> Fabric semantic model</label>
+            <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminSaveTargetReadSource()">บันทึก</button>
+            <span id="adminTargetSourceHint" class="admin-target-source-hint"></span>
+          </div>
+          <div class="admin-target-periods-head">
+            <span class="admin-target-periods-head__title">งวดล่าสุดที่มีข้อมูลใน Target Sun</span>
+            <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminLoadTargetReadSource()">รีเฟรช</button>
+          </div>
+          <div id="adminTargetPeriods" class="admin-target-periods">
+            <span class="admin-inv-muted">กำลังตรวจสอบงวด…</span>
+          </div>
+          <div class="admin-endpoint-preset-block" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);">
+            <div class="admin-target-periods-head">
+              <span class="admin-target-periods-head__title">URL Target Sun (อ่านเป้า / ส่งผลแยกกัน)</span>
+            </div>
+            <p class="admin-card__hint" style="margin:0 0 10px;">ค่าเริ่มต้นแนะนำก่อน go-live: อ่าน Prod · ส่ง UAT</p>
+            <div id="adminEndpointCrossWarn" class="admin-endpoint-cross-warn" style="display:none;"></div>
+            <div id="adminEndpointPresetRow" class="admin-target-source-row" style="flex-wrap:wrap;"></div>
+            <div id="adminEndpointEffective" class="admin-inv-muted" style="margin-top:8px;font-size:12px;line-height:1.55;"></div>
+          </div>
+        </section>
+        <section class="admin-card admin-card--cache">
+          <div class="admin-card-header">
+            <h2 class="admin-card__title">แคชข้อมูล Fabric / Payload</h2>
+            <div class="admin-period-bar admin-period-bar--inline">
+              <label class="admin-period-bar__field">เดือน
+                <select id="adminCacheMonth" class="field-input field-input--sm admin-period-input"></select>
+              </label>
+              <label class="admin-period-bar__field">ปี
+                <input type="number" id="adminCacheYear" class="field-input field-input--sm admin-period-input" min="2000" max="2100" />
+              </label>
+              <input type="text" id="adminCacheSupId" class="field-input field-input--sm" placeholder="SL (ไม่บังคับ)" />
+              <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminLoadCacheStatus()">สถานะ</button>
+              <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminRefreshCache('all')">รีเฟรชทั้งหมด</button>
+              <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminInvalidateCache('all')">ล้างแคชงวด</button>
+            </div>
+          </div>
+          <div id="adminCacheBody" class="admin-inventory admin-inventory--cache"></div>
+        </section>
+      </div>
+
+      <div id="adminPanelUsageLogs" class="admin-panel" data-panel="usageLogs" style="display:none;">
+        <section class="admin-card admin-card--panel">
+          <div class="admin-card-header">
+            <div>
+              <h2 class="admin-card__title">บันทึกความผิดพลาด</h2>
+              <p class="admin-card__hint">ข้อความ error/warn จากผู้ใช้และระบบ — แสดงทั้งหมดล่าสุดก่อน</p>
+            </div>
+            <div class="admin-period-bar">
+              <label class="admin-period-bar__field">ระดับ
+                <select id="adminUsageLogLevel" class="admin-select admin-select--sm" onchange="adminLoadUsageLogs()">
+                  <option value="">ทุกระดับ</option>
+                  <option value="error">error</option>
+                  <option value="warn">warn</option>
+                  <option value="info">info</option>
+                </select>
+              </label>
+              <button type="button" class="admin-btn-refresh admin-btn-refresh--sm" onclick="adminLoadUsageLogs()" title="โหลดรายการล่าสุด">
+                <span class="admin-btn-refresh__icon" aria-hidden="true">↻</span>
+                <span>โหลดใหม่</span>
+              </button>
+              <span id="adminUsageLogCount" class="admin-period-bar__meta" aria-live="polite"></span>
+            </div>
+          </div>
+          <div class="admin-help-strip admin-help-strip--compact">
+            <p>เมื่อตรวจแล้วว่าแก้หรือไม่เกี่ยวกับระบบ — กด <strong>รับทราบแล้ว</strong> รายการจะถูกลบออกจากรายการนี้</p>
+          </div>
+          <div id="adminUsageLogsBody" class="admin-table-wrap admin-table-wrap--scroll admin-table-wrap--panel">
+            <table class="admin-table admin-table--compact admin-table--zebra">
+              <thead><tr><th>เวลา</th><th>ระดับ</th><th>ผู้ใช้</th><th>การกระทำ</th><th>ข้อความ</th><th></th></tr></thead>
+              <tbody id="adminUsageLogsTable"><tr><td colspan="6" class="admin-empty">กำลังโหลด…</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <div id="adminPanelAllocations" class="admin-panel" data-panel="allocations" style="display:none;">
+        <section class="admin-card admin-card--panel">
+          <div class="admin-card-header">
+            <div>
+              <h2 class="admin-card__title">ผลการกระจาย (server)</h2>
+              <p class="admin-card__hint">snapshot ทุกงวด — กดหัวคอลัมน์เพื่อเรียงลำดับ</p>
+            </div>
+            <span id="adminAllocCount" class="admin-period-bar__meta" aria-live="polite"></span>
+          </div>
+          <div class="admin-data-actions" style="margin:0 0 12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+            <input type="search" id="adminAllocSearch" class="field-input field-input--sm" placeholder="ค้นหา SL…" style="min-width:9rem;" oninput="adminFilterAllocations()" />
+          </div>
+          <div class="admin-table-wrap admin-table-wrap--scroll admin-table-wrap--panel">
+            <table class="admin-table admin-table--compact admin-table--zebra admin-table--alloc">
+              <thead><tr>
+                <th class="th-sortable" data-sort="sup" onclick="adminToggleAllocSort('sup')">SL</th>
+                <th class="th-sortable" data-sort="period" onclick="adminToggleAllocSort('period')">งวด</th>
+                <th class="th-sortable" data-sort="status" onclick="adminToggleAllocSort('status')">สถานะ</th>
+                <th class="th-sortable th-sort--active th-sort--desc" data-sort="updated" onclick="adminToggleAllocSort('updated')">อัปเดต</th>
+                <th>โดย</th>
+                <th>จัดการ</th>
+              </tr></thead>
+              <tbody id="adminAllocTable"><tr><td colspan="6" class="admin-empty">กำลังโหลด…</td></tr></tbody>
+            </table>
+          </div>
         </section>
       </div>
 
@@ -1129,86 +1311,44 @@
           <div class="admin-data-head">
             <h2 class="admin-card__title">ผูกรหัส SKU (รวมประวัติขาย)</h2>
             <div class="admin-data-actions">
-              <button type="button" class="admin-btn-primary admin-btn-primary--sm" id="adminSkuLinkAddBtn" onclick="adminSkuLinkShowAdd()">+ เพิ่มกลุ่ม</button>
-              <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminLoadSkuLinks()">โหลดใหม่</button>
-            </div>
-          </div>
-          <p class="admin-inv-muted">รหัส canonical ใช้ใน Dashboard งวดนี้ · alias คือรหัสเก่าใน cross_sold_history — หลังบันทึกให้โหลด Dashboard ใหม่ (refresh)</p>
-          <div id="adminSkuCatalogHead" class="admin-data-head" style="margin-top:8px;">
-            <h3 class="admin-card__title">สินค้าในงวด (จาก cache Dashboard)</h3>
-            <div class="admin-data-actions">
-              <label class="admin-inline-label">Supervisor<input type="text" id="adminSkuCatalogSup" class="field-input field-input--sm" placeholder="SL532" style="width:88px;" /></label>
-              <label class="admin-inline-label">เดือน<select id="adminSkuCatalogMonth" class="field-input field-input--sm" style="width:64px;"></select></label>
-              <label class="admin-inline-label">ปี<input type="number" id="adminSkuCatalogYear" class="field-input field-input--sm" min="2000" max="2100" style="width:72px;" /></label>
+              <span id="adminSkuPeriodBadge" class="admin-period-badge" aria-live="polite"></span>
+              <input type="search" id="adminSkuSearch" class="field-input field-input--sm" placeholder="ค้นหารหัส SKU หรือชื่อสินค้า…" style="min-width:12rem;" oninput="adminFilterSkuCatalog()" />
               <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminLoadSkuCatalog()">โหลดใหม่</button>
             </div>
           </div>
+          <p class="admin-inv-muted">แสดงเฉพาะสินค้าที่<strong>มีเป้าหีบในงวดกระจายปัจจุบัน</strong> (ดึงตามแหล่งเป้า Target Sun / Fabric) — รหัสเก่าที่เคยผูกแต่ไม่มีเป้าในงวดนี้จะไม่ขึ้น · พิมพ์รหัสเก่าในคอลัมน์「ผูกกับ」แล้วบันทึก · หลังบันทึกให้ refresh Dashboard</p>
+          <div class="admin-help-strip admin-help-strip--compact">
+            <p>การผูกรหัสใช้กับ<strong>ประวัติขายใน Fabric</strong> ตอนกระจายหีบ (รวมยอดรหัสเก่าเข้ารหัสใหม่) — ไม่เกี่ยวกับเป้าใน Target Sun โดยตรง นอกจากการเลือกว่า SKU ไหนมีเป้าในงวดนี้</p>
+          </div>
+          <div id="adminSkuLinkError" class="admin-alert admin-alert--error" style="display:none;"></div>
           <p id="adminSkuCatalogHint" class="admin-inv-muted"></p>
           <div id="adminSkuCatalogLoading" class="admin-loading" style="display:none;">กำลังโหลดรายการสินค้า…</div>
-          <div class="admin-table-wrap admin-table-wrap--scroll" id="adminSkuCatalogWrap" style="max-height:280px;margin-bottom:12px;">
+          <div class="admin-table-wrap admin-table-wrap--scroll" id="adminSkuCatalogWrap" style="max-height:min(70vh, 640px);">
             <table class="admin-table admin-table--compact" id="adminSkuCatalogTable">
               <thead>
                 <tr>
                   <th>รหัส</th>
                   <th>ชื่อสินค้า</th>
                   <th>เป้า (หีบ)</th>
-                  <th>ผูกรหัส</th>
+                  <th>ราคา/หีบ</th>
+                  <th>ผูกกับรหัส (เก่า)</th>
+                  <th class="admin-th-actions"></th>
                 </tr>
               </thead>
               <tbody id="adminSkuCatalogBody">
-                <tr><td colspan="4" class="admin-empty">เปิดแท็บนี้จะโหลดรายการอัตโนมัติ</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div id="adminSkuLinkError" class="admin-alert admin-alert--error" style="display:none;"></div>
-          <div id="adminSkuLinkLoading" class="admin-loading" style="display:none;">กำลังโหลด…</div>
-          <div id="adminSkuLinkAddPanel" class="admin-card admin-card--add" style="display:none;">
-            <h3 class="admin-card__title">เพิ่ม / แก้ไขกลุ่มผูกรหัส</h3>
-            <div class="admin-add-grid">
-              <label>รหัส (canonical)<input type="text" id="adminSkuLinkCanon" class="field-input" placeholder="266932" /></label>
-              <label>ชื่อสินค้า<input type="text" id="adminSkuLinkName" class="field-input" placeholder="ไม่บังคับ" /></label>
-              <label>ผูกกับรหัส (alias คั่นด้วย ,)<input type="text" id="adminSkuLinkAliases" class="field-input" placeholder="266932, OLD001" /></label>
-              <label>หมายเหตุ<input type="text" id="adminSkuLinkNote" class="field-input" placeholder="ไม่บังคับ" /></label>
-            </div>
-            <div class="admin-add-actions">
-              <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminSkuLinkSave()">บันทึก</button>
-              <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminSkuLinkHideAdd()">ยกเลิก</button>
-            </div>
-          </div>
-          <div class="admin-table-wrap">
-            <table class="admin-table admin-table--compact" id="adminSkuLinkTable">
-              <thead>
-                <tr>
-                  <th>รหัส</th>
-                  <th>ชื่อสินค้า</th>
-                  <th>ผูกกับรหัส</th>
-                  <th class="admin-th-actions">จัดการ</th>
-                </tr>
-              </thead>
-              <tbody id="adminSkuLinkBody">
-                <tr><td colspan="4" class="admin-empty">กำลังโหลด…</td></tr>
+                <tr><td colspan="6" class="admin-empty">เปิดแท็บนี้จะโหลดรายการอัตโนมัติ</td></tr>
               </tbody>
             </table>
           </div>
         </section>
-        <section class="admin-card" style="margin-top:12px;">
-          <h3 class="admin-card__title">ทดสอบยอดประวัติ (preview)</h3>
-          <div class="admin-add-grid">
-            <label>Supervisor<input type="text" id="adminSkuPreviewSup" class="field-input" placeholder="SL382" /></label>
-            <label>รหัส SKU<input type="text" id="adminSkuPreviewSku" class="field-input" placeholder="266932" /></label>
-            <label>เดือน<select id="adminSkuPreviewMonth" class="field-input"></select></label>
-            <label>ปี<input type="number" id="adminSkuPreviewYear" class="field-input" min="2000" max="2100" /></label>
-          </div>
-          <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminSkuLinkPreview()">ดูยอด 3M / LY</button>
-          <pre id="adminSkuPreviewOut" class="admin-preview-out" style="display:none;"></pre>
-        </section>
+      </div>
       </div>
     </div>
   </div>
 
   <!-- ใช้ไฟล์ในโปรเจกต์ — เครือข่ายองค์กรมักบล็อก alcdn.msauth.net ทำให้ msal ไม่โหลด -->
   <script src="vendor/msal-browser.min.js"></script>
-  <script src="app.js?v=2026062617"></script>
+  <script src="app.js?v=2026070328"></script>
 </body>
 
 </html>

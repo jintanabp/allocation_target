@@ -1,0 +1,228 @@
+"""Global Fabric cache ต่องวด — ลด DAX ซ้ำเมื่อสลับ SL"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import tempfile
+import threading
+from datetime import datetime, timezone
+from typing import Any
+
+import pandas as pd
+
+logger = logging.getLogger("target_allocation")
+
+_LOCK = threading.Lock()
+
+
+def _repo_root() -> str:
+    return os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+def cache_dir() -> str:
+    raw = (os.environ.get("FABRIC_CACHE_DIR") or "").strip()
+    if raw:
+        return os.path.normpath(os.path.abspath(raw))
+    return os.path.join(_repo_root(), "data", "cache")
+
+
+def fabric_static_cache_ttl_sec() -> int:
+    raw = (os.environ.get("FABRIC_STATIC_CACHE_TTL_SEC") or "86400").strip()
+    try:
+        return int(raw)
+    except ValueError:
+        return 86400
+
+
+def _cache_enabled() -> bool:
+    return fabric_static_cache_ttl_sec() > 0
+
+
+def _product_path(year: int, month: int) -> str:
+    return os.path.join(cache_dir(), f"dim_product_{int(year)}_{int(month):02d}.json")
+
+
+def _price_path(year: int, month: int) -> str:
+    return os.path.join(cache_dir(), f"price_per_box_{int(year)}_{int(month):02d}.json")
+
+
+def _tga_skus_path(year: int, month: int) -> str:
+    return os.path.join(cache_dir(), f"tga_skus_{int(year)}_{int(month):02d}.csv")
+
+
+def _read_meta(path: str) -> dict[str, Any] | None:
+    if not _cache_enabled() or not os.path.isfile(path):
+        return None
+    try:
+        if path.endswith(".json"):
+            with open(path, encoding="utf-8") as f:
+                doc = json.load(f)
+        else:
+            return None
+        cached_at_raw = str(doc.get("cached_at") or "").strip()
+        if not cached_at_raw:
+            return None
+        cached_at = datetime.fromisoformat(cached_at_raw.replace("Z", "+00:00"))
+        if cached_at.tzinfo is None:
+            cached_at = cached_at.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - cached_at.astimezone(timezone.utc)).total_seconds()
+        if age > fabric_static_cache_ttl_sec():
+            return None
+        return doc
+    except Exception as e:
+        logger.warning("fabric cache read %s: %s", path, e)
+        return None
+
+
+def _write_json_cache(path: str, payload: dict[str, Any]) -> None:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    doc = {
+        "cached_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        **payload,
+    }
+    with _LOCK:
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(doc, f, ensure_ascii=False)
+            os.replace(tmp, path)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+
+
+def read_product_info_df(year: int, month: int) -> pd.DataFrame | None:
+    doc = _read_meta(_product_path(year, month))
+    if not doc:
+        return None
+    rows = doc.get("rows")
+    if not isinstance(rows, list):
+        return None
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows)
+
+
+def write_product_info_df(year: int, month: int, df: pd.DataFrame) -> None:
+    if not _cache_enabled() or df is None:
+        return
+    rows = df.to_dict(orient="records")
+    _write_json_cache(_product_path(year, month), {"rows": rows, "row_count": len(rows)})
+
+
+def read_price_map(year: int, month: int) -> dict[str, float] | None:
+    doc = _read_meta(_price_path(year, month))
+    if not doc:
+        return None
+    prices = doc.get("prices")
+    if not isinstance(prices, dict):
+        return None
+    return {str(k): float(v) for k, v in prices.items()}
+
+
+def write_price_map(year: int, month: int, price_map: dict[str, float]) -> None:
+    if not _cache_enabled():
+        return
+    _write_json_cache(
+        _price_path(year, month),
+        {"prices": price_map, "row_count": len(price_map)},
+    )
+
+
+def read_tga_skus_csv(year: int, month: int) -> pd.DataFrame | None:
+    path = _tga_skus_path(year, month)
+    meta_path = path + ".meta.json"
+    if not _cache_enabled() or not os.path.isfile(path):
+        return None
+    doc = _read_meta(meta_path)
+    if not doc:
+        return None
+    try:
+        return pd.read_csv(path, dtype=str)
+    except Exception as e:
+        logger.warning("fabric tga skus read %s: %s", path, e)
+        return None
+
+
+def write_tga_skus_csv(year: int, month: int, df: pd.DataFrame) -> None:
+    if not _cache_enabled() or df is None:
+        return
+    path = _tga_skus_path(year, month)
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with _LOCK:
+        df.to_csv(path, index=False)
+        _write_json_cache(path + ".meta.json", {"row_count": len(df)})
+
+
+def cache_status(year: int, month: int) -> list[dict[str, Any]]:
+    """สถานะแต่ละ layer สำหรับ Admin UI"""
+    layers = [
+        ("product", _product_path(year, month), "ข้อมูลสินค้า (Dim_Product)"),
+        ("price", _price_path(year, month), "ราคาต่อหีบจากประวัติขาย"),
+        ("tga_skus", _tga_skus_path(year, month), "รายการ SKU มีเป้า TGA"),
+    ]
+    out: list[dict[str, Any]] = []
+    ttl = fabric_static_cache_ttl_sec()
+    for layer_id, path, label in layers:
+        meta_path = path if path.endswith(".json") else path + ".meta.json"
+        exists = os.path.isfile(path)
+        doc = _read_meta(meta_path) if exists else None
+        cached_at = doc.get("cached_at") if doc else None
+        row_count = doc.get("row_count") if doc else None
+        if row_count is None and exists and layer_id == "tga_skus":
+            try:
+                row_count = max(0, sum(1 for _ in open(path, encoding="utf-8")) - 1)
+            except OSError:
+                row_count = None
+        out.append(
+            {
+                "layer": layer_id,
+                "label": label,
+                "path": path,
+                "exists": exists,
+                "fresh": doc is not None,
+                "cached_at": cached_at,
+                "row_count": row_count,
+                "ttl_sec": ttl,
+            }
+        )
+    return out
+
+
+def invalidate_period_cache(
+    year: int | None = None,
+    month: int | None = None,
+    *,
+    layers: set[str] | None = None,
+) -> int:
+    """ลบไฟล์ cache ตามงวด/layer — คืนจำนวนไฟล์ที่ลบ"""
+    root = cache_dir()
+    if not os.path.isdir(root):
+        return 0
+    want = layers or {"product", "price", "tga_skus", "payload"}
+    removed = 0
+    suffix = ""
+    if year is not None and month is not None:
+        suffix = f"_{int(year)}_{int(month):02d}"
+    for name in os.listdir(root):
+        path = os.path.join(root, name)
+        hit = False
+        if "product" in want and name.startswith("dim_product") and (not suffix or name.endswith(suffix + ".json")):
+            hit = True
+        elif "price" in want and name.startswith("price_per_box") and (not suffix or name.endswith(suffix + ".json")):
+            hit = True
+        elif "tga_skus" in want and (name.startswith("tga_skus") or name.startswith("tga_skus")):
+            if not suffix or suffix in name:
+                hit = True
+        if hit:
+            try:
+                os.unlink(path)
+                removed += 1
+            except OSError as e:
+                logger.warning("fabric cache delete %s: %s", path, e)
+    return removed

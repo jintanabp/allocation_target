@@ -92,10 +92,70 @@ def period_label_th(month: int, year_ce: int) -> str:
 _MSG_NOT_UPDATED_WORK_PERIOD = "ระบบยังไม่อัปเดตเป้า"
 
 
+def _period_from_max_effective_result(result: dict) -> tuple[int, int] | None:
+    """ใช้ impliedTargetYear/Month จาก Target Sun maxEffectiveDate"""
+    if not isinstance(result, dict):
+        return None
+    iy = result.get("impliedTargetYear")
+    im = result.get("impliedTargetMonth")
+    if iy is None or im is None:
+        return None
+    try:
+        return int(iy), int(im)
+    except (TypeError, ValueError):
+        return None
+
+
+def tga_empty_period_message_targetsun(
+    max_effective: dict,
+    target_month: int,
+    target_year: int,
+) -> tuple[str, str]:
+    """ข้อความเมื่อไม่มีเป้า — ใช้ผล maxEffectiveDate จาก Target Sun Read API"""
+    period_th = period_label_th(target_month, target_year)
+    sel_y, sel_m = int(target_year), int(target_month)
+    work_period = is_expected_work_period(sel_m, sel_y)
+    implied = _period_from_max_effective_result(max_effective)
+    if implied is None:
+        if work_period:
+            return (
+                "not_updated",
+                f"{_MSG_NOT_UPDATED_WORK_PERIOD} สำหรับงวด {period_th} — กรุณารอ HQ อัปเดตเป้าเข้าระบบ",
+            )
+        return (
+            "no_effective",
+            (
+                f"ระบบยังไม่พบวันที่มีผลของเป้าใน Target Sun "
+                f"สำหรับงวด {period_th} — กรุณาให้ HQ อัปเดตเป้าเข้าระบบก่อน"
+            ),
+        )
+    implied_y, implied_m = implied
+    if (sel_y, sel_m) > (implied_y, implied_m):
+        if work_period:
+            return (
+                "not_updated",
+                f"{_MSG_NOT_UPDATED_WORK_PERIOD} สำหรับงวด {period_th} — กรุณารอ HQ อัปเดตเป้าเข้าระบบ",
+            )
+        return (
+            "not_updated",
+            (
+                f"ยังไม่มีการอัปเดตเป้างวด {period_th} เข้ามาในระบบเป้า Target Sun "
+                f"(ข้อมูลล่าสุดในระบบคืองวด {period_label_th(implied_m, implied_y)}) "
+                "— กรุณาเลือกดูงวดที่มีข้อมูลแล้ว"
+            ),
+        )
+    return (
+        "no_data",
+        f"ไม่มีข้อมูลเป้างวด {period_th} ในระบบเป้า Target Sun",
+    )
+
+
 def tga_empty_period_message(
     fabric,
     target_month: int,
     target_year: int,
+    *,
+    max_effective: dict | None = None,
 ) -> tuple[str, str]:
     """
     ข้อความเมื่อไม่มีแถวเป้าในงวดที่เลือก (หลังกรอง EFFECTIVEDATE)
@@ -105,9 +165,19 @@ def tga_empty_period_message(
       - not_updated — เลือกงวดล่วงหน้ากว่าที่ HQ อัปเดตล่าสุด
       - no_data — งวดไม่เกิน snapshot แต่ไม่มีแถวในงวดนั้น
     """
+    if max_effective is not None:
+        return tga_empty_period_message_targetsun(
+            max_effective, target_month, target_year
+        )
+
     period_th = period_label_th(target_month, target_year)
     sel_y, sel_m = int(target_year), int(target_month)
     work_period = is_expected_work_period(sel_m, sel_y)
+    if fabric is None:
+        return (
+            "no_data",
+            f"ไม่มีข้อมูลเป้างวด {period_th} ในระบบเป้า Target Sun",
+        )
     try:
         raw = fabric.get_tga_max_effective_raw()
         ts = _parse_effective_raw(raw)
@@ -182,13 +252,19 @@ def enforce_tga_has_targets_for_period(
     total_sup_boxes: int,
     *,
     debug: dict | None = None,
+    max_effective: dict | None = None,
 ) -> None:
     """ไม่มีเป้าหีบในงวดที่เลือก (หลังกรอง EFFECTIVEDATE) → 409 ห้ามเข้า Dashboard"""
     has_positive = df_tga is not None and not df_tga.empty
     if has_positive and int(total_sup_boxes) > 0:
         return
 
-    status, msg = tga_empty_period_message(fabric, target_month, target_year)
+    status, msg = tga_empty_period_message(
+        fabric,
+        target_month,
+        target_year,
+        max_effective=max_effective,
+    )
     work_period = is_expected_work_period(target_month, target_year)
     if work_period and status == "not_updated":
         title = _MSG_NOT_UPDATED_WORK_PERIOD
@@ -208,10 +284,69 @@ def enforce_tga_has_targets_for_period(
     )
 
 
+def enforce_tga_selection_matches_effective_window_ts(
+    division_code: str,
+    sales_type: str,
+    target_month: int,
+    target_year: int,
+) -> None:
+    """ตรวจงวดเป้าจาก Target Sun maxEffectiveDate"""
+    if os.environ.get("TGA_ENFORCE_EFFECTIVE_WINDOW", "1").strip().lower() in (
+        "0",
+        "false",
+        "no",
+        "off",
+    ):
+        return
+
+    from ..services import targetsun_read
+
+    try:
+        result = targetsun_read.fetch_max_effective_date(division_code, sales_type)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("TargetSun maxEffectiveDate check skipped: %s", e)
+        return
+
+    implied = _period_from_max_effective_result(result)
+    if implied is None:
+        logger.warning("TargetSun maxEffectiveDate: no implied period")
+        return
+
+    implied_y, implied_m = implied
+    sel_y, sel_m = int(target_year), int(target_month)
+    if (sel_y, sel_m) >= (implied_y, implied_m):
+        return
+
+    sel_th = f"{_MONTH_TH[sel_m]} {sel_y + 543}"
+    imp_th = f"{_MONTH_TH[implied_m]} {implied_y + 543}"
+    eff_th = str(result.get("maxEffectiveDateTh") or "").strip()
+    eff_label = eff_th or imp_th
+
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "TGA_EFFECTIVE_WINDOW",
+            "title": "งวดที่เลือกหมดช่วงกำหนดแล้ว",
+            "message": (
+                f"ตอนนี้ข้อมูลเป้าจาก Target Sun อัปเดตไปสำหรับงวด {imp_th} แล้ว "
+                f"จึงไม่สามารถกำหนดเป้างวด {sel_th} ได้"
+            ),
+            "selected": {"month": sel_m, "year": sel_y},
+            "suggested": {"month": implied_m, "year": implied_y},
+            "effectiveDateLabel": eff_label,
+        },
+    )
+
+
 def enforce_tga_selection_matches_effective_window(
     fabric,
     target_month: int,
     target_year: int,
+    *,
+    division_code: str | None = None,
+    sales_type: str | None = None,
 ) -> None:
     """
     ถ้างวดที่เลือกน้อยกว่างวดเป้าที่ snapshot ปัจจุบันรองรับ → 409
@@ -222,6 +357,17 @@ def enforce_tga_selection_matches_effective_window(
         "no",
         "off",
     ):
+        return
+
+    from ..services import targetsun_read
+
+    if targetsun_read.is_enabled() and division_code and sales_type:
+        enforce_tga_selection_matches_effective_window_ts(
+            division_code,
+            sales_type,
+            target_month,
+            target_year,
+        )
         return
 
     try:

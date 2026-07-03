@@ -33,10 +33,14 @@ def get_managers(user: dict = Depends(require_authenticated_user)):
         if not out.get("manager_views"):
             by_m = out.get("by_manager") or {}
             mgrs = out.get("manager_codes") or []
-            out["manager_views"] = build_manager_views_map(by_m, list(mgrs))
+            out["manager_views"] = build_manager_views_map(by_m, list(mgrs), mgrs)
         out["can_import_targetsun"] = user_can_import_targetsun(user)
         out["is_admin"] = bool(user.get("is_admin"))
         out["is_marketing"] = bool(user.get("is_marketing"))
+        from ..services import targetsun_read
+
+        out["targetsun_read_enabled"] = targetsun_read.is_enabled()
+        out["target_read_source"] = targetsun_read.get_target_read_source()
         if user.get("view_as_email"):
             out["view_as_email"] = user["view_as_email"]
             out["acting_admin_email"] = user.get("acting_admin_email")

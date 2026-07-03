@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .access_hierarchy import access_hierarchy_json_path, load_hierarchy_payload, parse_hierarchy_metadata
+from .targetsun_endpoints import targetsun_import_excel_url
 from .user_access_store import read_rows
 
 logger = logging.getLogger("target_allocation")
@@ -42,7 +43,7 @@ API_MAP = [
     {"endpoint": "GET /admin/supervisor-team", "fabric": True, "sources": ["Dim_Salesman", "emp_cache_*"]},
     {"endpoint": "GET /admin/user-access", "fabric": False, "sources": ["user_access.json"]},
     {"endpoint": "GET /admin/sku-links", "fabric": False, "sources": ["sku_links.json"]},
-    {"endpoint": "GET /admin/sku-links/catalog", "fabric": False, "sources": ["employee_payload_cache", "sku_links.json"]},
+    {"endpoint": "GET /admin/sku-links/catalog", "fabric": True, "sources": ["tga_target_salesman_next", "Dim_Product", "sku_links.json"]},
     {"endpoint": "GET /admin/sku-links/preview", "fabric": True, "sources": ["cross_sold_history_2y_qu", "Dim_Salesman"]},
     {"endpoint": "GET /admin/sl-links", "fabric": False, "sources": ["sl_links.json"]},
 ]
@@ -149,9 +150,7 @@ def build_data_inventory(*, check_fabric: bool = True) -> dict[str, Any]:
         except OSError:
             pass
 
-    targetsun_url = (
-        os.environ.get("TARGETSUN_IMPORT_EXCEL_URL") or ""
-    ).strip() or "https://spcuatws.sahapat.com/spc/targetsun/importTargetSalesmanNextFromExcel"
+    targetsun_url = targetsun_import_excel_url()
 
     onelake_ok = bool(
         (os.environ.get("ONELAKE_WORKSPACE_ID") or "").strip()
@@ -164,6 +163,14 @@ def build_data_inventory(*, check_fabric: bool = True) -> dict[str, Any]:
     }
     if check_fabric:
         fabric_block["connection"] = _fabric_connection_status()
+    else:
+        fabric_block["connection"] = {
+            "skipped": True,
+            "ok": None,
+            "dataset_id": (os.environ.get("FABRIC_DATASET_ID") or "").strip(),
+            "workspace_id": (os.environ.get("FABRIC_WORKSPACE_ID") or "").strip(),
+            "error": None,
+        }
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),

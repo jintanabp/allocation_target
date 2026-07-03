@@ -38,7 +38,7 @@ class TestSlLinks(unittest.TestCase):
 
     def test_expand_sl_codes(self) -> None:
         self._write(
-            [{"canonical_sl": "SL508", "alias_sls": ["SL508", "SL524"], "note": ""}]
+            [{"old_sl": "SL508", "new_sls": ["SL524"], "note": ""}]
         )
         expanded = sls.expand_sl_codes({"SL524", "SL532"})
         self.assertIn("SL508", expanded)

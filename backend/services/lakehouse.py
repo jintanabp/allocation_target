@@ -661,6 +661,81 @@ def _drop_rows_missing_tga_import_key(
     return kept, dropped, preview
 
 
+def _normalize_brand_label(value: object) -> str:
+    return str(value or "").strip()
+
+
+def _brand_filter_mask(df: pd.DataFrame, brand_filter: str) -> pd.Series:
+    """จับคู่ชื่อแบรนด์ไทยหรืออังกฤษ (ตัดช่องว่างหัวท้าย)"""
+    bf = _normalize_brand_label(brand_filter)
+    th = (
+        df["brand_name_thai"].map(_normalize_brand_label)
+        if "brand_name_thai" in df.columns
+        else pd.Series("", index=df.index)
+    )
+    en = (
+        df["brand_name_english"].map(_normalize_brand_label)
+        if "brand_name_english" in df.columns
+        else pd.Series("", index=df.index)
+    )
+    return (th == bf) | (en == bf)
+
+
+def _enrich_brand_names(
+    df: pd.DataFrame,
+    sup_id: str,
+    month: int,
+    year: int,
+) -> pd.DataFrame:
+    """เติม brand_name_thai / brand_name_english จาก global product cache / target_boxes.csv"""
+    from .fabric_cache import read_product_info_df
+
+    out = df.copy()
+    brand_th_map: dict[str, str] = {}
+    brand_en_map: dict[str, str] = {}
+    cached = read_product_info_df(year, month)
+    if cached is not None and not cached.empty and "sku" in cached.columns:
+        th_col = "brand_name_thai" if "brand_name_thai" in cached.columns else (
+            "brand" if "brand" in cached.columns else None
+        )
+        en_col = "brand_name_english" if "brand_name_english" in cached.columns else None
+        for _, row in cached.iterrows():
+            sku = str(row.get("sku") or "").strip()
+            if not sku:
+                continue
+            if th_col:
+                brand = str(row.get(th_col) or "").strip()
+                if brand:
+                    brand_th_map[sku] = brand
+            if en_col:
+                brand = str(row.get(en_col) or "").strip()
+                if brand:
+                    brand_en_map[sku] = brand
+    if not brand_th_map and not brand_en_map:
+        tgt_path = "data/target_boxes.csv"
+        if os.path.isfile(tgt_path):
+            try:
+                df_tgt = pd.read_csv(tgt_path, dtype=str)
+                if "sku" in df_tgt.columns:
+                    for _, row in df_tgt.iterrows():
+                        sku = str(row.get("sku") or "").strip()
+                        if not sku:
+                            continue
+                        if "brand_name_thai" in df_tgt.columns:
+                            brand = str(row.get("brand_name_thai") or "").strip()
+                            if brand:
+                                brand_th_map[sku] = brand
+                        if "brand_name_english" in df_tgt.columns:
+                            brand = str(row.get("brand_name_english") or "").strip()
+                            if brand:
+                                brand_en_map[sku] = brand
+            except Exception as e:
+                logger.warning("brand enrich from target_boxes: %s", e)
+    out["brand_name_thai"] = out["sku"].astype(str).map(lambda s: brand_th_map.get(s, ""))
+    out["brand_name_english"] = out["sku"].astype(str).map(lambda s: brand_en_map.get(s, ""))
+    return out
+
+
 def _enrich_emp_dimensions(
     df: pd.DataFrame,
     rows_raw: list[dict],
@@ -774,6 +849,33 @@ def _build_tga_upload_dataframe(
     df = df[(df["emp_id"] != "") & (df["sku"] != "")].copy()
     if df.empty:
         raise HTTPException(400, detail="ไม่มีแถว emp×sku ที่สมบูรณ์สำหรับส่งออก")
+
+    brand_filter = _normalize_brand_label(getattr(req, "brand_filter", None) or "ALL")
+    if brand_filter and brand_filter.upper() != "ALL":
+        needs_brand_enrich = (
+            "brand_name_thai" not in df.columns
+            or df["brand_name_thai"].astype(str).str.strip().eq("").all()
+        )
+        if needs_brand_enrich:
+            df = _enrich_brand_names(df, req.sup_id, int(req.target_month), int(req.target_year))
+        mask = _brand_filter_mask(df, brand_filter)
+        df = df[mask].copy()
+        if df.empty:
+            raise HTTPException(
+                404,
+                detail={
+                    "message": f"ไม่พบข้อมูลสำหรับแบรนด์ '{brand_filter}'",
+                    "hint_th": "ตรวจว่าแบรนด์นี้มี SKU ในผลกระจายหีบ — หรือลองส่งทุกแบรนด์",
+                },
+            )
+        if int(df["allocated_boxes"].sum()) == 0:
+            raise HTTPException(
+                400,
+                detail={
+                    "message": f"แบรนด์ '{brand_filter}' ส่งเป็นหีบ 0 ทั้งหมด — Target Sun จะทับเป้าเดิมเป็น 0",
+                    "hint_th": "ดาวน์โหลด Excel ตรวจก่อน หรือรีเฟรชหน้าแล้วส่งใหม่",
+                },
+            )
 
     df = _normalize_allocation_payload(df)
     zero_pairs_full = _zero_sum_emp_sku_pairs(df)

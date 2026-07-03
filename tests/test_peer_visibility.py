@@ -68,6 +68,30 @@ class TestLoginPickPeers(unittest.TestCase):
         self.assertIn("SL382", out["peer_supervisor_codes"])
         self.assertNotIn("SL382 (Supervisor)", out["managers"])
 
+    def test_manager_acc_not_dual_supervisor_pick(self):
+        from backend.services.access_control import filter_managers_payload_for_user
+        from backend.services.sl_link_store import manager_pick_label, read_links
+
+        full = {
+            "rows": [],
+            "supervisors": ["SL508", "SL532"],
+            "manager_codes": ["SL508"],
+            "by_manager": {"SL508": ["SL508", "SL532"]},
+        }
+        user = {
+            "userpls_supervisor_pick": set(),
+            "userpls_manager_pick": {"SL508"},
+            "allowed_supervisor_codes": {"SL508", "SL532"},
+            "home_supervisor_codes": set(),
+        }
+        out = filter_managers_payload_for_user(full, user)
+        labels = out.get("managers") or []
+        sl_links = read_links()
+        expected_mgr = manager_pick_label("SL508", sl_links)
+        self.assertIn(expected_mgr, labels)
+        self.assertNotIn("SL508 (Supervisor)", labels)
+        self.assertEqual(out.get("by_manager", {}).get("SL508"), ["SL532"])
+
 
 if __name__ == "__main__":
     unittest.main()

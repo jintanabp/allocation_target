@@ -99,7 +99,7 @@ class TestBEParse(unittest.TestCase):
         lk, unit, scope = parse_role_from_position("ซุปเครดิตภาคกลาง")
         self.assertEqual(lk, "supervisor_acc")
         self.assertEqual(unit, "credit")
-        self.assertEqual(scope, "self")
+        self.assertEqual(scope, "region_peers")
 
 
 class TestVisibleSupervisors(unittest.TestCase):
@@ -206,7 +206,7 @@ class TestVisibleSupervisors(unittest.TestCase):
                 "userpl": "SL500",
                 "acc_division": "Div.S",
                 "login_kind": "manager_acc",
-                "acc_scope": "all",
+                "manager_level": "regional",
                 "acc_region": "กลาง",
             },
             {

@@ -26,15 +26,35 @@ python scripts/access/repair_user_access.py
 - **Deploy ครั้งแรก:** ไฟล์ config อยู่ใน Git — server ได้รายชื่อพร้อมใช้หลัง `git pull`
 - **หลัง deploy:** แอดมินแก้ผ่านปุ่ม **「จัดการสิทธิ์」** (อีเมลใน `ALLOCATION_ADMIN_EMAILS`) — การแก้บน server ไม่ถูก commit อัตโนมัติ
 - ฟิลด์ `can_import_targetsun` กำหนดใครกด **ส่งเข้า Target Sun** ได้
-- ฟิลด์ `login_kind`: `marketing` = เข้าระบบแล้วเห็นแอดมินแท็บ **ทีมพนักงาน**, **ผูกรหัส SL** (ดู), **ผูกรหัส SKU** (ดู) เท่านั้น
+- ฟิลด์ `login_kind`: `marketing` = เข้าระบบแล้วเห็นแอดมินแท็บ **ทีมพนักงาน**, **ผูกรหัส SL** (ดู), **ผูกรหัส SKU** (ดู) เท่านั้น · `manager_acc` = บังคับบทบาท Manager (ใช้คู่กับ `manager_level` และ `acc_division`/`acc_region`/`acc_scope`)
+- ฟิลด์ `manager_level` (เมื่อ `login_kind` = `manager_acc`): `division` = ดูซุปทั้ง division · `regional` = ดูซุปทั้งภาค — **ระบบอนุมาน `acc_scope` อัตโนมัติ** ไม่ต้องตั้งเอง
+- ซุป (`supervisor_acc`): ดูซุปทั้งภาคใน division · ถ้ามี `acc_unit` = van/credit จะดูเฉพาะซุปหน่วยเดียวกันในภาค
 - ฟิลด์ `acc_scope`: `self` = ดูเฉพาะทีมตัวเอง · `region_peers` = ดู Supervisor ใน **division+ภาคเดียวกัน** (กระจายหีบได้เฉพาะทีมตัวเอง — ทีมคนอื่นเป็น read-only)
-- ฟิลด์สำคัญ: `full_name`, `acc_division`, `acc_region`, `acc_unit`, `acc_scope` (`all`/`credit`/`van`/`self`/`region_peers`), `login_kind`, `visible_supervisor_codes` (precompute)
+- ฟิลด์สำคัญ (ทุกแถวมีครบ — ค่าว่างใช้ `none`): `full_name`, `acc_division`, `acc_region`, `acc_unit`, `acc_position`, `login_kind`, `manager_level`, `acc_scope`, `acc_type`, `acc_joblevel`, `visible_supervisor_codes`
+- นำเข้า/ซ่อมจาก Excel:
+
+```bash
+python scripts/access/import_user_access_from_division_xlsx.py
+python scripts/access/repair_user_access.py
+```
+
+**กฎ Excel → สิทธิ**
+
+| แหล่ง | เงื่อนไข | ผลลัพธ์ |
+|--------|----------|---------|
+| Div.S | คอล. E = `Div.S`, F = `All` | `manager_acc` + `manager_level: division` |
+| Div.S | E = ภาค (BKK/Central/…), F = `All` | `manager_acc` + `manager_level: regional` |
+| Div.S | E = ภาค, F = `Credit All` / `Van All` | `supervisor_acc` + หน่วย credit/van |
+| Div.B/E | ตำแหน่งมี ผจก./ผช.ผจก. + ภาค | `manager_acc` + `manager_level: regional` |
+| Div.E | ตำแหน่ง ผจก.แผนก Div.E (ไม่มีภาค) | `manager_acc` + `manager_level: division` |
+| Div.B/E | ซุป + ภาค (+ เครดิต/รถ ถ้ามี) | `supervisor_acc` |
 
 ### กฎสิทธิ์ (Excel roster)
 
 | Division | บทบาท | ดูได้ |
 |----------|--------|--------|
-| Div.B / Div.E | ผจก./ผช.ผจก. (`manager_acc`) | ซุปทุกคนใน **division + ภาค** เดียวกัน · โหมด「รวมภาค」/「รวมทั้งหมด」กระจายหีบได้ |
+| Div.B / Div.E | ผจก./ผช.ผจก. (`manager_acc`) | ซุปทุกคนใน **division + ภาค** เดียวกัน · โหมด「รวมทั้งหมด」ดูอย่างเดียว · กระจายหีบได้เฉพาะ「รายคน」/「รวมภาค」 |
+| Div.S | ผจก. division (`manager_acc`, ไม่มีภาค) | ซุปทุกคนใน Div.S ทุกภาค · โหมด「รวมทั้งหมด」ดูอย่างเดียว · กระจายหีบได้เฉพาะ「รายคน」/「รวมภาค」 |
 | Div.B / Div.E | ซุป (`supervisor_acc`) + `self` | **รหัส SL ตัวเอง** เท่านั้น |
 | Div.B / Div.E | ซุป (`supervisor_acc`) + `region_peers` | ซุปทุกคนใน **division + ภาค** เดียวกัน (ดูรวมทั้งภาคได้ · กระจายหีบได้เฉพาะทีมตัวเอง) |
 | Div.S | ขอบเขต `All` + ภูมิภาค `Div.S` | ซุปทุกคนใน Div.S ทุกภาค |
@@ -92,3 +112,52 @@ python scripts/access/repair_user_access.py
 ## ความปลอดภัย
 
 `.env` มี secret — อย่า commit; backup `user_access.json`, `sl_links.json`, `sku_links.json` บน server เป็นระยะหลังแอดมินแก้ผ่านเว็บ
+
+## Deploy checklist (server เครื่องเดียว)
+
+### ก่อน push / merge
+
+1. รัน `python -m unittest discover -s tests -p "test_*.py"` บนเครื่อง dev
+2. ตรวจว่าไม่ commit `config/.env` และ `.cursor/`
+3. GitHub Actions (`.github/workflows/test.yml`) ต้องผ่านบน PR
+
+### เตรียม server
+
+1. คัดลอก `config/.env.example` → `config/.env` แล้วกรอกค่า production
+2. ตั้ง persistent volume และ env (แนะนำ):
+
+```env
+ALLOCATIONS_DATA_DIR=/var/lib/allocation_target/allocations
+USAGE_LOGS_DIR=/var/lib/allocation_target/logs
+FABRIC_CACHE_DIR=/var/lib/allocation_target/cache
+AZURE_AUTH_DISABLED=0
+ALLOCATION_ADMIN_EMAILS=admin1@...,admin2@...
+```
+
+3. Entra redirect URI ตรงกับ domain production
+4. **Target Sun URL (Read / Send แยกกัน):** default ใน `backend/services/targetsun_endpoints.py` · สลับ preset จากแอดมิน → `config/app_runtime.json` (ดู `docs/ENV_CHECKLIST_IT.md`)
+5. รัน uvicorn **1 worker** — snapshot JSON ใช้ last-write-wins
+6. **หลัง deploy โค้ดใหม่** — รีสตาร์ท service เสมอ (โดยเฉพาะ endpoint แอดมิน)
+
+### Checklist
+
+- IT env: [`docs/ENV_CHECKLIST_IT.md`](../docs/ENV_CHECKLIST_IT.md)
+- QA ก่อน go-live: [`docs/DEPLOY_QA_CHECKLIST.md`](../docs/DEPLOY_QA_CHECKLIST.md)
+
+### หลัง deploy
+
+```bash
+python scripts/dev/smoke_deploy.py --base-url https://your-host/allocation_target
+```
+
+### ทดสอบ go-live (manual)
+
+1. Supervisor กระจาย → `PUT /data/allocations` 200 → peer อ่านได้ / เขียน 403
+2. แอดมินเห็น snapshot + ดาวน์โหลดสำรอง + ลบได้
+3. ส่ง Target Sun แยกแบรนด์ — Excel มีหีบถูก
+4. Restart server — snapshot ยังอยู่ใน `ALLOCATIONS_DATA_DIR`
+5. Footer แสดง `build <hash>` ตรงกับ commit ที่ deploy
+
+### Log rotation
+
+ไฟล์ `usage_*.jsonl` ใน `USAGE_LOGS_DIR` โตตามการใช้งาน — ย้าย/ลบงวดเก่าเป็นระยะเพื่อกัน disk เต็ม

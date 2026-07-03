@@ -19,10 +19,15 @@ def _row_by_userpl() -> dict[str, dict[str, Any]]:
 def is_division_wide_manager(row: dict[str, Any] | None) -> bool:
     if not row:
         return False
+    if str(row.get("login_kind") or "") != "manager_acc":
+        return False
+    ml = str(row.get("manager_level") or "").strip().lower()
+    if ml == "division":
+        return True
+    if ml == "regional":
+        return False
     return (
-        str(row.get("login_kind") or "") == "manager_acc"
-        and str(row.get("acc_division") or "") == "Div.S"
-        and str(row.get("acc_scope") or "").lower() == "all"
+        str(row.get("acc_division") or "") == "Div.S"
         and not str(row.get("acc_region") or "").strip()
     )
 
@@ -34,21 +39,23 @@ def supervisor_region_for_code(code: str, roster: dict[str, dict[str, Any]]) -> 
     return str(row.get("acc_region") or "").strip()
 
 
-def team_supervisor_codes(team: list[str], manager_code: str) -> list[str]:
+def team_supervisor_codes(
+    team: list[str],
+    manager_code: str,
+    exclude_manager_codes: set[str] | None = None,
+) -> list[str]:
+    """รหัส Supervisor ในทีม — ตัดรหัส Manager ที่เกี่ยวข้อง (ไม่ใช่ Manager ทั้งองค์กร)"""
     mgr = manager_code.strip().upper()
+    excl = {str(x).strip().upper() for x in (exclude_manager_codes or ())}
+    excl.add(mgr)
     out: list[str] = []
     seen: set[str] = set()
     for raw in team:
         c = str(raw or "").strip().upper()
-        if not c or c == mgr or c in seen:
+        if not c or c in excl or c in seen:
             continue
-        row = _row_by_userpl().get(c)
-        if row and str(row.get("login_kind") or "") == "supervisor_acc":
-            out.append(c)
-            seen.add(c)
-        elif not row:
-            out.append(c)
-            seen.add(c)
+        out.append(c)
+        seen.add(c)
     return sorted(out)
 
 
@@ -64,6 +71,7 @@ def _region_display_label(region_id: str) -> str:
 def build_manager_view_options(
     manager_code: str,
     team_codes: list[str],
+    exclude_manager_codes: set[str] | None = None,
 ) -> dict[str, Any]:
     """
     คืนตัวเลือกมุมมองสำหรับ Manager:
@@ -73,7 +81,7 @@ def build_manager_view_options(
     mgr = manager_code.strip().upper()
     roster = _row_by_userpl()
     mgr_row = roster.get(mgr)
-    supers = team_supervisor_codes(team_codes, mgr)
+    supers = team_supervisor_codes(team_codes, mgr, exclude_manager_codes)
 
     meta: dict[str, dict[str, str]] = {}
     by_region: dict[str, list[str]] = {}
@@ -125,8 +133,14 @@ def build_manager_view_options(
 def build_manager_views_map(
     by_manager: dict[str, list[str]] | None,
     manager_codes: list[str] | None = None,
+    manager_pick: set[str] | list[str] | None = None,
+    sl_links: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """สร้าง manager_views สำหรับทุกรหัส Manager ในทีม (ใช้ทั้ง user ปกติและแอดมิน)"""
+    from .sl_link_store import manager_codes_to_exclude_from_team, read_links
+
+    links = sl_links if sl_links is not None else read_links()
+    picks = manager_pick if manager_pick is not None else (manager_codes or [])
     bm: dict[str, list[str]] = {}
     for k, v in (by_manager or {}).items():
         mk = str(k or "").strip().upper()
@@ -136,7 +150,8 @@ def build_manager_views_map(
     codes = manager_codes if manager_codes is not None else sorted(bm.keys())
     out: dict[str, Any] = {}
     for m in sorted({str(c).strip().upper() for c in codes if str(c).strip()}):
-        out[m] = build_manager_view_options(m, bm.get(m, []))
+        excl = manager_codes_to_exclude_from_team(m, picks, links)
+        out[m] = build_manager_view_options(m, bm.get(m, []), excl)
     return out
 
 

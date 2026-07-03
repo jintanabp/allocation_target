@@ -12,7 +12,7 @@ import re
 import time
 from typing import Any
 
-from .user_access_store import read_rows
+from .user_access_store import apply_inferred_access_fields, read_rows
 
 logger = logging.getLogger("target_allocation")
 
@@ -93,17 +93,43 @@ def parse_region_from_position(pos: str) -> str:
 
 
 def parse_role_from_position(pos: str) -> tuple[str, str, str]:
-    """คืน (login_kind, acc_unit, acc_scope)"""
+    """คืน (login_kind, acc_unit, acc_scope) — scope จะถูกอนุมานใหม่ตอน normalize"""
     p = re.sub(r"\s+", "", (pos or ""))
     if re.search(r"ผจก|ผช\.?ผจก|ผู้จัดการ", p):
         return "manager_acc", "", "all"
     if "ซุป" in p:
         if "เครดิต" in p:
-            return "supervisor_acc", "credit", "self"
+            return "supervisor_acc", "credit", "region_peers"
         if "หน่วยรถ" in p or ("รถ" in p and "เครดิต" not in p):
-            return "supervisor_acc", "van", "self"
-        return "supervisor_acc", "", "self"
-    return "standard", "", "self"
+            return "supervisor_acc", "van", "region_peers"
+        return "supervisor_acc", "", "region_peers"
+    return "standard", "", ""
+
+
+def infer_manager_level_from_roster(
+    *,
+    login_kind: str,
+    acc_division: str = "",
+    acc_region: str = "",
+    div_s_region_raw: str = "",
+) -> str:
+    """อนุมาน manager_level จาก Excel roster"""
+    if str(login_kind or "").strip() != "manager_acc":
+        return ""
+    div = str(acc_division or "").strip()
+    region = str(acc_region or "").strip()
+    raw = str(div_s_region_raw or "").strip().upper()
+    if div == "Div.S" and raw in ("DIV.S", "DIV.S."):
+        return "division"
+    if region:
+        return "regional"
+    if div in ("Div.E", "Div.S"):
+        return "division"
+    return "regional"
+
+
+def is_div_s_division_manager_region_raw(region_raw: str | None) -> bool:
+    return str(region_raw or "").strip().upper() in ("DIV.S", "DIV.S.")
 
 
 def _build_division_supervisor_index(
@@ -155,6 +181,7 @@ def compute_visible_supervisors_for_row(
     div = str(row.get("acc_division") or "").strip()
     region = str(row.get("acc_region") or "").strip()
     scope = str(row.get("acc_scope") or "").strip().lower()
+    mgr_level = str(row.get("manager_level") or "").strip().lower()
 
     def _mgr_team(codes: set[str]) -> list[str]:
         if upl:
@@ -162,24 +189,43 @@ def compute_visible_supervisors_for_row(
             codes.add(upl)
         return sorted(codes)
 
+    def _unit_by_upl() -> dict[str, str]:
+        out: dict[str, str] = {}
+        for r in source:
+            code = str(r.get("userpl") or "").strip().upper()
+            if code:
+                out[code] = str(r.get("acc_unit") or "").strip().lower()
+        return out
+
     if login_kind == "manager_acc":
-        if div == "Div.S":
-            if scope == "all" and not region:
+        if not mgr_level and div == "Div.S" and not region:
+            mgr_level = "division"
+        elif not mgr_level and region:
+            mgr_level = "regional"
+        if mgr_level == "division":
+            if div == "Div.S":
                 return _mgr_team(div_s_supervisors)
-            if scope == "all" and region:
-                return _mgr_team(division_index.get((div, region), set()))
-        if div in ("Div.B", "Div.E") and region:
+            if div:
+                allowed: set[str] = set()
+                for (d, _r), codes in division_index.items():
+                    if d == div:
+                        allowed.update(codes)
+                return _mgr_team(allowed)
+        if div and region:
             return _mgr_team(division_index.get((div, region), set()))
         if div:
-            allowed: set[str] = set()
+            allowed = set()
             for (d, r), codes in division_index.items():
                 if d == div and (not region or r == region):
                     allowed.update(codes)
             return _mgr_team(allowed)
 
     if login_kind == "supervisor_acc":
-        if scope == "region_peers" and div and region:
-            peers = division_index.get((div, region), set())
+        if div and region and scope in ("region_peers", "credit", "van", "all", ""):
+            peers = set(division_index.get((div, region), set()))
+            if scope in ("credit", "van"):
+                units = _unit_by_upl()
+                peers = {c for c in peers if units.get(c) == scope}
             if peers:
                 return sorted(peers)
         return [upl] if upl else []
@@ -208,6 +254,7 @@ def enrich_rows_with_visibility(rows: list[dict[str, Any]]) -> list[dict[str, An
     out: list[dict[str, Any]] = []
     for r in normalized:
         nr = dict(r)
+        apply_inferred_access_fields(nr)
         vis = compute_visible_supervisors_for_row(
             nr,
             all_rows=normalized,

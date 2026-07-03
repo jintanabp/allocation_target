@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 ตรวจและซ่อม config/user_access.json ตามกฎ Excel roster:
+- อนุมาน manager_level / acc_scope
+- จัดฟิลด์ครบทุกแถว (ว่าง = none)
 - คำนวณ visible_supervisor_codes ใหม่
-- ตรวจว่า supervisor มี SL ตัวเองในรายการที่ดูได้
 - rebuild access_hierarchy.json
 """
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from typing import Any
@@ -21,6 +21,10 @@ from backend.services.access_hierarchy import (  # noqa: E402
     enrich_rows_with_visibility,
     persist_hierarchy,
     build_hierarchy_payload,
+)
+from backend.services.user_access_store import (  # noqa: E402
+    canonicalize_user_access_rows,
+    read_rows,
 )
 
 USER_ACCESS_PATH = os.path.join(REPO, "config", "user_access.json")
@@ -54,13 +58,9 @@ def audit_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def main() -> int:
-    with open(USER_ACCESS_PATH, encoding="utf-8") as f:
-        rows = json.load(f)
-    if not isinstance(rows, list):
-        print("user_access.json ต้องเป็น array", file=sys.stderr)
-        return 1
-
-    enriched = enrich_rows_with_visibility(rows)
+    rows = read_rows()
+    with_vis = enrich_rows_with_visibility(rows)
+    enriched = canonicalize_user_access_rows(with_vis)
     report = audit_rows(enriched)
     bad = [x for x in report if not x["ok"]]
     legacy = [
@@ -69,6 +69,8 @@ def main() -> int:
         if str(x.get("login_kind") or "") == "standard"
         and not str(x.get("visible") or [])
     ]
+
+    import json
 
     with open(USER_ACCESS_PATH, "w", encoding="utf-8") as f:
         json.dump(enriched, f, ensure_ascii=False, indent=2)

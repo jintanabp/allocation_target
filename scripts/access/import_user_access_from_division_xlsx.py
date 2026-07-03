@@ -2,9 +2,9 @@
 """
 นำเข้า user_access จากไฟล์ Excel แยก Division (B/E/S)
 - Div.B/E: ภาคจากคอลัมน์ตำแหน่ง, บทบาทจากข้อความตำแหน่ง
-- Div.S: ภาคจากคอลัมน์ภูมิภาค + ขอบเขต (All / Credit All / Van All)
+- Div.S: คอล. E = Div.S + F=All → Mgr·Division · E=ภาค + F=All → Mgr·ภาค · F=Credit/Van All → Sup+หน่วย
 - merge: อัปเดตแถวที่ตรง email+userpl, เก็บแถวเดิมที่ไม่อยู่ใน Excel
-- คำนวณ visible_supervisor_codes และ rebuild access_hierarchy
+- จัดฟิลด์ครบทุกแถว (ว่าง = none) + คำนวณ visible + rebuild hierarchy
 """
 
 from __future__ import annotations
@@ -27,6 +27,8 @@ sys.path.insert(0, REPO)
 from backend.services.access_hierarchy import (  # noqa: E402
     apply_roster_overrides,
     enrich_rows_with_visibility,
+    infer_manager_level_from_roster,
+    is_div_s_division_manager_region_raw,
     parse_div_s_scope,
     parse_region_from_position,
     parse_role_from_position,
@@ -34,6 +36,7 @@ from backend.services.access_hierarchy import (  # noqa: E402
     build_hierarchy_payload,
     normalize_div_s_region,
 )
+from backend.services.user_access_store import canonicalize_user_access_rows  # noqa: E402
 
 USER_ACCESS_PATH = os.path.join(REPO, "config", "user_access.json")
 
@@ -64,7 +67,7 @@ def row_from_be(
     full_name: str,
     position: str,
 ) -> dict[str, Any]:
-    login_kind, acc_unit, acc_scope = parse_role_from_position(position)
+    login_kind, acc_unit, _acc_scope = parse_role_from_position(position)
     acc_region = parse_region_from_position(position)
     out: dict[str, Any] = {
         "email": _norm_email(email),
@@ -75,12 +78,19 @@ def row_from_be(
         "acc_division": division,
         "acc_position": (position or "").strip(),
         "login_kind": login_kind,
-        "acc_scope": acc_scope,
     }
     if acc_region:
         out["acc_region"] = acc_region
     if acc_unit:
         out["acc_unit"] = acc_unit
+    if login_kind == "manager_acc":
+        ml = infer_manager_level_from_roster(
+            login_kind=login_kind,
+            acc_division=division,
+            acc_region=acc_region,
+        )
+        if ml:
+            out["manager_level"] = ml
     if login_kind in ("manager_acc", "supervisor_acc"):
         out["acc_type"] = "NON"
         out["acc_joblevel"] = "1"
@@ -97,8 +107,10 @@ def row_from_s(
     parsed = parse_div_s_scope(scope_raw)
     if parsed is None:
         return None
-    login_kind, acc_scope, acc_unit = parsed
-    acc_region = normalize_div_s_region(region_raw)
+    login_kind, _acc_scope, acc_unit = parsed
+    region_key = str(region_raw or "").strip()
+    is_div_mgr = is_div_s_division_manager_region_raw(region_key)
+
     out: dict[str, Any] = {
         "email": _norm_email(email),
         "userpl": _norm_upl(userpl),
@@ -107,14 +119,25 @@ def row_from_s(
         "note": "",
         "acc_division": "Div.S",
         "login_kind": login_kind,
-        "acc_scope": acc_scope,
         "acc_type": "NON",
         "acc_joblevel": "1",
     }
-    if acc_region:
-        out["acc_region"] = acc_region
-    if acc_unit:
-        out["acc_unit"] = acc_unit
+
+    if login_kind == "manager_acc":
+        if is_div_mgr:
+            out["manager_level"] = "division"
+        else:
+            out["manager_level"] = "regional"
+            reg = normalize_div_s_region(region_key)
+            if reg:
+                out["acc_region"] = reg
+    else:
+        reg = normalize_div_s_region(region_key)
+        if reg:
+            out["acc_region"] = reg
+        if acc_unit:
+            out["acc_unit"] = acc_unit
+
     return apply_roster_overrides(out)
 
 
@@ -226,11 +249,12 @@ def main() -> int:
 
     imported = be_rows + s_rows
     merged, stats = merge_rows(existing, imported)
-    enriched = enrich_rows_with_visibility(merged)
+    with_vis = enrich_rows_with_visibility(merged)
+    enriched = canonicalize_user_access_rows(with_vis)
 
     print(f"Excel B/E: {len(be_rows)} แถว, Div.S: {len(s_rows)} แถว")
     print(f"merge: +{stats['added']} ใหม่, ~{stats['updated']} อัปเดต, {stats['kept_legacy']} legacy คงไว้")
-    print(f"รวม: {len(enriched)} แถว")
+    print(f"รวม: {len(enriched)} แถว (canonical)")
 
     if args.dry_run:
         print("(dry-run — ไม่เขียนไฟล์)")

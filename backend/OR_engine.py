@@ -193,6 +193,7 @@ def allocate_boxes(
 
     _LP_STRATEGIES = frozenset({"L3M", "L6M", "LY", "LP"})
     base_map: dict[tuple[str, str], int] = {}
+    opt_meta: dict[str, bool] = {"optimization_fallback": False}
     if strategy in _LP_STRATEGIES:
         baseline = strategy if strategy in ("L3M", "L6M", "LY") else "L3M"
         df_base = _proportional(
@@ -223,6 +224,7 @@ def allocate_boxes(
             flex_skus=flex_skus,
             flex_band_pct=_TIER_FLEX_BAND_PCT,
             strict_band_pct=_TIER_STRICT_BAND_PCT,
+            _meta=opt_meta,
         )
     else:
         df_out = _proportional(
@@ -293,6 +295,7 @@ def allocate_boxes(
             band_pct=_DEFAULT_HIST_BAND_PCT,
             even_skus=even_skus,
         )
+    df_expanded.attrs["optimization_fallback"] = opt_meta.get("optimization_fallback", False)
     return df_expanded
 
 
@@ -840,6 +843,7 @@ def _lp_optimize(
     flex_skus: frozenset[str] | None = None,
     flex_band_pct: float = _TIER_FLEX_BAND_PCT,
     strict_band_pct: float = _TIER_STRICT_BAND_PCT,
+    _meta: dict | None = None,
 ):
     locked_map = locked_map or {}
     even_skus = even_skus or frozenset()
@@ -848,6 +852,8 @@ def _lp_optimize(
         baseline_strategy = "L3M"
 
     def _fallback_prop():
+        if _meta is not None:
+            _meta["optimization_fallback"] = True
         return _proportional(
             df_emp_targets,
             df_sku,

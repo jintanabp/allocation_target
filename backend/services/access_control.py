@@ -17,7 +17,16 @@ from .access_hierarchy import (
     parse_hierarchy_metadata,
 )
 from .manager_views import build_manager_view_options, build_manager_views_map
-from .sl_link_store import expand_sl_codes, hierarchy_manager_code, read_links as read_sl_links
+from .sl_link_store import (
+    expand_sl_codes,
+    hierarchy_manager_code,
+    manager_pick_label,
+    normalize_sl,
+    preferred_login_manager_code,
+    read_links as read_sl_links,
+    supervisor_team_for_manager,
+    sync_by_manager_for_sl_links,
+)
 from .user_access_store import (
     emails_with_targetsun,
     normalized_email,
@@ -166,15 +175,14 @@ def role_label_for_meta(
         return "marketing"
 
     if login_kind == "manager_acc":
-        if upl in manager_codes:
-            return "manager"
+        ml = str((meta or {}).get("manager_level") or "").strip().lower()
+        if ml == "regional":
+            return "regional_manager"
+        if ml == "division":
+            return "district_manager"
         return "manager_acc"
     if login_kind == "supervisor_acc":
-        if upl in manager_codes:
-            return "manager"
-        if upl in supervisors:
-            return "supervisor"
-        return "supervisor_acc"
+        return "supervisor"
 
     if upl in manager_codes:
         return "manager"
@@ -333,16 +341,19 @@ def build_user_access_context(email: str, *, allow_admin_bypass: bool = True) ->
         if lk == "manager_acc":
             mgr_pick.add(upl)
         elif lk == "supervisor_acc":
-            if upl in supervisors:
-                sup_pick.add(upl)
             if upl in manager_codes:
                 mgr_pick.add(upl)
-            if upl not in supervisors and upl not in manager_codes:
+            elif upl in supervisors:
+                sup_pick.add(upl)
+            elif upl not in manager_codes:
                 sup_pick.add(upl)
         elif upl in supervisors:
             sup_pick.add(upl)
         elif upl in manager_codes:
             mgr_pick.add(upl)
+
+    # รหัสที่เป็น Manager ไม่ล็อกอินเป็น Supervisor — ใช้ตำแหน่งที่สูงกว่า
+    sup_pick -= mgr_pick
 
     allowed = compute_allowed_supervisor_codes(ne, acc_rows, mdata)
 
@@ -400,6 +411,7 @@ def enrich_user_access_rows(rows: list[dict[str, Any]] | None = None) -> list[di
                 "acc_position": str(r.get("acc_position") or ""),
                 "acc_scope": str(r.get("acc_scope") or ""),
                 "login_kind": str(r.get("login_kind") or "standard"),
+                "manager_level": str(r.get("manager_level") or ""),
                 "role": role,
                 "visible_supervisors": visible,
             }
@@ -415,11 +427,15 @@ def visible_supervisors_for_row_dict(
     region_teams: dict[str, list[str]] | None = None,
     division_index: dict[tuple[str, str], set[str]] | None = None,
 ) -> list[str]:
-    """คำนวณรหัส SL ที่ผู้ใช้ดูได้ (สำหรับแอดมิน / preview)"""
+    """คำนวณรหัส SL ที่ผู้ใช้ดูได้ (สำหรับแอดมิน / preview) — Manager แสดงเฉพาะ Supervisor จริง"""
     _ = supervisors, manager_codes, by_m, region_teams, division_index
     full_rows = read_rows()
     vis = _visible_codes_for_row(row, full_rows)
     upl = str(row.get("userpl") or "").strip().upper()
+    lk = str(row.get("login_kind") or "")
+    if lk == "manager_acc" and upl:
+        vis_set = supervisor_team_for_manager(sorted(vis), upl, {upl})
+        return vis_set
     if upl:
         vis.add(upl)
     return sorted(vis)
@@ -502,18 +518,40 @@ def filter_managers_payload_for_user(full: dict, user: dict[str, Any]) -> dict:
             by_manager_f[m] = [s for s in team if not allowed_set or s in allowed_set]
         elif allowed_set:
             by_manager_f[m] = sorted(allowed_set)
-        if m in hierarchy_supervisors and m not in by_manager_f.get(m, []):
-            by_manager_f.setdefault(m, [])
-            by_manager_f[m].append(m)
-            by_manager_f[m] = sorted(by_manager_f[m])
+        by_manager_f[m] = supervisor_team_for_manager(
+            by_manager_f.get(m, []), m, mgr_pick, sl_links
+        )
+
+    by_manager_f = sync_by_manager_for_sl_links(by_manager_f, mgr_pick, sl_links)
+    for m in sorted(mgr_pick):
+        by_manager_f[m] = supervisor_team_for_manager(
+            by_manager_f.get(m, []), m, mgr_pick, sl_links
+        )
 
     pick_labels: list[str] = []
     for c in sorted(sup_pick):
+        if c in mgr_pick:
+            continue
         pick_labels.append(f"{c} (Supervisor)")
-    for c in sorted(mgr_pick):
-        pick_labels.append(f"{c} (Manager)")
+    mgr_sorted = sorted(
+        mgr_pick,
+        key=lambda c: (
+            0 if c in {normalize_sl(x) for row in sl_links for x in (row.get("new_sls") or [])} else 1,
+            c,
+        ),
+    )
+    for c in mgr_sorted:
+        pick_labels.append(manager_pick_label(c, sl_links))
 
-    manager_views = build_manager_views_map(by_manager_f, sorted(mgr_pick))
+    default_login_pick = preferred_login_manager_code(mgr_pick, sl_links)
+    if default_login_pick:
+        default_login_pick = manager_pick_label(default_login_pick, sl_links)
+    elif sup_pick and len(sup_pick) == 1:
+        default_login_pick = f"{sorted(sup_pick)[0]} (Supervisor)"
+
+    manager_views = build_manager_views_map(
+        by_manager_f, sorted(mgr_pick), mgr_pick, sl_links
+    )
 
     out = dict(full)
     out["supervisors"] = sorted(sup_pick)
@@ -530,4 +568,50 @@ def filter_managers_payload_for_user(full: dict, user: dict[str, Any]) -> dict:
         if allowed_codes and home_codes
         else set()
     )
+    if default_login_pick:
+        out["default_login_pick"] = default_login_pick
     return out
+
+
+def resolve_summary_supervisor_codes(user: dict, team_csv: str = "") -> list[str]:
+    """รหัส SL สำหรับ GET /data/allocations/summary — รองรับแอดมิน (allowed=None)"""
+    from ..deps import ensure_supervisor_allowed
+
+    team_ids = sorted(
+        {
+            str(x).strip().upper()
+            for x in str(team_csv or "").split(",")
+            if str(x).strip()
+        }
+    )
+    if team_ids:
+        for sid in team_ids:
+            ensure_supervisor_allowed(user, sid)
+        return team_ids
+
+    allowed = user.get("allowed_supervisor_codes")
+    if allowed is not None:
+        sup_ids = sorted({str(x).strip().upper() for x in allowed if str(x).strip()})
+        for sid in sup_ids:
+            ensure_supervisor_allowed(user, sid)
+        return sup_ids
+
+    if user.get("auth_disabled") or user.get("acc_admin_full_access"):
+        mdata = managers_svc.load_full_managers_payload()
+        sup_ids = sorted(
+            {
+                str(r.get("supervisor_code") or "").strip().upper()
+                for r in (mdata.get("rows") or [])
+                if str(r.get("supervisor_code") or "").strip()
+            }
+        )
+        return sup_ids
+
+    peers = user.get("peer_supervisor_codes") or ()
+    home = user.get("home_supervisor_codes") or ()
+    sup_ids = sorted(
+        {str(x).strip().upper() for x in (*home, *peers) if str(x).strip()}
+    )
+    for sid in sup_ids:
+        ensure_supervisor_allowed(user, sid)
+    return sup_ids

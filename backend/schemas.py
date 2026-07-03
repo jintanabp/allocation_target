@@ -101,5 +101,6 @@ class LakehouseUploadRequest(BaseModel):
     target_year: int = Field(ge=2020, le=2100)
     allocations: list[LakehouseUploadRow] = Field(default_factory=list)
     upload_user_code: str | None = None
+    brand_filter: str = "ALL"
     """จาก POST /lakehouse/prepare-targetsun — ส่ง import โดยไม่สร้าง Excel ซ้ำ"""
     prepare_token: str | None = None

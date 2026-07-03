@@ -103,16 +103,6 @@ def _read_hist_cache(path: str, emp_list: list[str]) -> pd.DataFrame:
     return collapse_hist_to_canonical(df)
 
 
-def _maybe_split_hist(
-    df: pd.DataFrame,
-    reverse_map: dict[str, tuple[str, str]],
-    value_shares: dict[tuple[str, str], float],
-) -> pd.DataFrame:
-    if not reverse_map or not any("|" in k for k in reverse_map):
-        return df
-    return split_hist_dataframe(df, reverse_map, value_shares)
-
-
 def _hist_input_for_strategy(
     strategy_u: str,
     df_hist_3: pd.DataFrame,
@@ -471,6 +461,7 @@ def run_optimization_service(
     brand_map = req.brand_strategy_map or {}
     distinct_strategies = {s for s in brand_map.values() if s}
     multi_strategy_run = False
+    optimization_fallback = False
     sku_strategy_map: dict[str, str] = {}
     hist_by_strategy: dict[str, pd.DataFrame] = {}
     if brand_map and len(distinct_strategies) > 1 and not df_sku.empty:
@@ -566,6 +557,8 @@ def run_optimization_service(
                 tiered_allocation=bool(req.tiered_allocation),
                 tier_pct=float(req.tier_pct),
             )
+            if df_alloc_grp.attrs.get("optimization_fallback"):
+                optimization_fallback = True
             alloc_parts.append(df_alloc_grp)
         df_allocation = (
             pd.concat(alloc_parts, ignore_index=True)
@@ -606,6 +599,7 @@ def run_optimization_service(
             tiered_allocation=bool(req.tiered_allocation),
             tier_pct=float(req.tier_pct),
         )
+        optimization_fallback = bool(df_allocation.attrs.get("optimization_fallback"))
 
     tier_flex_skus: list[str] = []
     if req.tiered_allocation:
@@ -741,4 +735,5 @@ def run_optimization_service(
         "tier_flex_skus": tier_flex_skus,
         "tier_strict_sku_count": max(0, len(df_sku) - len(tier_flex_skus)) if req.tiered_allocation else 0,
         "revenue_scale": round(_revenue_scale_factor(df_emp_targets, df_sku), 6),
+        "optimization_fallback": optimization_fallback,
     }

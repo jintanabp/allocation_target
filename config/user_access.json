@@ -13,7 +13,9 @@
     "acc_unit": "van",
     "acc_scope": "van",
     "visible_supervisor_codes": [
-      "SL397"
+      "SL397",
+      "SL460",
+      "SL509"
     ]
   },
   {
@@ -29,8 +31,10 @@
     "acc_division": "Div.B",
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯหน่วยรถภาคใต้",
-    "acc_scope": "self",
+    "acc_scope": "van",
     "visible_supervisor_codes": [
+      "SL362",
+      "SL399",
       "SL520"
     ]
   },
@@ -48,7 +52,8 @@
     "acc_unit": "credit",
     "acc_scope": "credit",
     "visible_supervisor_codes": [
-      "SL396"
+      "SL396",
+      "SL506"
     ]
   },
   {
@@ -65,7 +70,9 @@
     "acc_unit": "van",
     "acc_scope": "van",
     "visible_supervisor_codes": [
-      "SL459"
+      "SL459",
+      "SL515",
+      "SL518"
     ]
   },
   {
@@ -82,7 +89,9 @@
     "acc_unit": "van",
     "acc_scope": "van",
     "visible_supervisor_codes": [
-      "SL460"
+      "SL397",
+      "SL460",
+      "SL509"
     ]
   },
   {
@@ -98,14 +107,11 @@
     "acc_division": "Div.B",
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯหน่วยรถภาคกลาง",
-    "acc_scope": "region_peers",
+    "acc_scope": "van",
     "visible_supervisor_codes": [
-      "SL341",
       "SL375",
       "SL381",
-      "SL382",
-      "SL418",
-      "SL528"
+      "SL418"
     ]
   },
   {
@@ -122,7 +128,9 @@
     "acc_unit": "credit",
     "acc_scope": "credit",
     "visible_supervisor_codes": [
-      "SL527"
+      "SL453",
+      "SL527",
+      "SL531"
     ]
   },
   {
@@ -147,6 +155,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "manager_acc",
+    "manager_level": "regional",
     "acc_division": "Div.S",
     "acc_scope": "all",
     "visible_supervisor_codes": [
@@ -171,9 +180,10 @@
     "acc_division": "Div.B",
     "acc_unit": "credit",
     "acc_position": "ซุปเปอร์ฯเครดิตภาคใต้",
-    "acc_scope": "self",
+    "acc_scope": "credit",
     "visible_supervisor_codes": [
-      "SL328"
+      "SL328",
+      "SL412"
     ]
   },
   {
@@ -189,9 +199,11 @@
     "acc_division": "Div.B",
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯหน่วยรถภาคใต้",
-    "acc_scope": "self",
+    "acc_scope": "van",
     "visible_supervisor_codes": [
-      "SL362"
+      "SL362",
+      "SL399",
+      "SL520"
     ]
   },
   {
@@ -206,9 +218,10 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.E",
     "acc_position": "ซุปเปอร์ฯ Div.E ภาคเหนือ",
-    "acc_scope": "self",
+    "acc_scope": "region_peers",
     "visible_supervisor_codes": [
-      "SL406"
+      "SL406",
+      "SL523"
     ]
   },
   {
@@ -225,6 +238,8 @@
     "acc_unit": "van",
     "acc_scope": "van",
     "visible_supervisor_codes": [
+      "SL350",
+      "SL457",
       "SL526"
     ]
   },
@@ -241,8 +256,10 @@
     "acc_division": "Div.B",
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯหน่วยรถภาคเหนือ",
-    "acc_scope": "self",
+    "acc_scope": "van",
     "visible_supervisor_codes": [
+      "SL307",
+      "SL514",
       "SL539"
     ]
   },
@@ -259,9 +276,11 @@
     "acc_division": "Div.B",
     "acc_unit": "credit",
     "acc_position": "ซุปเปอร์ฯเครดิตภาคอีสาน",
-    "acc_scope": "self",
+    "acc_scope": "credit",
     "visible_supervisor_codes": [
-      "SL415"
+      "SL319",
+      "SL415",
+      "SL454"
     ]
   },
   {
@@ -284,6 +303,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
+    "acc_scope": "region_peers",
     "visible_supervisor_codes": [
       "SL959"
     ]
@@ -296,6 +316,7 @@
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc",
+    "acc_scope": "all",
     "visible_supervisor_codes": [
       "SL369"
     ]
@@ -312,8 +333,9 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.E",
     "acc_position": "ซุปเปอร์ฯ Div.E ภาคเหนือ",
-    "acc_scope": "self",
+    "acc_scope": "region_peers",
     "visible_supervisor_codes": [
+      "SL406",
       "SL523"
     ]
   },
@@ -325,6 +347,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
+    "acc_scope": "region_peers",
     "visible_supervisor_codes": [
       "SL513"
     ]
@@ -342,14 +365,11 @@
     "acc_division": "Div.B",
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯหน่วยรถภาคกลาง",
-    "acc_scope": "region_peers",
+    "acc_scope": "van",
     "visible_supervisor_codes": [
-      "SL341",
       "SL375",
       "SL381",
-      "SL382",
-      "SL418",
-      "SL528"
+      "SL418"
     ]
   },
   {
@@ -360,6 +380,7 @@
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc",
+    "acc_scope": "all",
     "visible_supervisor_codes": [
       "SL629"
     ]
@@ -373,6 +394,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "manager_acc",
+    "manager_level": "division",
     "acc_division": "Div.S",
     "acc_scope": "all",
     "visible_supervisor_codes": [
@@ -416,13 +438,10 @@
     "acc_division": "Div.B",
     "acc_unit": "credit",
     "acc_position": "ซุปเปอร์ฯเครดิตภาคกลาง",
-    "acc_scope": "region_peers",
+    "acc_scope": "credit",
     "visible_supervisor_codes": [
       "SL341",
-      "SL375",
-      "SL381",
       "SL382",
-      "SL418",
       "SL528"
     ]
   },
@@ -439,8 +458,9 @@
     "acc_division": "Div.B",
     "acc_unit": "credit",
     "acc_position": "ซุปเปอร์ฯเครดิตภาคใต้",
-    "acc_scope": "self",
+    "acc_scope": "credit",
     "visible_supervisor_codes": [
+      "SL328",
       "SL412"
     ]
   },
@@ -458,6 +478,8 @@
     "acc_unit": "van",
     "acc_scope": "van",
     "visible_supervisor_codes": [
+      "SL459",
+      "SL515",
       "SL518"
     ]
   },
@@ -475,6 +497,8 @@
     "acc_unit": "credit",
     "acc_scope": "credit",
     "visible_supervisor_codes": [
+      "SL453",
+      "SL527",
       "SL531"
     ]
   },
@@ -492,7 +516,9 @@
     "acc_unit": "credit",
     "acc_scope": "credit",
     "visible_supervisor_codes": [
-      "SL525"
+      "SL380",
+      "SL525",
+      "SL530"
     ]
   },
   {
@@ -508,9 +534,11 @@
     "acc_division": "Div.B",
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯหน่วยรถภาคใต้",
-    "acc_scope": "self",
+    "acc_scope": "van",
     "visible_supervisor_codes": [
-      "SL399"
+      "SL362",
+      "SL399",
+      "SL520"
     ]
   },
   {
@@ -521,6 +549,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
+    "acc_scope": "region_peers",
     "visible_supervisor_codes": [
       "SL458"
     ]
@@ -537,7 +566,7 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.E",
     "acc_position": "ซุปเปอร์ฯ Div.E ภาคกลาง",
-    "acc_scope": "self",
+    "acc_scope": "region_peers",
     "visible_supervisor_codes": [
       "SL346"
     ]
@@ -555,8 +584,10 @@
     "acc_division": "Div.B",
     "acc_unit": "credit",
     "acc_position": "ซุปเปอร์ฯเครดิตภาคอีสาน",
-    "acc_scope": "self",
+    "acc_scope": "credit",
     "visible_supervisor_codes": [
+      "SL319",
+      "SL415",
       "SL454"
     ]
   },
@@ -574,7 +605,9 @@
     "acc_unit": "credit",
     "acc_scope": "credit",
     "visible_supervisor_codes": [
-      "SL456"
+      "SL452",
+      "SL456",
+      "SL529"
     ]
   },
   {
@@ -587,6 +620,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "manager_acc",
+    "manager_level": "regional",
     "acc_division": "Div.B",
     "acc_position": "ผจก.ภาคอีสาน",
     "acc_scope": "all",
@@ -614,7 +648,9 @@
     "acc_unit": "van",
     "acc_scope": "van",
     "visible_supervisor_codes": [
-      "SL515"
+      "SL459",
+      "SL515",
+      "SL518"
     ]
   },
   {
@@ -630,14 +666,11 @@
     "acc_division": "Div.B",
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯหน่วยรถภาคกลาง",
-    "acc_scope": "region_peers",
+    "acc_scope": "van",
     "visible_supervisor_codes": [
-      "SL341",
       "SL375",
       "SL381",
-      "SL382",
-      "SL418",
-      "SL528"
+      "SL418"
     ]
   },
   {
@@ -648,6 +681,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
+    "acc_scope": "region_peers",
     "visible_supervisor_codes": [
       "SL411"
     ]
@@ -665,9 +699,11 @@
     "acc_division": "Div.B",
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯหน่วยรถภาคอีสาน",
-    "acc_scope": "self",
+    "acc_scope": "van",
     "visible_supervisor_codes": [
-      "SL387"
+      "SL387",
+      "SL407",
+      "SL408"
     ]
   },
   {
@@ -678,6 +714,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
+    "acc_scope": "region_peers",
     "visible_supervisor_codes": [
       "SL223"
     ]
@@ -694,9 +731,11 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.E",
     "acc_position": "ซุปเปอร์ฯ Div.E ภาคกทม.",
-    "acc_scope": "self",
+    "acc_scope": "region_peers",
     "visible_supervisor_codes": [
-      "SL320"
+      "SL315",
+      "SL320",
+      "SL376"
     ]
   },
   {
@@ -708,6 +747,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
+    "acc_scope": "region_peers",
     "visible_supervisor_codes": [
       "SL358"
     ]
@@ -722,6 +762,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "manager_acc",
+    "manager_level": "regional",
     "acc_division": "Div.B",
     "acc_position": "ผช.ผจก.ภาคกลาง",
     "acc_scope": "all",
@@ -749,7 +790,9 @@
     "acc_unit": "van",
     "acc_scope": "van",
     "visible_supervisor_codes": [
-      "SL350"
+      "SL350",
+      "SL457",
+      "SL526"
     ]
   },
   {
@@ -763,7 +806,7 @@
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
     "acc_division": "Div.S",
-    "acc_scope": "self",
+    "acc_scope": "region_peers",
     "visible_supervisor_codes": [
       "SL330"
     ]
@@ -790,6 +833,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "manager_acc",
+    "manager_level": "regional",
     "acc_division": "Div.S",
     "acc_scope": "all",
     "visible_supervisor_codes": [
@@ -812,6 +856,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "manager_acc",
+    "manager_level": "regional",
     "acc_division": "Div.B",
     "acc_position": "ผจก.ภาคเหนือ",
     "acc_scope": "all",
@@ -832,6 +877,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
+    "acc_scope": "region_peers",
     "visible_supervisor_codes": [
       "SL958"
     ]
@@ -850,7 +896,9 @@
     "acc_unit": "credit",
     "acc_scope": "credit",
     "visible_supervisor_codes": [
-      "SL453"
+      "SL453",
+      "SL527",
+      "SL531"
     ]
   },
   {
@@ -866,13 +914,10 @@
     "acc_division": "Div.B",
     "acc_unit": "credit",
     "acc_position": "ซุปเปอร์ฯเครดิตภาคกลาง",
-    "acc_scope": "region_peers",
+    "acc_scope": "credit",
     "visible_supervisor_codes": [
       "SL341",
-      "SL375",
-      "SL381",
       "SL382",
-      "SL418",
       "SL528"
     ]
   },
@@ -889,7 +934,7 @@
     "acc_division": "Div.B",
     "acc_unit": "credit",
     "acc_position": "ซุปเปอร์ฯเครดิตภาคกรุงเทพฯ",
-    "acc_scope": "self",
+    "acc_scope": "credit",
     "visible_supervisor_codes": [
       "SL532"
     ]
@@ -902,6 +947,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
+    "acc_scope": "region_peers",
     "visible_supervisor_codes": [
       "SL367"
     ]
@@ -915,6 +961,8 @@
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc",
+    "manager_level": "regional",
+    "acc_scope": "all",
     "visible_supervisor_codes": [
       "SL352"
     ]
@@ -929,6 +977,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "manager_acc",
+    "manager_level": "regional",
     "acc_division": "Div.S",
     "acc_scope": "all",
     "visible_supervisor_codes": [
@@ -955,6 +1004,8 @@
     "acc_unit": "credit",
     "acc_scope": "credit",
     "visible_supervisor_codes": [
+      "SL452",
+      "SL456",
       "SL529"
     ]
   },
@@ -968,6 +1019,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "manager_acc",
+    "manager_level": "regional",
     "acc_division": "Div.B",
     "acc_position": "ผจก.ภาคใต้",
     "acc_scope": "all",
@@ -994,7 +1046,9 @@
     "acc_unit": "van",
     "acc_scope": "van",
     "visible_supervisor_codes": [
-      "SL393"
+      "SL351",
+      "SL393",
+      "SL535"
     ]
   },
   {
@@ -1010,9 +1064,11 @@
     "acc_division": "Div.B",
     "acc_unit": "credit",
     "acc_position": "ซุปเปอร์ฯเครดิตภาคอีสาน",
-    "acc_scope": "self",
+    "acc_scope": "credit",
     "visible_supervisor_codes": [
-      "SL319"
+      "SL319",
+      "SL415",
+      "SL454"
     ]
   },
   {
@@ -1027,8 +1083,10 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.E",
     "acc_position": "ซุปเปอร์ฯ Div.E ภาคกทม.",
-    "acc_scope": "self",
+    "acc_scope": "region_peers",
     "visible_supervisor_codes": [
+      "SL315",
+      "SL320",
       "SL376"
     ]
   },
@@ -1045,8 +1103,10 @@
     "acc_division": "Div.B",
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯหน่วยรถภาคอีสาน",
-    "acc_scope": "self",
+    "acc_scope": "van",
     "visible_supervisor_codes": [
+      "SL387",
+      "SL407",
       "SL408"
     ]
   },
@@ -1064,6 +1124,8 @@
     "acc_unit": "van",
     "acc_scope": "van",
     "visible_supervisor_codes": [
+      "SL351",
+      "SL393",
       "SL535"
     ]
   },
@@ -1075,6 +1137,7 @@
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc",
+    "acc_scope": "all",
     "visible_supervisor_codes": [
       "SL356"
     ]
@@ -1093,7 +1156,9 @@
     "acc_unit": "van",
     "acc_scope": "van",
     "visible_supervisor_codes": [
-      "SL351"
+      "SL351",
+      "SL393",
+      "SL535"
     ]
   },
   {
@@ -1104,6 +1169,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
+    "acc_scope": "region_peers",
     "visible_supervisor_codes": [
       "SL413"
     ]
@@ -1117,6 +1183,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "manager_acc",
+    "manager_level": "division",
     "acc_division": "Div.S",
     "acc_scope": "all",
     "visible_supervisor_codes": [
@@ -1160,9 +1227,11 @@
     "acc_division": "Div.B",
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯหน่วยรถภาคเหนือ",
-    "acc_scope": "self",
+    "acc_scope": "van",
     "visible_supervisor_codes": [
-      "SL307"
+      "SL307",
+      "SL514",
+      "SL539"
     ]
   },
   {
@@ -1179,7 +1248,9 @@
     "acc_unit": "credit",
     "acc_scope": "credit",
     "visible_supervisor_codes": [
-      "SL380"
+      "SL380",
+      "SL525",
+      "SL530"
     ]
   },
   {
@@ -1196,7 +1267,9 @@
     "acc_unit": "van",
     "acc_scope": "van",
     "visible_supervisor_codes": [
-      "SL457"
+      "SL350",
+      "SL457",
+      "SL526"
     ]
   },
   {
@@ -1211,7 +1284,7 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.E",
     "acc_position": "ซุปเปอร์ฯ Div.E ภาคอีสาน",
-    "acc_scope": "self",
+    "acc_scope": "region_peers",
     "visible_supervisor_codes": [
       "SL417"
     ]
@@ -1224,6 +1297,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
+    "acc_scope": "region_peers",
     "visible_supervisor_codes": [
       "SL371"
     ]
@@ -1236,6 +1310,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
+    "acc_scope": "region_peers",
     "visible_supervisor_codes": [
       "SL340"
     ]
@@ -1254,6 +1329,7 @@
     "acc_unit": "credit",
     "acc_scope": "credit",
     "visible_supervisor_codes": [
+      "SL396",
       "SL506"
     ]
   },
@@ -1267,6 +1343,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "manager_acc",
+    "manager_level": "regional",
     "acc_division": "Div.S",
     "acc_scope": "all",
     "visible_supervisor_codes": [
@@ -1286,6 +1363,7 @@
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc",
+    "acc_scope": "all",
     "visible_supervisor_codes": [
       "SL311"
     ]
@@ -1298,6 +1376,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
+    "acc_scope": "region_peers",
     "visible_supervisor_codes": [
       "SL395"
     ]
@@ -1314,9 +1393,11 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.E",
     "acc_position": "ซุปเปอร์ฯ Div.E ภาคกทม.",
-    "acc_scope": "self",
+    "acc_scope": "region_peers",
     "visible_supervisor_codes": [
-      "SL315"
+      "SL315",
+      "SL320",
+      "SL376"
     ]
   },
   {
@@ -1332,13 +1413,10 @@
     "acc_division": "Div.B",
     "acc_unit": "credit",
     "acc_position": "ซุปเปอร์ฯเครดิตภาคกลาง",
-    "acc_scope": "region_peers",
+    "acc_scope": "credit",
     "visible_supervisor_codes": [
       "SL341",
-      "SL375",
-      "SL381",
       "SL382",
-      "SL418",
       "SL528"
     ]
   },
@@ -1352,6 +1430,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "manager_acc",
+    "manager_level": "regional",
     "acc_division": "Div.S",
     "acc_scope": "all",
     "visible_supervisor_codes": [
@@ -1368,6 +1447,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "manager_acc",
+    "manager_level": "division",
     "acc_division": "Div.S",
     "acc_scope": "all",
     "visible_supervisor_codes": [
@@ -1407,6 +1487,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "manager_acc",
+    "manager_level": "division",
     "acc_division": "Div.S",
     "acc_scope": "all",
     "visible_supervisor_codes": [
@@ -1450,9 +1531,10 @@
     "acc_division": "Div.B",
     "acc_unit": "credit",
     "acc_position": "ซุปเปอร์ฯเครดิตภาคเหนือ",
-    "acc_scope": "self",
+    "acc_scope": "credit",
     "visible_supervisor_codes": [
-      "SL225"
+      "SL225",
+      "SL503"
     ]
   },
   {
@@ -1465,6 +1547,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "manager_acc",
+    "manager_level": "regional",
     "acc_division": "Div.B",
     "acc_position": "ผช.ผจก.ภาคกรุงเทพฯ",
     "acc_scope": "all",
@@ -1481,6 +1564,7 @@
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc",
+    "acc_scope": "all",
     "visible_supervisor_codes": [
       "SL524"
     ]
@@ -1499,7 +1583,9 @@
     "acc_unit": "credit",
     "acc_scope": "credit",
     "visible_supervisor_codes": [
-      "SL452"
+      "SL452",
+      "SL456",
+      "SL529"
     ]
   },
   {
@@ -1515,9 +1601,11 @@
     "acc_division": "Div.B",
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯหน่วยรถภาคเหนือ",
-    "acc_scope": "self",
+    "acc_scope": "van",
     "visible_supervisor_codes": [
-      "SL514"
+      "SL307",
+      "SL514",
+      "SL539"
     ]
   },
   {
@@ -1528,6 +1616,7 @@
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc",
+    "acc_scope": "all",
     "visible_supervisor_codes": [
       "SL511"
     ]
@@ -1542,6 +1631,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "manager_acc",
+    "manager_level": "regional",
     "acc_division": "Div.S",
     "acc_scope": "all",
     "visible_supervisor_codes": [
@@ -1568,6 +1658,8 @@
     "acc_unit": "credit",
     "acc_scope": "credit",
     "visible_supervisor_codes": [
+      "SL380",
+      "SL525",
       "SL530"
     ]
   },
@@ -1584,9 +1676,11 @@
     "acc_division": "Div.B",
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯหน่วยรถภาคอีสาน",
-    "acc_scope": "self",
+    "acc_scope": "van",
     "visible_supervisor_codes": [
-      "SL407"
+      "SL387",
+      "SL407",
+      "SL408"
     ]
   },
   {
@@ -1602,8 +1696,9 @@
     "acc_division": "Div.B",
     "acc_unit": "credit",
     "acc_position": "ซุปเปอร์ฯเครดิตภาคเหนือ",
-    "acc_scope": "self",
+    "acc_scope": "credit",
     "visible_supervisor_codes": [
+      "SL225",
       "SL503"
     ]
   },
@@ -1615,6 +1710,7 @@
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc",
+    "acc_scope": "all",
     "visible_supervisor_codes": [
       "SL374"
     ]
@@ -1628,6 +1724,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "manager_acc",
+    "manager_level": "division",
     "acc_division": "Div.E",
     "acc_position": "ผจก.แผนก Div.E",
     "acc_scope": "all",
@@ -1651,6 +1748,7 @@
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "manager_acc",
+    "manager_level": "division",
     "acc_division": "Div.S",
     "acc_scope": "all",
     "visible_supervisor_codes": [
@@ -1695,6 +1793,8 @@
     "acc_unit": "van",
     "acc_scope": "van",
     "visible_supervisor_codes": [
+      "SL397",
+      "SL460",
       "SL509"
     ]
   }

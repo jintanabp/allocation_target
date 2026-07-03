@@ -415,115 +415,6 @@ SELECTCOLUMNS(
         print(f"✅ trf_select_supervisor: {len(out)} แถว")
         return out
 
-    def get_acc_user_control_rows(self) -> list[dict]:
-        """
-        ACC_USER_CONTROL: คอลัมน์ EMAIL และ USERPL (สิทธิ์เข้าใช้เป็นรหัส Supervisor หรือ Manager)
-        แถวซ้ำ EMAIL+USERPL — ฝั่ง access_control จะรวมเป็น set
-        """
-        print("📡 [ACC_USER_CONTROL] EMAIL / USERPL...")
-        dax = """
-EVALUATE
-SELECTCOLUMNS(
-    'ACC_USER_CONTROL',
-    "EMAIL", 'ACC_USER_CONTROL'[EMAIL],
-    "USERPL", 'ACC_USER_CONTROL'[USERPL]
-)
-"""
-        try:
-            rows = self._execute_dax(dax)
-        except Exception as ex:
-            print(f"⚠️ ACC_USER_CONTROL DAX ล้มเหลว: {ex}")
-            return []
-
-        out: list[dict] = []
-        for r in rows or []:
-            em = str(
-                self._get(r, "[EMAIL]", "ACC_USER_CONTROL[EMAIL]", default="")
-            ).strip().lower()
-            upl = str(
-                self._get(r, "[USERPL]", "ACC_USER_CONTROL[USERPL]", default="")
-            ).strip()
-            if not em or not upl:
-                continue
-            out.append({"email": em, "userpl": upl.upper()})
-        print(f"✅ ACC_USER_CONTROL: {len(out)} แถว (dedupe ฝั่ง access control)")
-        return out
-
-    def get_extra_user_access_rows(self) -> list[dict]:
-        """
-        ตารางเสริมสำหรับเพิ่มสิทธิ์รายคนเมื่อผู้ใช้ยังไม่มีใน ACC_USER_CONTROL:
-          - EMAIL: อีเมลเข้าระบบ (Microsoft login)
-          - USERPL/SUPERVISORCODE: รหัสที่ใช้ login เป็น Supervisor หรือ Manager (เหมือน ACC)
-
-        Default semantic model table: acc_extra_user[EMAIL], acc_extra_user[USERPL].
-        Override ได้ด้วย env EXTRA_USER_ACCESS_TABLE_NAME / _EMAIL_COL / _USERPL_COL / …
-        ถ้ามี Semantic model เวอร์ชันเก่ายังไม่มีตารางนี้ — DAX จะล้มเหลวแล้วฝั่ง caller ถือว่าไม่มี extra rows (หรือ fail-closed ถ้าตั้ง env)
-        """
-        table = (
-            os.environ.get("EXTRA_USER_ACCESS_TABLE_NAME", "acc_extra_user").strip()
-            or "acc_extra_user"
-        )
-        email_col = (
-            os.environ.get("EXTRA_USER_ACCESS_EMAIL_COL", "EMAIL").strip().upper()
-            or "EMAIL"
-        )
-        upl_primary = (
-            os.environ.get("EXTRA_USER_ACCESS_USERPL_COL", "USERPL").strip().upper()
-            or "USERPL"
-        )
-        upl_alt = os.environ.get("EXTRA_USER_ACCESS_USERPL_ALT_COL", "").strip().upper()
-
-        upl_col = upl_primary if upl_primary else "USERPL"
-        if upl_alt:
-            upl_col = upl_alt
-
-        if not email_col:
-            return []
-
-        upl_alias = upl_col if upl_col not in {"EMAIL", email_col} else "USERPL"
-        upl_field = upl_col if upl_alias == "USERPL" else upl_col
-
-        print(f"📡 [{table}] EMAIL / USERPL fallback access...")
-        dax = f"""
-EVALUATE
-SELECTCOLUMNS(
-    '{table}',
-    "EMAIL", '{table}'[{email_col}],
-    "{upl_alias}", '{table}'[{upl_field}]
-)
-"""
-        try:
-            rows = self._execute_dax(dax)
-        except Exception as ex:
-            print(f"⚠️ {table} DAX ล้มเหลว: {ex}")
-            return []
-
-        out: list[dict] = []
-        seen: set[tuple[str, str]] = set()
-
-        for r in rows or []:
-            em = str(
-                self._get(r, "[EMAIL]", f"{table}[{email_col}]", default="")
-            ).strip().lower()
-            if not em:
-                continue
-            upl_raw = self._get(
-                r,
-                f"[{upl_alias}]",
-                f"{table}[{upl_field}]",
-                default="",
-            )
-            upl = str(upl_raw or "").strip()
-            if not upl:
-                continue
-            key = (em, upl.upper())
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append({"email": em, "userpl": upl.upper()})
-        print(f"✅ {table}: {len(out)} แถว (dedupe EMAIL+USERPL)")
-        return out
-
     # ── 1. พนักงานจาก SuperCode ─────────────────────────────────────
     def get_employees_by_manager(self, manager_code: str) -> pd.DataFrame:
         """
@@ -1559,6 +1450,72 @@ CALCULATETABLE(
 
         df = pd.DataFrame(records) if records else pd.DataFrame(columns=empty_cols)
         print(f"✅ TGA targets (granular): {len(df)} แถว")
+        return df
+
+    def get_tga_period_sku_targets(
+        self,
+        target_month: int,
+        target_year: int,
+    ) -> pd.DataFrame:
+        """
+        รายการ SKU ที่มีเป้าในงวด — รวมทั้งตาราง TGA (ไม่แบ่งพนักงาน)
+        คืน columns: sku, target_boxes
+        """
+        t = os.environ.get("TGA_TABLE_NAME", "tga_target_salesman_next").strip()
+        c_prod = os.environ.get("TGA_COL_PRODUCT", "PRODUCTCODE").strip()
+        c_qty = os.environ.get("TGA_COL_QUANTITY", "QUANTITYCASE").strip()
+        c_eff = os.environ.get("TGA_COL_EFFECTIVE", "EFFECTIVEDATE").strip()
+        filter_period = tga_filter_by_selected_period()
+
+        period_filters = ""
+        if filter_period and c_eff:
+            period_filters = (
+                f", YEAR('{t}'[{c_eff}]) = {int(target_year)}, "
+                f"MONTH('{t}'[{c_eff}]) = {int(target_month)}"
+            )
+
+        print(
+            f"📡 [{t}] ดึงเป้าราย SKU ทั้งงวด {target_month:02d}/{target_year}"
+            + (f" (กรอง {c_eff})" if period_filters else " (ไม่กรองงวด)")
+        )
+
+        dax = f"""
+EVALUATE
+CALCULATETABLE(
+    SUMMARIZECOLUMNS(
+        '{t}'[{c_prod}],
+        "target_qty", SUM('{t}'[{c_qty}])
+    ){period_filters}
+)
+"""
+        rows = self._execute_dax(dax, debug=True)
+        records: list[dict] = []
+        for r in rows:
+            sku = str(
+                self._get(
+                    r,
+                    f"{t}[{c_prod}]",
+                    f"[{c_prod}]",
+                    "tga_target_salesman_next[PRODUCTCODE]",
+                    "[PRODUCTCODE]",
+                    default="",
+                )
+            ).strip()
+            if not sku:
+                continue
+            qty = float(self._get(r, "[target_qty]", default=0) or 0)
+            if qty <= 0:
+                continue
+            records.append({"sku": sku, "target_boxes": qty})
+
+        df = (
+            pd.DataFrame(records)
+            if records
+            else pd.DataFrame(columns=["sku", "target_boxes"])
+        )
+        if not df.empty:
+            df = df.groupby("sku", as_index=False)["target_boxes"].sum()
+        print(f"✅ TGA SKU งวดนี้: {len(df)} รหัส")
         return df
 
     def get_tga_lakehouse_dims_by_emp_sku(

@@ -215,16 +215,37 @@ TTL: `EMPLOYEE_PAYLOAD_CACHE_TTL_SEC`, `MANAGERS_CACHE_TTL_SEC`, `ADMIN_TEAM_CAC
 2. `optimize.py` — `collapse_hist_to_canonical()` ตอนอ่าน cache (กรณีแก้ link หลัง cache เก่า)
 3. หลังบันทึก link ใน Admin — โหลด Dashboard ใหม่ (`refresh=true`) เพื่อ rebuild ประวัติ
 
+**Admin catalog (`GET /admin/sku-links/catalog`)** — ใช้งวดกระจายเป้าปัจจุบันอัตโนมัติ (ไม่ต้องส่ง month/year) · แสดงเฉพาะ SKU ที่มีเป้าหีบ > 0
+
+---
+
+## 4. Snapshot ผลกระจายบน server + Peer viewing
+
+| Endpoint | การใช้ |
+|----------|--------|
+| `PUT /data/allocations` | บันทึกผลกระจาย (draft / optimized / sent) |
+| `GET /data/allocations` | โหลด snapshot เต็ม (allocations + yellow) |
+| `GET /data/allocations/summary` | metadata ทุก SL ที่ user เข้าถึงได้ (เบา — อ่าน JSON ต่อ SL) |
+| `DELETE /data/allocations` | ลบ snapshot (แอดมิน) |
+
+**Peer read-only (`region_peers`)**
+
+- Supervisor ดูทีมอื่นในภาคได้ แต่ `PUT` ถูกบล็อก (403) นอกจาก home SL
+- Frontend **fast path**: สลับดู peer โหลดเฉพาะ `GET /data/allocations` — **ไม่** เรียก `loadData` / Fabric
+- สรุปทุก SL (`/summary`) cache ใน `sessionStorage` ~2 นาที · invalidate หลังบันทึกผลกระจาย
+
 ---
 
 ## 5. ปลายทางส่งออก
 
 ### TargetSun SPC API
 
-- ไฟล์: `backend/services/targetsun_import.py`
-- URL: `TARGETSUN_IMPORT_EXCEL_URL` (default UAT)
+- ไฟล์: `backend/services/targetsun_import.py`, `backend/services/targetsun_endpoints.py`
+- **Read URL** (ดึงเป้า): `targetsun_read_api_base()` — default Prod `spcws`
+- **Send URL** (import Excel): `targetsun_import_excel_url()` — default UAT `spcuatws` (ช่วงทดสอบ)
+- Runtime preset: แอดมิน → `PUT /admin/settings/target-endpoints` → `config/app_runtime.json`
 - คอลัมน์: `PRODUCTCODE`, `SALESTYPE`, `DIVISIONCODE`, `SALESMANCODE`, `AREACODE`, `PROVINCECODE`, `WAREHOUSECODE`, `QUANTITYCASE`, `EFFECTIVEDATE`, `UPDATEDATE`, `USERCODE`
-- เอกสาร: `targetsun-importTargetSalesmanNextFromExcel.md`
+- เอกสาร: `targetsun-importTargetSalesmanNextFromExcel.md`, `docs/TARGETSUN_READ_API_SPEC.md`
 
 ### OneLake
 

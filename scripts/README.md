@@ -20,6 +20,7 @@ python scripts/access/repair_user_access.py
 | `setup.bat` | สร้าง conda env `allocation_env` |
 | `start_server.bat` | รัน uvicorn (ต้อง setup ก่อน) |
 | `test_powerbi_access.py` | ทดสอบ SP เห็น workspace/dataset (ไม่รัน DAX) |
+| `smoke_deploy.py` | หลัง deploy — `GET /health` + unittest ชุดหลัก (`--skip-http` ถ้าไม่มี server) |
 
 ## Build portable (`scripts/build/`)
 

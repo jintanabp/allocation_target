@@ -46,7 +46,10 @@ class TestAdminInventory(unittest.TestCase):
         self.assertNotIn("access_token", text)
         self.assertEqual(inv["local_config"]["user_access_rows"], 1)
         self.assertIn("fabric", inv)
-        self.assertNotIn("connection", inv["fabric"])
+        conn = inv["fabric"].get("connection") or {}
+        self.assertTrue(conn.get("skipped"))
+        self.assertIsNone(conn.get("ok"))
+        self.assertEqual(conn.get("dataset_id"), "ds-test")
 
     def test_api_map_present(self):
         inv = admin_inventory.build_data_inventory(check_fabric=False)
