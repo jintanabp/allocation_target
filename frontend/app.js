@@ -2107,8 +2107,9 @@ async function switchToReadOnlyAllocationView(newSupId) {
   }
 
   const prevId = S.supId;
-  const cached = !!_readAllocSnapshotCache(ns);
-  setSupervisorSwitchLoading(true, cached ? "กำลังแสดงผลกระจาย…" : "กำลังโหลดผลกระจาย…");
+  setSupervisorSwitchLoading(true, "กำลังโหลดข้อมูลทีม…");
+  _setStep1Skeleton(true);
+  pushGlobalBusy(UX.busyLoadTeam);
   const gen = _bumpDashboardLoadGen();
   try {
     S.supId = ns;
@@ -2127,27 +2128,53 @@ async function switchToReadOnlyAllocationView(newSupId) {
     syncViewingPeerState({ skipPeerSnapshotLoad: true });
     _showPeerViewOnlyNotice(isPeer);
 
-    const ok = await _applyServerAllocationSnapshot(ns, { readOnly: true, deferRender: true });
+    const dataOk = await loadData(S.supId, S.targetMonth, S.targetYear);
     if (_isDashboardLoadStale(gen)) return;
-    if (!ok) {
+    if (!dataOk) {
+      S.supId = prevId;
       S.viewingTeamSnapshotReadOnly = false;
-      toast("ยังไม่มีผลกระจายที่บันทึกบน server สำหรับทีมนี้", "amber");
-    } else {
-      const note = document.getElementById("step3ResultTargetNote");
+      updateSupervisorSwitcherUI();
+      updateDashboardSupBadge();
+      syncViewingPeerState();
+      toast("โหลดข้อมูล Supervisor ไม่สำเร็จ — ลองอีกครั้ง", "red");
+      return;
+    }
+
+    const snapOk = await _applyServerAllocationSnapshot(ns, { readOnly: true, deferRender: true });
+    if (_isDashboardLoadStale(gen)) return;
+
+    const note = document.getElementById("step3ResultTargetNote");
+    if (snapOk) {
       if (note) {
         note.textContent = isMgrSnap
           ? `แสดงผลกระจายของ ${ns} จาก server (โหมดดูอย่างเดียว — สลับทีมเพื่อแก้เป้า)`
           : "แสดงผลกระจายล่าสุดจาก server (โหมดดูอย่างเดียว)";
         note.style.display = "block";
       }
+    } else {
+      S.allocations = [];
+      if (rb) rb.style.display = "none";
+      if (note) {
+        note.textContent = "ยังไม่มีผลกระจายบน server — ดูข้อมูลตั้งต้น Step 1–2 ได้ (แก้ไขไม่ได้)";
+        note.style.display = "block";
+      }
     }
+
+    renderStep1();
+    renderYellowTable();
+    _updateAggregateModeUI();
     updateValidation();
+    _updateNegGrowthReasonState();
+    _renderBrandStrategyPanel();
+    _showSkuWarnings();
     syncPeerReadOnlyUI();
     syncStep3LockUI();
-    renderYellowTable();
+    syncLakehouseButton();
+    syncRestartAllocBtn();
     if (!_readAllocSummaryCache()) {
       loadAllocationSummary(false);
     }
+    checkSnapshotChanges();
   } catch (err) {
     if (!_isDashboardLoadStale(gen)) {
       S.supId = prevId;
@@ -2158,6 +2185,8 @@ async function switchToReadOnlyAllocationView(newSupId) {
       toast(String(err?.message || err), "red");
     }
   } finally {
+    popGlobalBusy();
+    _setStep1Skeleton(false);
     setSupervisorSwitchLoading(false);
     _showPeerViewOnlyNotice(!!S.viewingPeer);
   }
@@ -2166,6 +2195,32 @@ async function switchToReadOnlyAllocationView(newSupId) {
 /** @deprecated alias — ใช้ switchToReadOnlyAllocationView */
 async function switchToPeerViewReadOnly(newSupId) {
   return switchToReadOnlyAllocationView(newSupId);
+}
+
+/** Manager โหมดรายคน — ยืนยันก่อนสลับไปทีม Supervisor อื่น (แก้เป้า/กระจายได้) */
+function _confirmManagerIndividualSuperSwitch(newSupId) {
+  if (S.loginRole !== "manager" || S.managerViewMode !== "individual" || S.aggregateMode) {
+    return Promise.resolve(true);
+  }
+  const ns = String(newSupId || "").trim().toUpperCase();
+  const cur = String(S.supId || "").trim().toUpperCase();
+  if (!ns || ns === cur) return Promise.resolve(true);
+
+  const name = (S.supervisorRows || []).find((r) => String(r.code || "").trim().toUpperCase() === ns);
+  const label = name?.name ? `${ns} (${name.name})` : ns;
+
+  return new Promise((resolve) => {
+    _showInfoModal({
+      title: "สลับทีม Supervisor",
+      bodyHtml:
+        `<p style="margin:0 0 10px;line-height:1.6;">คุณกำลังสลับไปทีม <strong>${escH(label)}</strong></p>` +
+        `<p style="margin:0;line-height:1.6;color:var(--text-2);">จะสามารถแก้เป้าเงิน กระจายหีบ บันทึกผล และส่ง Target Sun ของทีมนี้ได้</p>`,
+      primaryLabel: "ดำเนินการต่อ",
+      onPrimary: () => resolve(true),
+      secondaryLabel: "ยกเลิก",
+      onSecondary: () => resolve(false),
+    });
+  });
 }
 
 async function switchSupervisorContext(newSupId) {
@@ -2184,6 +2239,10 @@ async function switchSupervisorContext(newSupId) {
       updateSupervisorSwitcherUI();
       return;
     }
+  }
+  if (!await _confirmManagerIndividualSuperSwitch(ns)) {
+    updateSupervisorSwitcherUI();
+    return;
   }
 
   const prevId = S.supId;
@@ -7471,7 +7530,7 @@ async function viewAllocationSnapshot(supId) {
   }
   const cur = String(S.supId ?? "").trim();
   if (cur !== sid) {
-    if (_isPeerSupervisor(sid) || (S.loginRole === "manager" && S.managerViewMode === "individual")) {
+    if (_isPeerSupervisor(sid)) {
       await switchToReadOnlyAllocationView(sid);
     } else {
       await switchSupervisorContext(sid);
