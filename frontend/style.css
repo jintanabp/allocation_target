@@ -7146,6 +7146,7 @@ body.is-admin-login-only #msLogoutBtn {
 }
 .emp-wh-group-meta { margin-left: 8px; font-size: 11px; color: var(--text-3); }
 .emp-wh-child td { background: #fcfdff; }
+#empTableBody .emp-wh-row.emp-wh-child .emp-wh-badge { display: none; }
 .emp-wh-row.emp-wh-child td { border-top: 1px dashed #e2e8f0; }
 .emp-wh-row.emp-row--view-only { opacity: 0.92; }
 .emp-wh-row.emp-row--view-only td { background: var(--bg-main, #f8fafc); }

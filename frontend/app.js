@@ -830,6 +830,48 @@ function _snapshotUsableForComposite(snap) {
   return snap.allocations.some((a) => (Number(a?.allocated_boxes) || 0) > 0);
 }
 
+/** คีย์กลุ่มพนักงานหลายคลัง — โหมดรวมภาคแยกตาม SL กันชนกันข้ามทีม */
+function _employeeWhGroupKey(empOrId, supervisorCode) {
+  const empId = typeof empOrId === "string"
+    ? String(empOrId || "").trim()
+    : String(empOrId?.emp_id || "").trim();
+  if (S.aggregateMode) {
+    const sup = supervisorCode
+      || (typeof empOrId === "object" ? empOrId?.supervisor_code : "")
+      || "";
+    const sid = String(sup).trim().toUpperCase();
+    return sid ? `${sid}|${empId}` : empId;
+  }
+  return empId;
+}
+
+function _updateCompositeRegionalBanner(supOrder) {
+  const note = document.getElementById("step3ResultTargetNote");
+  if (!note || !S.compositeAllocView) return;
+  const order = supOrder || _aggregateSupervisorOrder().filter((sid) => S.allocSourceBySup?.[sid]);
+  const snapN = Object.values(S.allocSourceBySup || {}).filter((v) => v === "snapshot").length;
+  const tsN = Object.values(S.allocSourceBySup || {}).filter((v) => v === "targetsun").length;
+  const mgrWrite = _managerAggregateWritable();
+  const title = mgrWrite ? "ตารางรวมทั้งภาค (ผู้จัดการ)" : "ตารางรวมทั้งภาค";
+  let body =
+    `รวม ${order.length} ทีม — กระจายแล้ว ${snapN} ทีม · Target Sun ${tsN} ทีม`;
+  const sourceNote =
+    `เป้าในตารางดึงจาก <strong>Target Sun</strong> โดยตรง — ยังไม่ผ่านการกระจายด้วย <strong>Target Allocation</strong>` +
+    (snapN > 0
+      ? ` (ยกเว้นทีมที่กระจายแล้ว ${snapN} ทีม — ดูป้าย「กระจายแล้ว」ด้านล่าง)`
+      : "");
+  if (mgrWrite) {
+    body += ` · แก้เป้า/กระจายหีบได้ — บันทึกแยกตาม Supervisor อัตโนมัติ`;
+  }
+  body +=
+    `<br><span style="color:var(--text-3);">${sourceNote}</span>` +
+    `<br>แถวล่างเป้ารวม = ผลรวมทั้งภาคต่อ SKU`;
+  note.innerHTML =
+    `<div class="fabric-change-title">${title}</div>` +
+    `<div style="font-size:12px;color:var(--text-2);margin-top:6px;line-height:1.55;">${body}</div>`;
+  note.style.display = "block";
+}
+
 function syncCompositeAllocLegend() {
   const leg = document.getElementById("compositeAllocLegend");
   if (!leg) return;
@@ -912,17 +954,7 @@ async function loadRegionalCompositeAllocationView(gen = null) {
   syncRestartAllocBtn();
   syncLakehouseButton();
 
-  const note = document.getElementById("step3ResultTargetNote");
-  if (note) {
-    const snapN = Object.values(S.allocSourceBySup).filter((v) => v === "snapshot").length;
-    const tsN = Object.values(S.allocSourceBySup).filter((v) => v === "targetsun").length;
-    note.innerHTML =
-      `<div class="fabric-change-title">ตารางรวมทั้งภาค (ดูอย่างเดียว)</div>` +
-      `<div style="font-size:12px;color:var(--text-2);margin-top:6px;line-height:1.55;">` +
-      `รวม ${supOrder.length} ทีม — กระจายแล้ว ${snapN} ทีม · Target Sun ${tsN} ทีม · แถวล่างเป้ารวม = ผลรวมทั้งภาคต่อ SKU` +
-      `</div>`;
-    note.style.display = "block";
-  }
+  _updateCompositeRegionalBanner(supOrder);
   return true;
 }
 
@@ -3598,14 +3630,16 @@ function _employeeWhGroups(opts = {}) {
   const source = allocOnly ? _allocEligibleEmployees() : (S.employees || []);
   const map = new Map();
   for (const e of source) {
-    const id = String(e.emp_id || "").trim();
-    if (!map.has(id)) map.set(id, []);
-    map.get(id).push(e);
+    const groupKey = _employeeWhGroupKey(e);
+    if (!map.has(groupKey)) map.set(groupKey, []);
+    map.get(groupKey).push(e);
   }
-  return [...map.entries()].map(([empId, rows]) => {
+  return [...map.entries()].map(([groupKey, rows]) => {
+    const empId = String(rows[0]?.emp_id || "").trim();
     const isGroup = rows.length > 1 || !!rows[0]?.wh_split;
     return {
       empId,
+      groupKey,
       rows,
       isGroup,
       name: rows[0]?.emp_name || "",
@@ -3616,14 +3650,14 @@ function _employeeWhGroups(opts = {}) {
   });
 }
 
-function _whGroupExpanded(empId) {
+function _whGroupExpanded(groupKey) {
   if (!S.whExpanded) return true;
-  return S.whExpanded.has(empId);
+  return S.whExpanded.has(String(groupKey || "").trim());
 }
 
-function toggleWhGroup(empId) {
+function toggleWhGroup(groupKey) {
   if (!S.whExpanded) S.whExpanded = new Set();
-  const id = String(empId || "").trim();
+  const id = String(groupKey || "").trim();
   if (S.whExpanded.has(id)) S.whExpanded.delete(id);
   else S.whExpanded.add(id);
   _renderEmpStep1();
@@ -3674,7 +3708,7 @@ function applyDataPayload(data) {
   S.employees = (data.employees || []).map(_enrichEmployeeAllocFlags);
   S.whExpanded = new Set();
   for (const e of S.employees) {
-    if (e.wh_split) S.whExpanded.add(String(e.emp_id || "").trim());
+    if (e.wh_split) S.whExpanded.add(_employeeWhGroupKey(e));
   }
   _applyNewProductSkus(data.new_product_skus);
   S.supervisorName = (data.supervisor_name || "").trim();
@@ -4182,9 +4216,11 @@ function _renderEmpStep1() {
   const supCell = (e) => S.aggregateMode
     ? `<td><code class="admin-code">${escH(e.supervisor_code || "")}</code></td>`
     : "";
-  const whCell = (e) => showWh
-    ? `<td class="mono" style="color:var(--text-3);font-size:12px;">${escH(e.warehouse_code || "—")}</td>`
-    : "";
+  const whCell = (e, opts = {}) => {
+    if (!showWh) return "";
+    const childPad = opts.child ? "padding-left:22px;" : "";
+    return `<td class="mono" style="color:var(--text-3);font-size:12px;${childPad}">${escH(e.warehouse_code || "—")}</td>`;
+  };
 
   const renderRow = (e, opts = {}) => {
     const tgt = Number(e.target_sun) || 0;
@@ -4195,16 +4231,16 @@ function _renderEmpStep1() {
     const gHtml = _fmtEmpGrowthHtml(tgt, mid);
     const viewOnlyCls = !_isAllocEligible(e) ? " emp-row--view-only" : "";
     const childCls = opts.child ? " emp-wh-child" : "";
-    const pad = opts.child ? ' style="padding-left:22px;"' : "";
+    const empPad = opts.child && !showWh ? ' style="padding-left:22px;"' : "";
     return `<tr class="emp-wh-row${childCls}${viewOnlyCls}">
       ${supCell(e)}
-      <td${pad}>
+      <td${empPad}>
         ${opts.child ? "" : `<span class="emp-tag">${escH(e.emp_id)}</span>`}
         ${!opts.child && e.emp_name ? `<div class="emp-name-sub">${escH(e.emp_name)}</div>` : ""}
-        ${opts.child ? `<span class="emp-wh-badge">W/H ${escH(e.warehouse_code || "—")}</span>` : ""}
+        ${opts.child && !showWh ? `<span class="emp-wh-badge">W/H ${escH(e.warehouse_code || "—")}</span>` : ""}
         ${_empViewOnlyNoteHtml(e)}
       </td>
-      ${showWh && !opts.child ? whCell(e) : showWh && opts.child ? whCell(e) : ""}
+      ${whCell(e, opts)}
       <td class="r mono">${baht(tgt)}</td>
       <td class="r mono" style="color:var(--text-3);">${baht(mid)}</td>
       <td class="r">${gHtml}</td>
@@ -4217,14 +4253,17 @@ function _renderEmpStep1() {
       parts.push(renderRow(g.rows[0]));
       continue;
     }
-    const open = _whGroupExpanded(g.empId);
+    const open = _whGroupExpanded(g.groupKey);
     const icon = open ? "▼" : "▶";
     const mid =
       _empStep1View === "ly" ? g.totalLy : g.totalAvg3;
     const gHtml = _fmtEmpGrowthHtml(g.totalTargetSun, mid);
-    parts.push(`<tr class="emp-wh-group-header" onclick="toggleWhGroup('${escH(g.empId)}')">
-      ${S.aggregateMode ? "<td></td>" : ""}
-      <td colspan="${showWh ? 1 : 1}">
+    const supHdr = S.aggregateMode
+      ? `<td><code class="admin-code">${escH(g.rows[0]?.supervisor_code || "")}</code></td>`
+      : "";
+    parts.push(`<tr class="emp-wh-group-header" onclick="toggleWhGroup('${escH(g.groupKey)}')">
+      ${supHdr}
+      <td>
         <button type="button" class="emp-wh-toggle" aria-expanded="${open ? "true" : "false"}">${icon}</button>
         <span class="emp-tag">${escH(g.empId)}</span>
         ${g.name ? `<span class="emp-name-sub">${escH(g.name)}</span>` : ""}
@@ -4578,7 +4617,7 @@ function _yellowRowHtml(e, opts = {}) {
     : `<td class="r mono">${baht(ly)}</td>`;
   const empCell = opts.groupHeader
     ? `<td>
-        <button type="button" class="emp-wh-toggle" onclick="toggleWhGroup('${escH(e.emp_id)}')">${_whGroupExpanded(e.emp_id) ? "▼" : "▶"}</button>
+        <button type="button" class="emp-wh-toggle" onclick="toggleWhGroup('${escH(opts.groupKey || e.emp_id)}')">${_whGroupExpanded(opts.groupKey || e.emp_id) ? "▼" : "▶"}</button>
         <span class="emp-tag">${escH(e.emp_id)}</span>
         ${e.emp_name ? `<span style="font-size:11px;color:var(--text-3);margin-left:4px;">${escH(e.emp_name)}</span>` : ""}
         <span class="emp-wh-group-meta">${opts.childCount || ""} คลัง</span>
@@ -4643,7 +4682,7 @@ function renderYellowTable() {
       parts.push(_yellowRowHtml(g.rows[0]));
       continue;
     }
-    const open = _whGroupExpanded(g.empId);
+    const open = _whGroupExpanded(g.groupKey);
     const headerEmp = {
       ...g.rows[0],
       emp_id: g.empId,
@@ -4654,7 +4693,12 @@ function renderYellowTable() {
       wh_split: false,
     };
     const headerYellow = g.rows.reduce((a, r) => a + (S.yellow[_allocKey(r)] || 0), 0);
-    parts.push(_yellowRowHtml(headerEmp, { groupHeader: true, childCount: g.rows.length, displayYellow: headerYellow }));
+    parts.push(_yellowRowHtml(headerEmp, {
+      groupHeader: true,
+      childCount: g.rows.length,
+      displayYellow: headerYellow,
+      groupKey: g.groupKey,
+    }));
     if (open) {
       for (const e of g.rows) {
         if (!_isAllocEligible(e)) continue;
@@ -4922,12 +4966,18 @@ async function runOptimization() {
       syncLakehouseButton();
       syncRestartAllocBtn();
       qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
-      S.compositeAllocView = false;
-      S.allocSourceBySup = {};
       if (_managerAggregateWritable()) {
-        await saveRegionalAllocationSnapshots(displayAllocs, "optimized");
+        S.compositeAllocView = true;
+        const saved = await saveRegionalAllocationSnapshots(displayAllocs, "optimized");
+        for (const supId of saved || []) {
+          S.allocSourceBySup[supId] = "snapshot";
+        }
+        syncCompositeAllocLegend();
+        _updateCompositeRegionalBanner();
         _clearManagerRegionalDraft();
       } else {
+        S.compositeAllocView = false;
+        S.allocSourceBySup = {};
         saveDraft(true);
         queueServerAllocationSave("optimized");
       }
@@ -5688,8 +5738,12 @@ function onResultEdit(el) {
   _rebalanceTimer = setTimeout(() => {
     autoRebalance(true, { skipRender: true });
     _syncResultTableAfterRebalance();
-    _saveAllocationSnapshot();
-    saveDraft(true);
+    if (S.compositeAllocView && _managerAggregateWritable()) {
+      queueRegionalAllocationSave("draft");
+    } else {
+      _saveAllocationSnapshot();
+      saveDraft(true);
+    }
   }, 250);
 }
 
@@ -6916,6 +6970,26 @@ function _removeDraftKeysBothLocals() {
 const _draftPromptSuppressedForKeys = new Set();
 
 let _serverAllocSaveTimer = null;
+let _regionalAllocSaveTimer = null;
+
+function queueRegionalAllocationSave(status = "draft") {
+  if (!S.compositeAllocView || !_managerAggregateWritable()) return;
+  if (!S.allocations?.length && status === "draft") return;
+  clearTimeout(_regionalAllocSaveTimer);
+  _regionalAllocSaveTimer = setTimeout(() => {
+    saveRegionalAllocationSnapshots(S.allocations, status)
+      .then((saved) => {
+        for (const supId of saved || []) {
+          S.allocSourceBySup[supId] = "snapshot";
+        }
+        if (saved?.length) {
+          syncCompositeAllocLegend();
+          _updateCompositeRegionalBanner();
+        }
+      })
+      .catch((e) => console.warn("queueRegionalAllocationSave:", e));
+  }, 800);
+}
 
 function _canWriteServerAllocationForSup(supId) {
   if (_isAllocReadOnlyView()) return false;
@@ -8210,7 +8284,20 @@ async function runReAllocationKeepEdits() {
   requestAnimationFrame(() => adjustResultStickyGap());
   qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
   toast("✅ กระจายหีบใหม่สำเร็จ — ตัวเลขที่แก้เองยังคงอยู่", "green");
-  saveDraft(true);
+  if (_managerAggregateWritable()) {
+    S.compositeAllocView = true;
+    saveRegionalAllocationSnapshots(allocs, "optimized")
+      .then((saved) => {
+        for (const supId of saved || []) {
+          S.allocSourceBySup[supId] = "snapshot";
+        }
+        syncCompositeAllocLegend();
+        _updateCompositeRegionalBanner();
+      })
+      .catch((e) => console.warn("runReAllocationKeepEdits regional save:", e));
+  } else {
+    saveDraft(true);
+  }
 }
 /* ════════════════════════════════════════════════════════════════════════════
    USER MANUAL MODAL — คู่มือการใช้งานทีละขั้นตอน
