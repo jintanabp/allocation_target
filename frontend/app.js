@@ -363,24 +363,30 @@ async function initEntraAuth() {
   const hintEl = block?.querySelector(".ms-auth-hint");
   const formBlock = document.getElementById("loginFormBlock");
 
+  _primeMsAuthBlock();
+
   try {
-    const r = await fetch(`${API_BASE_URL}/auth/config`);
+    const r = await fetchWithTimeout(`${API_BASE_URL}/auth/config`, {}, 8000);
     if (r.ok) AUTH_CONFIG = await r.json();
     else AUTH_CONFIG = { authRequired: false, _fetchStatus: r.status };
   } catch (e) {
     console.warn("auth/config:", e);
-    AUTH_CONFIG = { authRequired: false, _fetchError: true };
+    AUTH_CONFIG = {
+      authRequired: false,
+      _fetchError: true,
+      _fetchTimedOut: e?.name === "AbortError" || /timeout|abort/i.test(String(e?.message || e)),
+    };
   }
 
-  /* แสดงบล็อกเสมอ — ให้รู้ว่ามีโหมด MS หรือทำไมถึงปิด */
   if (block) block.style.display = "flex";
 
   if (!AUTH_CONFIG.authRequired) {
     S.canImportTargetSun = true;
     if (hintEl) {
       if (AUTH_CONFIG._fetchError) {
-        hintEl.textContent =
-          `เชื่อมต่อ ${API_BASE_URL}/auth/config ไม่ได้ — ตรวจว่าเปิด URL นี้ผ่าน server เดียวกัน (ไม่ใช้ไฟล์เปล่า) และรีเฟรช`;
+        hintEl.textContent = AUTH_CONFIG._fetchTimedOut
+          ? `เชื่อมต่อ server ช้า/ไม่ตอบ (${API_BASE_URL}/auth/config) — ตรวจว่า server รันอยู่แล้วรีเฟรช`
+          : `เชื่อมต่อ ${API_BASE_URL}/auth/config ไม่ได้ — ตรวจว่าเปิด URL นี้ผ่าน server เดียวกัน (ไม่ใช้ไฟล์เปล่า) และรีเฟรช`;
       } else {
         hintEl.textContent =
           "ล็อกอิน Microsoft ปิดอยู่ — ใส่ AZURE_AUTH_CLIENT_ID + FABRIC_TENANT_ID ใน config/.env แล้วรีสตาร์ท server · ในโหมดนี้รายชื่อ Supervisor/Manager แสดงทั้งระบบ (ไม่กรองตาม user_access.json)";
@@ -388,6 +394,7 @@ async function initEntraAuth() {
     }
     if (msBtn) msBtn.style.display = "none";
     if (formBlock) formBlock.classList.remove("login-form-disabled");
+    _syncSupSelectAwaitingMsOrManagers();
     syncLoginFormReady();
     return;
   }
@@ -454,35 +461,68 @@ async function initEntraAuth() {
     syncLoginFormReady();
     applyAdminLoginLayout();
   } else {
-    if (msBtn) {
-      msBtn.style.display = "inline-flex";
-      msBtn.onclick = () => {
-        try {
-          const p = msalInstance.loginRedirect({
-            scopes: [GRAPH_USER_READ_SCOPE],
-          });
-          Promise.resolve(p).catch((e) => {
-            console.error("MS loginRedirect:", e);
-            if (hintEl) {
-              hintEl.textContent =
-                "เปิดหน้าล็อกอิน Microsoft ไม่สำเร็จ: " +
-                (e?.message || String(e)) +
-                " — ลองรีเฟรช (F5) หรือปิดแท็บ login.microsoftonline.com ที่ค้าง";
-            }
-          });
-        } catch (e) {
-          console.error("MS loginRedirect:", e);
-          if (hintEl) {
-            hintEl.textContent =
-              "เปิดหน้าล็อกอิน Microsoft ไม่สำเร็จ: " +
-              (e?.message || String(e));
-          }
-        }
-      };
-    }
+    _bindMsLoginButton(msBtn, hintEl);
     if (formBlock) formBlock.classList.add("login-form-disabled");
+    _syncSupSelectAwaitingMsOrManagers();
     syncLoginFormReady();
   }
+}
+
+/** แสดงบล็อก MS ทันที — กันรอ /auth/config แล้วหน้าว่าง */
+function _primeMsAuthBlock() {
+  const block = document.getElementById("msAuthBlock");
+  const hintEl = block?.querySelector(".ms-auth-hint");
+  const msBtn = document.getElementById("msLoginBtn");
+  if (block) block.style.display = "flex";
+  if (hintEl) hintEl.textContent = "กำลังเตรียมการล็อกอิน Microsoft…";
+  if (msBtn) msBtn.style.display = "none";
+}
+
+/** รายชื่อ Supervisor — รอ MS หรือพร้อมโหลด */
+function _syncSupSelectAwaitingMsOrManagers() {
+  const sup = document.getElementById("supSelect");
+  if (!sup) return;
+  if (AUTH_CONFIG?.authRequired && !entraMsalReady()) {
+    sup.innerHTML = '<option value="">ล็อกอิน Microsoft ก่อน (ปุ่มด้านบน)</option>';
+    sup.disabled = true;
+    return;
+  }
+  if (!sup.options.length || sup.options[0]?.value === "") {
+    const first = (sup.options[0]?.textContent || "").trim();
+    if (first.includes("ล็อกอิน Microsoft")) return;
+    if (first.includes("กำลังดึง")) {
+      sup.innerHTML = '<option value="">⏳ กำลังดึงข้อมูล...</option>';
+      sup.disabled = true;
+    }
+  }
+}
+
+function _bindMsLoginButton(msBtn, hintEl) {
+  if (!msBtn) return;
+  msBtn.style.display = "inline-flex";
+  msBtn.onclick = () => {
+    try {
+      const p = msalInstance.loginRedirect({
+        scopes: [GRAPH_USER_READ_SCOPE],
+      });
+      Promise.resolve(p).catch((e) => {
+        console.error("MS loginRedirect:", e);
+        if (hintEl) {
+          hintEl.textContent =
+            "เปิดหน้าล็อกอิน Microsoft ไม่สำเร็จ: " +
+            (e?.message || String(e)) +
+            " — ลองรีเฟรช (F5) หรือปิดแท็บ login.microsoftonline.com ที่ค้าง";
+        }
+      });
+    } catch (e) {
+      console.error("MS loginRedirect:", e);
+      if (hintEl) {
+        hintEl.textContent =
+          "เปิดหน้าล็อกอิน Microsoft ไม่สำเร็จ: " +
+          (e?.message || String(e));
+      }
+    }
+  };
 }
 
 async function ensureGraphToken() {
@@ -2411,7 +2451,7 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
    INIT
 ══════════════════════════════════════════════ */
 document.addEventListener("DOMContentLoaded", async () => {
-  await initEntraAuth();
+  _primeMsAuthBlock();
 
   // ปุ่ม login อย่าใส่ onclick ใน HTML ด้วย — ถ้ามีซ้ำจะเรียก handleLogin สองครั้งต่อคลิก
   const loginBtn = document.getElementById("loginBtn");
@@ -2441,7 +2481,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   const onMonthYearChange = () => updateDatePreview();
   document.getElementById("monthSelect").addEventListener("change", onMonthYearChange);
   document.getElementById("yearSelect").addEventListener("change", onMonthYearChange);
-  if (entraMsalReady()) loadManagers();
   loadAppBuildInfo();
 
   document.querySelectorAll('[name="strategy"]').forEach(r => {
@@ -2452,7 +2491,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
   syncHistAllocNote();
 
-  // beforeunload — เตือนเมื่อปิดหน้าต่างหรือรีเฟรช และมี allocation ที่ยังไม่ได้ export/save
   window.addEventListener("beforeunload", e => {
     if (S.allocations && S.allocations.length > 0 && S._hasUnsaved) {
       e.preventDefault();
@@ -2460,8 +2498,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   });
 
-  // Server health polling — แสดงสถานะ server ที่หน้า Login แบบ real-time
   _pollServerStatus();
+
+  await initEntraAuth();
+
+  if (entraMsalReady()) loadManagers();
+  else _syncSupSelectAwaitingMsOrManagers();
 });
 
 /* ══════════════════════════════════════════════

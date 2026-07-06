@@ -95,11 +95,11 @@
               <span class="login-manual-cta__arrow" aria-hidden="true">→</span>
             </button>
 
-            <div id="msAuthBlock" class="ms-auth-block" style="display: none;" aria-live="polite">
+            <div id="msAuthBlock" class="ms-auth-block" style="display: flex;" aria-live="polite">
               <button type="button" id="msLoginBtn" class="btn-ms">ล็อกอินด้วย Microsoft</button>
               <p id="msUserLine" class="ms-user-line" style="display: none;"></p>
               <button type="button" id="msLogoutBtn" class="btn-ms-logout" style="display: none;" onclick="handleMsLogout()">ออกจากบัญชี Microsoft</button>
-              <p class="ms-auth-hint">เมื่อล็อกอินบัญชีองค์กรคุณสามารถเข้าใช้งานได้ตามสิทธิที่คุณมี</p>
+              <p class="ms-auth-hint">กำลังเตรียมการล็อกอิน Microsoft…</p>
             </div>
 
             <div id="loginFormBlock">
@@ -1348,7 +1348,7 @@
 
   <!-- ใช้ไฟล์ในโปรเจกต์ — เครือข่ายองค์กรมักบล็อก alcdn.msauth.net ทำให้ msal ไม่โหลด -->
   <script src="vendor/msal-browser.min.js"></script>
-  <script src=".app.js?v=2026070603"></script>
+  <script src="app.js?v=2026070604"></script>
 </body>
 
 </html>
