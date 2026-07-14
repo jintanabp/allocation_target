@@ -204,6 +204,59 @@ html, body {
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
 }
 
+/* ── ตัวบ่งชี้สถานะ กำลังโหลด/บันทึก ── */
+.topbar-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  background: var(--bg-main);
+  color: var(--text-2);
+  transition: opacity 0.2s ease;
+}
+.topbar-status__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--text-3);
+}
+/* กำลังโหลด/บันทึก — จุดหมุนเป็นวงแหวน */
+.topbar-status--busy .topbar-status__dot {
+  width: 11px;
+  height: 11px;
+  background: transparent;
+  border: 2px solid var(--accent-brd, #c7d2fe);
+  border-top-color: var(--accent, #6366f1);
+  animation: topbar-status-spin 0.7s linear infinite;
+}
+.topbar-status--busy {
+  color: var(--accent, #4f46e5);
+  border-color: var(--accent-brd, #c7d2fe);
+  background: var(--accent-bg, #eef2ff);
+}
+/* บันทึกแล้ว — จุดเขียว */
+.topbar-status--done .topbar-status__dot {
+  background: var(--green, #16a34a);
+}
+.topbar-status--done {
+  color: var(--green, #16a34a);
+  border-color: var(--green-brd, #bbf7d0);
+  background: var(--green-bg, #f0fdf4);
+}
+@keyframes topbar-status-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .topbar-status--busy .topbar-status__dot { animation: none; }
+}
+
 /* หน้า login ซ่อน topbar/footers เพื่อกันล้นจอ */
 body.is-login .topbar {
   display: none;
@@ -2987,11 +3040,17 @@ body.is-admin .admin-view {
 .alloc-row--composite {
   border-left: 3px solid color-mix(in srgb, var(--sup-band, #6366f1) 55%, transparent);
 }
+/* เฉดสีต้องเป็น overlay บนพื้นทึบ (var(--white)) เท่านั้น — ไม่งั้นส่วนที่เป็น transparent
+   จะทำให้เซลล์ SKU ที่เลื่อนอยู่ใต้ทะลุขึ้นมาผ่านคอลัมน์ที่ตรึง (มุม manager/composite) */
 .alloc-row--snapshot td.result-sticky-left {
-  background: linear-gradient(90deg, rgba(99, 102, 241, 0.07), transparent 48px);
+  background:
+    linear-gradient(90deg, rgba(99, 102, 241, 0.07), transparent 48px),
+    var(--white);
 }
 .alloc-row--targetsun td.result-sticky-left {
-  background: linear-gradient(90deg, rgba(234, 179, 8, 0.09), transparent 48px);
+  background:
+    linear-gradient(90deg, rgba(234, 179, 8, 0.09), transparent 48px),
+    var(--white);
 }
 .alloc-row-sup {
   margin-top: 3px;
@@ -4555,6 +4614,41 @@ body.is-admin .admin-view {
   flex-wrap: wrap;
 }
 
+/* ── ค้นหา/กระโดดไปพนักงาน (Step 3) ── */
+.emp-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.emp-search__input {
+  min-width: 190px;
+  padding: 6px 12px;
+  height: auto;
+  font-size: 13px;
+  border: 1px solid var(--border-md);
+  border-radius: 6px;
+  background: var(--bg-main);
+  color: var(--text-2);
+}
+.emp-search__input:focus {
+  outline: none;
+  border-color: var(--accent-brd, #c7d2fe);
+  box-shadow: 0 0 0 2px var(--accent-bg, #eef2ff);
+}
+.emp-search__count {
+  font-size: 12px;
+  color: var(--text-3);
+  min-width: 42px;
+  white-space: nowrap;
+}
+/* แถวที่ตรงคำค้น — ไฮไลต์ (รวมถึงคอลัมน์ sticky ที่มี background ทับ) */
+.result-tbl tbody tr.emp-search-hit > td {
+  background: var(--amber-bg, #fef3c7) !important;
+}
+.result-tbl tbody tr.emp-search-hit > td.result-sticky-left {
+  background: var(--amber-bg, #fef3c7) !important;
+}
+
 /* ── Sticky totals columns ── */
 .result-tbl .sticky-col {
   position: sticky;
@@ -5112,6 +5206,32 @@ body.is-admin .admin-view {
 .tbl tbody tr:hover .result-sticky-left--sm,
 .tbl tbody tr:hover .result-sticky-left--wh {
   background: var(--bg-main) !important;
+}
+
+/* ══════════════════════════════════════════════
+   ตรึงคอลัมน์ซ้ายแบบทั่วไป (Step 1 พนักงาน/WH, Step 2 พนักงาน)
+   ค่า left เซ็ตจาก JS: pinStickyLeftColumns() เพราะคอลัมน์นำหน้าแปรผัน
+   เงา divider โผล่เฉพาะเมื่อเลื่อนแนวนอนได้จริง (.is-hscroll) เพื่อไม่ให้เกิดเงาค้าง
+══════════════════════════════════════════════ */
+.tbl--emp-step1 .sticky-left-col,
+.tbl--step2-main .sticky-left-col {
+  position: sticky;
+  z-index: 5;
+  background: var(--white);
+}
+.tbl--emp-step1 thead th.sticky-left-col,
+.tbl--step2-main thead th.sticky-left-col {
+  z-index: 7;
+  background: var(--bg-main);
+}
+.tbl--emp-step1 tbody tr:hover .sticky-left-col,
+.tbl--step2-main tbody tr:hover .sticky-left-col {
+  background: var(--bg-main);
+}
+/* เงาแบ่งคอลัมน์: เซลล์ sticky ที่อยู่ขวาสุดเท่านั้นที่เงาไม่ถูกเซลล์ถัดไปทับ */
+.panel-scroll--emp.is-hscroll .sticky-left-col,
+.step2-table-scroll.is-hscroll .sticky-left-col {
+  box-shadow: 2px 0 5px rgba(0, 0, 0, 0.05);
 }
 
 /* 🔴 ตรึงคอลัมน์ฝั่งขวา (ยอดรวมต่างๆ) */

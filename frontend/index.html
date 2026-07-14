@@ -24,6 +24,10 @@
         <span class="brand-name">Target Allocation</span>
       </div>
       <div class="topbar-actions">
+        <div class="topbar-status" id="topbarStatus" role="status" aria-live="polite" style="display:none;">
+          <span class="topbar-status__dot" aria-hidden="true"></span>
+          <span class="topbar-status__text" id="topbarStatusText"></span>
+        </div>
         <div class="topbar-total" id="topbarTotalContainer" style="display:none;">
           เป้ารวม <strong id="totalTargetDisplay">—</strong>
         </div>
@@ -287,9 +291,9 @@
               <table class="tbl tbl--emp-step1">
                 <thead>
                   <tr id="empStep1HeadRow">
-                    <th id="empStep1SupTh" style="display:none;">ซุป (SL)</th>
-                    <th>พนักงาน</th>
-                    <th id="empStep1WhTh" class="mono" style="display:none;">W/H</th>
+                    <th id="empStep1SupTh" class="sticky-left-col" style="display:none;">ซุป (SL)</th>
+                    <th class="sticky-left-col">พนักงาน</th>
+                    <th id="empStep1WhTh" class="sticky-left-col mono" style="display:none;">W/H</th>
                     <th class="r">เป้า (บาท)</th>
                     <th class="r" id="empStep1MidTh">เฉลี่ย 3 เดือนย้อนหลัง</th>
                     <th class="r">% เติบโต</th>
@@ -443,7 +447,7 @@
                 </colgroup>
                 <thead id="step2Thead">
                   <tr>
-                    <th>พนักงาน</th>
+                    <th class="sticky-left-col">พนักงาน</th>
                     <th class="r" id="step2ThLY">ยอดขายเดือนเดียวกันปีที่แล้ว</th>
                     <th class="r">ยอดขายเฉลี่ย 3 เดือนย้อนหลัง</th>
                     <th class="r">เป้า Target Sun</th>
@@ -759,6 +763,12 @@
           <div class="result-head">
             <div class="result-title">ผลลัพธ์การกระจายหีบ</div>
             <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <div class="emp-search" role="search">
+                <input type="search" id="empSearchInput" class="emp-search__input"
+                  placeholder="ค้นหาพนักงาน (รหัส/ชื่อ)" autocomplete="off" aria-label="ค้นหาพนักงาน"
+                  oninput="onEmpSearchInput(this.value)" />
+                <span class="emp-search__count" id="empSearchCount" aria-live="polite"></span>
+              </div>
               <select id="skuSortSelect" class="field-select"
                 style="min-width: 140px; padding: 6px 30px 6px 12px; height: auto; border-radius: 6px;"
                 onchange="renderResult(S.allocations)">

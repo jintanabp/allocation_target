@@ -2447,6 +2447,35 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
   }
 }
 
+/**
+ * ตัวบ่งชี้สถานะที่ topbar — state: "loading" | "saving" | "done" | "idle"
+ * "done" จะซ่อนเองอัตโนมัติหลัง 1.8 วินาที
+ */
+let _busyStatusTimer = null;
+function setBusyStatus(state, msg) {
+  const host = document.getElementById("topbarStatus");
+  const txt = document.getElementById("topbarStatusText");
+  if (!host || !txt) return;
+  if (_busyStatusTimer) { clearTimeout(_busyStatusTimer); _busyStatusTimer = null; }
+  host.classList.remove("topbar-status--busy", "topbar-status--done");
+  if (state === "loading" || state === "saving") {
+    host.classList.add("topbar-status--busy");
+    txt.textContent = msg || (state === "loading" ? "กำลังโหลดข้อมูล…" : "กำลังบันทึก…");
+    host.style.display = "";
+  } else if (state === "done") {
+    host.classList.add("topbar-status--done");
+    txt.textContent = msg || "บันทึกแล้ว";
+    host.style.display = "";
+    _busyStatusTimer = setTimeout(() => {
+      host.style.display = "none";
+      host.classList.remove("topbar-status--done");
+    }, 1800);
+  } else {
+    host.style.display = "none";
+    txt.textContent = "";
+  }
+}
+
 /* ══════════════════════════════════════════════
    INIT
 ══════════════════════════════════════════════ */
@@ -3747,6 +3776,7 @@ function applyDataPayload(data) {
   S.yellowLocked = {};
   S.histWindowMonths = 3;
   S.skus = data.skus;
+  _bumpSkusVersion();
   S.employees = (data.employees || []).map(_enrichEmployeeAllocFlags);
   S.whExpanded = new Set();
   for (const e of S.employees) {
@@ -3823,6 +3853,7 @@ async function loadAggregateData(viewMode, regionKey) {
   const view = viewMode === "all" ? "all" : "region";
   const team = (S.supervisorChoices || []).map(c => String(c).trim().toUpperCase()).filter(Boolean).join(",");
   const region = viewMode === "region" ? String(regionKey || "") : "";
+  setBusyStatus("loading");
   try {
     const url =
       `${API_BASE_URL}/data/employees/aggregate?manager_code=${encodeURIComponent(mgr)}` +
@@ -3845,6 +3876,8 @@ async function loadAggregateData(viewMode, regionKey) {
   } catch (err) {
     showLoginError(`❌ ${err.message || err}`);
     return false;
+  } finally {
+    setBusyStatus("idle");
   }
 }
 
@@ -3852,6 +3885,7 @@ async function loadData(supId, targetMonth, targetYear, refresh = false) {
   S.aggregateMode = false;
   S.aggregateSupIds = [];
   _clearCompositeAllocState();
+  setBusyStatus("loading");
   try {
     const q = new URLSearchParams({
       sup_id: String(supId),
@@ -3944,6 +3978,8 @@ async function loadData(supId, targetMonth, targetYear, refresh = false) {
       : `❌ ${err.message}`;
     showLoginError(hint);
     return false;
+  } finally {
+    setBusyStatus("idle");
   }
 }
 
@@ -4256,12 +4292,12 @@ function _renderEmpStep1() {
   if (!body) return;
   const showWh = _teamHasWhSplit();
   const supCell = (e) => S.aggregateMode
-    ? `<td><code class="admin-code">${escH(e.supervisor_code || "")}</code></td>`
+    ? `<td class="sticky-left-col"><code class="admin-code">${escH(e.supervisor_code || "")}</code></td>`
     : "";
   const whCell = (e, opts = {}) => {
     if (!showWh) return "";
     const childPad = opts.child ? "padding-left:22px;" : "";
-    return `<td class="mono" style="color:var(--text-3);font-size:12px;${childPad}">${escH(e.warehouse_code || "—")}</td>`;
+    return `<td class="sticky-left-col mono" style="color:var(--text-3);font-size:12px;${childPad}">${escH(e.warehouse_code || "—")}</td>`;
   };
 
   const renderRow = (e, opts = {}) => {
@@ -4276,7 +4312,7 @@ function _renderEmpStep1() {
     const empPad = opts.child && !showWh ? ' style="padding-left:22px;"' : "";
     return `<tr class="emp-wh-row${childCls}${viewOnlyCls}">
       ${supCell(e)}
-      <td${empPad}>
+      <td class="sticky-left-col"${empPad}>
         ${opts.child ? "" : `<span class="emp-tag">${escH(e.emp_id)}</span>`}
         ${!opts.child && e.emp_name ? `<div class="emp-name-sub">${escH(e.emp_name)}</div>` : ""}
         ${opts.child && !showWh ? `<span class="emp-wh-badge">W/H ${escH(e.warehouse_code || "—")}</span>` : ""}
@@ -4301,17 +4337,17 @@ function _renderEmpStep1() {
       _empStep1View === "ly" ? g.totalLy : g.totalAvg3;
     const gHtml = _fmtEmpGrowthHtml(g.totalTargetSun, mid);
     const supHdr = S.aggregateMode
-      ? `<td><code class="admin-code">${escH(g.rows[0]?.supervisor_code || "")}</code></td>`
+      ? `<td class="sticky-left-col"><code class="admin-code">${escH(g.rows[0]?.supervisor_code || "")}</code></td>`
       : "";
     parts.push(`<tr class="emp-wh-group-header" onclick="toggleWhGroup('${escH(g.groupKey)}')">
       ${supHdr}
-      <td>
+      <td class="sticky-left-col">
         <button type="button" class="emp-wh-toggle" aria-expanded="${open ? "true" : "false"}">${icon}</button>
         <span class="emp-tag">${escH(g.empId)}</span>
         ${g.name ? `<span class="emp-name-sub">${escH(g.name)}</span>` : ""}
         <span class="emp-wh-group-meta">${g.rows.length} คลัง</span>
       </td>
-      ${showWh ? `<td class="mono" style="color:var(--text-3);font-size:11px;">รวม</td>` : ""}
+      ${showWh ? `<td class="sticky-left-col mono" style="color:var(--text-3);font-size:11px;">รวม</td>` : ""}
       <td class="r mono"><strong>${baht(g.totalTargetSun)}</strong></td>
       <td class="r mono" style="color:var(--text-3);">${baht(mid)}</td>
       <td class="r">${gHtml}</td>
@@ -4321,6 +4357,7 @@ function _renderEmpStep1() {
     }
   }
   body.innerHTML = parts.join("");
+  requestAnimationFrame(() => pinStickyLeftColumns(document.querySelector(".panel-scroll--emp")));
 }
 
 function renderStep1() {
@@ -4658,15 +4695,15 @@ function _yellowRowHtml(e, opts = {}) {
       </td>`
     : `<td class="r mono">${baht(ly)}</td>`;
   const empCell = opts.groupHeader
-    ? `<td>
+    ? `<td class="sticky-left-col">
         <button type="button" class="emp-wh-toggle" onclick="toggleWhGroup('${escH(opts.groupKey || e.emp_id)}')">${_whGroupExpanded(opts.groupKey || e.emp_id) ? "▼" : "▶"}</button>
         <span class="emp-tag">${escH(e.emp_id)}</span>
         ${e.emp_name ? `<span style="font-size:11px;color:var(--text-3);margin-left:4px;">${escH(e.emp_name)}</span>` : ""}
         <span class="emp-wh-group-meta">${opts.childCount || ""} คลัง</span>
       </td>`
     : opts.child
-      ? `<td style="padding-left:22px;"><span class="emp-wh-badge">W/H ${escH(e.warehouse_code || "—")}</span>${lockIcon}</td>`
-      : `<td>
+      ? `<td class="sticky-left-col" style="padding-left:22px;"><span class="emp-wh-badge">W/H ${escH(e.warehouse_code || "—")}</span>${lockIcon}</td>`
+      : `<td class="sticky-left-col">
         <span class="emp-tag">${escH(e.emp_id)}</span>
         ${e.emp_name ? `<span style="font-size:11px;color:var(--text-3);margin-left:4px;">${escH(e.emp_name)}</span>` : ""}
         ${lockIcon}
@@ -4768,6 +4805,7 @@ function renderYellowTable() {
   qs("#footYellowSum").textContent = baht(ySum);
   qs("#footGrowth").textContent = totalG !== null ? (totalG >= 0 ? "+" : "") + totalG.toFixed(1) + "%" : "—";
   syncStep2ReadOnlyUI();
+  requestAnimationFrame(() => pinStickyLeftColumns(document.querySelector(".step2-table-scroll")));
 }
 
 function onYellowChange(input) {
@@ -4778,8 +4816,10 @@ function onYellowChange(input) {
   S.yellow[akey] = val;
   S.yellowLocked[akey] = true;
 
-  const lockedRows = _allocEligibleEmployees().filter(e => S.yellowLocked[_allocKey(e)]);
-  const unlockedRows = _allocEligibleEmployees().filter(e => !S.yellowLocked[_allocKey(e)]);
+  // เรียก _allocEligibleEmployees() ครั้งเดียว (เดิมเรียกซ้ำ) — แบ่ง locked/unlocked จากชุดเดียวกัน
+  const eligible = _allocEligibleEmployees();
+  const lockedRows = eligible.filter(e => S.yellowLocked[_allocKey(e)]);
+  const unlockedRows = eligible.filter(e => !S.yellowLocked[_allocKey(e)]);
 
   const lockedSum = lockedRows.reduce((acc, e) => acc + (S.yellow[_allocKey(e)] || 0), 0);
   let remainingTarget = S.totalTarget - lockedSum;
@@ -5262,6 +5302,22 @@ function toggleSkuProductNames() {
   if (S.allocations?.length) renderResult(S.allocations);
 }
 
+/** เพิ่ม version ของ S.skus — เรียกทุกครั้งที่ S.skus ถูกแทน/แก้ราคา/เพิ่มรายการ เพื่อล้างแคช price map */
+function _bumpSkusVersion() {
+  S._skusVersion = (S._skusVersion || 0) + 1;
+}
+
+/** map ราคา/หีบ (sku → price) แบบ memoize ตาม version ของ S.skus — เลี่ยงสร้างใหม่ซ้ำหลายที่ต่อ render */
+function _getSkuPriceMap() {
+  const ver = S._skusVersion || 0;
+  if (S._skuPriceMapCache && S._skuPriceMapVer === ver) return S._skuPriceMapCache;
+  const m = Object.create(null);
+  for (const x of (S.skus || [])) m[x.sku] = Number(x.price_per_box) || 0;
+  S._skuPriceMapCache = m;
+  S._skuPriceMapVer = ver;
+  return m;
+}
+
 function renderResult(allocs) {
   if (allocs?.length) _recomputeAllHistDev(allocs);
   const scrollerPre = document.querySelector("#resultBlock .tbl-scroll");
@@ -5272,7 +5328,10 @@ function renderResult(allocs) {
   let filtered = isFiltered ? allocs.filter(a => (a.brand_name_thai || a.brand_name_english || "") === S.activeBrand) : allocs;
 
   const sortMode = qs("#skuSortSelect")?.value || "code";
-  const _skuPriceMap = Object.fromEntries(S.skus.map(x => [x.sku, Number(x.price_per_box) || 0]));
+  const _skuPriceMap = _getSkuPriceMap();
+  // Prebuild lookup maps — เลี่ยง .find() วนซ้ำต่อแถว/ต่อ SKU (O(rows×emps), O(skus²))
+  const _skuInfoByCode = new Map((S.skus || []).map(x => [x.sku, x]));
+  const _empByKey = new Map((S.employees || []).map(e => [_allocKey(e), e]));
   let uniqueSkusObj = {};
   filtered.forEach(a => {
     if (!uniqueSkusObj[a.sku]) {
@@ -5339,7 +5398,7 @@ function renderResult(allocs) {
 
   if (isFiltered) {
     const brandTotal = filtered.reduce((acc, a) => {
-      const price = S.skus.find(x => x.sku === a.sku)?.price_per_box || 0;
+      const price = _skuPriceMap[a.sku] ?? 0;
       return acc + (a.allocated_boxes || 0) * price;
     }, 0);
     qs("#brandSummary").innerHTML = `
@@ -5357,7 +5416,7 @@ function renderResult(allocs) {
   const smWhRowspan = showNames ? ' rowspan="2"' : "";
   headerHtml += `<tr><th class="result-sticky-left result-sticky-left--sm"${smWhRowspan}>S/M</th><th class="result-sticky-left result-sticky-left--wh"${smWhRowspan}>W/H</th>`;
   skus.forEach(s => {
-    const info = S.skus.find(x => x.sku === s) || {};
+    const info = _skuInfoByCode.get(s) || {};
     const price = _skuPriceMap[s] ?? 0;
     const newBadge = _skuNewBadgeHtml(s);
     const tierBadge = _skuTierBadgeHtml(s);
@@ -5379,7 +5438,7 @@ function renderResult(allocs) {
   if (showNames) {
     headerHtml += `<tr class="sku-th-row--names">`;
     skus.forEach(s => {
-      const info = S.skus.find(x => x.sku === s) || {};
+      const info = _skuInfoByCode.get(s) || {};
       const pname = _skuDisplayName(info);
       headerHtml += `<th class="r sku-th sku-th--product" title="${escH(pname)}">` +
         `<div class="sku-th-product">${escH(pname || "—")}</div></th>`;
@@ -5418,7 +5477,7 @@ function renderResult(allocs) {
   const skuTotals = skus.map(() => 0);
 
   qs("#resultBody").innerHTML = rowKeys.map(rk => {
-    const empInfo = (S.employees || []).find(e => _allocKey(e) === rk);
+    const empInfo = _empByKey.get(rk);
     const empId = empInfo?.emp_id || (rk.includes("|") ? rk.split("|")[0] : rk);
     const wh = empInfo?.warehouse_code || (rk.includes("|") ? rk.split("|")[1] : "") || "—";
     const empName = empInfo?.emp_name || "";
@@ -5452,7 +5511,8 @@ function renderResult(allocs) {
     const supBadge = S.compositeAllocView && rowSup
       ? `<div class="alloc-row-sup"><code>${escH(rowSup)}</code></div>` : "";
 
-    let rowHtml = `<tr class="${rowCls}"${rowStyle}>
+    const empSearchHay = escH(`${empId} ${empName} ${wh}`.toLowerCase());
+    let rowHtml = `<tr class="${rowCls}"${rowStyle} data-emp-search="${empSearchHay}">
       <td class="result-sticky-left result-sticky-left--sm"><span class="emp-tag">${escH(empId)}</span>${supBadge}${empName ? `<div style="font-size:10px;margin-top:2px;">${escH(empName)}</div>` : ""}</td>
       <td class="result-sticky-left result-sticky-left--wh mono" style="color:var(--text-3);font-size:12px;">${escH(wh)}</td>`;
 
@@ -5533,6 +5593,7 @@ function renderResult(allocs) {
     });
     if (scrollerPre) scrollerPre.dataset.stickyGapPx = gapPx;
   }
+  _reapplyEmpSearchIfActive();
   requestAnimationFrame(() => {
     requestAnimationFrame(() => adjustResultStickyGap());
   });
@@ -5615,6 +5676,54 @@ function adjustResultStickyGap() {
   }
 }
 
+/**
+ * ตรึงคอลัมน์นำหน้า (ที่ติด class .sticky-left-col ต่อเนื่องจากซ้าย) สำหรับตารางที่คอลัมน์นำหน้าแปรผัน
+ * — Step 1 (ซุป? / พนักงาน / W/H?) และ Step 2 (พนักงาน)
+ * คำนวณ left จากความกว้างจริงของคอลัมน์ก่อนหน้า แล้วผูก ResizeObserver ครั้งเดียวต่อ scroller
+ */
+function pinStickyLeftColumns(scroller) {
+  if (!scroller) return;
+  const table = scroller.querySelector("table");
+  const headRow = table?.tHead?.rows?.[0];
+  if (!headRow) return;
+
+  // เก็บ left ของคอลัมน์ sticky ที่มองเห็น (ต่อเนื่องจากซ้าย) จาก header
+  const lefts = [];
+  let acc = 0;
+  for (const th of headRow.cells) {
+    if (getComputedStyle(th).display === "none") continue; // คอลัมน์ที่ซ่อน ไม่นับความกว้าง
+    if (!th.classList.contains("sticky-left-col")) break;  // หยุดที่คอลัมน์แรกที่ไม่ตรึง
+    th.style.left = `${acc}px`;
+    lefts.push(acc);
+    acc += th.getBoundingClientRect().width;
+  }
+  if (!lefts.length) return;
+
+  // ใช้ left ชุดเดียวกันกับทุกแถว body/foot — ไล่เฉพาะ cell ที่ติด class ต่อเนื่องจากต้นแถว
+  const applyRow = (row) => {
+    let i = 0;
+    for (const cell of row.cells) {
+      if (i >= lefts.length || !cell.classList.contains("sticky-left-col")) break;
+      cell.style.left = `${lefts[i]}px`;
+      i++;
+    }
+  };
+  table.querySelectorAll("tbody tr").forEach(applyRow);
+  if (table.tFoot) Array.from(table.tFoot.rows).forEach(applyRow);
+
+  // เงา divider เฉพาะเมื่อเลื่อนแนวนอนได้จริง
+  scroller.classList.toggle("is-hscroll", scroller.scrollWidth > scroller.clientWidth + 1);
+
+  // ผูก ResizeObserver ครั้งเดียว — คำนวณใหม่เมื่อความกว้างเปลี่ยน (การเซ็ต left ไม่กระทบ layout จึงไม่วน)
+  if (!scroller.__pinObs && typeof ResizeObserver !== "undefined") {
+    const ro = new ResizeObserver(() => {
+      requestAnimationFrame(() => pinStickyLeftColumns(scroller));
+    });
+    ro.observe(scroller);
+    scroller.__pinObs = ro;
+  }
+}
+
 /** @deprecated ใช้ checkSnapshotChanges จัดการแจ้งเตือนเป้าเปลี่ยนแล้ว — คงไว้กัน caller เก่า */
 function syncStep3ResultFabricNote() {
   /* no-op: ไม่คัดลอกซ้ำไป step3ResultTargetNote อีก */
@@ -5676,7 +5785,7 @@ function syncStep3TieredNote() {
 function renderResultFooter(skus, skuTotals) {
   const isFiltered = S.activeBrand !== "ALL";
   // Reuse single-pass price map — no extra filter loops needed
-  const _p = Object.fromEntries(S.skus.map(x => [x.sku, Number(x.price_per_box) || 0]));
+  const _p = _getSkuPriceMap();
   let grandBoxesAll = 0, grandValueAll = 0, brandBoxesTotal = 0, brandValueTotal = 0;
   for (const a of S.allocations) {
     const b = a.allocated_boxes || 0;
@@ -5716,6 +5825,57 @@ function renderResultFooter(skus, skuTotals) {
   botRow += `<td class="r tfoot-val sticky-grand-box">${grandBoxesAll.toLocaleString()}</td><td class="r tfoot-val sticky-grand-val">${baht(grandValueAll)}</td></tr>`;
 
   qs("#resultFoot").innerHTML = topRow + botRow;
+}
+
+/* ══════════════════════════════════════════════
+   ค้นหา/กระโดดไปพนักงาน (Step 3)
+══════════════════════════════════════════════ */
+let _empSearchTimer = null;
+function onEmpSearchInput(q) {
+  clearTimeout(_empSearchTimer);
+  _empSearchTimer = setTimeout(() => _applyEmpSearch(q), 180);
+}
+
+/** ไฮไลต์ + กระโดดไปแถวพนักงานที่ตรงคำค้น (จับจาก data-emp-search: รหัส/ชื่อ/คลัง) */
+function _applyEmpSearch(q) {
+  const body = document.getElementById("resultBody");
+  if (!body) return;
+  const countEl = document.getElementById("empSearchCount");
+  const query = String(q ?? "").trim().toLowerCase();
+  const rows = body.querySelectorAll("tr");
+  if (!query) {
+    rows.forEach(r => r.classList.remove("emp-search-hit"));
+    if (countEl) countEl.textContent = "";
+    return;
+  }
+  let first = null;
+  let n = 0;
+  rows.forEach(r => {
+    const hit = (r.dataset.empSearch || "").includes(query);
+    r.classList.toggle("emp-search-hit", hit);
+    if (hit) { n++; if (!first) first = r; }
+  });
+  if (countEl) countEl.textContent = n ? `พบ ${n}` : "ไม่พบ";
+  if (first) first.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+}
+
+/** เรียกหลัง renderResult เพื่อคงไฮไลต์ค้นหาไว้เมื่อตารางถูกสร้างใหม่ */
+function _reapplyEmpSearchIfActive() {
+  const input = document.getElementById("empSearchInput");
+  const q = input && input.value ? input.value.trim() : "";
+  if (!q) return;
+  // ไม่ต้อง scroll ซ้ำตอน re-render — แค่ทาไฮไลต์กลับ
+  const body = document.getElementById("resultBody");
+  if (!body) return;
+  const query = q.toLowerCase();
+  const countEl = document.getElementById("empSearchCount");
+  let n = 0;
+  body.querySelectorAll("tr").forEach(r => {
+    const hit = (r.dataset.empSearch || "").includes(query);
+    r.classList.toggle("emp-search-hit", hit);
+    if (hit) n++;
+  });
+  if (countEl) countEl.textContent = n ? `พบ ${n}` : "ไม่พบ";
 }
 
 /* ══════════════════════════════════════════════
@@ -5776,6 +5936,7 @@ function onResultEdit(el) {
   }
 
   // Debounce 250ms — ป้องกัน renderResult ยิงทุก blur เมื่อแก้หลายช่องต่อเนื่องเร็วๆ
+  setBusyStatus("saving");
   clearTimeout(_rebalanceTimer);
   _rebalanceTimer = setTimeout(() => {
     autoRebalance(true, { skipRender: true });
@@ -5786,6 +5947,7 @@ function onResultEdit(el) {
       _saveAllocationSnapshot();
       saveDraft(true);
     }
+    setBusyStatus("done");
   }, 250);
 }
 
@@ -5804,7 +5966,7 @@ function _syncResultTableAfterRebalance() {
   const allocs = S.allocations;
   if (!allocs?.length) return;
   const isFiltered = S.activeBrand !== "ALL";
-  const skuPriceMap = Object.fromEntries(S.skus.map((x) => [x.sku, Number(x.price_per_box) || 0]));
+  const skuPriceMap = _getSkuPriceMap();
 
   const empTotals = {};
   for (const a of allocs) {
@@ -5821,17 +5983,28 @@ function _syncResultTableAfterRebalance() {
     }
   }
 
+  // Index cell ครั้งเดียวตาม emp|sku แทนการยิง querySelectorAll ต่อ allocation
+  // (คง semantic เดิม: alloc ที่ wh ว่าง จะอัปเดตทุก cell ของ emp+sku นั้น)
+  const cellsByEmpSku = new Map();
+  document.querySelectorAll("#resultBody .result-box-num").forEach((el) => {
+    const k = `${String(el.dataset.emp || "").trim()}|${String(el.dataset.sku || "").trim()}`;
+    let arr = cellsByEmpSku.get(k);
+    if (!arr) { arr = []; cellsByEmpSku.set(k, arr); }
+    arr.push(el);
+  });
   for (const a of allocs) {
     const emp = String(a.emp_id || "").trim();
     const sku = String(a.sku || "").trim();
     const wh = String(a.warehouse_code || "").trim();
-    document.querySelectorAll(`#resultBody .result-box-num[data-emp="${emp}"][data-sku="${sku}"]`).forEach((el) => {
-      if (wh && String(el.dataset.wh || "").trim() !== wh) return;
-      if (el === document.activeElement) return;
+    const cells = cellsByEmpSku.get(`${emp}|${sku}`);
+    if (!cells) continue;
+    for (const el of cells) {
+      if (wh && String(el.dataset.wh || "").trim() !== wh) continue;
+      if (el === document.activeElement) continue;
       const v = Number(a.allocated_boxes) || 0;
       if (el.textContent.trim() !== String(v)) el.textContent = String(v);
       el.classList.toggle("is-edited", !!a.is_edited);
-    });
+    }
   }
 
   document.querySelectorAll("#resultBody [id^='rowtotal-']").forEach((totalEl) => {
@@ -5868,12 +6041,14 @@ function _syncResultTableAfterRebalance() {
 
   const skus = _visibleResultSkusFromHead();
   if (skus.length) {
-    const filtered = isFiltered
-      ? allocs.filter((a) => (a.brand_name_thai || a.brand_name_english || "") === S.activeBrand)
-      : allocs;
-    const skuTotals = skus.map((sku) =>
-      filtered.filter((a) => String(a.sku).trim() === sku).reduce((s, a) => s + (Number(a.allocated_boxes) || 0), 0)
-    );
+    // รวมยอดต่อ SKU ในรอบเดียว แทน skus.map(filter) (เดิม O(skus×allocations))
+    const sumBySku = new Map();
+    for (const a of allocs) {
+      if (isFiltered && (a.brand_name_thai || a.brand_name_english || "") !== S.activeBrand) continue;
+      const k = String(a.sku).trim();
+      sumBySku.set(k, (sumBySku.get(k) || 0) + (Number(a.allocated_boxes) || 0));
+    }
+    const skuTotals = skus.map((sku) => sumBySku.get(sku) || 0);
     renderResultFooter(skus, skuTotals);
   }
   syncStep3ReviewNotes();
@@ -5884,14 +6059,22 @@ function autoRebalance(silent = false, opts = {}) {
   const skipRender = !!(opts && opts.skipRender);
   if (!S.allocations || S.allocations.length === 0) return { changed: false, residuals: [] };
 
-  const skus = [...new Set(S.allocations.map(a => a.sku))];
+  // Index ครั้งเดียว — เลี่ยง filter/find ต่อ SKU (เดิม O(skus×allocations))
+  const allocsBySku = new Map();
+  for (const a of S.allocations) {
+    let arr = allocsBySku.get(a.sku);
+    if (!arr) { arr = []; allocsBySku.set(a.sku, arr); }
+    arr.push(a);
+  }
+  const skuInfoByCode = new Map((S.skus || []).map(x => [x.sku, x]));
+  const skus = [...allocsBySku.keys()];
   let changed = false;
   const residuals = [];
 
   skus.forEach(sku => {
-    const targetInfo = S.skus.find(x => x.sku === sku);
+    const targetInfo = skuInfoByCode.get(sku);
     const target = targetInfo ? (Number(targetInfo.supervisor_target_boxes) || 0) : 0;
-    const allocs = S.allocations.filter(a => a.sku === sku);
+    const allocs = allocsBySku.get(sku) || [];
     const currentSum = allocs.reduce((s, a) => s + (a.allocated_boxes || 0), 0);
 
     if (currentSum === target) return; 
@@ -5955,9 +6138,8 @@ function autoRebalance(silent = false, opts = {}) {
       }
       changed = true;
     }
-    const afterSum = S.allocations
-      .filter((a) => a.sku === sku)
-      .reduce((s, a) => s + (Number(a.allocated_boxes) || 0), 0);
+    // allocs เป็น reference เดียวกับ S.allocations (mutate in place) — sum ใหม่จากชุดเดิมได้เลย
+    const afterSum = allocs.reduce((s, a) => s + (Number(a.allocated_boxes) || 0), 0);
     if (afterSum !== target) {
       residuals.push({ sku, target, actual: afterSum });
     }
@@ -7407,6 +7589,7 @@ async function loadLiveTargetsFromTargetSun() {
       S.skus.push({ ...np });
     }
     S.skus.sort((a, b) => String(a.sku).localeCompare(String(b.sku)));
+    _bumpSkusVersion(); // ราคา/รายการ SKU อาจเปลี่ยน — ล้างแคช price map
 
     for (const emp of S.employees || []) {
       const eid = String(emp.emp_id || "").trim();
@@ -11622,6 +11805,7 @@ async function exitViewAsMode() {
   S.supervisorChoices = [];
   S.employees = [];
   S.skus = [];
+  _bumpSkusVersion();
   S.allocations = [];
   S.totalTarget = 0;
   S._hasUnsaved = false;
