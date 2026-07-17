@@ -865,8 +865,8 @@ async function _fetchLiveTargetsForSup(supId) {
 function _snapshotUsableForComposite(snap) {
   if (!snap || !Array.isArray(snap.allocations)) return false;
   const st = String(snap.status || "").toLowerCase();
-  if (st === "sent_targetsun") return false;
-  if (!(st === "optimized" || st === "draft")) return false;
+  // รวม sent_targetsun ด้วย: ตอนนี้ snapshot ไม่ถูกลบหลังส่งแล้ว ผลกระจายยังใช้ได้ปกติ
+  if (!(st === "optimized" || st === "draft" || st === "sent_targetsun")) return false;
   return snap.allocations.some((a) => (Number(a?.allocated_boxes) || 0) > 0);
 }
 
@@ -2786,6 +2786,8 @@ let _managersListLoading = false;
 /** กันเรียก /managers ซ้อน — รอบที่สองรอรอบแรกจบ; กัน response เก่าทับโหมดทดสอบ */
 let _loadManagersTask = null;
 let _loadManagersSeq = 0;
+/** ลองซ้ำอัตโนมัติได้ครั้งเดียวต่อการโหลดหน้า — กันวนไม่จบเมื่อ server ล่มจริง */
+let _managersRetriedOnce = false;
 
 function _loginSupervisorSelectNeedsLoad() {
   const sup = document.getElementById("supSelect");
@@ -3035,6 +3037,16 @@ async function loadManagers(force = false) {
     if (retryBtn) retryBtn.style.display = "inline-flex";
   } catch (err) {
     console.error("loadManagers error:", err);
+    // /managers เป็นแหล่งเดียวของ is_admin — พลาดครั้งเดียวแอดมินหายจนกว่าผู้ใช้จะรีเฟรชเอง
+    // จึงลองซ้ำอัตโนมัติ 1 ครั้งสำหรับความผิดพลาดชั่วคราว (timeout/เน็ตสะดุด)
+    // ไม่ลองซ้ำกรณี 401/403 เพราะนั่นตอบไปแล้วข้างบนและเป็นคำตอบที่ชัดเจน
+    if (!_managersRetriedOnce && seq === _loadManagersSeq) {
+      _managersRetriedOnce = true;
+      console.warn("loadManagers: ลองใหม่อัตโนมัติหนึ่งครั้ง");
+      _loadManagersTask = null;
+      setTimeout(() => loadManagers(true), 1200);
+      return;
+    }
     showLoginError(`❌ ${err?.message || String(err)}`);
     populateLoginSupervisorSelect([], "ไม่สามารถโหลดรายการ — ตรวจ server หรือกดรีเฟรช");
     if (retryBtn) retryBtn.style.display = "inline-flex";
@@ -3339,9 +3351,36 @@ function _setServerSnapshotMeta(snap, supId) {
     target_year: Number(snap.target_year) || S.targetYear,
     updated_at: snap.updated_at,
     updated_by: String(snap.updated_by || "").trim(),
+    version: Number(snap.version) || 0,
   };
 }
 
+/**
+ * version ที่จะส่งเป็น precondition — ส่งเฉพาะเมื่อ meta เป็นของ (sup, งวด) เดียวกันจริง ๆ
+ * ถ้าเงื่อนไขนี้หลวม save แรกของเดือนใหม่จะโดน 409 ทุกครั้ง
+ */
+function _ifMatchVersionFor(supId) {
+  const sid = String(supId || S.supId || "").trim().toUpperCase();
+  const meta = S.serverSnapshotMeta;
+  if (
+    !meta ||
+    meta.supId !== sid ||
+    meta.target_month !== S.targetMonth ||
+    meta.target_year !== S.targetYear ||
+    !Number.isFinite(meta.version)
+  ) {
+    return null;
+  }
+  return meta.version;
+}
+
+/**
+ * เตือนก่อนทำ action ที่ย้อนยากถ้ามีคนอัปเดตทับ (เช่นส่ง Target Sun ซึ่งไม่ผ่าน PUT จึงไม่มี 409 ช่วย)
+ *
+ * ต้องใช้ forceRefresh: ไม่งั้น _fetchServerAllocationSnapshot จะคืน cache ในเครื่อง
+ * ซึ่งถูกเขียนทับทุกครั้งที่ save สำเร็จ → เทียบกับตัวเองเสมอ → check ไม่เคยทำงาน (บั๊กเดิม)
+ * และเทียบด้วย version ไม่ใช่ updated_at เพราะ updated_at ตัดหน่วยไมโครวินาที
+ */
 async function _confirmIfServerSnapshotStale(supId, actionLabel = "บันทึก") {
   const sid = String(supId || S.supId || "").trim().toUpperCase();
   const meta = S.serverSnapshotMeta;
@@ -3349,8 +3388,10 @@ async function _confirmIfServerSnapshotStale(supId, actionLabel = "บันท�
     return true;
   }
   try {
-    const snap = await _fetchServerAllocationSnapshot(sid);
-    if (!snap?.updated_at || snap.updated_at === meta.updated_at) return true;
+    const snap = await _fetchServerAllocationSnapshot(sid, { forceRefresh: true });
+    if (!snap) return true;
+    const serverVer = Number(snap.version) || 0;
+    if (serverVer === Number(meta.version || 0)) return true;
     const who = String(snap.updated_by || meta.updated_by || "").trim() || "ไม่ระบุ";
     const when = _formatAllocUpdatedAt(snap.updated_at);
     return await new Promise((resolve) => {
@@ -5061,7 +5102,9 @@ async function runOptimization() {
         S.compositeAllocView = false;
         S.allocSourceBySup = {};
         saveDraft(true);
-        queueServerAllocationSave("optimized");
+        // อย่าฮาร์ดโค้ด "optimized": ฟังก์ชันนี้ทำทั้งกระจายสด และ「คำนวณใหม่」ที่คงการแก้ไว้
+        // (_mergeLockedEditsIntoAllocs ตั้ง is_edited=true ให้แถวที่ล็อกไว้) → อันหลังต้องเป็น draft
+        queueServerAllocationSave(_deriveAllocStatus());
       }
     } catch (e) {
       console.error("renderResult:", e);
@@ -6613,21 +6656,34 @@ function _formatApiErrorDetail(j) {
   return "";
 }
 
+/**
+ * ส่ง Target Sun สำเร็จ → บันทึกสถานะ "ส่งแล้ว" และ **เก็บผลกระจายไว้**
+ *
+ * เดิมโค้ดนี้ลบ snapshot ทิ้ง ทำให้สถานะ sent_targetsun ไปไม่ถึงเลยตั้งแต่วันแรก
+ * และไม่เหลือหลักฐานว่าทีมไหนส่งแล้ว — ตอนนี้เก็บไว้เพื่อให้ manager/แอดมินตามดูได้
+ * ไม่ล็อกหน้า: เป้าอาจเปลี่ยนหรือเพิ่มวันถัดไป super ต้องกระจายใหม่/แก้แล้วส่งซ้ำได้เสมอ
+ * (พอแก้ต่อ สถานะจะกลับเป็น "แบบร่าง" แต่ target_sun_sent_at ยังอยู่ = เคยส่งแล้ว)
+ */
 function _markAllocationSentTargetSun(supId = null) {
   if (S.targetSunPreviewMode) return;
   const sid = String(supId || S.supId || "").trim().toUpperCase();
   if (!sid) return;
-  deleteServerAllocationSnapshot(sid)
+  // ไม่ส่ง precondition: ข้อมูลเข้า Target Sun ไปแล้วจริง ๆ การประทับว่า "ส่งแล้ว" ต้องลงเสมอ
+  // ไม่งั้นถ้า version ไม่ตรงจะเด้ง modal「มีคนบันทึกทับ」ทั้งที่ส่งสำเร็จไปแล้ว
+  saveServerAllocationSnapshot("sent_targetsun", {
+    supId: sid,
+    silentSummary: true,
+    ifMatchVersion: null,
+  })
     .then(() => {
       _invalidateAllocSnapshotCache(sid);
       _invalidateAllocationSummaryCache(true);
       loadAllocationSummary(true);
-      updateStep3SnapshotBadge(null);
       if (S.aggregateMode && _shouldShowRegionalCompositeView()) {
         loadRegionalCompositeAllocationView();
       }
     })
-    .catch((e) => console.warn("delete snapshot after targetsun:", sid, e));
+    .catch((e) => console.warn("mark sent targetsun:", sid, e));
 }
 
 function _handleTargetSunImportResponse(res, j, opts = {}) {
@@ -6990,8 +7046,10 @@ async function doExport() {
       yellow_targets: Object.entries(S.yellow).map(([emp_id, v]) => ({ emp_id, yellow_target: v })),
     };
 
+    // ส่งงวดไปด้วย เพื่อให้ server อ่านเป้าของทีมนี้ ไม่ใช่ไฟล์ global ที่ทีมอื่นอาจเขียนทับ
     const res = await fetchWithTimeout(
-      `${API_BASE_URL}/export/excel?sup_id=${S.supId}`,
+      `${API_BASE_URL}/export/excel?sup_id=${S.supId}` +
+        `&target_month=${S.targetMonth}&target_year=${S.targetYear}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -7128,6 +7186,22 @@ function currentDraftStorageKey() {
 }
 
 /** ลดขนาดแบบร่างใน localStorage (~5MB) — เก็บเฉพาะฟิลด์ที่จำเป็น */
+/**
+ * สถานะของผลกระจาย — นิยามตามที่ตกลงกับผู้ใช้ (ดู docs/ALLOCATION_STATUS.md)
+ *
+ *   กระจายแล้ว (optimized)      = กดกระจายเฉย ๆ ไม่ได้แก้มือ
+ *   แบบร่าง (draft)             = กระจายแล้วแก้ตัวเลขด้วยมือ
+ *   ส่ง Target Sun แล้ว (sent)  = ส่งไปแล้ว (ตั้งจากตอนส่งสำเร็จเท่านั้น)
+ *
+ * ตัดสินจาก is_edited ซึ่งถูกตั้งเฉพาะตอนแก้จริง (app.js:5952 และเช็คค่าซ้ำที่ :5936)
+ * และถูกล้างทุกครั้งที่กระจายใหม่ (:5148) — อย่าฮาร์ดโค้ด "draft" ที่ call site
+ * เพราะ saveDraft ถูกเรียกตอนแค่ "โหลดแบบร่าง" ด้วย ซึ่งไม่ใช่การแก้มือ
+ */
+function _deriveAllocStatus(allocs = null) {
+  const rows = allocs || S.allocations || [];
+  return rows.some((a) => a?.is_edited) ? "draft" : "optimized";
+}
+
 function _slimAllocationsForDraft(allocs) {
   return (allocs || []).map((a) => ({
     emp_id: a.emp_id,
@@ -7244,48 +7318,167 @@ function queueServerAllocationSave(status = "draft") {
   }, 800);
 }
 
+/**
+ * server ปฏิเสธเพราะมีคนบันทึกทับไปแล้ว — ให้ผู้ใช้เลือก โหลดใหม่ / เขียนทับ
+ * ต้องมีทางออก "เขียนทับ" เสมอ ห้ามให้เป็นทางตันจนทำงานต่อไม่ได้
+ */
+async function _handleSnapshotConflict(httpStatus, j, supId, status, opts) {
+  const sid = String(supId || S.supId || "").trim().toUpperCase();
+  const cur = j?.detail?.current || {};
+  const who = String(cur.updated_by || "").trim() || "ไม่ระบุ";
+  const when = cur.updated_at ? _formatAllocUpdatedAt(cur.updated_at) : "ไม่ทราบเวลา";
+  _logClientError(
+    "save_allocation_conflict",
+    `HTTP ${httpStatus}`,
+    `sup=${sid} server_version=${cur.version}`
+  );
+
+  if (opts.autoResolve === "reload") {
+    await _reloadServerAllocationSnapshot(sid);
+    return null;
+  }
+
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    const settle = (fn) => async () => {
+      if (settled) return;
+      settled = true;
+      try {
+        resolve(await fn());
+      } catch (e) {
+        reject(e);
+      }
+    };
+    _showInfoModal({
+      title: "มีคนบันทึกทับไปแล้ว",
+      bodyHtml:
+        `<p style="margin:0 0 10px;line-height:1.55;">ผลกระจายของ <strong>${escH(sid)}</strong> ถูกบันทึกโดยคนอื่นหลังจากที่คุณโหลด</p>
+         <ul style="margin:0;padding-left:1.2em;line-height:1.7;">
+           <li>ล่าสุดโดย: <strong>${escH(who)}</strong></li>
+           <li>เมื่อ: <strong>${escH(when)}</strong></li>
+         </ul>
+         <p style="margin:12px 0 0;color:var(--text-3);font-size:12px;">「เขียนทับ」จะลบงานของอีกคน · 「โหลดใหม่」จะทิ้งการแก้ของคุณและดึงของล่าสุดมา</p>`,
+      // สำคัญ: _showInfoModal เรียก onSecondary ทั้งตอนกดปุ่มปิดและตอนคลิกพื้นหลัง
+      // ช่อง secondary จึงต้องเป็น "ทางที่ปลอดภัย" เสมอ — ห้ามเอา「เขียนทับ」ไปไว้ตรงนั้น
+      // ไม่งั้นแค่ปิดกล่องก็ลบงานเพื่อนทิ้ง (ธรรมเนียมเดียวกับ _confirmIfServerSnapshotStale)
+      primaryLabel: "เขียนทับ",
+      secondaryLabel: "โหลดใหม่",
+      onPrimary: settle(async () => {
+        // ส่ง version ล่าสุดของ server กลับไป = ตั้งใจเขียนทับ
+        return await saveServerAllocationSnapshot(status, {
+          ...opts,
+          ifMatchVersion: Number(cur.version) || 0,
+          autoResolve: "reload",
+        });
+      }),
+      onSecondary: settle(async () => {
+        await _reloadServerAllocationSnapshot(sid);
+        return null;
+      }),
+    });
+  });
+}
+
+/**
+ * ดึง snapshot ล่าสุดจาก server มาแสดงแทนของในจอ
+ *
+ * ต้อง forceRefresh: _fetchServerAllocationSnapshot อ่าน cache ในเครื่องเป็นค่าเริ่มต้น
+ * ซึ่งเป็นตัวที่ทำให้เกิด conflict อยู่แล้ว → ถ้าไม่บังคับ จะได้ของเก่าเดิมกลับมา
+ * แล้ว version ก็ยังเก่า → save ครั้งหน้า 409 ซ้ำวนไม่จบ
+ * และต้องอัปเดต meta เองด้วย เพราะ _applyServerAllocationSnapshot อาจ return ก่อนถึงจุดที่ตั้ง meta
+ */
+async function _reloadServerAllocationSnapshot(supId) {
+  const sid = String(supId || S.supId || "").trim().toUpperCase();
+  const snap = await _fetchServerAllocationSnapshot(sid, { forceRefresh: true });
+  if (snap) _setServerSnapshotMeta(snap, sid);
+  await _applyServerAllocationSnapshot(sid, {
+    snap,
+    readOnly: !_canWriteServerAllocationForSup(sid),
+  });
+  return snap;
+}
+
+/**
+ * เรียงคิว PUT ทีละตัว
+ *
+ * autosave debounce 800ms ยิงซ้อนกันได้ ถ้าปล่อยให้สองตัววิ่งพร้อมกัน ตัวที่สองจะอ่าน
+ * S.serverSnapshotMeta ที่ยังไม่ถูกอัปเดตจากตัวแรก → ส่ง version เก่า → 409 ใส่ตัวเอง
+ * และเด้ง modal ถามผู้ใช้ทั้งที่ไม่มีใครมาแย่งแก้เลย
+ */
+let _allocSaveChain = Promise.resolve();
+function _withSaveLock(fn) {
+  const next = _allocSaveChain.then(fn, fn);
+  _allocSaveChain = next.then(
+    () => {},
+    () => {}
+  );
+  return next;
+}
+
 async function saveServerAllocationSnapshot(status = "draft", opts = {}) {
   const supId = opts.supId || S.supId;
   const allocs = opts.allocations || S.allocations;
   if (!_canWriteServerAllocationForSup(supId) && !opts.forceRegional) return null;
   if (!allocs?.length && status === "draft") return null;
-  if (!opts.skipStaleCheck && !opts.forceRegional) {
-    const ok = await _confirmIfServerSnapshotStale(supId, "บันทึก");
-    if (!ok) return null;
+
+  // สร้าง body + อ่าน meta + ยิง PUT ต้องอยู่ในคิวเดียวกัน ไม่งั้น meta เก่าค้าง
+  // แต่การจัดการ conflict ต้องอยู่ "นอก" คิว ไม่งั้นการยิงซ้ำตอนกด「เขียนทับ」จะรอคิวตัวเอง = ค้างถาวร
+  const attempt = await _withSaveLock(async () => {
+    const body = {
+      sup_id: supId,
+      target_month: S.targetMonth,
+      target_year: S.targetYear,
+      status,
+      allocations: allocs,
+      yellow: opts.yellow || S.yellow,
+      yellow_locked: opts.yellow_locked || S.yellowLocked,
+      strategy: _strategySummaryTh(_getSelectedStrategies()),
+    };
+    // กระจายทั้งภาคคือการตั้งใจทับทุกทีม (ผู้ใช้ยืนยันใน modal「กระจายใหม่ทั้งภาค」แล้ว)
+    // จึงไม่ส่ง precondition — ไม่งั้นจะเด้ง modal ถามทีละทีมกลางลูป
+    const ifMatch = opts.forceRegional
+      ? null
+      : opts.ifMatchVersion !== undefined
+        ? opts.ifMatchVersion
+        : _ifMatchVersionFor(supId);
+    if (ifMatch !== null && ifMatch !== undefined) body.if_match_version = ifMatch;
+
+    const res = await fetchWithTimeout(
+      `${API_BASE_URL}/data/allocations`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+      30000
+    );
+    if (res.status === 409 || res.status === 428) {
+      return { conflict: res.status, j: await res.json().catch(() => ({})) };
+    }
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      const msg = _formatApiErrorDetail(j) || "บันทึกผลกระจายบน server ไม่สำเร็จ";
+      _logClientError("save_allocation", msg, `sup=${supId}`);
+      throw new Error(msg);
+    }
+    const saved = await res.json().catch(() => null);
+    // ตั้ง meta เฉพาะทีมที่กำลังดูอยู่ — ไม่งั้นลูปกระจายทั้งภาคจะทิ้ง meta ของทีมสุดท้ายไว้
+    // แล้ว _ifMatchVersionFor ของทีมตัวเองจะคืน null = ปิด precondition เงียบ ๆ
+    const isCurrentSup =
+      String(supId || "").trim().toUpperCase() === String(S.supId || "").trim().toUpperCase();
+    if (saved?.updated_at && isCurrentSup) _setServerSnapshotMeta(saved, supId);
+    if (saved) _writeAllocSnapshotCache(supId, saved);
+    return { saved };
+  });
+
+  if (attempt.conflict) {
+    return await _handleSnapshotConflict(attempt.conflict, attempt.j, supId, status, opts);
   }
-  const body = {
-    sup_id: supId,
-    target_month: S.targetMonth,
-    target_year: S.targetYear,
-    status,
-    allocations: allocs,
-    yellow: opts.yellow || S.yellow,
-    yellow_locked: opts.yellow_locked || S.yellowLocked,
-    strategy: _strategySummaryTh(_getSelectedStrategies()),
-  };
-  const res = await fetchWithTimeout(
-    `${API_BASE_URL}/data/allocations`,
-    {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    },
-    30000
-  );
-  if (!res.ok) {
-    const j = await res.json().catch(() => ({}));
-    const msg = _formatApiErrorDetail(j) || "บันทึกผลกระจายบน server ไม่สำเร็จ";
-    _logClientError("save_allocation", msg, `sup=${supId}`);
-    throw new Error(msg);
-  }
-  const saved = await res.json().catch(() => null);
-  if (saved?.updated_at) _setServerSnapshotMeta(saved, supId);
-  if (saved) _writeAllocSnapshotCache(supId, saved);
   if (!opts.silentSummary) {
     _invalidateAllocationSummaryCache(true);
     loadAllocationSummary(true);
   }
-  return saved;
+  return attempt.saved;
 }
 
 async function saveRegionalAllocationSnapshots(allocs, status = "optimized") {
@@ -7299,7 +7492,10 @@ async function saveRegionalAllocationSnapshots(allocs, status = "optimized") {
   const saved = [];
   for (const [supId, rows] of bySup) {
     try {
-      await saveServerAllocationSnapshot(status, {
+      // สถานะต้องดูจากแถวของทีมนั้น ๆ ไม่ใช่ค่าเดียวเหมารวมทั้งภาค
+      // (บางทีมอาจมีแก้มือ บางทีมไม่มี — sent_targetsun ยังใช้ค่าที่ส่งเข้ามาตรง ๆ)
+      const supStatus = status === "sent_targetsun" ? status : _deriveAllocStatus(rows);
+      await saveServerAllocationSnapshot(supStatus, {
         supId,
         allocations: rows,
         forceRegional: true,
@@ -7623,24 +7819,63 @@ async function loadLiveTargetsFromTargetSun() {
   }
 }
 
-function toggleAllocationSummaryExpand() {
+/**
+ * ผู้ใช้กดพับแผงสรุปเองหรือยัง — ค่าเริ่มต้นคือ "เปิด"
+ * ต้องจำไว้ เพราะ updateAllocationSummaryVisibility() ถูกเรียกซ้ำจาก loadAllocationSummary()
+ * ถ้าไปสั่งเปิดตรง ๆ ทุกครั้ง ผู้ใช้จะพับไม่ได้เลย (เด้งกลับมาเปิดทันที)
+ */
+let _allocSummaryUserCollapsed = false;
+
+function _setAllocationSummaryOpen(open) {
   const body = document.getElementById("allocationSummaryBody");
   const head = document.getElementById("allocationSummaryHead");
   const toggle = document.getElementById("allocationSummaryToggle");
   if (!body || !head) return;
-  const open = body.style.display === "none" || !body.style.display;
   body.style.display = open ? "block" : "none";
   head.setAttribute("aria-expanded", open ? "true" : "false");
   if (toggle) toggle.textContent = open ? "▼" : "▶";
+}
+
+function toggleAllocationSummaryExpand() {
+  const body = document.getElementById("allocationSummaryBody");
+  if (!body) return;
+  const open = body.style.display === "none" || !body.style.display;
+  _allocSummaryUserCollapsed = !open;
+  _setAllocationSummaryOpen(open);
   if (open) loadAllocationSummary(true);
 }
 
+/**
+ * ความหมายของแต่ละสถานะ — ใช้ทั้งเป็น label, tooltip และคำอธิบายใต้ตาราง
+ * ให้ตรงกับ docs/ALLOCATION_STATUS.md เสมอ
+ */
+const ALLOC_STATUS_INFO = {
+  optimized: {
+    label: "กระจายแล้ว",
+    desc: "กดกระจายแล้ว ยังไม่ได้แก้ตัวเลขเอง",
+  },
+  draft: {
+    label: "แบบร่าง",
+    desc: "กระจายแล้วและแก้ตัวเลขด้วยมือ ยังไม่ได้ส่งเข้า Target Sun",
+  },
+  sent_targetsun: {
+    label: "ส่ง Target Sun แล้ว",
+    desc: "ส่งเข้า Target Sun เรียบร้อย (ยังกระจายใหม่หรือแก้แล้วส่งซ้ำได้)",
+  },
+  none: {
+    label: "ยังไม่กระจาย",
+    desc: "ยังไม่มีผลกระจายบันทึกบน server",
+  },
+};
+
 function _allocationStatusLabel(status) {
   const s = String(status || "").toLowerCase();
-  if (s === "sent_targetsun") return "ส่ง Target Sun แล้ว";
-  if (s === "optimized") return "กระจายแล้ว";
-  if (s === "draft") return "แบบร่าง";
-  return "—";
+  return ALLOC_STATUS_INFO[s]?.label || "—";
+}
+
+function _allocationStatusDesc(status) {
+  const s = String(status || "").toLowerCase();
+  return ALLOC_STATUS_INFO[s]?.desc || "";
 }
 
 function _allocationStatusClass(status) {
@@ -7674,13 +7909,10 @@ function updateAllocationSummaryVisibility() {
   const show = (individual && (isMgr || peers) && (teamCount > 1 || isMgr)) || mgrRegional || supRegionAgg;
   wrap.style.display = show ? "block" : "none";
   if (show) {
-    if (mgrRegional || supRegionAgg) {
-      const body = document.getElementById("allocationSummaryBody");
-      const head = document.getElementById("allocationSummaryHead");
-      const toggle = document.getElementById("allocationSummaryToggle");
-      if (body) body.style.display = "block";
-      if (head) head.setAttribute("aria-expanded", "true");
-      if (toggle) toggle.textContent = "▼";
+    // เปิดเป็นค่าเริ่มต้น เว้นแต่ผู้ใช้กดพับเอง
+    // (โหมดรวมภาคเปิดเสมอ เพราะแผงนี้คือเนื้อหาหลักของมุมมองนั้น)
+    if (mgrRegional || supRegionAgg || !_allocSummaryUserCollapsed) {
+      _setAllocationSummaryOpen(true);
     }
     loadAllocationSummary(false);
   }
@@ -7695,26 +7927,47 @@ function _renderAllocationSummaryRows(items) {
   const rows = items.map((it) => {
     const sid = String(it.sup_id || "").trim();
     const isHome = !home.size || home.has(sid.toUpperCase());
+    const statusKey = it.has_snapshot ? String(it.status || "").toLowerCase() : "none";
     const stCls = it.has_snapshot ? _allocationStatusClass(it.status) : "alloc-summary-status--none";
-    const stTxt = it.has_snapshot ? _allocationStatusLabel(it.status) : "ยังไม่กระจาย";
+    const stTxt = _allocationStatusLabel(statusKey);
+    const stDesc = _allocationStatusDesc(statusKey);
     const when = it.has_snapshot ? _formatAllocUpdatedAt(it.updated_at) : "—";
     const who = it.updated_by ? escapeHtml(String(it.updated_by)) : "—";
+    // เคยส่งแล้วแต่กลับมาแก้ต่อ → สถานะเป็น "แบบร่าง" แต่ต้องยังเห็นว่าเคยส่งเมื่อไหร่
+    const sentNote =
+      it.target_sun_sent_at && statusKey !== "sent_targetsun"
+        ? ` <span class="admin-inv-muted" title="ส่งเข้า Target Sun ครั้งล่าสุดเมื่อ ${escapeHtml(
+            _formatAllocUpdatedAt(it.target_sun_sent_at)
+          )} — หลังจากนั้นมีการแก้เพิ่ม">(เคยส่งแล้ว)</span>`
+        : "";
     const viewBtn = it.has_snapshot
       ? `<button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="viewAllocationSnapshot('${escapeHtml(sid)}')">ดู</button>`
       : "";
     const homeMark = isHome ? "" : ' <span class="admin-inv-muted">(peer)</span>';
     return `<tr>
       <td><code>${escapeHtml(sid)}</code>${homeMark}</td>
-      <td class="${stCls}">${escapeHtml(stTxt)}</td>
+      <td class="${stCls}" title="${escapeHtml(stDesc)}">${escapeHtml(stTxt)}${sentNote}</td>
       <td>${when}</td>
       <td>${who}</td>
       <td class="num">${viewBtn}</td>
     </tr>`;
   }).join("");
+  const legend = `<div class="alloc-summary-legend">
+      ${["optimized", "draft", "sent_targetsun"]
+        .map(
+          (k) =>
+            `<span class="alloc-summary-legend__item"><span class="alloc-summary-status ${_allocationStatusClass(
+              k
+            )}">${escapeHtml(ALLOC_STATUS_INFO[k].label)}</span> ${escapeHtml(
+              ALLOC_STATUS_INFO[k].desc
+            )}</span>`
+        )
+        .join("")}
+    </div>`;
   body.innerHTML = rows
     ? `<table class="alloc-summary-table"><thead><tr>
         <th>SL</th><th>สถานะ</th><th>อัปเดตล่าสุด</th><th>โดย</th><th></th>
-      </tr></thead><tbody>${rows}</tbody></table>`
+      </tr></thead><tbody>${rows}</tbody></table>${legend}`
     : `<span class="admin-inv-muted">ยังไม่มีผลกระจายที่บันทึกบน server</span>`;
   body.dataset.loaded = "1";
 }
@@ -7978,17 +8231,16 @@ async function checkServerAllocationRestore(gen = null) {
       _markDraftPromptSuppressed(draftKey);
     }
 
-    const readOnly = serverStatus === "sent_targetsun";
-    const ok = await _applyServerAllocationSnapshot(sid, { snap, readOnly, forceRefresh: false });
+    // "ส่งแล้ว" เป็นบันทึกว่าเคยส่ง ไม่ใช่การล็อก — เป้าอาจเปลี่ยน/เพิ่มวันถัดไป
+    // super ต้องกระจายใหม่หรือแก้แล้วส่งซ้ำได้เสมอ
+    const ok = await _applyServerAllocationSnapshot(sid, { snap, readOnly: false, forceRefresh: false });
     if (gen != null && _isDashboardLoadStale(gen)) return false;
     if (ok) {
       renderYellowTable();
       updateValidation();
-      if (!readOnly) {
-        const runBtn = qs("#runBtn");
-        if (runBtn && runBtn.textContent === "เริ่มคำนวณ") {
-          runBtn.textContent = "คำนวณใหม่";
-        }
+      const runBtn = qs("#runBtn");
+      if (runBtn && runBtn.textContent === "เริ่มคำนวณ") {
+        runBtn.textContent = "คำนวณใหม่";
       }
     } else if (serverHasWork) {
       console.warn("checkServerAllocationRestore: snapshot มีข้อมูลแต่แสดงตารางไม่ได้", sid);
@@ -8022,7 +8274,9 @@ function saveDraft(silent = false) {
     S._hasUnsaved = false;
     _saveAllocationSnapshot();
     checkSnapshotChanges();
-    queueServerAllocationSave("draft");
+    // อย่าฮาร์ดโค้ด "draft": ฟังก์ชันนี้ถูกเรียกตอน "โหลดแบบร่าง" ด้วย (:8293)
+    // ซึ่งจะดาวน์เกรดสถานะบน server ทั้งที่ผู้ใช้แค่เปิดหน้าเว็บกลับมา
+    queueServerAllocationSave(_deriveAllocStatus());
     if (!silent) toast("💾 บันทึกแบบร่างลงในเครื่องเรียบร้อยแล้ว\n(สามารถปิดเว็บแล้วกลับมาทำต่อได้)", "green");
   } catch (err) {
     const isQuota = err && (err.name === "QuotaExceededError" || /quota/i.test(String(err.message || err)));
@@ -8031,7 +8285,7 @@ function saveDraft(silent = false) {
       try {
         _persistDraftToLocal(draftKey, draftData);
         S._hasUnsaved = false;
-        _saveDraftFallbackServer("draft");
+        _saveDraftFallbackServer(_deriveAllocStatus());
         if (!silent) {
           toast("💾 บันทึกแบบร่าง (ลบงวดเก่าในเครื่องเพื่อเพิ่มพื้นที่)\nสำรองบน server ด้วย", "green");
         }
@@ -8040,7 +8294,7 @@ function saveDraft(silent = false) {
         console.error("saveDraft retry after prune:", err2);
       }
     }
-    _saveDraftFallbackServer(S.targetSunPreviewMode ? "draft" : "optimized");
+    _saveDraftFallbackServer(S.targetSunPreviewMode ? "draft" : _deriveAllocStatus());
     toast(
       "⚠️ บันทึกแบบร่างในเครื่องไม่สำเร็จ (พื้นที่ browser เต็ม ~5MB)\n"
       + "ข้อมูลยังอยู่ในหน้านี้ — ระบบพยายามสำรองบน server แล้ว\n"
@@ -9673,7 +9927,7 @@ const ADMIN_TAB_META = {
   slLinks: { group: "การผูกรหัส", title: "ผูกรหัส SL", sub: "รหัสใหม่สืบทอดสิทธิ/ทีมจากรหัสเก่า — เช่น SL524 → SL508" },
   skuLinks: { group: "การผูกรหัส", title: "ผูกรหัส SKU", sub: "รวมประวัติขายข้ามรหัสเก่า — แสดงรายการสินค้าทันทีเมื่อเปิดแท็บ" },
   data: { group: "ข้อมูล", title: "แหล่งข้อมูล", sub: "สรุปการดึง ใช้ และส่งข้อมูลในระบบ + แคช" },
-  usageLogs: { group: "ปฏิบัติการ", title: "บันทึกความผิดพลาด", sub: "error/warn จากผู้ใช้ — รับทราบแล้วจะลบออก" },
+  usageLogs: { group: "ปฏิบัติการ", title: "บันทึกการใช้งาน", sub: "ใครส่ง Target Sun / ข้อผิดพลาด — เก็บถาวร ไม่มีการลบ" },
   allocations: { group: "ปฏิบัติการ", title: "ผลการกระจาย", sub: "snapshot บน server ต่อ SL × งวด" },
   team: { group: "ทีม", title: "ทีมพนักงาน", sub: "รายชื่อพนักงานใต้ Supervisor จาก Fabric / cache" },
 };
@@ -9980,36 +10234,12 @@ function adminInitUsageLogsPanel() {
   adminLoadUsageLogs();
 }
 
-async function adminAckUsageLog(entryId) {
-  const eid = String(entryId || "").trim();
-  if (!eid) return;
-  if (!window.confirm("รับทราบรายการนี้แล้ว?\nรายการจะถูกลบออกจากบันทึก")) return;
-  try {
-    const res = await fetchWithTimeout(
-      `${API_BASE_URL}/admin/usage-logs/${encodeURIComponent(eid)}`,
-      { method: "DELETE" },
-      15000,
-    );
-    if (!res.ok) {
-      const j = await res.json().catch(() => ({}));
-      if (res.status === 405) {
-        throw new Error("เซิร์ฟเวอร์ยังไม่อัปเดต — กรุณารีสตาร์ทแอปแล้วกด Ctrl+F5 โหลดหน้าใหม่");
-      }
-      throw new Error(j.detail || "ลบรายการไม่สำเร็จ");
-    }
-    toast("รับทราบแล้ว — ลบออกจากรายการ", "green");
-    adminLoadUsageLogs();
-  } catch (e) {
-    toast(e.message, "red");
-  }
-}
-
 async function adminLoadUsageLogs() {
   const tbody = document.getElementById("adminUsageLogsTable");
   const countEl = document.getElementById("adminUsageLogCount");
   if (!tbody) return;
   const level = document.getElementById("adminUsageLogLevel")?.value || "";
-  tbody.innerHTML = `<tr><td colspan="6" class="admin-empty">กำลังโหลด…</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="7" class="admin-empty">กำลังโหลด…</td></tr>`;
   if (countEl) countEl.textContent = "";
   try {
     const q = new URLSearchParams({ limit: "500" });
@@ -10020,10 +10250,10 @@ async function adminLoadUsageLogs() {
     if (countEl) {
       countEl.textContent = items.length
         ? `แสดง ${items.length.toLocaleString("th-TH")} รายการล่าสุด`
-        : "ไม่มีรายการค้าง";
+        : "ยังไม่มีบันทึก";
     }
     if (!items.length) {
-      tbody.innerHTML = `<tr><td colspan="6" class="admin-empty">ไม่มีรายการความผิดพลาดค้างอยู่</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7" class="admin-empty">ยังไม่มีบันทึกการใช้งานในช่วงนี้</td></tr>`;
       return;
     }
     tbody.innerHTML = items.map((r) => {
@@ -10031,25 +10261,23 @@ async function adminLoadUsageLogs() {
       const lvl = String(r.level || "").toLowerCase();
       const lvlClass = lvl === "error" ? "admin-log-level--error" : (lvl === "warn" ? "admin-log-level--warn" : "admin-log-level--info");
       const detail = r.detail ? escapeHtml(String(r.detail)) : "";
-      const eid = escapeHtml(String(r.entry_id || r.request_id || ""));
       const detailBtn = detail
         ? `<button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminShowUsageDetail(this)" data-detail="${detail.replace(/"/g, "&quot;")}">รายละเอียด</button>`
         : "";
-      const ackBtn = eid
-        ? `<button type="button" class="admin-btn-ack admin-btn-ack--sm" onclick="adminAckUsageLog('${eid.replace(/'/g, "\\'")}')">✓ รับทราบแล้ว</button>`
-        : "";
+      // ไม่มีปุ่ม「รับทราบ」แล้ว — log เป็นบันทึกการใช้งานถาวร ไม่ต้องให้แอดมินมาเคลียร์
       return `<tr>
         <td>${ts}</td>
         <td><span class="admin-log-level ${lvlClass}">${escapeHtml(lvl || "—")}</span></td>
         <td>${escapeHtml(String(r.email || "—"))}</td>
+        <td>${escapeHtml(String(r.sup_id || "—"))}</td>
         <td>${escapeHtml(String(r.action || "—"))}</td>
         <td>${escapeHtml(String(r.message || "—"))}</td>
-        <td class="admin-td-actions">${detailBtn} ${ackBtn}</td>
+        <td class="admin-td-actions">${detailBtn}</td>
       </tr>`;
     }).join("");
   } catch (e) {
     if (countEl) countEl.textContent = "";
-    tbody.innerHTML = `<tr><td colspan="6" class="admin-empty">${escapeHtml(e.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="admin-empty">${escapeHtml(e.message)}</td></tr>`;
   }
 }
 

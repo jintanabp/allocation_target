@@ -7,17 +7,47 @@ from __future__ import annotations
 import json
 import logging
 import os
-import tempfile
 import threading
 from datetime import datetime, timezone
 from typing import Any
 
+from ..core.atomic_io import atomic_write_json, read_locked
 from ..core.paths import safe_id
 
 logger = logging.getLogger("target_allocation")
 
-_STORE_LOCK = threading.Lock()
+# RLock: write_snapshot ต้องอ่าน snapshot เดิมใต้ lock เดียวกัน (compare-and-swap)
+# และ mark_sent_targetsun ก็เป็น read-modify-write ที่ต้องอะตอมมิกทั้งก้อน
+_STORE_LOCK = threading.RLock()
 _VALID_STATUS = frozenset({"draft", "optimized", "sent_targetsun"})
+
+
+class SnapshotConflict(Exception):
+    """มีคนอื่นบันทึกทับไปแล้วระหว่างที่ client ถือข้อมูลเก่าอยู่"""
+
+    def __init__(self, current: dict[str, Any] | None):
+        super().__init__("snapshot conflict")
+        self.current = current or {}
+
+
+class SnapshotPreconditionRequired(Exception):
+    """เปิดโหมดบังคับ if_match_version แล้ว แต่ client ไม่ส่งมา (tab เก่า)"""
+
+    def __init__(self, current: dict[str, Any] | None):
+        super().__init__("precondition required")
+        self.current = current or {}
+
+
+def require_if_match() -> bool:
+    """
+    ค่าเริ่มต้น = ปิด — เพื่อให้ tab เก่าที่ยังไม่ส่ง if_match_version บันทึกได้เหมือนเดิม
+    เปิดเป็น 1 ได้หลังยืนยันว่าไม่มี save_allocation_no_precondition ใน usage log แล้ว
+    """
+    return (os.environ.get("ALLOC_REQUIRE_IF_MATCH") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
 
 def _repo_root() -> str:
@@ -79,12 +109,11 @@ def _validate_body(body: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def read_snapshot(sup_id: str, month: int, year: int) -> dict[str, Any] | None:
-    path = allocation_snapshot_path(sup_id, month, year)
+def _read_snapshot_unlocked(path: str) -> dict[str, Any] | None:
     if not os.path.isfile(path):
         return None
     try:
-        with open(path, encoding="utf-8") as f:
+        with read_locked(path), open(path, encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
             return data
@@ -93,22 +122,54 @@ def read_snapshot(sup_id: str, month: int, year: int) -> dict[str, Any] | None:
     return None
 
 
-def write_snapshot(body: dict[str, Any]) -> dict[str, Any]:
+def read_snapshot(sup_id: str, month: int, year: int) -> dict[str, Any] | None:
+    with _STORE_LOCK:
+        return _read_snapshot_unlocked(allocation_snapshot_path(sup_id, month, year))
+
+
+def _version_of(snap: dict[str, Any] | None) -> int:
+    try:
+        return int((snap or {}).get("version") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def write_snapshot(
+    body: dict[str, Any],
+    *,
+    expected_version: int | None = None,
+) -> dict[str, Any]:
+    """
+    บันทึก snapshot แบบ compare-and-swap
+
+    expected_version = version ที่ client เห็นตอนโหลด
+      - ตรงกับบนดิสก์ → เขียนได้ version +1
+      - ไม่ตรง        → SnapshotConflict (มีคนบันทึกทับไปแล้ว)
+      - None          → เขียนทับเลย (พฤติกรรมเดิม) เว้นแต่เปิด ALLOC_REQUIRE_IF_MATCH
+
+    ใช้ version (int) ไม่ใช่ updated_at เพราะ _now_iso() ตัดหน่วยไมโครวินาที
+    และ autosave ฝั่ง frontend debounce 800ms — สอง save ในวินาทีเดียวกันจะได้
+    updated_at เท่ากัน ทำให้ precondition แบบ timestamp มีรูให้เล็ดลอด
+    """
     row = _validate_body(body)
     path = allocation_snapshot_path(row["sup_id"], row["target_month"], row["target_year"])
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with _STORE_LOCK:
-        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(row, f, ensure_ascii=False, indent=2)
-            os.replace(tmp, path)
-        except Exception:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
+        current = _read_snapshot_unlocked(path)
+        cur_ver = _version_of(current)
+        if expected_version is not None:
+            if cur_ver != int(expected_version):
+                raise SnapshotConflict(current)
+        elif current is not None and require_if_match():
+            raise SnapshotPreconditionRequired(current)
+        # "เคยส่ง Target Sun แล้ว" ต้องอยู่ถาวร แม้สถานะจะกลับเป็น draft หลังแก้ต่อ
+        # เก็บฝั่ง server ไม่พึ่ง client ส่งกลับมา — client เก่าที่ไม่ส่ง field นี้จะลบประวัติทิ้ง
+        if not row.get("target_sun_sent_at") and current:
+            prev_sent = current.get("target_sun_sent_at")
+            if prev_sent:
+                row["target_sun_sent_at"] = str(prev_sent)
+        row["version"] = cur_ver + 1
+        atomic_write_json(path, row, indent=2)
     return row
 
 
@@ -121,19 +182,23 @@ def mark_sent_targetsun(
     allocations: list[dict[str, Any]] | None = None,
     yellow: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    existing = read_snapshot(sup_id, month, year) or {}
-    body: dict[str, Any] = {
-        "sup_id": _normalize_sup(sup_id),
-        "target_month": int(month),
-        "target_year": int(year),
-        "status": "sent_targetsun",
-        "allocations": allocations if allocations is not None else existing.get("allocations") or [],
-        "yellow": yellow if yellow is not None else existing.get("yellow") or {},
-        "yellow_locked": existing.get("yellow_locked") or {},
-        "strategy": existing.get("strategy") or "",
-        "updated_by": updated_by or existing.get("updated_by") or "",
-    }
-    return write_snapshot(body)
+    # อ่าน+เขียนต้องอยู่ใน lock เดียวกัน ไม่งั้นมีคน save คั่นกลางแล้ว allocations เดิมหาย
+    with _STORE_LOCK:
+        existing = _read_snapshot_unlocked(allocation_snapshot_path(sup_id, month, year)) or {}
+        body: dict[str, Any] = {
+            "sup_id": _normalize_sup(sup_id),
+            "target_month": int(month),
+            "target_year": int(year),
+            "status": "sent_targetsun",
+            "allocations": (
+                allocations if allocations is not None else existing.get("allocations") or []
+            ),
+            "yellow": yellow if yellow is not None else existing.get("yellow") or {},
+            "yellow_locked": existing.get("yellow_locked") or {},
+            "strategy": existing.get("strategy") or "",
+            "updated_by": updated_by or existing.get("updated_by") or "",
+        }
+        return write_snapshot(body)
 
 
 def _snapshot_has_work(snap: dict[str, Any]) -> bool:

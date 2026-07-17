@@ -172,7 +172,7 @@ python scripts/repair_user_access.py
 | `payload_cache_{sup}_{year}_{mm}.json` | payload ขั้นที่ 1 ทั้งก้อน |
 | `tga_lines_{sup}_{year}_{mm}.csv` | tga_target_salesman_next |
 | `hist_cache_*`, `hist_lysm_*`, `hist_prev_*`, `hist_cy_*` | cross_sold_history |
-| `target_boxes.csv`, `target_sun.csv` | คำนวณจาก TGA + ราคา |
+| `target_boxes_{sup}_{year}_{mm}.csv`, `target_sun_{sup}_{year}_{mm}.csv` | คำนวณจาก TGA + ราคา |
 | `managers_cache.json` | access_hierarchy |
 | `ts_prepare/*.xlsx` | ไฟล์ชั่วคราวก่อนส่ง TargetSun |
 

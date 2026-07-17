@@ -319,12 +319,18 @@ def spa_config_payload() -> dict[str, Any]:
 
 
 def fetch_graph_primary_email(bearer: str) -> str | None:
-    """ดึง mail จาก Microsoft Graph เมื่อ claims ไม่มีอีเมลชัดเจน"""
+    """
+    ดึง mail จาก Microsoft Graph เมื่อ claims ไม่มีอีเมลชัดเจน
+
+    timeout ต้อง "สั้นกว่า" ฝั่ง client ชัดเจน: frontend เรียก /managers ด้วย timeout 15 วิ
+    (app.js: fetchWithTimeout(`${API_BASE_URL}/managers`, {}, 15000)) ถ้าที่นี่ก็ 15 วิเท่ากัน
+    client จะยอมแพ้พอดีตอน server ยังรอ Graph อยู่ → ผู้ใช้เห็นหน้า login ค้างแล้วต้องรีเฟรชเอง
+    """
     try:
         r = requests.get(
             "https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName",
             headers={"Authorization": f"Bearer {bearer}"},
-            timeout=15,
+            timeout=6,
         )
         if r.status_code != 200:
             return None

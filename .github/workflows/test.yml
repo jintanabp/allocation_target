@@ -20,3 +20,19 @@ jobs:
           pip install -r requirements-dev.txt
       - name: Run unit tests
         run: python -m unittest discover -s tests -p "test_*.py" -v
+
+  # frontend/app.js ไม่มี test ใด ๆ — อย่างน้อยต้องกัน ReferenceError ที่ `node --check` จับไม่ได้
+  # (เคยหลุด: ลบ `const readOnly = ...` แต่ลืม `if (!readOnly)` → ผลกระจายไม่ขึ้นทั้งหน้า)
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Syntax check
+        run: node --check frontend/app.js
+      - name: ตรวจตัวแปรที่ใช้แต่ไม่เคยประกาศ
+        run: |
+          npm install --no-save --no-audit --no-fund acorn
+          node scripts/dev/check_js_undef.js frontend/app.js

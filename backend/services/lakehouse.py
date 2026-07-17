@@ -11,7 +11,8 @@ import pandas as pd
 import requests
 from fastapi import HTTPException
 
-from ..core.paths import safe_id, tga_grain_cache_path
+from ..core.atomic_io import read_locked
+from ..core.paths import safe_id, target_boxes_cache_path, tga_grain_cache_path
 from ..fabric_dax_connector import FabricDAXConnector
 from ..schemas import LakehouseUploadRequest
 
@@ -712,10 +713,14 @@ def _enrich_brand_names(
                 if brand:
                     brand_en_map[sku] = brand
     if not brand_th_map and not brand_en_map:
-        tgt_path = "data/target_boxes.csv"
+        # fallback ชั้นสุดท้าย (แค่ label แบรนด์) — ใช้ไฟล์ราย sup ก่อน แล้วค่อยตกไป global เดิม
+        tgt_path = target_boxes_cache_path(sup_id, month, year)
+        if not os.path.isfile(tgt_path):
+            tgt_path = "data/target_boxes.csv"
         if os.path.isfile(tgt_path):
             try:
-                df_tgt = pd.read_csv(tgt_path, dtype=str)
+                with read_locked(tgt_path):  # ไฟล์นี้ถูกเขียนด้วย atomic_write_csv — ต้องถือ lock
+                    df_tgt = pd.read_csv(tgt_path, dtype=str)
                 if "sku" in df_tgt.columns:
                     for _, row in df_tgt.iterrows():
                         sku = str(row.get("sku") or "").strip()

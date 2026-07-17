@@ -32,9 +32,11 @@ from ..core.paths import (
     hist_ly_same_month_cache_path,
     hist_prev_month_cache_path,
     result_path,
+    target_boxes_cache_path,
     tga_grain_cache_path,
 )
-from ..core.targets import load_target_csv
+from ..core.atomic_io import atomic_write_csv
+from ..core.targets import load_target_csv_for, target_boxes_source_path
 from ..generate_excel import create_target_excel
 from ..schemas import OptimizeRequest
 from ..fabric_dax_connector import FabricDAXConnector
@@ -295,9 +297,9 @@ def run_optimization_service(
 
     os.makedirs("data", exist_ok=True)
 
-    df_sku, _ = load_target_csv()
+    df_sku, _ = load_target_csv_for(sup_id, target_month, target_year)
     if df_sku is None:
-        raise HTTPException(500, detail="ไม่พบ target_boxes.csv กรุณาโหลดหน้า Dashboard ก่อน")
+        raise HTTPException(500, detail="ไม่พบเป้าหีบของทีมนี้ กรุณาโหลดหน้า Dashboard ก่อน")
 
     df_sku = df_sku.copy()
     df_sku["supervisor_target_boxes"] = pd.to_numeric(
@@ -705,7 +707,7 @@ def run_optimization_service(
 
     df_final = restore_allocation_emp_ids(df_final, reverse_map)
 
-    df_final.to_csv(result_path(sup_id), index=False)
+    atomic_write_csv(result_path(sup_id), df_final, index=False)
 
     yellow_map: dict[str, float] = {}
     for y in req.yellowTargets:
@@ -721,7 +723,10 @@ def run_optimization_service(
         brand_filter="ALL",
         yellow_map=yellow_map,
         sup_id=sup_id,
-        target_boxes_csv="data/target_boxes.csv",
+        # ต้องเช็คว่ามีไฟล์จริง: df_sku ข้างบนอาจมาจาก fallback ไฟล์ global ช่วงเปลี่ยนผ่าน
+        # ซึ่งแปลว่าไฟล์ราย sup ยังไม่มี — generate_excel เจอ path ไม่มีไฟล์แล้วคืน {} เงียบ ๆ
+        # จะได้ Excel ที่แถว "เป้าหีบ (หัวหน้า)" ว่างทั้งที่ตัวเลขกระจายมีค่า
+        target_boxes_csv=target_boxes_source_path(sup_id, target_month, target_year),
     )
 
     return {

@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 
@@ -14,8 +16,36 @@ from ..services.targetsun_import import (
     import_prepared_targetsun,
     prepare_targetsun_import,
 )
+from ..services.usage_log_store import log_from_user
 
 router = APIRouter(tags=["lakehouse"])
+
+
+def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) -> None:
+    """
+    บันทึกทุกครั้งที่กดส่ง Target Sun — สำเร็จหรือไม่ก็ตาม
+    นี่คือหลักฐานเดียวที่บอกได้ว่าทีมไหนส่งอะไรไปเมื่อไหร่ (snapshot เก็บแค่ครั้งล่าสุดต่องวด)
+    """
+    try:
+        res = result if isinstance(result, dict) else {}
+        ts = res.get("targetsun") or {}
+        r = ts.get("result") or {}
+        ok = ts.get("success") is not False
+        log_from_user(
+            user,
+            level="info" if ok else "error",
+            sup_id=req.sup_id,
+            action="send_targetsun",
+            message=("ส่งเข้า Target Sun สำเร็จ" if ok else "ส่งเข้า Target Sun ไม่สำเร็จ"),
+            detail=(
+                f"งวด {req.target_year}-{req.target_month:02d} · "
+                f"ส่ง {res.get('rows_sent', 0)} แถว · "
+                f"เพิ่ม {r.get('inserted', 0)} · แก้ {r.get('updated', 0)} · ข้าม {r.get('skipped', 0)}"
+                + ("" if ok else f" · {ts.get('resultMsg') or ''}")
+            ),
+        )
+    except Exception:  # log ต้องไม่ทำให้การส่งพัง
+        pass
 
 
 @router.post("/lakehouse/export-csv")
@@ -74,6 +104,20 @@ def import_targetsun_from_allocations(
     ensure_supervisor_allowed(user, req.sup_id)
     ensure_own_supervisor_write(user, req.sup_id)
     ensure_targetsun_import_allowed(user)
-    if (req.prepare_token or "").strip():
-        return import_prepared_targetsun(req)
-    return import_allocations_to_targetsun(req)
+    try:
+        if (req.prepare_token or "").strip():
+            result = import_prepared_targetsun(req)
+        else:
+            result = import_allocations_to_targetsun(req)
+    except Exception as e:
+        log_from_user(
+            user,
+            level="error",
+            sup_id=req.sup_id,
+            action="send_targetsun",
+            message="ส่งเข้า Target Sun ไม่สำเร็จ",
+            detail=f"งวด {req.target_year}-{req.target_month:02d} · {type(e).__name__}: {e}",
+        )
+        raise
+    _log_targetsun_send(user, req, result)
+    return result

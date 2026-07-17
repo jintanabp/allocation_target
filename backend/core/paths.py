@@ -32,6 +32,19 @@ def hist_calendar_year_cache_path(sup_id: str, calendar_year: int) -> str:
     return f"data/hist_cy_{safe_id(sup_id)}_{int(calendar_year)}.csv"
 
 
+def target_boxes_cache_path(sup_id: str, month: int, year: int) -> str:
+    """
+    เป้าหีบราย SKU ต่อ (sup, งวด) — แทนไฟล์ global data/target_boxes.csv เดิม
+    ที่ไม่มี sup_id ในชื่อ ทำให้ทีมที่โหลดทีหลังเขียนทับของทีมก่อนหน้า
+    """
+    return f"data/target_boxes_{safe_id(sup_id)}_{year}_{month:02d}.csv"
+
+
+def target_sun_cache_path(sup_id: str, month: int, year: int) -> str:
+    """เป้า Target Sun ราย emp ต่อ (sup, งวด) — แทนไฟล์ global data/target_sun.csv เดิม"""
+    return f"data/target_sun_{safe_id(sup_id)}_{year}_{month:02d}.csv"
+
+
 def emp_cache_path(sup_id: str, month: int, year: int) -> str:
     return f"data/emp_cache_{safe_id(sup_id)}_{year}_{month:02d}.csv"
 

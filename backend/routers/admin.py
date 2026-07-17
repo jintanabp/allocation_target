@@ -54,7 +54,7 @@ from ..services.employee_payload_cache import (
 )
 from ..services.fabric_cache import cache_status, invalidate_period_cache
 from ..services.allocation_store import delete_snapshot, list_all_snapshots, read_snapshot
-from ..services.usage_log_store import append_log, acknowledge_logs, read_logs
+from ..services.usage_log_store import append_log, read_logs
 from ..services.user_access_store import read_rows as read_user_access_rows
 from ..fabric_dax_connector import FabricDAXConnector
 
@@ -903,33 +903,9 @@ def admin_get_usage_logs(
     }
 
 
-class UsageLogAckBody(BaseModel):
-    entry_ids: list[str] = Field(default_factory=list)
-
-
-def _acknowledge_usage_log_ids(entry_ids: list[str]) -> dict[str, Any]:
-    removed = acknowledge_logs(entry_ids)
-    if removed <= 0:
-        raise HTTPException(status_code=404, detail="ไม่พบรายการที่จะลบ")
-    return {"ok": True, "removed": removed}
-
-
-@router.delete("/usage-logs/{entry_id}")
-def admin_delete_usage_log(
-    entry_id: str,
-    _admin: dict = Depends(require_admin_user),
-):
-    """รับทราบ/แก้ไขแล้ว — ลบรายการออกจากบันทึก"""
-    return _acknowledge_usage_log_ids([entry_id])
-
-
-@router.post("/usage-logs/acknowledge")
-def admin_acknowledge_usage_logs(
-    body: UsageLogAckBody,
-    _admin: dict = Depends(require_admin_user),
-):
-    """รับทราบ/แก้ไขแล้ว — ลบรายการออกจากบันทึก (legacy)"""
-    return _acknowledge_usage_log_ids(body.entry_ids)
+# หมายเหตุ: เดิมมี DELETE /usage-logs/{entry_id} และ POST /usage-logs/acknowledge สำหรับ
+# ให้แอดมินกด "รับทราบ" แล้วลบรายการทิ้ง — ถอดออกแล้ว เพราะ log ต้องเป็นบันทึกการใช้งาน
+# แบบ append-only ไว้ตาม monitor (ใครส่ง Target Sun เมื่อไหร่) การลบทำให้ตามย้อนหลังไม่ได้
 
 
 @router.post("/usage-logs")

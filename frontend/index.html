@@ -235,12 +235,13 @@
           โหมดดูรวม — แสดงข้อมูลสรุปเท่านั้น ไม่สามารถกระจายหีบ · สลับเป็น「รายคน」เพื่อดำเนินการ
         </div>
         <div id="allocationSummaryWrap" class="alloc-summary-wrap" style="display:none;" role="region" aria-label="สรุปผลกระจายหีบล่าสุด">
-          <div class="alloc-summary-wrap__head" onclick="toggleAllocationSummaryExpand()" role="button" tabindex="0" aria-expanded="false" id="allocationSummaryHead">
+          <div class="alloc-summary-wrap__head" onclick="toggleAllocationSummaryExpand()" role="button" tabindex="0" aria-expanded="true" id="allocationSummaryHead">
             <span class="alloc-summary-wrap__title">ผลกระจายหีบล่าสุด (server)</span>
-            <span class="alloc-summary-wrap__toggle" id="allocationSummaryToggle" aria-hidden="true">▶</span>
+            <span class="alloc-summary-wrap__toggle" id="allocationSummaryToggle" aria-hidden="true">▼</span>
             <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="event.stopPropagation(); loadAllocationSummary(true)">รีเฟรช</button>
           </div>
-          <div id="allocationSummaryBody" class="alloc-summary-wrap__body" style="display:none;"></div>
+          <!-- เปิดไว้เป็นค่าเริ่มต้น — ผู้ใช้ยังกดพับเองได้ และระบบจะจำไว้จนกว่าจะโหลดหน้าใหม่ -->
+          <div id="allocationSummaryBody" class="alloc-summary-wrap__body" style="display:block;"></div>
         </div>
       </div>
 
@@ -941,7 +942,7 @@
         <div class="admin-nav-group">
           <div class="admin-nav-group__label">ปฏิบัติการ</div>
           <button type="button" class="admin-nav-item" role="tab" data-tab="allocations" aria-selected="false" onclick="adminSwitchTab('allocations')">ผลการกระจาย</button>
-          <button type="button" class="admin-nav-item" role="tab" data-tab="usageLogs" aria-selected="false" onclick="adminSwitchTab('usageLogs')">บันทึกความผิดพลาด</button>
+          <button type="button" class="admin-nav-item" role="tab" data-tab="usageLogs" aria-selected="false" onclick="adminSwitchTab('usageLogs')">บันทึกการใช้งาน</button>
         </div>
         <div class="admin-nav-group">
           <div class="admin-nav-group__label">ทีม</div>
@@ -1257,7 +1258,7 @@
         <section class="admin-card admin-card--panel">
           <div class="admin-card-header">
             <div>
-              <h2 class="admin-card__title">บันทึกความผิดพลาด</h2>
+              <h2 class="admin-card__title">บันทึกการใช้งาน</h2>
               <p class="admin-card__hint">ข้อความ error/warn จากผู้ใช้และระบบ — แสดงทั้งหมดล่าสุดก่อน</p>
             </div>
             <div class="admin-period-bar">
@@ -1277,12 +1278,12 @@
             </div>
           </div>
           <div class="admin-help-strip admin-help-strip--compact">
-            <p>เมื่อตรวจแล้วว่าแก้หรือไม่เกี่ยวกับระบบ — กด <strong>รับทราบแล้ว</strong> รายการจะถูกลบออกจากรายการนี้</p>
+            <p>บันทึกถาวร ไม่มีการลบ — ใช้ตรวจย้อนหลังว่าใคร/ทีมไหนทำอะไรเมื่อไหร่ เช่น <strong>send_targetsun</strong> = กดส่งเข้า Target Sun (กรอง「การกระทำ」ได้ที่ช่องระดับ + ค้นในหน้า)</p>
           </div>
           <div id="adminUsageLogsBody" class="admin-table-wrap admin-table-wrap--scroll admin-table-wrap--panel">
             <table class="admin-table admin-table--compact admin-table--zebra">
-              <thead><tr><th>เวลา</th><th>ระดับ</th><th>ผู้ใช้</th><th>การกระทำ</th><th>ข้อความ</th><th></th></tr></thead>
-              <tbody id="adminUsageLogsTable"><tr><td colspan="6" class="admin-empty">กำลังโหลด…</td></tr></tbody>
+              <thead><tr><th>เวลา</th><th>ระดับ</th><th>ผู้ใช้</th><th>ทีม (SL)</th><th>การกระทำ</th><th>ข้อความ</th><th></th></tr></thead>
+              <tbody id="adminUsageLogsTable"><tr><td colspan="7" class="admin-empty">กำลังโหลด…</td></tr></tbody>
             </table>
           </div>
         </section>

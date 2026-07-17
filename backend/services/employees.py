@@ -6,6 +6,7 @@ import pandas as pd
 from fastapi import HTTPException
 
 from ..core.allocation_checks import detect_new_product_skus
+from ..core.atomic_io import atomic_write_csv
 from ..core.constants import PRICE_FALLBACK
 from ..core.paths import (
     emp_cache_path,
@@ -13,6 +14,8 @@ from ..core.paths import (
     hist_calendar_year_cache_path,
     hist_ly_same_month_cache_path,
     hist_prev_month_cache_path,
+    target_boxes_cache_path,
+    target_sun_cache_path,
     tga_grain_cache_path,
 )
 from ..core.employee_filter import (
@@ -20,7 +23,7 @@ from ..core.employee_filter import (
     filter_employees_for_display,
     is_allocation_eligible,
 )
-from ..core.targets import load_target_csv
+from ..core.targets import load_target_csv, load_target_csv_for, target_csv_ready
 from ..core.tga_period import (
     enforce_tga_has_targets_for_period,
     enforce_tga_selection_matches_effective_window,
@@ -280,7 +283,16 @@ def load_employees_payload(
 
     refresh=True หรือ regen_target=True → ข้าม JSON cache แล้วยิง DAX ใหม่
     """
-    if not regen_target and not refresh:
+    # ต้องเช็ค target_csv_ready ด้วย: ถ้า cache hit จะ return ก่อนถึงจุดที่เขียนไฟล์เป้าราย sup
+    # ทีมที่มี cache ค้างจะไม่มีวันสร้างไฟล์ แล้วตกไปใช้ไฟล์ global ของทีมอื่นตลอดไป
+    # ยกเว้นโหมด legacy (dev) ที่ไม่เคยเขียนไฟล์ราย sup อยู่แล้ว — ไม่งั้น cache จะใช้ไม่ได้เลย
+    _legacy_mode = os.environ.get("USE_LEGACY_TARGET_CSV", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    _targets_ok = _legacy_mode or target_csv_ready(sup_id, target_month, target_year)
+    if not regen_target and not refresh and _targets_ok:
         cached = read_cached_employee_payload(sup_id, target_month, target_year)
         if cached is not None:
             current_src = targetsun_read.get_target_read_source()
@@ -587,8 +599,13 @@ def load_employees_payload(
         )
         emp_with_tga_set = emp_with_tga
 
-        df_sku.to_csv("data/target_boxes.csv", index=False)
-        df_sun_csv.to_csv("data/target_sun.csv", index=False)
+        # เขียนแยกราย (sup, งวด) — ไฟล์ global เดิมไม่มี sup_id ทีมจึงทับกันเอง
+        atomic_write_csv(
+            target_boxes_cache_path(sup_id, target_month, target_year), df_sku, index=False
+        )
+        atomic_write_csv(
+            target_sun_cache_path(sup_id, target_month, target_year), df_sun_csv, index=False
+        )
         logger.info(
             "บันทึกเป้าจาก Fabric (TGA): %d SKU, พนักงาน %d คน, มีแถว TGA %d คน",
             len(df_sku),
@@ -596,9 +613,8 @@ def load_employees_payload(
             len(emp_with_tga_set),
         )
 
-    if df_sun_csv is None and os.path.exists("data/target_sun.csv"):
-        df_sun_csv = pd.read_csv("data/target_sun.csv", dtype={"emp_id": str}).fillna(0)
-        df_sun_csv["emp_id"] = df_sun_csv["emp_id"].astype(str).str.strip()
+    if df_sun_csv is None:
+        _, df_sun_csv = load_target_csv_for(sup_id, target_month, target_year)
 
     sku_list = df_sku["sku"].tolist()
 

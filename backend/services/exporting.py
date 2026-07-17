@@ -5,22 +5,37 @@ import pandas as pd
 from fastapi import HTTPException
 from fastapi.responses import FileResponse
 
+from ..core.atomic_io import atomic_write_csv
 from ..core.caches import cleanup_export_artifacts_keep_latest_per_sup
-from ..core.paths import excel_export_path, excel_path, export_result_path, safe_id
-from ..core.targets import load_target_csv
+from ..core.paths import (
+    excel_export_path,
+    excel_path,
+    export_result_path,
+    safe_id,
+    target_boxes_cache_path,
+)
+from ..core.targets import load_target_csv, load_target_csv_for, target_boxes_source_path
 from ..generate_excel import create_target_excel
 from ..schemas import ExportRequest
 
 logger = logging.getLogger("target_allocation")
 
 
-def export_excel_service(req: ExportRequest, sup_id: str) -> dict:
+def export_excel_service(
+    req: ExportRequest,
+    sup_id: str,
+    target_month: int | None = None,
+    target_year: int | None = None,
+) -> dict:
     os.makedirs("data", exist_ok=True)
 
     df_final = pd.DataFrame([a.model_dump() for a in req.allocations])
 
     # เติม price_per_box ถ้าไม่ครบ
-    df_sku_tmp, _ = load_target_csv()
+    if target_month and target_year:
+        df_sku_tmp, _ = load_target_csv_for(sup_id, target_month, target_year)
+    else:
+        df_sku_tmp, _ = load_target_csv()
     if df_sku_tmp is not None:
         want_cols = [
             "price_per_box",
@@ -82,7 +97,7 @@ def export_excel_service(req: ExportRequest, sup_id: str) -> dict:
             raise HTTPException(404, detail=f"ไม่พบข้อมูลสำหรับแบรนด์ '{brand_filter}'")
 
     ep = export_result_path(sup_id, brand_filter)
-    df_export.to_csv(ep, index=False)
+    atomic_write_csv(ep, df_export, index=False)
 
     yellow_map = {y.emp_id: y.yellow_target for y in req.yellow_targets}
 
@@ -92,7 +107,7 @@ def export_excel_service(req: ExportRequest, sup_id: str) -> dict:
         brand_filter=brand_filter,
         yellow_map=yellow_map,
         sup_id=sup_id,
-        target_boxes_csv="data/target_boxes.csv",
+        target_boxes_csv=target_boxes_source_path(sup_id, target_month, target_year),
     )
 
     # cleanup export artifacts: keep only latest per sup_id (avoid data/ growth)

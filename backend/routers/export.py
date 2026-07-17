@@ -12,9 +12,14 @@ def export_excel(
     req: ExportRequest,
     user: dict = Depends(require_authenticated_user),
     sup_id: str = Query("SL330"),
+    # optional: tab เก่าที่ยังไม่ส่งงวดมา จะตกไปใช้ไฟล์เป้า global เดิม (พฤติกรรมเดิม ไม่พัง)
+    target_month: int | None = Query(None, ge=1, le=12),
+    target_year: int | None = Query(None, ge=2020, le=2100),
 ):
     ensure_supervisor_allowed(user, sup_id)
-    return export_excel_service(req=req, sup_id=sup_id)
+    return export_excel_service(
+        req=req, sup_id=sup_id, target_month=target_month, target_year=target_year
+    )
 
 
 @router.get("/download/excel")

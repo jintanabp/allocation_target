@@ -9,6 +9,8 @@ from ..deps import (
     require_authenticated_user,
 )
 from ..services.allocation_store import (
+    SnapshotConflict,
+    SnapshotPreconditionRequired,
     delete_snapshot,
     list_summaries,
     read_snapshot,
@@ -165,6 +167,9 @@ class AllocationSnapshotBody(BaseModel):
     yellow_locked: dict[str, Any] = Field(default_factory=dict)
     strategy: str = ""
     target_sun_sent_at: str | None = None
+    # version ที่ client เห็นตอนโหลด — ไม่ส่งมา = เขียนทับแบบเดิม (tab เก่าจึงไม่พัง)
+    # ใช้ field ใน body ไม่ใช่ header If-Match เพื่อเลี่ยงปัญหา preflight/proxy ตัด header
+    if_match_version: int | None = None
 
 
 @router.get("/data/allocations")
@@ -206,10 +211,52 @@ def put_allocation_snapshot(
         raise
     email = str(user.get("email") or user.get("view_as_email") or "").strip()
     payload = body.model_dump()
+    expected_version = payload.pop("if_match_version", None)
     payload["sup_id"] = sid
     payload["updated_by"] = email
+
+    if expected_version is None and read_snapshot(sid, body.target_month, body.target_year):
+        # สัญญาณสำหรับ rollout: ถ้าไม่มี log นี้แล้ว = ทุก client ส่ง version → เปิดบังคับได้
+        log_from_user(
+            user,
+            level="warn",
+            sup_id=sid,
+            action="save_allocation_no_precondition",
+            message="บันทึกทับโดยไม่ส่ง version (client เก่า)",
+            detail=f"{body.target_year}-{body.target_month:02d}",
+        )
+
     try:
-        return write_snapshot(payload)
+        return write_snapshot(payload, expected_version=expected_version)
+    except SnapshotConflict as e:
+        log_from_user(
+            user,
+            level="warn",
+            sup_id=sid,
+            action="save_allocation_conflict",
+            message="บันทึกไม่ได้ — มีคนอื่นบันทึกทับไปแล้ว",
+            detail=f"version บนเซิร์ฟเวอร์={e.current.get('version')}",
+        )
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "snapshot_conflict",
+                "message": "มีคนอื่นบันทึกผลกระจายนี้ไปแล้ว — โหลดใหม่ก่อนหรือเลือกเขียนทับ",
+                "current": {
+                    k: e.current.get(k)
+                    for k in ("version", "updated_at", "updated_by", "status")
+                },
+            },
+        ) from e
+    except SnapshotPreconditionRequired as e:
+        raise HTTPException(
+            status_code=428,
+            detail={
+                "code": "precondition_required",
+                "message": "หน้าเว็บเป็นเวอร์ชันเก่า — กรุณากด Ctrl+F5 รีเฟรชแล้วบันทึกใหม่",
+                "current": {k: e.current.get(k) for k in ("version", "updated_at")},
+            },
+        ) from e
     except ValueError as e:
         log_from_user(
             user,

@@ -36,13 +36,32 @@ class TestUsageLogStore(unittest.TestCase):
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["message"], "hello")
 
-    def test_acknowledge_removes_entry(self):
-        row = logs.append_log(level="error", email="a@b.c", action="x", message="m1")
-        eid = row["entry_id"]
-        self.assertEqual(len(logs.read_logs(scan_all=True)), 1)
-        n = logs.acknowledge_logs([eid])
-        self.assertEqual(n, 1)
-        self.assertEqual(logs.read_logs(scan_all=True), [])
+    def test_logs_are_append_only(self):
+        """
+        log เป็นบันทึกการใช้งานถาวร ไว้ตรวจย้อนหลังว่าใครส่ง Target Sun เมื่อไหร่
+        เดิมมี acknowledge_logs ให้แอดมินกดลบทีละรายการ — ถอดออกแล้ว ห้ามใส่กลับ
+        """
+        self.assertFalse(
+            hasattr(logs, "acknowledge_logs"),
+            "acknowledge_logs ถูกถอดออกแล้ว — การลบ log ทำให้ตาม monitor ย้อนหลังไม่ได้",
+        )
+        logs.append_log(level="info", email="a@b.c", action="send_targetsun", message="m1")
+        logs.append_log(level="error", email="a@b.c", action="x", message="m2")
+        self.assertEqual(len(logs.read_logs(scan_all=True)), 2)
+
+    def test_send_targetsun_is_readable_as_info(self):
+        logs.append_log(
+            level="info",
+            email="sup@x.com",
+            sup_id="SL330",
+            action="send_targetsun",
+            message="ส่งเข้า Target Sun สำเร็จ",
+            detail="งวด 2026-07 · ส่ง 100 แถว",
+        )
+        items = logs.read_logs(level="info", limit=10, scan_all=True)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["action"], "send_targetsun")
+        self.assertEqual(items[0]["sup_id"], "SL330")
 
 
 if __name__ == "__main__":

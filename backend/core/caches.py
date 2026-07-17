@@ -8,17 +8,40 @@ from .paths import safe_id
 logger = logging.getLogger("target_allocation")
 
 
+_CACHE_PREFIXES = (
+    "hist_cache_",
+    "hist_lysm_",
+    "hist_prev_",
+    "hist_cy_",
+    "emp_cache_",
+    "target_boxes_",
+    "target_sun_",
+)
+
+# ไฟล์เป้าแบบ global เดิม (ไม่มี sup_id) — เหลือไว้เป็น fallback ช่วงเปลี่ยนผ่านเท่านั้น
+# ต้องลบทิ้งพร้อมกับไฟล์ราย sup ด้วย ไม่งั้นไฟล์ราย sup หมดอายุก่อน แล้ว load_target_csv_for
+# จะตกกลับไปอ่านไฟล์ global ที่ค้างอยู่ = ได้เป้าของทีมอื่นเงียบ ๆ (บั๊กเดิมที่เพิ่งแก้ไป)
+_LEGACY_TARGET_FILES = ("target_boxes.csv", "target_sun.csv")
+
+
 def cleanup_old_caches(max_age_days: int = 7) -> None:
     cutoff = datetime.now() - timedelta(days=max_age_days)
+    # โหมด dev ที่วางไฟล์ global เอง — อย่าไปลบของเขา
+    keep_legacy = os.environ.get("USE_LEGACY_TARGET_CSV", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
     try:
         for fname in os.listdir("data"):
-            if fname.startswith(
-                ("hist_cache_", "hist_lysm_", "hist_prev_", "hist_cy_", "emp_cache_")
-            ):
-                fpath = os.path.join("data", fname)
-                if datetime.fromtimestamp(os.path.getmtime(fpath)) < cutoff:
-                    os.remove(fpath)
-                    logger.info("Cleaned old cache: %s", fname)
+            is_cache = fname.startswith(_CACHE_PREFIXES)
+            is_legacy_target = fname in _LEGACY_TARGET_FILES and not keep_legacy
+            if not (is_cache or is_legacy_target):
+                continue
+            fpath = os.path.join("data", fname)
+            if datetime.fromtimestamp(os.path.getmtime(fpath)) < cutoff:
+                os.remove(fpath)
+                logger.info("Cleaned old cache: %s", fname)
     except Exception as e:
         logger.warning("Cache cleanup error: %s", e)
 

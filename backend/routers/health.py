@@ -14,6 +14,13 @@ def _repo_root() -> str:
     return os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
+def _count_data_files(prefix: str) -> int:
+    try:
+        return sum(1 for f in os.listdir("data") if f.startswith(prefix))
+    except OSError:
+        return 0
+
+
 def _git_short_hash() -> str:
     env = (os.environ.get("BUILD_VERSION") or os.environ.get("GIT_COMMIT") or "").strip()
     if env:
@@ -43,8 +50,11 @@ def health():
             "built_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         },
         "files": {
-            "target_boxes.csv": os.path.exists("data/target_boxes.csv"),
-            "target_sun.csv": os.path.exists("data/target_sun.csv"),
+            # ไฟล์เป้าแยกราย sup แล้ว — รายงานเป็นจำนวนไฟล์ ส่วน legacy_* คือไฟล์ global เก่าที่ยังค้าง
+            "target_boxes_files": _count_data_files("target_boxes_"),
+            "target_sun_files": _count_data_files("target_sun_"),
+            "legacy_target_boxes.csv": os.path.exists("data/target_boxes.csv"),
+            "legacy_target_sun.csv": os.path.exists("data/target_sun.csv"),
         },
     }
 

@@ -23,10 +23,32 @@ from .services.managers import warm_managers_cache_at_startup
 logger = logging.getLogger("target_allocation")
 
 
+def _warn_if_multi_worker() -> None:
+    """
+    store ทั้งหมดกันการแก้ทับกันด้วย threading.Lock ซึ่งเป็น lock ระดับโปรเซส
+    หลาย worker = lock ไร้ผล = บั๊กที่แก้ไปแล้วกลับมาแบบเงียบ ๆ (ดู docs/CONCURRENCY.md)
+    log อย่างเดียว ไม่ fail startup — IT เป็นเจ้าของ deploy
+    """
+    raw = (os.environ.get("WEB_CONCURRENCY") or "").strip()
+    if not raw:
+        return
+    try:
+        n = int(raw)
+    except ValueError:
+        return
+    if n > 1:
+        logger.error(
+            "WEB_CONCURRENCY=%d (>1) — ไฟล์ใน data/ ไม่ปลอดภัยเมื่อรันหลายโปรเซส "
+            "ผลกระจายอาจหายหรือคำนวณผิดแบบไม่มี error; ดู docs/CONCURRENCY.md",
+            n,
+        )
+
+
 def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(app_: FastAPI):
         os.makedirs("data", exist_ok=True)
+        _warn_if_multi_worker()
         cleanup_old_caches(max_age_days=7)
         cleanup_export_artifacts_keep_latest_per_sup(keep_n=1)
         warm_managers_cache_at_startup()

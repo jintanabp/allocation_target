@@ -1336,16 +1336,8 @@ body.is-admin .admin-view {
   color: var(--text-3);
   font-family: ui-monospace, monospace;
 }
-@media (max-width: 900px) {
-  .admin-layout { grid-template-columns: 1fr; }
-  .admin-sidebar {
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  .admin-nav-group { display: contents; }
-  .admin-nav-group__label { width: 100%; }
-}
+/* จอเล็ก/มือถือของหน้าแอดมิน: ดูบล็อก "แอดมินบนจอเล็ก" ที่ท้ายไฟล์
+   (ต้องอยู่ท้ายสุดเพราะกฎ .admin-card--table / .admin-table-wrap ถูกประกาศไว้ล่างกว่าจุดนี้) */
 .admin-top {
   grid-row: 1;
   display: flex;
@@ -2622,18 +2614,24 @@ body.is-admin .admin-view {
     width: 100%;
     box-sizing: border-box;
   }
+  /* 2 คอลัมน์ ไม่ใช่เรียงลงทีละอันเต็มความกว้าง — 6 ปุ่มเรียงลงกินความสูง 295px
+     จากจอ 780px ทำให้แทบไม่เหลือที่ให้ตาราง (ปุ่มหลักยังเต็มแถวเพื่อให้เด่น) */
   .admin-top__actions {
     width: 100%;
     margin-left: 0;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
     align-items: stretch;
   }
   .admin-top__actions .admin-btn-primary,
   .admin-top__actions .admin-btn-ghost,
   .admin-top__actions .admin-btn-back {
     width: 100%;
+    box-sizing: border-box;
     justify-content: center;
   }
+  .admin-top__actions > .admin-btn-primary { grid-column: 1 / -1; }
   .admin-controls {
     padding: 8px 10px;
   }
@@ -3134,6 +3132,24 @@ body.is-admin .admin-view {
 .alloc-summary-status--optimized { color: var(--blue, #2563eb); }
 .alloc-summary-status--draft { color: var(--text-3); }
 .alloc-summary-status--none { color: var(--text-3); opacity: 0.7; }
+
+/* คำอธิบายสถานะใต้ตารางสรุป — manager มักไม่รู้ว่า "แบบร่าง" ต่างจาก "กระจายแล้ว" ยังไง */
+.alloc-summary-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border, #e5e7eb);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-3);
+}
+
+.alloc-summary-legend__item .alloc-summary-status {
+  font-weight: 600;
+  margin-right: 4px;
+}
 
 .alloc-summary-wrap__toggle {
   margin-left: auto;
@@ -7285,4 +7301,64 @@ body.is-admin-login-only #msLogoutBtn {
   background: #fffbeb;
   border: 1px solid #fcd34d;
   border-radius: 8px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   แอดมินบนจอเล็ก / มือถือ
+   ต้องอยู่ท้ายไฟล์: กฎ .admin-card--table (~บรรทัด 2900) และ .admin-table-wrap
+   (~3200) ประกาศไว้ล่างกว่าบล็อก @media เดิมที่บรรทัด ~1347 ด้วย specificity เท่ากัน
+   ของที่อยู่หลังจึงชนะ — เคยแก้ไว้ข้างบนแล้วไม่ติดเพราะเหตุนี้
+
+   ปัญหาที่แก้ (วัดจริงบน 390x780 ก่อนแก้):
+     แถบปุ่ม 295px + เมนู 209px → เหลือให้เนื้อหาแค่ 187px (26% ของจอ)
+     และ "เลื่อนหน้าไม่ได้เลย" เพราะ html+body ถูกล็อก 100dvh + overflow:hidden
+   ═══════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 900px) {
+  /* คืนการเลื่อนแบบเอกสารปกติ — app-shell สูงเท่าจอเหมาะกับเดสก์ท็อปเท่านั้น */
+  html:has(body.is-admin) { overflow: visible; height: auto; }
+  body.is-admin { overflow: visible; height: auto; min-height: 100dvh; }
+  .admin-view,
+  body.is-admin .admin-view {
+    position: static;
+    height: auto;
+    min-height: calc(100dvh - var(--topbar-h));
+    overflow: visible;
+  }
+  .admin-shell { height: auto; overflow: visible; grid-template-rows: auto auto; }
+  .admin-layout { grid-template-columns: 1fr; height: auto; overflow: visible; }
+  .admin-content { height: auto; overflow: visible; }
+
+  /* เลิกผูกความสูงกับ viewport — ไม่งั้น scroll ซ้อนกันสามชั้นจนกดใช้ไม่ได้ */
+  .admin-content .admin-panel,
+  .admin-panel { flex: 0 0 auto; height: auto; min-height: 0; overflow: visible; }
+  .admin-card--table { flex: 0 0 auto; min-height: 0; overflow: visible; }
+  .admin-table-wrap {
+    flex: 0 0 auto;
+    height: auto;
+    min-height: 0;
+    max-height: 65vh;   /* ยังเลื่อนในตัวเองได้ (ตารางกว้าง) แต่ไม่กินทั้งจอ */
+  }
+
+  /* เมนู: แถบชิปเลื่อนแนวนอนแถวเดียว
+     เดิมตั้ง flex-wrap:wrap ไว้แต่ .admin-nav-item มี width:100% → wrap ไร้ผล
+     กลายเป็นรายการเรียงลง 7 แถว สูง 209px */
+  .admin-sidebar {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 6px;
+    padding: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    position: sticky;
+    top: 0;
+    z-index: 5;
+  }
+  .admin-nav-group { display: contents; }
+  .admin-nav-group__label { display: none; }
+  .admin-nav-item {
+    width: auto;
+    flex: 0 0 auto;
+    white-space: nowrap;
+    padding: 8px 12px;
+  }
 }

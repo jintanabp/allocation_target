@@ -62,8 +62,8 @@ allocation_target/
 │   └── README.md
 │
 ├── data/                   # สร้างอัตโนมัติ — ไม่ขึ้น Git (.gitignore)
-│   ├── target_boxes.csv        # cache เป้าหีบจาก Fabric (Step 1) — สร้างอัตโนมัติ
-│   ├── target_sun.csv          # cache เป้าเงินรายคนจาก Fabric (Step 1)
+│   ├── target_boxes_{SL}_{ปี}_{ดด}.csv  # cache เป้าหีบจาก Fabric (Step 1) — แยกรายทีม+งวด
+│   ├── target_sun_{SL}_{ปี}_{ดด}.csv    # cache เป้าเงินรายคนจาก Fabric (Step 1)
 │   ├── app.log
 │   ├── token_cache.bin     # cache MSAL (ถ้าใช้แบบ interactive)
 │   └── ...                 # cache อื่น (hist_cache_*, tga_lines_* ตามงวด, ลบอัตโนมัติทุก 7 วัน)
@@ -281,7 +281,9 @@ allocation_target/
 - แสดง **เป้ารวม** งวดที่เลือก — ถ้าไม่ตรง ใช้ลิงก์ **ติดต่อ IT** ใต้เป้ารวม
 - **เป้าหมายตั้งต้นรายพนักงาน:** แท็บ **เทียบเฉลี่ย 3 เดือน** / **เทียบปีที่แล้ว**
 - **เป้าหีบราย SKU:** จัดกลุ่ม **ราย SKU** · **แบรนด์** · **Section**
-- Backend เขียน cache: `target_boxes.csv`, `target_sun.csv`, `tga_lines_{SuperCode}_{year}_{month}.csv`
+- Backend เขียน cache แยกรายทีม+งวดทั้งหมด: `target_boxes_{SuperCode}_{year}_{month}.csv`,
+  `target_sun_{SuperCode}_{year}_{month}.csv`, `tga_lines_{SuperCode}_{year}_{month}.csv`
+  (ดู [docs/CONCURRENCY.md](docs/CONCURRENCY.md) — อย่าสร้างไฟล์ใน `data/` ที่ไม่มี SuperCode ในชื่อ)
 
 ### ขั้นที่ 2 — กำหนดเป้าหมาย *(optional)*
 

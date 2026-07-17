@@ -1,13 +1,19 @@
 import json
 import logging
 import os
+import threading
 import time
 
+from ..core.atomic_io import atomic_write_json, read_locked
 from .access_hierarchy import load_hierarchy_payload, persist_hierarchy, build_hierarchy_payload
 
 logger = logging.getLogger("target_allocation")
 
 MANAGERS_CACHE_FILE = "data/managers_cache.json"
+
+# ไฟล์นี้ถูกอ่านทุก request ที่ผ่าน auth (access_control.build_user_access_context)
+# เดิมเขียนด้วย open(...,"w") ตรง ๆ ไม่มี lock → reader อ่านได้ไฟล์ครึ่งใบตอนมีคน login พร้อมกัน
+_CACHE_LOCK = threading.Lock()
 
 
 def load_full_managers_payload() -> dict:
@@ -22,7 +28,9 @@ def load_full_managers_payload() -> dict:
         try:
             age = time.time() - os.path.getmtime(cache_path)
             if age < ttl:
-                with open(cache_path, "r", encoding="utf-8") as f:
+                # ต้องถือ lock เดียวกับตอนเขียน ไม่งั้นบน Windows การ replace จะพัง
+                # เพราะ reader ถือ handle ค้าง (ดู docs/CONCURRENCY.md)
+                with read_locked(cache_path), open(cache_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 if isinstance(data, dict) and data.get("by_manager") is not None:
                     return data
@@ -39,8 +47,8 @@ def load_full_managers_payload() -> dict:
 
 def persist_managers_payload(payload: dict) -> None:
     os.makedirs("data", exist_ok=True)
-    with open(MANAGERS_CACHE_FILE, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False)
+    with _CACHE_LOCK:
+        atomic_write_json(MANAGERS_CACHE_FILE, payload)
 
 
 def warm_managers_cache_at_startup() -> None:
