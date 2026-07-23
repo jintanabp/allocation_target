@@ -1256,7 +1256,7 @@
   {
     "email": "somtawin.n@sahapat.co.th",
     "userpl": "SL457",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "สมถวิล งามแสง",
     "acc_region": "กลาง",

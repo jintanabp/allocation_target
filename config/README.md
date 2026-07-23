@@ -28,8 +28,8 @@ python scripts/access/repair_user_access.py
 - ฟิลด์ `can_import_targetsun` กำหนดใครกด **ส่งเข้า Target Sun** ได้
 - ฟิลด์ `login_kind`: `marketing` = เข้าระบบแล้วเห็นแอดมินแท็บ **ทีมพนักงาน**, **ผูกรหัส SL** (ดู), **ผูกรหัส SKU** (ดู) เท่านั้น · `manager_acc` = บังคับบทบาท Manager (ใช้คู่กับ `manager_level` และ `acc_division`/`acc_region`/`acc_scope`)
 - ฟิลด์ `manager_level` (เมื่อ `login_kind` = `manager_acc`): `division` = ดูซุปทั้ง division · `regional` = ดูซุปทั้งภาค — **ระบบอนุมาน `acc_scope` อัตโนมัติ** ไม่ต้องตั้งเอง
-- ซุป (`supervisor_acc`): ดูซุปทั้งภาคใน division · ถ้ามี `acc_unit` = van/credit จะดูเฉพาะซุปหน่วยเดียวกันในภาค
-- ฟิลด์ `acc_scope`: `self` = ดูเฉพาะทีมตัวเอง · `region_peers` = ดู Supervisor ใน **division+ภาคเดียวกัน** (กระจายหีบได้เฉพาะทีมตัวเอง — ทีมคนอื่นเป็น read-only)
+- ซุป (`supervisor_acc`): ดูซุปทั้งภาคใน division · ถ้ามี `acc_unit` = van/credit จะดูเฉพาะซุปหน่วยเดียวกันในภาค — **แก้เป้า/กระจาย/ส่ง Target Sun ได้ทุกทีมในกลุ่ม** (โหมด「ทั้งภาค」บันทึกแยก SL)
+- ฟิลด์ `acc_scope`: `self` = ดูเฉพาะทีมตัวเอง · `region_peers` / `van` / `credit` = เห็นและเขียน Supervisor ใน **division+ภาคเดียวกัน** (กรองหน่วยเมื่อเป็น van/credit)
 - ฟิลด์สำคัญ (ทุกแถวมีครบ — ค่าว่างใช้ `none`): `full_name`, `acc_division`, `acc_region`, `acc_unit`, `acc_position`, `login_kind`, `manager_level`, `acc_scope`, `acc_type`, `acc_joblevel`, `visible_supervisor_codes`
 - นำเข้า/ซ่อมจาก Excel:
 

@@ -129,7 +129,7 @@ def get_employees_region_peers(
         description="บังคับดึงจาก Fabric ใหม่ (ข้าม payload cache)",
     ),
 ):
-    """รวมข้อมูลทุกซุปในภาคเดียวกัน — สำหรับ supervisor_acc + region_peers (ดูอย่างเดียว)"""
+    """รวมข้อมูลทุกซุปในภาคเดียวกัน — สำหรับ supervisor_acc + region_peers (แก้/กระจายได้)"""
     sid = sup_id.strip().upper()
     ensure_supervisor_allowed(user, sid)
     home = {str(x).strip().upper() for x in (user.get("home_supervisor_codes") or ())}

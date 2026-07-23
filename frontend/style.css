@@ -2921,8 +2921,10 @@ body.is-admin .admin-view {
 }
 
 /* ล็อกแค่ส่วนตั้งค่า — ตารางผลกระจายอ่านได้ชัดเต็มที่ */
+/* peer ในกลุ่มเดียวกันแก้ได้เหมือนทีมตัวเอง (.is-peer-view ไม่ล็อก Step 3 อีกต่อไป) —
+   ล็อกเฉพาะโหมดรวมทั้ง division ที่ไม่ให้เขียน (.is-aggregate-view ไม่มี --manager-write)
+   และโหมด read-only ที่ตั้งใจล็อกจริง (.is-alloc-readonly-view) */
 .is-aggregate-view:not(.is-aggregate-view--manager-write) .step3-body,
-.is-peer-view .step3-body,
 .is-alloc-readonly-view .step3-body {
   position: relative;
   opacity: 1;
@@ -2932,7 +2934,6 @@ body.is-admin .admin-view {
 }
 
 .is-aggregate-view:not(.is-aggregate-view--manager-write) .step3-body::after,
-.is-peer-view .step3-body::after,
 .is-alloc-readonly-view .step3-body::after {
   display: none;
 }
@@ -2943,12 +2944,6 @@ body.is-admin .admin-view {
 .is-aggregate-view:not(.is-aggregate-view--manager-write) .step3-body > #fabricChangeStep3Notice,
 .is-aggregate-view:not(.is-aggregate-view--manager-write) .step3-body > .run-card,
 .is-aggregate-view:not(.is-aggregate-view--manager-write) .step3-body > .prog-list,
-.is-peer-view .step3-body > .strategy-wrap,
-.is-peer-view .step3-body > .tiered-how,
-.is-peer-view .step3-body > .step3-live-targets-wrap,
-.is-peer-view .step3-body > #fabricChangeStep3Notice,
-.is-peer-view .step3-body > .run-card,
-.is-peer-view .step3-body > .prog-list,
 .is-alloc-readonly-view .step3-body > .strategy-wrap,
 .is-alloc-readonly-view .step3-body > .tiered-how,
 .is-alloc-readonly-view .step3-body > .step3-live-targets-wrap,
@@ -2962,7 +2957,6 @@ body.is-admin .admin-view {
 }
 
 .is-aggregate-view:not(.is-aggregate-view--manager-write) #resultBlock,
-.is-peer-view #resultBlock,
 .is-alloc-readonly-view #resultBlock,
 #resultBlock.result-block--readonly {
   opacity: 1;
@@ -3061,20 +3055,6 @@ body.is-admin .admin-view {
   padding: 1px 4px;
   border-radius: 4px;
   background: rgba(0, 0, 0, 0.04);
-}
-
-.is-peer-view .step3-lock-badge {
-  display: inline-flex;
-}
-
-.is-peer-view #step3Section .step-num {
-  background: var(--bg-main);
-  color: var(--text-3);
-  border: 1px solid var(--border-md);
-}
-
-.is-peer-view #step3Section .step-title {
-  color: var(--text-3);
 }
 
 .alloc-summary-wrap {

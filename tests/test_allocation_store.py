@@ -93,7 +93,21 @@ class TestAllocationStore(unittest.TestCase):
 
 
 class TestAllocationApiAuth(unittest.TestCase):
-    def test_peer_supervisor_cannot_write(self):
+    def test_peer_supervisor_in_allowed_can_write(self):
+        """peer ใน division+ภาค+หน่วยเดียวกัน (อยู่ใน allowed_supervisor_codes) เขียนได้ —
+        ดู tests/test_peer_visibility.py สำหรับกรณี allowed/blocked เพิ่มเติม"""
+        from backend.deps import ensure_allocation_write_allowed
+
+        user = {
+            "auth_disabled": False,
+            "allowed_supervisor_codes": {"SL397", "SL402"},
+            "home_supervisor_codes": {"SL397"},
+            "userpls_manager_pick": set(),
+        }
+        ensure_allocation_write_allowed(user, "SL397")
+        ensure_allocation_write_allowed(user, "SL402")
+
+    def test_supervisor_outside_allowed_cannot_write(self):
         from fastapi import HTTPException
 
         from backend.deps import ensure_allocation_write_allowed
@@ -104,9 +118,8 @@ class TestAllocationApiAuth(unittest.TestCase):
             "home_supervisor_codes": {"SL397"},
             "userpls_manager_pick": set(),
         }
-        ensure_allocation_write_allowed(user, "SL397")
         with self.assertRaises(HTTPException) as ctx:
-            ensure_allocation_write_allowed(user, "SL402")
+            ensure_allocation_write_allowed(user, "SL999")
         self.assertEqual(ctx.exception.status_code, 403)
 
     def test_manager_can_write_allowed_sl(self):

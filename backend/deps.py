@@ -138,33 +138,20 @@ def ensure_supervisor_allowed(user: dict, sup_id: str) -> None:
 
 
 def ensure_own_supervisor_write(user: dict, sup_id: str) -> None:
-    """ห้ามกระจายหีบ/ส่งผลเมื่อดูทีม supervisor คนอื่น (peer read-only)"""
+    """กระจายหีบ/ส่งผลได้เมื่อมีสิทธิ์เข้าถึงรหัสนั้น (รวม peer ในกลุ่มเดียวกัน)"""
     ensure_allocation_write_allowed(user, sup_id)
 
 
 def ensure_allocation_write_allowed(user: dict, sup_id: str) -> None:
-    """บันทึก snapshot ได้เฉพาะทีมตัวเอง — manager เขียน SL ใน allowed ได้"""
+    """
+    บันทึก snapshot / กระจาย / ส่ง Target Sun ได้เมื่อ sup_id อยู่ใน allowed
+    (supervisor peer ใน division+ภาค+หน่วยเดียวกัน และ manager ที่ home ว่าง)
+    """
     ensure_supervisor_allowed(user, sup_id)
     if user.get("auth_disabled") or user.get("acc_admin_full_access"):
         return
-    home = user.get("home_supervisor_codes")
-    if home is None:
-        return
-    home_set = {str(x).strip().upper() for x in home}
-    if not home_set:
-        return
-    sid = (sup_id or "").strip().upper()
-    if sid in home_set:
-        return
-    mgr_pick = user.get("userpls_manager_pick")
-    if mgr_pick:
-        return
-    raise HTTPException(
-        status_code=403,
-        detail=(
-            "โหมดดูอย่างเดียว — กระจายหีบและส่งผลได้เฉพาะทีม Supervisor ของคุณ"
-        ),
-    )
+    # ensure_supervisor_allowed ผ่านแล้ว = อยู่ใน allowed / admin / auth ปิด
+    # ไม่ล็อกที่ home อีก — peer ในกลุ่มเดียวกันเขียนได้
 
 
 require_entra_member = require_authenticated_user

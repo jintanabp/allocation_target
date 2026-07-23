@@ -1133,7 +1133,7 @@ def merge_employees_payloads(
             "brand": "",
             "message": (
                 f"โหมดดูรวม ({aggregate_label}) — {len(aggregate_sup_ids)} ซุป, "
-                f"{len(employees)} พนักงาน · ผู้จัดการกระจายหีบทั้งภาคได้ · ซุปดูอย่างเดียว"
+                f"{len(employees)} พนักงาน · ผู้จัดการ/ซุปในกลุ่มเดียวกันกระจายหีบทั้งภาคได้"
             ),
         },
     )

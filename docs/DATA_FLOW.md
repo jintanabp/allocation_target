@@ -228,10 +228,11 @@ TTL: `EMPLOYEE_PAYLOAD_CACHE_TTL_SEC`, `MANAGERS_CACHE_TTL_SEC`, `ADMIN_TEAM_CAC
 | `GET /data/allocations/summary` | metadata ทุก SL ที่ user เข้าถึงได้ (เบา — อ่าน JSON ต่อ SL) |
 | `DELETE /data/allocations` | ลบ snapshot (แอดมิน) |
 
-**Peer read-only (`region_peers`)**
+**Peer write (`region_peers` / van / credit)**
 
-- Supervisor ดูทีมอื่นในภาคได้ แต่ `PUT` ถูกบล็อก (403) นอกจาก home SL
-- Frontend **fast path**: สลับดู peer โหลดเฉพาะ `GET /data/allocations` — **ไม่** เรียก `loadData` / Fabric
+- Supervisor ดูและ**แก้**ทีมอื่นในภาค+หน่วยเดียวกันได้ (allowed peers)
+- โหมด「ทั้งภาค」: แก้เป้าเงิน · กระจายทีละ SL · บันทึก snapshot แยกต่อ `sup_id` · ส่ง Target Sun ทั้งกลุ่มในครั้งเดียว (เหมือน Manager รวมภาค)
+- Frontend สลับ peer รายคน: โหลดข้อมูลเต็มและเขียนได้ (ไม่ใช่ snapshot-only อีกต่อไป)
 - สรุปทุก SL (`/summary`) cache ใน `sessionStorage` ~2 นาที · invalidate หลังบันทึกผลกระจาย
 
 ---

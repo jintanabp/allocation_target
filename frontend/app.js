@@ -573,9 +573,8 @@ let S = {
   supervisorChoices: [],
   homeSupervisorCodes: [],
   peerSupervisorCodes: [],
+  /** true = กำลังดูทีมที่ไม่ใช่ home ของตัวเอง (peer ในกลุ่มเดียวกัน) — ใช้แสดง banner เท่านั้น แก้ได้เหมือนทีมตัวเอง */
   viewingPeer: false,
-  /** Manager ดูผลกระจายทีมอื่นแบบ read-only (ไม่โหลด Fabric ใหม่) */
-  viewingTeamSnapshotReadOnly: false,
   managerViews: {},
   managerViewOptions: null,
   managerViewMode: "individual",
@@ -725,7 +724,7 @@ function _formatAllocateDurationRange(lowSec, highSec) {
 }
 
 function estimateAllocateSeconds(opts = {}) {
-  const isRegional = _managerAggregateWritable();
+  const isRegional = _regionalAggregateWritable();
   const regionalSupCount = Number(opts.regionalSupCount) || (
     isRegional ? _aggregateSupervisorOrder().length : 1
   );
@@ -891,8 +890,8 @@ function _updateCompositeRegionalBanner(supOrder) {
   const order = supOrder || _aggregateSupervisorOrder().filter((sid) => S.allocSourceBySup?.[sid]);
   const snapN = Object.values(S.allocSourceBySup || {}).filter((v) => v === "snapshot").length;
   const tsN = Object.values(S.allocSourceBySup || {}).filter((v) => v === "targetsun").length;
-  const mgrWrite = _managerAggregateWritable();
-  const title = mgrWrite ? "ตารางรวมทั้งภาค (ผู้จัดการ)" : "ตารางรวมทั้งภาค";
+  const mgrWrite = _regionalAggregateWritable();
+  const title = mgrWrite ? "ตารางรวมทั้งภาค" : "ตารางรวมทั้งภาค";
   let body =
     `รวม ${order.length} ทีม — กระจายแล้ว ${snapN} ทีม · Target Sun ${tsN} ทีม`;
   const sourceNote =
@@ -1608,33 +1607,13 @@ function _invalidateAllocSnapshotCache(supId) {
   }
 }
 
+/**
+ * ไม่มีโหมด read-only เฉพาะการสลับทีม/peer อีกต่อไป — ทุกทีมในกลุ่มที่มองเห็นได้
+ * (home + peer + manager team) แก้เป้า/กระจาย/บันทึก/ส่งได้เหมือนกัน
+ * เก็บฟังก์ชันนี้ไว้เป็นจุดเดียว (เผื่ออนาคตต้องมีโหมดดูอย่างเดียวจริง ๆ เช่น admin preview)
+ */
 function _isAllocReadOnlyView() {
-  return !!S.viewingPeer || !!S.viewingTeamSnapshotReadOnly;
-}
-
-function _isManagerSnapshotOnlySwitch(supId) {
-  if (S.loginRole !== "manager") return false;
-  if (S.managerViewMode !== "individual" || S.aggregateMode) return false;
-  const sid = String(supId || "").trim().toUpperCase();
-  const cur = String(S.supId || "").trim().toUpperCase();
-  if (!sid || sid === cur) return false;
-  const team = new Set(
-    (S.supervisorChoices || []).map((c) => String(c).trim().toUpperCase()).filter(Boolean)
-  );
-  return team.has(sid);
-}
-
-function _isPeerSupervisor(supId) {
-  const sid = String(supId || "").trim().toUpperCase();
-  const home = new Set(
-    (S.homeSupervisorCodes || []).map((c) => String(c).trim().toUpperCase()).filter(Boolean)
-  );
-  return home.size > 0 && !!sid && !home.has(sid);
-}
-
-function _showPeerViewOnlyNotice(show) {
-  const el = document.getElementById("peerStep1Notice");
-  if (el) el.style.display = show ? "block" : "none";
+  return false;
 }
 
 async function _finalizeDashboardAfterLoad(gen) {
@@ -1658,9 +1637,7 @@ async function _finalizeDashboardAfterLoad(gen) {
 
   if (_isDashboardLoadStale(gen)) return false;
 
-  if (S.viewingPeer) {
-    await loadPeerAllocationView(gen);
-  } else if (S.aggregateMode && _shouldShowRegionalCompositeView()) {
+  if (S.aggregateMode && _shouldShowRegionalCompositeView()) {
     await loadRegionalCompositeAllocationView(gen);
   } else {
     const restored = await checkServerAllocationRestore(gen);
@@ -1698,7 +1675,7 @@ function _syncManagerViewOptionsFromLogin() {
   }
 }
 
-/** Supervisor + region_peers — มุมมองรายคน / รวมทั้งภาค (ดูอย่างเดียว) */
+/** Supervisor + region_peers — มุมมองรายคน / รวมทั้งภาค (แก้ได้ในกลุ่มเดียวกัน) */
 function _supervisorRegionPeersView() {
   return S.loginRole === "supervisor"
     && Array.isArray(S.peerSupervisorCodes)
@@ -1823,9 +1800,9 @@ function updateManagerViewControlsUI() {
   if (hint) {
     if (isSupRegion) {
       if (S.managerViewMode === "individual") {
-        hint.textContent = "เลือกทีมในภาค (กระจายได้เฉพาะทีมตัวเอง) · ดูเป้าทั้งภาค → เลือก「ทั้งภาค」";
+        hint.textContent = "เลือกทีมในกลุ่ม peer — แก้เป้า/กระจายได้ทุกทีม · รวมทั้งภาค → เลือก「ทั้งภาค」";
       } else {
-        hint.textContent = "เป้าหีบรวมทั้งภาค (Step 1) · ตาราง Step 3 รวมผลทุกทีมอัตโนมัติ · กระจายทีมตัวเอง → สลับ「รายคน」";
+        hint.textContent = "รวมทั้งภาค — แก้เป้า/กระจายทุกทีม · บันทึกและส่ง Target Sun แยกตาม Supervisor";
       }
     } else if (!isMgr) {
       hint.textContent = S.loginRole === "manager"
@@ -1852,7 +1829,7 @@ function _managerAggregateWritable() {
   );
 }
 
-/** Supervisor เลือกมุมมอง「ทั้งภาค」— ดูอย่างเดียว (ไม่พึ่ง aggregate_mode จาก API อย่างเดียว) */
+/** Supervisor เลือกมุมมอง「ทั้งภาค」— peer ใน division+ภาค+หน่วยเดียวกัน */
 function _supervisorRegionAggregateView() {
   return (
     S.loginRole === "supervisor"
@@ -1861,10 +1838,21 @@ function _supervisorRegionAggregateView() {
   );
 }
 
-/** โหมดรวมที่ปิดการแก้ไข/กระจาย (ซุปไม่ใช่ aggregate; manager ยกเว้น) */
+/**
+ * โหมดรวมที่แก้เป้า/กระจาย/บันทึก/ส่ง Target Sun ได้
+ * — Manager รวมภาค หรือ Supervisor ทั้งภาค (peer กลุ่มเดียวกัน)
+ */
+function _regionalAggregateWritable() {
+  if (_managerAggregateWritable()) return true;
+  return (
+    !!S.aggregateMode
+    && _supervisorRegionAggregateView()
+  );
+}
+
+/** โหมดรวมที่ปิดการแก้ไข/กระจาย (เช่น Manager รวมทั้ง division) */
 function _aggregateBlocksWrite() {
-  if (_managerAggregateWritable()) return false;
-  if (_supervisorRegionAggregateView()) return true;
+  if (_regionalAggregateWritable()) return false;
   return !!S.aggregateMode;
 }
 
@@ -1913,23 +1901,27 @@ function _supervisorCodeForAllocRow(a) {
 }
 
 function _updateAggregateModeUI() {
-  const mgrWrite = _managerAggregateWritable();
+  const regionalWrite = _regionalAggregateWritable();
   const readOnlyAgg = _aggregateBlocksWrite();
   const banner = document.getElementById("aggregateModeBanner");
   if (banner) {
     banner.style.display = S.aggregateMode ? "block" : "none";
     if (S.aggregateMode) {
-      banner.textContent = mgrWrite
-        ? "โหมดรวมภาค (ผู้จัดการ) — กำหนดเป้าและกระจายหีบได้ทั้งภาค · ส่ง Target Sun ทีละซุปอัตโนมัติ"
-        : (S.loginRole === "manager" && S.managerViewMode === "all"
-          ? "โหมดรวมทั้ง division — ดูข้อมูลสรุปเท่านั้น · กระจายหีบให้เลือก「รายคน」หรือ「รวมภาค」"
-          : (_supervisorRegionPeersView()
-            ? "โหมดดูเป้าหีบรวมทั้งภาค — ตาราง Step 3 รวมผลกระจาย/Target Sun ทุกทีมอัตโนมัติ · กระจายหีบทีมตัวเอง → สลับ「รายคน」"
-            : "โหมดดูรวม — แสดงข้อมูลสรุปเท่านั้น ไม่สามารถกระจายหีบ · สลับเป็น「รายคน」เพื่อดำเนินการ"));
+      if (regionalWrite) {
+        banner.textContent = S.loginRole === "manager"
+          ? "โหมดรวมภาค (ผู้จัดการ) — กำหนดเป้าและกระจายหีบได้ทั้งภาค · ส่ง Target Sun ทีละซุปอัตโนมัติ"
+          : "โหมดรวมทั้งภาค — แก้เป้า/กระจายหีบทุกทีมในกลุ่ม (div·ภาค·หน่วย) · บันทึกและส่ง Target Sun แยกตาม Supervisor";
+      } else if (S.loginRole === "manager" && S.managerViewMode === "all") {
+        banner.textContent =
+          "โหมดรวมทั้ง division — ดูข้อมูลสรุปเท่านั้น · กระจายหีบให้เลือก「รายคน」หรือ「รวมภาค」";
+      } else {
+        banner.textContent =
+          "โหมดดูรวม — แสดงข้อมูลสรุปเท่านั้น ไม่สามารถกระจายหีบ · สลับเป็น「รายคน」เพื่อดำเนินการ";
+      }
     }
   }
   document.body.classList.toggle("is-aggregate-view", !!S.aggregateMode);
-  document.body.classList.toggle("is-aggregate-view--manager-write", mgrWrite);
+  document.body.classList.toggle("is-aggregate-view--manager-write", regionalWrite);
 
   syncStep3LockUI();
 
@@ -1965,11 +1957,11 @@ function _updateAggregateModeUI() {
   } else if (runBtn) {
     runBtn.removeAttribute("title");
     if (runTitle && !S.allocations?.length) {
-      runTitle.textContent = mgrWrite ? "พร้อมกระจายหีบทั้งภาค" : "พร้อมกระจายหีบ";
+      runTitle.textContent = regionalWrite ? "พร้อมกระจายหีบทั้งภาค" : "พร้อมกระจายหีบ";
     }
     if (runSub && !S.allocations?.length) {
-      runSub.textContent = mgrWrite
-        ? "ระบบจะคำนวณทีละ Supervisor ในภาค"
+      runSub.textContent = regionalWrite
+        ? "ระบบจะคำนวณทีละ Supervisor ในกลุ่ม · บันทึก/ส่งแยกตามทีม"
         : "ตรวจสอบยอดรวมเป้าเงินก่อนกดเริ่มคำนวณ";
     }
   }
@@ -2168,107 +2160,6 @@ function updateDashboardSupBadge() {
   }
 }
 
-async function switchToReadOnlyAllocationView(newSupId) {
-  const ns = String(newSupId ?? "").trim();
-  const cur = String(S.supId ?? "").trim();
-  if (!ns || ns === cur) return;
-  const isPeer = _isPeerSupervisor(ns);
-  const isMgrSnap = _isManagerSnapshotOnlySwitch(ns);
-  if (!isPeer && !isMgrSnap) {
-    return switchSupervisorContext(ns);
-  }
-
-  const prevId = S.supId;
-  setSupervisorSwitchLoading(true, "กำลังโหลดข้อมูลทีม…");
-  _setStep1Skeleton(true);
-  pushGlobalBusy(UX.busyLoadTeam);
-  const gen = _bumpDashboardLoadGen();
-  try {
-    S.supId = ns;
-    S.allocations = [];
-    S._hasUnsaved = false;
-    _undoStack = [];
-    S.viewingTeamSnapshotReadOnly = isMgrSnap && !isPeer;
-    _clearCompositeAllocState();
-    const rb = document.getElementById("resultBlock");
-    if (rb) rb.style.display = "none";
-    const pl = document.getElementById("progList");
-    if (pl) pl.style.display = "none";
-
-    updateSupervisorSwitcherUI();
-    updateDashboardSupBadge();
-    syncViewingPeerState({ skipPeerSnapshotLoad: true });
-    _showPeerViewOnlyNotice(isPeer);
-
-    const dataOk = await loadData(S.supId, S.targetMonth, S.targetYear);
-    if (_isDashboardLoadStale(gen)) return;
-    if (!dataOk) {
-      S.supId = prevId;
-      S.viewingTeamSnapshotReadOnly = false;
-      updateSupervisorSwitcherUI();
-      updateDashboardSupBadge();
-      syncViewingPeerState();
-      toast("โหลดข้อมูล Supervisor ไม่สำเร็จ — ลองอีกครั้ง", "red");
-      return;
-    }
-
-    const snapOk = await _applyServerAllocationSnapshot(ns, { readOnly: true, deferRender: true });
-    if (_isDashboardLoadStale(gen)) return;
-
-    const note = document.getElementById("step3ResultTargetNote");
-    if (snapOk) {
-      if (note) {
-        note.textContent = isMgrSnap
-          ? `แสดงผลกระจายของ ${ns} จาก server (โหมดดูอย่างเดียว — สลับทีมเพื่อแก้เป้า)`
-          : "แสดงผลกระจายล่าสุดจาก server (โหมดดูอย่างเดียว)";
-        note.style.display = "block";
-      }
-    } else {
-      S.allocations = [];
-      if (rb) rb.style.display = "none";
-      if (note) {
-        note.textContent = "ยังไม่มีผลกระจายบน server — ดูข้อมูลตั้งต้น Step 1–2 ได้ (แก้ไขไม่ได้)";
-        note.style.display = "block";
-      }
-    }
-
-    renderStep1();
-    renderYellowTable();
-    _updateAggregateModeUI();
-    updateValidation();
-    _updateNegGrowthReasonState();
-    _renderBrandStrategyPanel();
-    _showSkuWarnings();
-    syncPeerReadOnlyUI();
-    syncStep3LockUI();
-    syncLakehouseButton();
-    syncRestartAllocBtn();
-    if (!_readAllocSummaryCache()) {
-      loadAllocationSummary(false);
-    }
-    checkSnapshotChanges();
-  } catch (err) {
-    if (!_isDashboardLoadStale(gen)) {
-      S.supId = prevId;
-      S.viewingTeamSnapshotReadOnly = false;
-      updateSupervisorSwitcherUI();
-      updateDashboardSupBadge();
-      syncViewingPeerState();
-      toast(String(err?.message || err), "red");
-    }
-  } finally {
-    popGlobalBusy();
-    _setStep1Skeleton(false);
-    setSupervisorSwitchLoading(false);
-    _showPeerViewOnlyNotice(!!S.viewingPeer);
-  }
-}
-
-/** @deprecated alias — ใช้ switchToReadOnlyAllocationView */
-async function switchToPeerViewReadOnly(newSupId) {
-  return switchToReadOnlyAllocationView(newSupId);
-}
-
 /** Manager โหมดรายคน — ยืนยันก่อนสลับไปทีม Supervisor อื่น (แก้เป้า/กระจายได้) */
 function _confirmManagerIndividualSuperSwitch(newSupId) {
   if (S.loginRole !== "manager" || S.managerViewMode !== "individual" || S.aggregateMode) {
@@ -2300,11 +2191,6 @@ async function switchSupervisorContext(newSupId) {
   const cur = String(S.supId ?? "").trim();
   if (!ns || ns === cur) return;
   if (S.loginRole === "manager" && S.managerViewMode !== "individual") return;
-  if (_isPeerSupervisor(ns)) {
-    return switchToReadOnlyAllocationView(ns);
-  }
-  S.viewingTeamSnapshotReadOnly = false;
-  _showPeerViewOnlyNotice(false);
   if (S._hasUnsaved) {
     const ok = window.confirm("มีการแก้ไขที่ยังไม่ได้บันทึกหรือดาวน์โหลด — ต้องการสลับ Supervisor ต่อหรือไม่?");
     if (!ok) {
@@ -3421,7 +3307,12 @@ async function _confirmIfServerSnapshotStale(supId, actionLabel = "บันท�
   }
 }
 
-function syncViewingPeerState(opts = {}) {
+/**
+ * S.viewingPeer = กำลังดูทีมที่ไม่ใช่ home ของตัวเอง (peer ในกลุ่มเดียวกัน) — ใช้แสดง banner เท่านั้น
+ * ไม่มีผลต่อสิทธิ์เขียน/โหลดข้อมูลอีกต่อไป (peer แก้ได้เหมือนทีมตัวเอง) — โหลด/restore snapshot
+ * เป็นเส้นทางเดียวกับ home ทั้งหมดผ่าน checkServerAllocationRestore ใน _finalizeDashboardAfterLoad
+ */
+function syncViewingPeerState() {
   const home = new Set(
     (S.homeSupervisorCodes || []).map(c => String(c).trim().toUpperCase()).filter(Boolean)
   );
@@ -3434,7 +3325,7 @@ function syncViewingPeerState(opts = {}) {
     if (S.viewingPeer) {
       const mine = [...home].join(", ");
       txt.textContent =
-        `กำลังดูทีม ${sup} (โหมดดูอย่างเดียว) — กระจายหีบและส่ง Target Sun ใช้ได้เฉพาะทีม ${mine} เท่านั้น`;
+        `กำลังดูทีม ${sup} — แก้เป้า/กระจายหีบ/ส่ง Target Sun ได้ (กลุ่ม peer เดียวกับ ${mine})`;
       bar.style.display = "flex";
       document.body.classList.add("has-peer-view-banner");
       _refreshPeerBannerMetadata(sup, txt, mine);
@@ -3446,11 +3337,7 @@ function syncViewingPeerState(opts = {}) {
   document.body.classList.toggle("is-peer-view", !!S.viewingPeer);
   syncPeerReadOnlyUI();
   syncStep3LockUI();
-  if (S.viewingPeer && !wasPeer && !opts.skipPeerSnapshotLoad) {
-    const rb = document.getElementById("resultBlock");
-    if (rb) rb.style.display = "none";
-    loadPeerAllocationView();
-  } else if (wasPeer && !S.viewingPeer) {
+  if (wasPeer && !S.viewingPeer) {
     const note = document.getElementById("step3ResultTargetNote");
     if (note) {
       note.textContent = "";
@@ -3475,47 +3362,29 @@ async function _refreshPeerBannerMetadata(sup, txtEl, homeCodes) {
     }
   } catch (_) { /* ignore */ }
   txtEl.textContent =
-    `ดูอย่างเดียว${metaLine} — กำลังดูทีม ${sup} · กระจายหีบได้เฉพาะทีม ${homeCodes}`;
+    `ทีม ${sup}${metaLine} — แก้เป้า/กระจาย/ส่งได้ (กลุ่มเดียวกับ ${homeCodes})`;
 }
 
 function syncStep3LockUI() {
   const readOnlyAgg = _aggregateBlocksWrite();
   const roPeer = _isAllocReadOnlyView();
-  const mgrSnapRo = !!S.viewingTeamSnapshotReadOnly;
-  const mgrWrite = _managerAggregateWritable();
+  const mgrWrite = _regionalAggregateWritable();
   const badge = document.getElementById("step3LockBadge");
-  if (badge) {
-    if (readOnlyAgg) {
-      badge.textContent = "ใช้ไม่ได้ในโหมดดูรวม";
-    } else if (roPeer) {
-      badge.textContent = mgrSnapRo
-        ? "โหมดดูอย่างเดียว — สลับทีมเพื่อแก้เป้า/กระจาย"
-        : "ไม่สามารถกระจายหีบให้ Supervisor คนอื่นได้";
-    }
+  if (badge && readOnlyAgg) {
+    badge.textContent = "ใช้ไม่ได้ในโหมดดูรวม";
   }
   const step3 = document.getElementById("step3Section");
   if (step3) step3.setAttribute("aria-disabled", (readOnlyAgg || roPeer) ? "true" : "false");
   const runTitle = qs("#runTitle");
   const runSub = qs("#runSub");
   const runBtn = qs("#runBtn");
-  if (roPeer && !readOnlyAgg) {
-    if (runTitle) {
-      runTitle.textContent = mgrSnapRo
-        ? "โหมดดูอย่างเดียว"
-        : "ไม่สามารถกระจายหีบให้ Supervisor คนอื่นได้";
-    }
-    if (runSub) {
-      runSub.textContent = mgrSnapRo
-        ? "สลับทีมจากเมนูด้านบนเพื่อแก้เป้าและกระจายหีบ"
-        : "สลับกลับทีมของคุณเพื่อกระจายหีบ";
-    }
-  } else if (!readOnlyAgg && !roPeer) {
+  if (!readOnlyAgg && !roPeer) {
     if (runBtn) runBtn.removeAttribute("title");
     if (!S.allocations?.length) {
       if (runTitle) runTitle.textContent = mgrWrite ? "พร้อมกระจายหีบทั้งภาค" : "พร้อมกระจายหีบ";
       if (runSub) {
         runSub.textContent = mgrWrite
-          ? "ระบบจะคำนวณทีละ Supervisor ในภาค"
+          ? "ระบบจะคำนวณทีละ Supervisor ในกลุ่ม · บันทึก/ส่งแยกตามทีม"
           : "ตรวจสอบยอดรวมเป้าเงินก่อนกดเริ่มคำนวณ";
       }
     }
@@ -3530,9 +3399,7 @@ function syncPeerReadOnlyUI() {
   if (runBtn) {
     if (ro) {
       runBtn.disabled = true;
-      runBtn.title = S.viewingTeamSnapshotReadOnly
-        ? "โหมดดูอย่างเดียว — สลับทีมเพื่อแก้เป้าและกระจายหีบ"
-        : "โหมดดูอย่างเดียว — สลับกลับทีมของคุณเพื่อกระจายหีบ";
+      runBtn.title = "โหมดดูอย่างเดียว";
     } else if (!runBtn.classList.contains("disabled-by-validation")) {
       runBtn.removeAttribute("title");
     }
@@ -3583,10 +3450,8 @@ function syncStep2ReadOnlyUI() {
     if (ro) {
       roNotice.style.display = "block";
       roNotice.textContent = _aggregateBlocksWrite()
-        ? "โหมดดูรวมทั้งภาค — แก้เป้าเงินไม่ได้ · สลับ「รายคน」เพื่อแก้ไข"
-        : S.viewingPeer
-          ? "โหมดดูผลกระจายทีมอื่น — แก้เป้าเงินไม่ได้ · สลับกลับทีมของคุณเพื่อแก้ไข"
-          : "โหมดดูอย่างเดียว — แก้เป้าเงินไม่ได้ · สลับทีมเพื่อแก้ไข";
+        ? "โหมดดูรวมทั้ง division — แก้เป้าเงินไม่ได้ · สลับ「รายคน」หรือ「รวมภาค」เพื่อแก้ไข"
+        : "โหมดดูอย่างเดียว — แก้เป้าเงินไม่ได้ · สลับทีมเพื่อแก้ไข";
     } else {
       roNotice.style.display = "none";
     }
@@ -4259,7 +4124,10 @@ function updateDashboardChrome() {
     if (S.aggregateMode && _supervisorRegionPeersView()) {
       const nSup = (S.aggregateSupIds || []).length || (S.peerSupervisorCodes || []).length + 1;
       desc.textContent =
-        `โหมดดูรวมทั้งภาค — เป้าหีบรวมต่อ SKU และพนักงานทุกทีม (${nSup} SL) · กระจายหีบได้เฉพาะทีมตัวเอง`;
+        `โหมดรวมทั้งภาค — เป้าหีบรวมต่อ SKU และพนักงานทุกทีม (${nSup} SL) · แก้เป้า/กระจาย/ส่ง Target Sun ได้ทั้งกลุ่ม`;
+    } else if (S.aggregateMode && _regionalAggregateWritable()) {
+      desc.textContent =
+        `โหมดรวมภาค — เป้าหมายรวมของเดือน ${monthTh} ปี พ.ศ. ${be} · กระจายหีบได้`;
     } else if (S.aggregateMode) {
       desc.textContent =
         `โหมดดูรวม — เป้าหมายรวมของเดือน ${monthTh} ปี พ.ศ. ${be} (ดูอย่างเดียว)`;
@@ -5038,7 +4906,7 @@ async function runOptimization() {
     document.getElementById("brandStrategyPanel")?.scrollIntoView({ behavior: "smooth", block: "center" });
     return;
   }
-  if (_managerAggregateWritable()) {
+  if (_regionalAggregateWritable()) {
     const ok = await _confirmRegionalReallocateIfNeeded();
     if (!ok) return;
   }
@@ -5089,7 +4957,7 @@ async function runOptimization() {
       syncLakehouseButton();
       syncRestartAllocBtn();
       qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
-      if (_managerAggregateWritable()) {
+      if (_regionalAggregateWritable()) {
         S.compositeAllocView = true;
         const saved = await saveRegionalAllocationSnapshots(displayAllocs, "optimized");
         for (const supId of saved || []) {
@@ -5234,7 +5102,7 @@ async function _doOptimize(lockedEdits = []) {
 
     let allocs = [];
 
-    if (_managerAggregateWritable()) {
+    if (_regionalAggregateWritable()) {
       const grouped = _employeesGroupedBySupervisor();
       const supOrder = _aggregateSupervisorOrder().filter((sid) => grouped.has(sid));
       if (!supOrder.length) {
@@ -5984,7 +5852,7 @@ function onResultEdit(el) {
   _rebalanceTimer = setTimeout(() => {
     autoRebalance(true, { skipRender: true });
     _syncResultTableAfterRebalance();
-    if (S.compositeAllocView && _managerAggregateWritable()) {
+    if (S.compositeAllocView && _regionalAggregateWritable()) {
       queueRegionalAllocationSave("draft");
     } else {
       _saveAllocationSnapshot();
@@ -6509,7 +6377,7 @@ function _lakehouseTargetSkus() {
 
 /** กรองตาม SL เฉพาะ manager กระจายทั้งภาค — supervisor คนเดียวไม่กรอง (กัน employee ไม่มี supervisor_code) */
 function _lakehouseMatrixFilterSup(supId) {
-  if (_managerAggregateWritable()) {
+  if (_regionalAggregateWritable()) {
     return String(supId || "").trim().toUpperCase() || null;
   }
   return null;
@@ -6570,7 +6438,7 @@ function _lakehouseAllocationsFromStep3(filterSupId = null, brand = null) {
 }
 
 function _lakehouseSupIdsForExport() {
-  if (_managerAggregateWritable()) {
+  if (_regionalAggregateWritable()) {
     const fromAllocs = [...new Set(
       (S.allocations || []).map((a) => _supervisorCodeForAllocRow(a)).filter(Boolean)
     )];
@@ -7271,7 +7139,7 @@ let _serverAllocSaveTimer = null;
 let _regionalAllocSaveTimer = null;
 
 function queueRegionalAllocationSave(status = "draft") {
-  if (!S.compositeAllocView || !_managerAggregateWritable()) return;
+  if (!S.compositeAllocView || !_regionalAggregateWritable()) return;
   if (!S.allocations?.length && status === "draft") return;
   clearTimeout(_regionalAllocSaveTimer);
   _regionalAllocSaveTimer = setTimeout(() => {
@@ -7292,19 +7160,26 @@ function queueRegionalAllocationSave(status = "draft") {
 function _canWriteServerAllocationForSup(supId) {
   if (_isAllocReadOnlyView()) return false;
   const sid = String(supId || "").trim().toUpperCase();
-  const allowed = new Set(
-    (S.supervisorChoices || []).map((c) => String(c).trim().toUpperCase()).filter(Boolean)
-  );
+  if (!sid) return false;
+  const allowed = new Set();
+  for (const c of (S.supervisorChoices || [])) {
+    const u = String(c).trim().toUpperCase();
+    if (u) allowed.add(u);
+  }
+  for (const c of (S.peerSupervisorCodes || [])) {
+    const u = String(c).trim().toUpperCase();
+    if (u) allowed.add(u);
+  }
+  for (const c of (S.homeSupervisorCodes || [])) {
+    const u = String(c).trim().toUpperCase();
+    if (u) allowed.add(u);
+  }
   if (allowed.size && !allowed.has(sid)) return false;
-  const home = new Set(
-    (S.homeSupervisorCodes || []).map(c => String(c).trim().toUpperCase()).filter(Boolean)
-  );
-  if (!home.size) return true;
-  return home.has(sid);
+  return true;
 }
 
 function _canWriteServerAllocation() {
-  if (S.aggregateMode) return false;
+  if (S.aggregateMode) return _regionalAggregateWritable();
   return _canWriteServerAllocationForSup(S.supId);
 }
 
@@ -7903,15 +7778,12 @@ function updateAllocationSummaryVisibility() {
   const peers = (S.peerSupervisorCodes || []).length > 0;
   const isMgr = S.loginRole === "manager";
   const individual = S.managerViewMode === "individual" && !S.aggregateMode;
-  const mgrRegional = _managerAggregateWritable();
-  const supRegionAgg = S.aggregateMode && _supervisorRegionPeersView();
+  const regionalWrite = _regionalAggregateWritable();
   const teamCount = (S.supervisorChoices || []).length;
-  const show = (individual && (isMgr || peers) && (teamCount > 1 || isMgr)) || mgrRegional || supRegionAgg;
+  const show = (individual && (isMgr || peers) && (teamCount > 1 || isMgr)) || regionalWrite;
   wrap.style.display = show ? "block" : "none";
   if (show) {
-    // เปิดเป็นค่าเริ่มต้น เว้นแต่ผู้ใช้กดพับเอง
-    // (โหมดรวมภาคเปิดเสมอ เพราะแผงนี้คือเนื้อหาหลักของมุมมองนั้น)
-    if (mgrRegional || supRegionAgg || !_allocSummaryUserCollapsed) {
+    if (regionalWrite || !_allocSummaryUserCollapsed) {
       _setAllocationSummaryOpen(true);
     }
     loadAllocationSummary(false);
@@ -8035,7 +7907,10 @@ async function prefetchAllocationSnapshots() {
 }
 
 async function loadAllocationSummary(forceRefresh = false) {
-  updateAllocationSummaryVisibility();
+  // ห้ามเรียก updateAllocationSummaryVisibility() ที่นี่ — ฟังก์ชันนั้นเรียก loadAllocationSummary(false)
+  // กลับเมื่อ show=true ทำให้เกิด recursion วนไม่หยุด (stack overflow) ตอน peer/regionalWrite ทำให้
+  // show เป็น true ได้จริง ผู้เรียกทุกจุดเรียก updateAllocationSummaryVisibility() เพื่อ set display ไว้
+  // ก่อนเรียกฟังก์ชันนี้อยู่แล้ว เช็ค wrap.style.display ด้านล่างพอแล้ว
   const wrap = document.getElementById("allocationSummaryWrap");
   const body = document.getElementById("allocationSummaryBody");
   if (!wrap || wrap.style.display === "none" || !body) return;
@@ -8082,11 +7957,7 @@ async function viewAllocationSnapshot(supId) {
   }
   const cur = String(S.supId ?? "").trim();
   if (cur !== sid) {
-    if (_isPeerSupervisor(sid)) {
-      await switchToReadOnlyAllocationView(sid);
-    } else {
-      await switchSupervisorContext(sid);
-    }
+    await switchSupervisorContext(sid);
     return;
   }
   await _applyServerAllocationSnapshot(sid, { readOnly: !_canWriteServerAllocation() });
@@ -8103,7 +7974,18 @@ async function _fetchServerAllocationSnapshot(supId, opts = {}) {
     target_month: String(S.targetMonth),
     target_year: String(S.targetYear),
   });
-  const res = await fetchWithTimeout(`${API_BASE_URL}/data/allocations?${q}`, {}, 20000);
+  const url = `${API_BASE_URL}/data/allocations?${q}`;
+
+  // ตอนโหลดหน้า/login มี request หลายตัวยิงพร้อมกัน (employees, summary, snapshot ฯลฯ)
+  // บางเบราว์เซอร์/เครื่องอาจโดน ERR_INSUFFICIENT_RESOURCES ชั่วคราวจนแถวนี้หลุดไปเงียบๆ
+  // (กด "ดู" ทีหลังกลับเรียกสำเร็จ เพราะ burst ตอนโหลดหน้าจบไปแล้ว) — retry เครือข่ายสั้นๆ 1 ครั้งกันเคสนี้
+  let res;
+  try {
+    res = await fetchWithTimeout(url, {}, 20000);
+  } catch (e) {
+    await new Promise((r) => setTimeout(r, 500));
+    res = await fetchWithTimeout(url, {}, 20000);
+  }
   if (res.status === 404) return null;
   if (!res.ok) {
     const j = await res.json().catch(() => ({}));
@@ -8181,27 +8063,11 @@ async function _applyServerAllocationSnapshot(supId, opts = {}) {
   return true;
 }
 
-async function loadPeerAllocationView(gen = null) {
-  if (!S.viewingPeer) return;
-  if (gen != null && _isDashboardLoadStale(gen)) return;
-  try {
-    const ok = await _applyServerAllocationSnapshot(S.supId, { readOnly: true });
-    if (gen != null && _isDashboardLoadStale(gen)) return;
-    if (ok) {
-      const note = document.getElementById("step3ResultTargetNote");
-      if (note) {
-        note.textContent = "แสดงผลกระจายล่าสุดจาก server (โหมดดูอย่างเดียว)";
-        note.style.display = "block";
-      }
-    }
-  } catch (e) {
-    console.warn("loadPeerAllocationView:", e);
-  }
-}
-
 async function checkServerAllocationRestore(gen = null) {
   if (gen != null && _isDashboardLoadStale(gen)) return false;
-  if (S.viewingPeer || S.aggregateMode) return false;
+  // aggregateMode มีเส้นทาง restore ของตัวเอง (loadRegionalCompositeAllocationView) —
+  // peer ในกลุ่มเดียวกัน restore เหมือนทีมตัวเองทุกอย่าง (เขียนได้)
+  if (S.aggregateMode) return false;
   const sid = String(S.supId || "").trim();
   if (!sid) return false;
 
@@ -8209,18 +8075,15 @@ async function checkServerAllocationRestore(gen = null) {
     const snap = await _fetchServerAllocationSnapshot(sid, { forceRefresh: true });
     if (gen != null && _isDashboardLoadStale(gen)) return false;
 
-    const serverStatus = String(snap?.status || "").toLowerCase();
-    const serverHasWork = snap && Array.isArray(snap.allocations)
-      && snap.allocations.some((a) => (Number(a?.allocated_boxes) || 0) > 0);
-    const preferServer = serverHasWork
-      && (serverStatus === "optimized" || serverStatus === "draft" || serverStatus === "sent_targetsun");
-
-    if (!snap || !preferServer) {
+    if (!snap) {
       updateStep3SnapshotBadge(null);
       syncRestartAllocBtn();
       return false;
     }
 
+    // แสดง badge/meta ทันทีที่มี snapshot บน server — ไม่ต้องเดาซ้ำว่า "มีผลงานจริงไหม"
+    // (ให้ _applyServerAllocationSnapshot ตัดสินเองจุดเดียว กันสองจุดตัดสินไม่ตรงกัน
+    // ซึ่งเคยทำให้ตาราง Step 3 ไม่โผล่อัตโนมัติทั้งที่กด "ดู" แล้วขึ้น)
     updateStep3SnapshotBadge(snap);
     _setServerSnapshotMeta(snap, sid);
 
@@ -8242,8 +8105,9 @@ async function checkServerAllocationRestore(gen = null) {
       if (runBtn && runBtn.textContent === "เริ่มคำนวณ") {
         runBtn.textContent = "คำนวณใหม่";
       }
-    } else if (serverHasWork) {
-      console.warn("checkServerAllocationRestore: snapshot มีข้อมูลแต่แสดงตารางไม่ได้", sid);
+    } else {
+      // snapshot ไม่มีหีบเลย (เช่น draft ว่าง) — ไม่มีอะไรให้โชว์ ไม่ใช่ error
+      syncRestartAllocBtn();
     }
     return !!ok;
   } catch (e) {
@@ -8552,7 +8416,7 @@ function _renderFabricStep3Notices(changes, source = "fabric") {
 function _renderStep3TargetChangeCompactNote(changes, timeStr) {
   const note = document.getElementById("step3ResultTargetNote");
   if (!note || !changes?.length) return;
-  if (S.compositeAllocView || S.viewingPeer || _isAllocReadOnlyView()) return;
+  if (S.compositeAllocView || _isAllocReadOnlyView()) return;
   const n = changes.length;
   note.dataset.targetChangeNote = "1";
   note.innerHTML =
@@ -8661,7 +8525,7 @@ function _saveAllocationSnapshot() {
 }
 
 function checkSnapshotChanges() {
-  if (S.compositeAllocView || S.viewingPeer || _isAllocReadOnlyView()) {
+  if (S.compositeAllocView || _isAllocReadOnlyView()) {
     document.getElementById("changeBanner")?.remove();
     _clearFabricStep3Notices();
     _clearStep3TargetChangeCompactNote();
@@ -8718,7 +8582,7 @@ async function runReAllocationKeepEdits() {
   const bannerBtn = document.querySelector(".btn-realloc");
   if (bannerBtn) { bannerBtn.disabled = true; bannerBtn.textContent = "⏳ กำลังดำเนินการ..."; }
 
-  if (_managerAggregateWritable()) {
+  if (_regionalAggregateWritable()) {
     const ok = await _confirmRegionalReallocateIfNeeded();
     if (!ok) {
       if (bannerBtn) { bannerBtn.disabled = false; bannerBtn.textContent = "🔄 กระจายหีบใหม่ (คงตัวเลขที่แก้เอง)"; }
@@ -8763,7 +8627,7 @@ async function runReAllocationKeepEdits() {
   requestAnimationFrame(() => adjustResultStickyGap());
   qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
   toast("✅ กระจายหีบใหม่สำเร็จ — ตัวเลขที่แก้เองยังคงอยู่", "green");
-  if (_managerAggregateWritable()) {
+  if (_regionalAggregateWritable()) {
     S.compositeAllocView = true;
     saveRegionalAllocationSnapshots(allocs, "optimized")
       .then((saved) => {

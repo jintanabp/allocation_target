@@ -1,4 +1,4 @@
-"""Tests for peer read-only write guard."""
+"""Tests for peer write guard (same-group peers may write)."""
 
 from __future__ import annotations
 
@@ -23,14 +23,23 @@ class TestPeerWriteGuard(unittest.TestCase):
         }
         ensure_own_supervisor_write(user, "SL397")
 
-    def test_blocks_peer_supervisor(self):
+    def test_allows_peer_supervisor_in_allowed(self):
+        """peer ในกลุ่มเดียวกัน (อยู่ใน allowed) เขียนได้"""
+        user = {
+            "auth_disabled": False,
+            "allowed_supervisor_codes": {"SL397", "SL402"},
+            "home_supervisor_codes": {"SL397"},
+        }
+        ensure_own_supervisor_write(user, "SL402")
+
+    def test_blocks_supervisor_outside_allowed(self):
         user = {
             "auth_disabled": False,
             "allowed_supervisor_codes": {"SL397", "SL402"},
             "home_supervisor_codes": {"SL397"},
         }
         with self.assertRaises(HTTPException) as ctx:
-            ensure_own_supervisor_write(user, "SL402")
+            ensure_own_supervisor_write(user, "SL999")
         self.assertEqual(ctx.exception.status_code, 403)
 
     def test_allows_manager_empty_home(self):
