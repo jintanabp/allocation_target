@@ -608,6 +608,12 @@ let S = {
   revenueScale: 1,
   /** LP ใช้ไม่ได้ — backend เกลี่ยแบบสัดส่วนแทน */
   optimizationFallback: false,
+  /** {sup_id: {sku: เป้าหีบของทีมนั้น}} — โหมดรวมภาคเท่านั้น */
+  targetBoxesBySup: {},
+  /** รหัสทีมที่ตก fallback (โหมดรวมภาค) — ว่างแปลว่าไม่มี */
+  optimizationFallbackSups: [],
+  /** ทีมที่กระจายไม่สำเร็จรอบล่าสุด (โหมดรวมภาค) */
+  regionalFailedSups: [],
   rebalanceResiduals: [],
   /** ส่งเข้า Target Sun ได้หรือไม่ (จาก GET /managers → can_import_targetsun) */
   canImportTargetSun: true,
@@ -1873,14 +1879,9 @@ function _employeesGroupedBySupervisor() {
 }
 
 function _lockedEditsForEmployees(lockedEdits, emps) {
-  const keys = new Set((emps || []).map((e) => _allocKey(e)));
-  return (lockedEdits || []).filter((lock) => {
-    const wh = String(lock.warehouse_code || "").trim();
-    const k = wh
-      ? `${String(lock.emp_id || "").trim()}|${wh}`
-      : String(lock.emp_id || "").trim();
-    return keys.has(k);
-  });
+  // คีย์มีรหัสซุปนำหน้าเมื่ออยู่โหมดรวมภาค — กันล็อกของทีมอื่นหลุดเข้ามา (R1)
+  const keys = new Set((emps || []).map((e) => _lockIdentityKeyForEmployee(e)));
+  return (lockedEdits || []).filter((lock) => keys.has(_lockIdentityKeyForLock(lock)));
 }
 
 function _aggregateSupervisorOrder() {
@@ -1897,7 +1898,11 @@ function _supervisorCodeForAllocRow(a) {
   const wh = String(a?.warehouse_code || "").trim();
   const key = wh ? `${emp}|${wh}` : emp;
   const row = (S.employees || []).find((e) => _allocKey(e) === key);
-  return String(row?.supervisor_code || S.supId || "").trim().toUpperCase();
+  if (row?.supervisor_code) return String(row.supervisor_code).trim().toUpperCase();
+  // โหมดรวมภาค: S.supId คือรหัสผู้จัดการ ไม่ใช่ทีมของแถวนี้
+  // เดาไม่ได้ก็ต้องคืนค่าว่าง ให้ปลายทางปฏิเสธ ดีกว่าบันทึกผิดทีมเงียบ ๆ (R2)
+  if (S.aggregateMode) return "";
+  return String(S.supId || "").trim().toUpperCase();
 }
 
 function _updateAggregateModeUI() {
@@ -3517,9 +3522,13 @@ function syncStep3LiveTargetsBtn() {
 }
 
 function _allocMatchLock(alloc, lock) {
-  const wh = String(lock.warehouse_code || "").trim();
-  const lockKey = wh ? `${String(lock.emp_id).trim()}|${wh}` : String(lock.emp_id).trim();
-  return _allocResultKey(alloc) === lockKey && alloc.sku === lock.sku;
+  // โหมดรวมภาคเทียบรหัสซุปด้วย ไม่งั้นล็อกไปจับแถวของทีมอื่นที่ emp_id ซ้ำกัน (R1)
+  const allocKey = _lockIdentityKey(
+    alloc?.emp_id,
+    alloc?.warehouse_code,
+    _supervisorCodeForAllocRow(alloc)
+  );
+  return allocKey === _lockIdentityKeyForLock(lock) && alloc.sku === lock.sku;
 }
 
 /* ── WH split (หลายคลังต่อพนักงาน) ── */
@@ -3529,6 +3538,55 @@ function _allocKey(e) {
   if (!e.wh_split) return emp;
   const wh = String(e.warehouse_code || "").trim();
   return wh ? `${emp}|${wh}` : emp;
+}
+
+/**
+ * คีย์ระบุตัวเซลล์สำหรับ "จับคู่ล็อก" โดยเฉพาะ
+ *
+ * โหมดรวมภาคต้องมีรหัสซุปนำหน้า เพราะ emp_id ซ้ำข้ามทีมได้
+ * (เหตุผลเดียวกับ _employeeWhGroupKey) ถ้าไม่ใส่ ล็อกของทีมหนึ่ง
+ * จะถูกส่งเข้าการคำนวณของอีกทีมและไปตกกับคนผิด
+ *
+ * โหมดปกติคืนค่าเท่ากับ _allocKey / _allocResultKey เดิมทุกประการ
+ */
+function _lockIdentityKey(empId, warehouseCode, supervisorCode) {
+  const emp = String(empId || "").trim();
+  const wh = String(warehouseCode || "").trim();
+  const base = wh ? `${emp}|${wh}` : emp;
+  if (!S.aggregateMode) return base;
+  const sup = String(supervisorCode || "").trim().toUpperCase();
+  return sup ? `${sup}::${base}` : base;
+}
+
+/** คีย์ล็อกของแถวพนักงาน — ใช้กติกา wh_split เดียวกับ _allocKey */
+function _lockIdentityKeyForEmployee(e) {
+  if (!e) return "";
+  return _lockIdentityKey(
+    e.emp_id,
+    e.wh_split ? e.warehouse_code : "",
+    e.supervisor_code
+  );
+}
+
+/** คีย์ล็อกของรายการ locked_edits ที่ส่งให้ backend */
+function _lockIdentityKeyForLock(lock) {
+  return _lockIdentityKey(lock?.emp_id, lock?.warehouse_code, lock?.supervisor_code);
+}
+
+/**
+ * รวมแถวที่ผู้ใช้แก้ตัวเลขเอง เป็น locked_edits
+ * ต้องพก supervisor_code ไปด้วยเสมอ ไม่งั้นโหมดรวมภาคแยกไม่ออกว่าล็อกนี้ของทีมไหน (R1)
+ */
+function _collectLockedEdits() {
+  return (S.allocations || [])
+    .filter((a) => a.is_edited)
+    .map((a) => ({
+      emp_id: a.emp_id,
+      sku: a.sku,
+      locked_boxes: a.allocated_boxes,
+      warehouse_code: a.warehouse_code || null,
+      supervisor_code: _supervisorCodeForAllocRow(a),
+    }));
 }
 
 function _enrichEmployeeAllocFlags(e) {
@@ -3679,6 +3737,10 @@ function applyDataPayload(data) {
   S.aggregateSupIds = Array.isArray(data.aggregate_sup_ids)
     ? data.aggregate_sup_ids.map((c) => String(c).trim().toUpperCase()).filter(Boolean)
     : [];
+  // เป้าหีบรายทีม — ใช้แสดงแถวรวมรายทีมว่าตอนนี้เกิน/ขาดเป้าตัวเองเท่าไร
+  S.targetBoxesBySup = (data.target_boxes_by_sup && typeof data.target_boxes_by_sup === "object")
+    ? data.target_boxes_by_sup
+    : {};
   S.yellowLocked = {};
   S.histWindowMonths = 3;
   S.skus = data.skus;
@@ -3790,6 +3852,7 @@ async function loadAggregateData(viewMode, regionKey) {
 async function loadData(supId, targetMonth, targetYear, refresh = false) {
   S.aggregateMode = false;
   S.aggregateSupIds = [];
+  S.targetBoxesBySup = {};
   _clearCompositeAllocState();
   setBusyStatus("loading");
   try {
@@ -4912,14 +4975,7 @@ async function runOptimization() {
   }
 
   btn.classList.remove("pulse-warn");
-  const lockedEdits = S.allocations
-    .filter(a => a.is_edited)
-    .map(a => ({
-      emp_id: a.emp_id,
-      sku: a.sku,
-      locked_boxes: a.allocated_boxes,
-      warehouse_code: a.warehouse_code || null,
-    }));
+  const lockedEdits = _collectLockedEdits();
 
   pushGlobalBusy(UX.busyAllocate, _formatAllocateBusyHint());
   let allocs;
@@ -5024,6 +5080,70 @@ function _applyOptimizeMetaFromJson(json) {
   const rs = Number(json.revenue_scale);
   S.revenueScale = Number.isFinite(rs) && rs > 0 ? rs : 1;
   S.optimizationFallback = !!json.optimization_fallback;
+  // เส้นทางซุปเดียว — ไม่มีรายชื่อทีมให้ระบุ ล้างค่าจากรอบรวมภาคก่อนหน้าทิ้ง
+  S.optimizationFallbackSups = [];
+  S.regionalFailedSups = [];
+}
+
+/**
+ * รวม meta จากทุกทีมในโหมดรวมภาค (R3)
+ *
+ * เดิมเรียก _applyOptimizeMetaFromJson ในลูป ทำให้เหลือค่าของทีมสุดท้ายทีมเดียว
+ * ที่อันตรายสุดคือ ถ้าทีมแรกตกไปใช้ proportional fallback แต่ทีมสุดท้ายไม่ตก
+ * คำเตือนจะหายไปทั้งที่มีทีมที่ไม่ได้ผ่าน LP จริง
+ */
+function _applyOptimizeMetaFromSups(metaBySup) {
+  const entries = Object.entries(metaBySup || {});
+  if (!entries.length) return;
+
+  const flexSkus = new Set();
+  const newSkus = new Set();
+  const fallbackSups = [];
+  const scales = [];
+  let months = 0;
+  let strictCount = 0;
+  let evenMode = "off";
+
+  for (const [supId, json] of entries) {
+    if (!json) continue;
+    if (json.optimization_fallback) fallbackSups.push(supId);
+
+    const mw = Number(json.hist_window_months);
+    if (mw === 1 || mw === 3 || mw === 6) months = Math.max(months, mw);
+
+    const mode = String(json.new_products_even_mode || "off");
+    if (mode !== "off") evenMode = mode;
+
+    if (Array.isArray(json.new_product_skus)) {
+      json.new_product_skus.forEach((x) => {
+        const s = String(x).trim();
+        if (s) newSkus.add(s);
+      });
+    }
+    if (Array.isArray(json.tier_flex_skus)) {
+      json.tier_flex_skus.forEach((x) => {
+        const s = String(x).trim();
+        if (s) flexSkus.add(s);
+      });
+    }
+    strictCount = Math.max(strictCount, Number(json.tier_strict_sku_count) || 0);
+
+    const rs = Number(json.revenue_scale);
+    if (Number.isFinite(rs) && rs > 0) scales.push(rs);
+  }
+
+  S.histWindowMonths = months || 3;
+  S.newProductsEvenMode = evenMode;
+  S.newProductSkus = newSkus;
+  S.tierFlexSkus = flexSkus;
+  S.tierStrictSkuCount = strictCount;
+  // อัตราส่วนต่อทีมไม่เท่ากัน — ใช้ค่าเฉลี่ยเพื่อแสดงผลรวมภาค
+  S.revenueScale = scales.length
+    ? scales.reduce((a, b) => a + b, 0) / scales.length
+    : 1;
+  // ทีมไหนก็ได้ที่ตก fallback ต้องยังเตือน
+  S.optimizationFallback = fallbackSups.length > 0;
+  S.optimizationFallbackSups = fallbackSups;
 }
 
 function _mergeLockedEditsIntoAllocs(allocs, lockedEdits) {
@@ -5035,10 +5155,20 @@ function _mergeLockedEditsIntoAllocs(allocs, lockedEdits) {
       found.is_edited = true;
     } else {
       const skuInfo = S.skus.find((x) => x.sku === lock.sku) || {};
+      // ต้องระบุทีมเจ้าของแถวเสมอ (R2)
+      // ถ้าปล่อยว่าง _supervisorCodeForAllocRow จะ fallback ไปใช้ S.supId
+      // ซึ่งในโหมดรวมภาคคือ "รหัสผู้จัดการ" → แถวนี้จะถูกบันทึกลง snapshot ผิดทีม
+      const supCode =
+        String(lock.supervisor_code || "").trim().toUpperCase()
+        || _supervisorCodeForAllocRow({
+          emp_id: lock.emp_id,
+          warehouse_code: lock.warehouse_code || "",
+        });
       allocs.push({
         emp_id: lock.emp_id,
         sku: lock.sku,
         warehouse_code: lock.warehouse_code || "",
+        supervisor_code: supCode,
         allocated_boxes: lock.locked_boxes,
         is_edited: true,
         price_per_box: Number(skuInfo.price_per_box) || 0,
@@ -5108,6 +5238,10 @@ async function _doOptimize(lockedEdits = []) {
       if (!supOrder.length) {
         throw new Error("ไม่พบพนักงานใต้ Supervisor ในโหมดรวมภาค");
       }
+      // เก็บผลรายทีม: ทีมที่พังไม่ควรลบผลของทีมที่สำเร็จไปแล้ว (R4)
+      const failedSups = [];
+      const okSups = [];
+      const metaBySup = {};
       for (let i = 0; i < supOrder.length; i++) {
         const supId = supOrder[i];
         const emps = grouped.get(supId) || [];
@@ -5115,18 +5249,38 @@ async function _doOptimize(lockedEdits = []) {
         if (!yellowTargets.length) continue;
         qs("#runSub").textContent =
           `กำลังกระจาย ${supId} (${i + 1}/${supOrder.length})…`;
-        const json = await _callOptimizeApi(supId, {
-          ...basePayload,
-          yellowTargets,
-          locked_edits: _lockedEditsForEmployees(lockedEdits, emps),
-        });
-        _applyOptimizeMetaFromJson(json);
-        const part = Array.isArray(json.allocations) ? json.allocations : [];
-        part.forEach((a) => { a.supervisor_code = supId; });
-        allocs.push(...part);
+        try {
+          const json = await _callOptimizeApi(supId, {
+            ...basePayload,
+            yellowTargets,
+            locked_edits: _lockedEditsForEmployees(lockedEdits, emps),
+          });
+          metaBySup[supId] = json;
+          const part = Array.isArray(json.allocations) ? json.allocations : [];
+          part.forEach((a) => { a.supervisor_code = supId; });
+          allocs.push(...part);
+          okSups.push(supId);
+        } catch (e) {
+          console.warn("optimize ล้มเหลว:", supId, e);
+          failedSups.push({ supId, message: _userFacingError(e) });
+        }
       }
+      // meta ต้องรวมทุกทีม ไม่ใช่เอาของทีมสุดท้ายทับ (R3)
+      _applyOptimizeMetaFromSups(metaBySup);
+      S.regionalFailedSups = failedSups;
       if (!allocs.length) {
-        throw new Error("ไม่ได้รับผลกระจายหีบจากเซิร์ฟเวอร์ (ทุกซุป)");
+        throw new Error(
+          failedSups.length
+            ? `กระจายไม่สำเร็จทุกทีม (${failedSups.length} ทีม) — ${failedSups[0].message}`
+            : "ไม่ได้รับผลกระจายหีบจากเซิร์ฟเวอร์ (ทุกซุป)"
+        );
+      }
+      if (failedSups.length) {
+        toast(
+          `⚠️ กระจายสำเร็จ ${okSups.length} ทีม · ไม่สำเร็จ ${failedSups.length} ทีม `
+          + `(${failedSups.map((f) => f.supId).join(", ")}) — ทีมที่สำเร็จบันทึกแล้ว กดคำนวณใหม่เพื่อลองทีมที่เหลือ`,
+          "amber"
+        );
       }
       allocs = _mergeLockedEditsIntoAllocs(allocs, lockedEdits);
     } else {
@@ -5233,6 +5387,10 @@ function renderResult(allocs) {
   if (allocs?.length) _recomputeAllHistDev(allocs);
   const scrollerPre = document.querySelector("#resultBlock .tbl-scroll");
   const preservedGapPx = scrollerPre?.dataset?.stickyGapPx;
+  // ตารางเลื่อนในกล่องตัวเอง (max-height) — แทน innerHTML แล้ว scrollTop จะถูก clamp เป็น 0
+  // ต้องเก็บไว้กู้คืน ไม่งั้นกด toggle ชื่อสินค้า / สลับแบรนด์ / เรียงใหม่ แล้วเด้งกลับบนสุดทุกครั้ง
+  const preservedScrollTop = scrollerPre?.scrollTop || 0;
+  const preservedScrollLeft = scrollerPre?.scrollLeft || 0;
   const isFiltered = S.activeBrand !== "ALL";
   // ใช้สำหรับ CSS เว้นพื้นที่ด้านขวา กันคอลัมน์ sticky ทับคอลัมน์อื่น
   document.getElementById("resultBlock")?.classList.toggle("brand-filtered", isFiltered);
@@ -5387,10 +5545,23 @@ function renderResult(allocs) {
 
   const skuTotals = skus.map(() => 0);
 
-  qs("#resultBody").innerHTML = rowKeys.map(rk => {
+  const _rowSupOrder = [];
+  const _rowsHtml = rowKeys.map(rk => {
     const empInfo = _empByKey.get(rk);
     const empId = empInfo?.emp_id || (rk.includes("|") ? rk.split("|")[0] : rk);
-    const wh = empInfo?.warehouse_code || (rk.includes("|") ? rk.split("|")[1] : "") || "—";
+    // แยก "คลังที่โชว์" ออกจาก "คลังที่ใช้เป็นคีย์"
+    //
+    // พนักงานอาจมี warehouse_code ติดมาในระเบียนแม้ wh_split = false
+    // แต่ payload ส่ง warehouse_code ให้ backend เฉพาะตอน wh_split (ดู _yellowTargetPayloadRow)
+    // แถวผลลัพธ์ของคนกลุ่มนี้จึงมี warehouse_code = "" เสมอ
+    //
+    // ถ้าเอา warehouse_code มาใส่ data-wh ตรง ๆ onResultEdit จะหาแถวเดิมไม่เจอ
+    // (เทียบ "" กับ "R337") แล้ว push แถวใหม่ซ้อน → หีบของคนนั้นถูกนับสองรอบ
+    // → ยอด SKU เกิน → autoRebalance ไปดึงคืนจากคนอื่น (ข้ามทีมได้ด้วย)
+    const whDisplay = empInfo?.warehouse_code || (rk.includes("|") ? rk.split("|")[1] : "") || "—";
+    const whKey = (empInfo?.wh_split || rk.includes("|"))
+      ? String(empInfo?.warehouse_code || (rk.includes("|") ? rk.split("|")[1] : "") || "").trim()
+      : "";
     const empName = empInfo?.emp_name || "";
 
     const boxes = skus.map(s => lk[rk]?.[s] ?? 0);
@@ -5411,7 +5582,7 @@ function renderResult(allocs) {
     const valTitle = yellowTarget > 0 ? (deviationOk ? `✓ ห่างจากเป้าเพียง ${baht(devAbs)} บาท` : `⚠️ ${word}เป้า ${baht(devAbs)} บาท`) : "";
 
     const rowSup = String(empInfo?.supervisor_code || "").trim().toUpperCase()
-      || _supervisorCodeForAllocRow({ emp_id: empId, warehouse_code: wh === "—" ? "" : wh });
+      || _supervisorCodeForAllocRow({ emp_id: empId, warehouse_code: whKey });
     const allocSrc = S.allocSourceBySup?.[rowSup] || "";
     const rowBand = S.compositeAllocView && rowSup ? _compositeSupBandColor(rowSup) : "";
     const rowCls = [
@@ -5422,10 +5593,10 @@ function renderResult(allocs) {
     const supBadge = S.compositeAllocView && rowSup
       ? `<div class="alloc-row-sup"><code>${escH(rowSup)}</code></div>` : "";
 
-    const empSearchHay = escH(`${empId} ${empName} ${wh}`.toLowerCase());
+    const empSearchHay = escH(`${empId} ${empName} ${whDisplay}`.toLowerCase());
     let rowHtml = `<tr class="${rowCls}"${rowStyle} data-emp-search="${empSearchHay}">
       <td class="result-sticky-left result-sticky-left--sm"><span class="emp-tag">${escH(empId)}</span>${supBadge}${empName ? `<div style="font-size:10px;margin-top:2px;">${escH(empName)}</div>` : ""}</td>
-      <td class="result-sticky-left result-sticky-left--wh mono" style="color:var(--text-3);font-size:12px;">${escH(wh)}</td>`;
+      <td class="result-sticky-left result-sticky-left--wh mono" style="color:var(--text-3);font-size:12px;">${escH(whDisplay)}</td>`;
 
     skus.forEach((s, i) => {
       const b = boxes[i];
@@ -5453,7 +5624,7 @@ function renderResult(allocs) {
       rowHtml += `<td class="r result-cell" style="vertical-align:top;">
         <div class="result-box-wrap">
           <div class="result-box-num ${colorClass}" contenteditable="${resultReadOnly ? "false" : "true"}"
-            data-emp="${escH(empId)}" data-wh="${escH(wh === "—" ? "" : wh)}" data-sku="${escH(s)}" onblur="onResultEdit(this)"
+            data-emp="${escH(empId)}" data-wh="${escH(whKey)}" data-sku="${escH(s)}" onblur="onResultEdit(this)"
             ${resultReadOnly ? "" : `onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
             onpaste="event.preventDefault();document.execCommand('insertText',false,parseInt(event.clipboardData.getData('text').replace(/,/g,''))||0)"`}
           >${b}</div>${flagHtml}
@@ -5478,8 +5649,13 @@ function renderResult(allocs) {
       `<div class="grand-val-cell-inner">` +
       `<div class="grand-val-amount">${baht(grandValue)}</div>${devSub}</div></td></tr>`;
 
+    _rowSupOrder.push(rowSup);
     return rowHtml;
-  }).join("");
+  });
+
+  qs("#resultBody").innerHTML = _withSupSubtotalRows(
+    _rowsHtml, _rowSupOrder, skus, allocs, isFiltered
+  );
 
   renderResultFooter(skus, skuTotals);
   syncCompositeAllocLegend();
@@ -5506,7 +5682,16 @@ function renderResult(allocs) {
   }
   _reapplyEmpSearchIfActive();
   requestAnimationFrame(() => {
-    requestAnimationFrame(() => adjustResultStickyGap());
+    requestAnimationFrame(() => {
+      // ลำดับสำคัญ: gap ก่อน (เปลี่ยนความกว้าง → แถวอาจ wrap ใหม่ ความสูงหัวเปลี่ยน)
+      // แล้วค่อยวัดหัว/ท้าย แล้วกู้ scroll ท้ายสุด (ไม่งั้น scrollLeft ถูก clamp กับความกว้างเก่า)
+      adjustResultStickyGap();
+      syncResultFrozenHeader();
+      if (scrollerPre) {
+        scrollerPre.scrollTop = preservedScrollTop;
+        scrollerPre.scrollLeft = preservedScrollLeft;
+      }
+    });
   });
 }
 
@@ -5588,6 +5773,57 @@ function adjustResultStickyGap() {
 }
 
 /**
+ * ตรึงหัว/ท้ายตารางผลลัพธ์ — วัดความสูงจริงแล้วส่งเป็น CSS var
+ *   --result-head-row1-h : top ของแถว "ชื่อสินค้า" (แถวที่สองของหัว)
+ *   --result-foot-row2-h : bottom ของแถว "เป้ารวม (หีบ)" (แถวบนของ tfoot)
+ *   --result-head-h / --result-foot-h : scroll-padding กันแถวถูกหัว/ท้ายบัง
+ *
+ * ครอบคลุม: toggle ชื่อสินค้า, สลับแบรนด์, เปลี่ยนการเรียง SKU, ย่อ/ขยายหน้าต่าง, ซูม, โหลดฟอนต์
+ * #resultHead/#resultFoot เป็น element ถาวร (renderResult เปลี่ยนแค่ innerHTML)
+ * ResizeObserver จึงผูกครั้งเดียวต่อ scroller แล้วรอดทุก re-render
+ */
+function syncResultFrozenHeader() {
+  const block = document.getElementById("resultBlock");
+  const scroller = block?.querySelector(".tbl-scroll");
+  const tbl = block?.querySelector(".result-tbl");
+  if (!block || !scroller || !tbl) return;
+
+  const head = tbl.tHead;
+  const foot = tbl.tFoot;
+  const px = (el) => (el ? Math.round(el.getBoundingClientRect().height) : 0);
+  const row1H = px(head?.rows?.[0]);
+  const headH = px(head);
+  const foot2H = foot && foot.rows.length > 1 ? px(foot.rows[1]) : 0;
+  const footH = px(foot);
+
+  // กันเขียนซ้ำ (แพตเทิร์นเดียวกับ scroller.dataset.stickyGapPx)
+  const sig = `${row1H}|${headH}|${foot2H}|${footH}`;
+  if (block.dataset.frozenSig !== sig) {
+    block.dataset.frozenSig = sig;
+    block.style.setProperty("--result-head-row1-h", `${row1H}px`);
+    block.style.setProperty("--result-head-h", `${headH}px`);
+    block.style.setProperty("--result-foot-row2-h", `${foot2H}px`);
+    block.style.setProperty("--result-foot-h", `${footH}px`);
+  }
+
+  // ค่าที่เขียนมีผลแค่กับ top/bottom/scroll-padding ของเซลล์ sticky
+  // ไม่เปลี่ยนขนาดกล่องที่ observe อยู่ จึงไม่เกิด feedback loop
+  if (!scroller.__frozenObs && typeof ResizeObserver !== "undefined") {
+    try {
+      const ro = new ResizeObserver(() => {
+        requestAnimationFrame(() => syncResultFrozenHeader());
+      });
+      if (head) ro.observe(head);
+      if (foot) ro.observe(foot);
+      ro.observe(scroller);   // ย่อ/ขยายหน้าต่าง + ซูม (max-height อิง dvh)
+      scroller.__frozenObs = ro;
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
  * ตรึงคอลัมน์นำหน้า (ที่ติด class .sticky-left-col ต่อเนื่องจากซ้าย) สำหรับตารางที่คอลัมน์นำหน้าแปรผัน
  * — Step 1 (ซุป? / พนักงาน / W/H?) และ Step 2 (พนักงาน)
  * คำนวณ left จากความกว้างจริงของคอลัมน์ก่อนหน้า แล้วผูก ResizeObserver ครั้งเดียวต่อ scroller
@@ -5646,7 +5882,19 @@ function syncStep3ReviewNotes() {
   if (!el) return;
   const lines = [];
   if (S.optimizationFallback) {
-    lines.push("ระบบใช้การเกลี่ยสัดส่วนแทนการปรับแบบ LP — ตรวจผล SKU ที่มี ⚠ หรือเป้าหีบไม่ตรง");
+    // โหมดรวมภาคต้องบอกด้วยว่าทีมไหนตก ไม่งั้นหาไม่เจอว่าต้องไปดูตรงไหน (R3)
+    const fbSups = Array.isArray(S.optimizationFallbackSups) ? S.optimizationFallbackSups : [];
+    const where = fbSups.length ? ` (ทีม: ${fbSups.join(", ")})` : "";
+    lines.push(
+      `ระบบใช้การเกลี่ยสัดส่วนแทนการปรับแบบ LP${where} — ตรวจผล SKU ที่มี ⚠ หรือเป้าหีบไม่ตรง`
+    );
+  }
+  const failedSups = Array.isArray(S.regionalFailedSups) ? S.regionalFailedSups : [];
+  if (failedSups.length) {
+    lines.push(
+      `ทีมที่กระจายไม่สำเร็จรอบล่าสุด: ${failedSups.map((f) => f.supId).join(", ")}`
+      + " — ผลของทีมเหล่านี้ยังเป็นค่าเดิม กดคำนวณใหม่เพื่อลองอีกครั้ง"
+    );
   }
   const residuals = Array.isArray(S.rebalanceResiduals) ? S.rebalanceResiduals : [];
   if (residuals.length) {
@@ -5693,6 +5941,115 @@ function syncStep3TieredNote() {
 }
 
 // 🔴 ตรึงคอลัมน์ S/M กับ W/H ไว้ด้วยกัน ไม่ให้ตารางเบี้ยว 
+/**
+ * แถวรวมรายทีมในตารางรวมภาค
+ *
+ * โหมดรวมภาค "ตั้งใจให้ย้ายหีบข้ามทีมได้" — autoRebalance เกลี่ยข้ามซุปเพื่อให้
+ * ผลรวมทั้งภาคต่อ SKU คงที่ ผลคือสัดส่วนของแต่ละทีมเลื่อนจากเป้า TGA ของตัวเอง
+ * ถ้าไม่มีแถวนี้ ผู้ใช้จะย้ายข้ามทีมโดยไม่เห็นเลยว่าทีมไหนเกิน/ขาดไปเท่าไร
+ *
+ * เทียบกับ S.targetBoxesBySup ซึ่งเป็นเป้าของ "ทีมนั้น" ไม่ใช่ยอดรวมภาค
+ */
+/**
+ * ป้ายสรุปของแถวรวมทีม — ต้องสื่อตาม "ที่มาของตัวเลข" ไม่ใช่เหมารวมว่าใครไปย้ายหีบ
+ *
+ * ตารางรวมภาคประกอบจากหลายแหล่ง (loadRegionalCompositeAllocationView):
+ *   snapshot  = ทีมนี้เคยกระจายไว้ → เทียบเป้าแล้วมีความหมายจริง
+ *   targetsun = ยังไม่เคยกระจาย ดึงเลขจาก Target Sun ตรง ๆ → ไม่มีเหตุผลจะตรงเป้ารอบใหม่
+ *   ไม่ระบุ    = เพิ่งกระจายสดในเซสชันนี้ → ต้องตรงเป้า (ประตู 409 บังคับ)
+ *
+ * นอกจากนี้ composite ยังกรองแถวของพนักงานที่รอบนี้ไม่มีเป้าเงินออก
+ * ยอดที่แสดงจึงน้อยกว่า snapshot เดิมได้โดยไม่มีใครแก้อะไร
+ */
+function _supSubtotalLabelHtml(supId, diffSkuCount) {
+  const src = S.allocSourceBySup?.[supId] || "";
+  if (src === "targetsun") {
+    return `<span class="sup-subtotal-src">ตัวเลขจาก Target Sun — ยังไม่ได้กระจาย</span>`;
+  }
+  if (diffSkuCount <= 0) {
+    return `<span class="sup-subtotal-ok">ตรงเป้าทีมทุก SKU</span>`;
+  }
+  if (src === "snapshot") {
+    return `<span class="sup-subtotal-warn">ผลที่บันทึกไว้ต่างจากเป้าปัจจุบัน ${diffSkuCount} SKU</span>`;
+  }
+  return `<span class="sup-subtotal-warn">ต่างจากเป้าทีม ${diffSkuCount} SKU</span>`;
+}
+
+function _supSubtotalRowHtml(supId, skus, supSkuTotals, isFiltered) {
+  const sid = String(supId || "").trim().toUpperCase();
+  if (!sid) return "";
+  const targets = (S.targetBoxesBySup && S.targetBoxesBySup[sid]) || {};
+  const band = _compositeSupBandColor(sid);
+  const totals = supSkuTotals[sid] || {};
+
+  // ทีมที่ตัวเลขมาจาก Target Sun ยังไม่เคยกระจาย — ไม่มีความหมายที่จะบอกว่า "เกิน/ขาดเป้า"
+  const showDiff = (S.allocSourceBySup?.[sid] || "") !== "targetsun";
+
+  let grand = 0;
+  let overCount = 0;
+  let cells = "";
+  skus.forEach((s) => {
+    const got = Number(totals[s] || 0);
+    const tgt = Number(targets[s] || 0);
+    grand += got;
+    const diff = got - tgt;
+    const flag = showDiff && tgt > 0 && diff !== 0;
+    let cls = "sup-subtotal-cell";
+    let title = `${sid} · SKU ${s}: กระจาย ${got} หีบ / เป้าทีม ${tgt} หีบ`;
+    if (flag) {
+      overCount += 1;
+      cls += diff > 0 ? " sup-subtotal-cell--over" : " sup-subtotal-cell--under";
+      title += ` (${diff > 0 ? "เกิน" : "ขาด"} ${Math.abs(diff)})`;
+    }
+    const diffTxt = flag
+      ? `<div class="sup-subtotal-diff">${diff > 0 ? "+" : ""}${diff}</div>`
+      : "";
+    cells += `<td class="r ${cls}" title="${escH(title)}">`
+      + `<div class="sup-subtotal-num">${got.toLocaleString()}</div>${diffTxt}</td>`;
+  });
+
+  const label = _supSubtotalLabelHtml(sid, overCount);
+
+  let html = `<tr class="sup-subtotal-row" style="--sup-band:${band}" data-sup="${escH(sid)}">`
+    + `<td class="result-sticky-left result-sticky-left--sm sup-subtotal-label">`
+    + `รวมทีม <code>${escH(sid)}</code></td>`
+    + `<td class="result-sticky-left result-sticky-left--wh sup-subtotal-label">${label}</td>`
+    + cells
+    + `<td class="sticky-gap"></td>`;
+  if (isFiltered) {
+    html += `<td class="r num-total sticky-brand-box"></td><td class="r num-total sticky-brand-val"></td>`;
+  }
+  html += `<td class="r num-total sticky-grand-box">${grand.toLocaleString()}</td>`
+    + `<td class="r num-total sticky-grand-val"></td></tr>`;
+  return html;
+}
+
+/** แทรกแถวรวมรายทีมท้ายกลุ่มของแต่ละซุป (เฉพาะโหมดรวมภาค) */
+function _withSupSubtotalRows(rowsHtml, rowSups, skus, allocs, isFiltered) {
+  if (!S.compositeAllocView || !S.aggregateMode) return rowsHtml.join("");
+
+  // รวมหีบต่อ (ทีม, SKU) รอบเดียว
+  const supSkuTotals = {};
+  for (const a of allocs || []) {
+    const sup = _supervisorCodeForAllocRow(a);
+    if (!sup) continue;
+    const bucket = supSkuTotals[sup] || (supSkuTotals[sup] = {});
+    bucket[a.sku] = (bucket[a.sku] || 0) + (Number(a.allocated_boxes) || 0);
+  }
+
+  const out = [];
+  for (let i = 0; i < rowsHtml.length; i++) {
+    out.push(rowsHtml[i]);
+    const cur = rowSups[i];
+    const next = rowSups[i + 1];
+    // ปิดท้ายกลุ่มเมื่อทีมเปลี่ยน หรือหมดแถว
+    if (cur && cur !== next) {
+      out.push(_supSubtotalRowHtml(cur, skus, supSkuTotals, isFiltered));
+    }
+  }
+  return out.join("");
+}
+
 function renderResultFooter(skus, skuTotals) {
   const isFiltered = S.activeBrand !== "ALL";
   // Reuse single-pass price map — no extra filter loops needed
@@ -5794,6 +6151,21 @@ function _reapplyEmpSearchIfActive() {
 ══════════════════════════════════════════════ */
 let _rebalanceTimer = null;
 
+/* ── อธิบายว่าการแก้มือไปดึง/เติมหีบจากใคร ─────────────────────
+   autoRebalance เกลี่ยหีบให้ยอดรวมต่อ SKU คงเดิม โดยไปปรับคนที่ "ยังไม่ถูกแก้"
+   ผู้ใช้จึงเห็นแค่ตัวเลขคนอื่นขยับโดยไม่รู้ว่าเพราะอะไร
+   เก็บภาพก่อนแก้ไว้ แล้ว diff หลังเกลี่ยเสร็จ เพื่อบอกได้ว่าไปกระทบใครบ้าง */
+let _rebalanceBaseline = null;
+const _rebalanceTriggers = new Set();
+
+function _snapshotAllocBoxes() {
+  const m = new Map();
+  for (const a of S.allocations || []) {
+    m.set(`${_allocResultKey(a)}::${a.sku}`, Number(a.allocated_boxes) || 0);
+  }
+  return m;
+}
+
 function onResultEdit(el) {
   if (_isAllocReadOnlyView() || _aggregateBlocksWrite()) return;
   const emp = el.dataset.emp;
@@ -5804,10 +6176,29 @@ function onResultEdit(el) {
   const val = Math.max(0, raw);
   el.textContent = val;
 
-  const alloc = S.allocations.find(
+  let alloc = S.allocations.find(
     a => String(a.emp_id) === String(emp) && String(a.sku) === String(sku)
       && String(a.warehouse_code || "") === String(wh || "")
   );
+  if (!alloc) {
+    // ตัวกันแถวซ้อน: ถ้าหาแถวตรงคลังไม่เจอ แต่มีแถวของ emp+sku นี้อยู่แล้ว
+    // แปลว่าคีย์คลังฝั่งตารางกับฝั่งข้อมูลไม่ตรงกัน — ห้าม push แถวใหม่เด็ดขาด
+    // เพราะจะทำให้หีบของคนคนเดียวถูกนับสองรอบ แล้วตัวเกลี่ยไปดึงคืนจากคนอื่น
+    const sameEmpSku = S.allocations.filter(
+      a => String(a.emp_id) === String(emp) && String(a.sku) === String(sku)
+    );
+    if (sameEmpSku.length === 1) {
+      alloc = sameEmpSku[0];
+      console.warn(
+        "onResultEdit: คีย์คลังไม่ตรง — ใช้แถวเดิมแทนการสร้างใหม่",
+        { emp, sku, cellWh: wh, rowWh: alloc.warehouse_code || "" }
+      );
+    } else if (sameEmpSku.length > 1) {
+      console.error("onResultEdit: พบแถวซ้ำของ emp+sku เดียวกัน", { emp, sku, rows: sameEmpSku.length });
+      toast(`⚠️ พบข้อมูลซ้ำของ ${emp} SKU ${sku} — กรุณาโหลดหน้าใหม่แล้วกระจายอีกครั้ง`, "amber");
+      return;
+    }
+  }
   const prev = alloc ? (Number(alloc.allocated_boxes) || 0) : null;
   const wasEdited = Boolean(alloc?.is_edited);
 
@@ -5824,6 +6215,10 @@ function onResultEdit(el) {
     el.classList.add("is-edited");
     return;
   }
+
+  // เก็บภาพ "ก่อนแก้" ครั้งแรกของชุดนี้ (debounce รวมหลายช่องเป็นชุดเดียว)
+  if (!_rebalanceBaseline) _rebalanceBaseline = _snapshotAllocBoxes();
+  _rebalanceTriggers.add(`${wh ? `${emp}|${wh}` : emp}::${sku}`);
 
   _pushUndoState(`edit:${emp}:${sku}`);
   el.classList.add("is-edited");
@@ -5851,6 +6246,9 @@ function onResultEdit(el) {
   clearTimeout(_rebalanceTimer);
   _rebalanceTimer = setTimeout(() => {
     autoRebalance(true, { skipRender: true });
+    _renderRebalanceExplain(_rebalanceBaseline, _rebalanceTriggers);
+    _rebalanceBaseline = null;
+    _rebalanceTriggers.clear();
     _syncResultTableAfterRebalance();
     if (S.compositeAllocView && _regionalAggregateWritable()) {
       queueRegionalAllocationSave("draft");
@@ -5873,6 +6271,183 @@ function _visibleResultSkusFromHead() {
 }
 
 /** อัปเดตยอดรวมหลังเกลี่ย — ไม่ rebuild ตารางทั้งก้อน (กันคอลัมน์ sticky เด้ง) */
+/** ชื่อที่อ่านออกของเซลล์ — "E001 (สมชาย)" + รหัสทีมเมื่ออยู่โหมดรวมภาค */
+function _rebalanceWho(rowKey) {
+  const bareId = rowKey.includes("|") ? rowKey.split("|")[0] : rowKey;
+  // จับคู่ตรงคีย์ก่อน ถ้าไม่เจอค่อยถอยไปจับด้วย emp_id ล้วน
+  // เพื่อให้ยังรู้ว่าเป็นคนของทีมไหน — คำเตือน "ดึงข้ามทีม" พึ่งข้อมูลนี้
+  const emp = (S.employees || []).find((e) => _allocKey(e) === rowKey)
+    || (S.employees || []).find((e) => String(e.emp_id || "").trim() === bareId);
+  const empId = emp?.emp_id || bareId;
+  const name = String(emp?.emp_name || "").trim();
+  const wh = String(emp?.warehouse_code || "").trim();
+  const sup = String(emp?.supervisor_code || "").trim().toUpperCase();
+  let label = `<code>${escapeHtml(empId)}</code>`;
+  if (name) label += ` ${escapeHtml(name)}`;
+  if (wh && rowKey.includes("|")) label += ` <span class="rx-wh">(คลัง ${escapeHtml(wh)})</span>`;
+  if (S.aggregateMode && sup) label += ` <span class="rx-sup">${escapeHtml(sup)}</span>`;
+  return { html: label, sup };
+}
+
+/**
+ * แสดงว่า "การแก้มือครั้งนี้ไปเพิ่ม/ลดหีบของใครบ้าง"
+ *
+ * ใช้ได้ทั้งมุมมองทีมเดียวและรวมภาค — ในโหมดรวมภาคจะติดรหัสทีมไว้ท้ายชื่อ
+ * เพื่อให้เห็นทันทีว่าหีบถูกดึงข้ามทีมไปหรือไม่
+ */
+function _renderRebalanceExplain(baseline, triggers) {
+  const host = document.getElementById("rebalanceExplain");
+  if (!host) return;
+  if (!baseline || !baseline.size) {
+    host.style.display = "none";
+    host.innerHTML = "";
+    return;
+  }
+
+  const after = _snapshotAllocBoxes();
+  const keys = new Set([...baseline.keys(), ...after.keys()]);
+  const bySku = new Map();
+
+  for (const k of keys) {
+    const delta = (after.get(k) || 0) - (baseline.get(k) || 0);
+    if (!delta) continue;
+    const sep = k.lastIndexOf("::");
+    const rowKey = k.slice(0, sep);
+    const sku = k.slice(sep + 2);
+    let entry = bySku.get(sku);
+    if (!entry) { entry = { edited: [], moved: [] }; bySku.set(sku, entry); }
+    (triggers.has(k) ? entry.edited : entry.moved).push({ rowKey, delta });
+  }
+
+  if (!bySku.size) {
+    host.style.display = "none";
+    host.innerHTML = "";
+    return;
+  }
+
+  const blocks = [];
+  for (const [sku, entry] of bySku) {
+    if (!entry.edited.length && !entry.moved.length) continue;
+    const skuInfo = (S.skus || []).find((x) => String(x.sku).trim() === sku);
+    const skuName = String(skuInfo?.product_name_thai || "").trim();
+
+    const editedTxt = entry.edited
+      .map((r) => {
+        const w = _rebalanceWho(r.rowKey);
+        return `${w.html} <strong class="${r.delta > 0 ? "rx-up" : "rx-down"}">`
+          + `${r.delta > 0 ? "+" : ""}${r.delta}</strong>`;
+      })
+      .join(" · ");
+
+    entry.moved.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+    const crossTeam = new Set();
+    const editedSups = new Set(entry.edited.map((r) => _rebalanceWho(r.rowKey).sup));
+    const movedTxt = entry.moved
+      .map((r) => {
+        const w = _rebalanceWho(r.rowKey);
+        if (S.aggregateMode && w.sup && editedSups.size && !editedSups.has(w.sup)) {
+          crossTeam.add(w.sup);
+        }
+        return `${w.html} <strong class="${r.delta > 0 ? "rx-up" : "rx-down"}">`
+          + `${r.delta > 0 ? "+" : ""}${r.delta}</strong>`;
+      })
+      .join(" · ");
+
+    let block = `<div class="rx-sku">`
+      + `<div class="rx-sku-head"><code>${escapeHtml(sku)}</code>`
+      + (skuName ? ` <span class="rx-name">${escapeHtml(skuName)}</span>` : "")
+      + `</div>`;
+    if (editedTxt) block += `<div class="rx-line"><span class="rx-tag">คุณแก้</span>${editedTxt}</div>`;
+    if (movedTxt) {
+      block += `<div class="rx-line"><span class="rx-tag rx-tag--auto">ระบบเกลี่ยจาก</span>${movedTxt}</div>`;
+    } else {
+      block += `<div class="rx-line rx-none">ไม่ได้ดึงจากใครเลย (ยอดรวม SKU นี้ยังไม่ตรงเป้า — ดูแถบเตือนด้านล่าง)</div>`;
+    }
+    if (crossTeam.size) {
+      block += `<div class="rx-cross">⚠️ ดึงข้ามทีม: ${[...crossTeam].map(escapeHtml).join(", ")}</div>`;
+    }
+    block += `</div>`;
+    blocks.push(block);
+  }
+
+  if (!blocks.length) {
+    host.style.display = "none";
+    host.innerHTML = "";
+    return;
+  }
+
+  host.innerHTML =
+    `<div class="rx-head">ผลจากการแก้ล่าสุด`
+    + `<button type="button" class="rx-close" onclick="this.closest('.rebalance-explain').style.display='none'" aria-label="ปิด">✕</button>`
+    + `</div><div class="rx-body">${blocks.join("")}</div>`;
+  host.style.display = "block";
+}
+
+/**
+ * อัปเดตแถวรวมรายทีมหลังแก้มือ/เกลี่ย โดยไม่ rebuild ตารางทั้งก้อน
+ * (เกลี่ยข้ามทีมได้ ตัวเลขพวกนี้จึงขยับได้ทุกครั้งที่แก้ช่องเดียว)
+ */
+function _syncSupSubtotalRows() {
+  const rows = document.querySelectorAll("#resultBody .sup-subtotal-row");
+  if (!rows.length) return;
+
+  const skus = _visibleResultSkusFromHead();
+  const supSkuTotals = {};
+  for (const a of S.allocations || []) {
+    const sup = _supervisorCodeForAllocRow(a);
+    if (!sup) continue;
+    const bucket = supSkuTotals[sup] || (supSkuTotals[sup] = {});
+    bucket[a.sku] = (bucket[a.sku] || 0) + (Number(a.allocated_boxes) || 0);
+  }
+
+  rows.forEach((tr) => {
+    const sid = String(tr.dataset.sup || "").trim().toUpperCase();
+    const targets = (S.targetBoxesBySup && S.targetBoxesBySup[sid]) || {};
+    const totals = supSkuTotals[sid] || {};
+    const cells = tr.querySelectorAll(".sup-subtotal-cell");
+    let grand = 0;
+    let overCount = 0;
+
+    cells.forEach((td, i) => {
+      const s = skus[i];
+      if (s === undefined) return;
+      const got = Number(totals[s] || 0);
+      const tgt = Number(targets[s] || 0);
+      const diff = got - tgt;
+      grand += got;
+      const showDiff = (S.allocSourceBySup?.[sid] || "") !== "targetsun";
+      const flag = showDiff && tgt > 0 && diff !== 0;
+
+      const numEl = td.querySelector(".sup-subtotal-num");
+      if (numEl) numEl.textContent = got.toLocaleString();
+
+      td.classList.toggle("sup-subtotal-cell--over", flag && diff > 0);
+      td.classList.toggle("sup-subtotal-cell--under", flag && diff < 0);
+      if (flag) overCount += 1;
+
+      let diffEl = td.querySelector(".sup-subtotal-diff");
+      if (flag) {
+        if (!diffEl) {
+          diffEl = document.createElement("div");
+          diffEl.className = "sup-subtotal-diff";
+          td.appendChild(diffEl);
+        }
+        diffEl.textContent = `${diff > 0 ? "+" : ""}${diff}`;
+      } else if (diffEl) {
+        diffEl.remove();
+      }
+      td.title = `${sid} · SKU ${s}: กระจาย ${got} หีบ / เป้าทีม ${tgt} หีบ`
+        + (tgt > 0 && diff !== 0 ? ` (${diff > 0 ? "เกิน" : "ขาด"} ${Math.abs(diff)})` : "");
+    });
+
+    const labelHost = tr.querySelector(".sup-subtotal-label:last-of-type")
+      || tr.querySelector(".sup-subtotal-warn, .sup-subtotal-ok, .sup-subtotal-src")?.parentElement;
+    if (labelHost) labelHost.innerHTML = _supSubtotalLabelHtml(sid, overCount);
+    const grandEl = tr.querySelector(".sticky-grand-box");
+    if (grandEl) grandEl.textContent = grand.toLocaleString();
+  });
+}
+
 function _syncResultTableAfterRebalance() {
   const allocs = S.allocations;
   if (!allocs?.length) return;
@@ -5917,6 +6492,8 @@ function _syncResultTableAfterRebalance() {
       el.classList.toggle("is-edited", !!a.is_edited);
     }
   }
+
+  _syncSupSubtotalRows();
 
   document.querySelectorAll("#resultBody [id^='rowtotal-']").forEach((totalEl) => {
     const rk = totalEl.id.replace(/^rowtotal-/, "");
@@ -5963,7 +6540,12 @@ function _syncResultTableAfterRebalance() {
     renderResultFooter(skus, skuTotals);
   }
   syncStep3ReviewNotes();
-  requestAnimationFrame(() => adjustResultStickyGap());
+  requestAnimationFrame(() => {
+    adjustResultStickyGap();
+    // path นี้ไม่ rebuild ตาราง แต่แก้ข้อความ .emp-dev-line ได้ → ความสูงแถว/ท้ายเปลี่ยน
+    // ค่าเรียกนี้เป็น O(1) เพราะ frozenSig dedupe อยู่แล้ว
+    syncResultFrozenHeader();
+  });
 }
 
 function autoRebalance(silent = false, opts = {}) {
@@ -6471,7 +7053,14 @@ function _lakehouseBrandSkus(brand) {
   return skus;
 }
 
-function _lakehouseExportPayload(supId = null, brand = null) {
+/**
+ * @param {object} [opts]
+ * @param {boolean} [opts.confirmTargetMismatch]
+ *   ส่งเป็น true เฉพาะ "เส้นทางส่งจริงที่ผู้ใช้กดยืนยันแล้ว" เท่านั้น
+ *   ห้ามอ่านจาก S.* เพราะค่าจะค้างข้ามการเรียก แล้วเส้นทางอื่น
+ *   (ตรวจอย่างเดียว / ดาวน์โหลด Excel) จะพลอยข้ามการเช็คเป้าไปด้วย
+ */
+function _lakehouseExportPayload(supId = null, brand = null, opts = {}) {
   const sid = supId || S.supId;
   const brandFilter = brand != null ? brand : _selectedLakehouseBrand();
   return {
@@ -6481,7 +7070,263 @@ function _lakehouseExportPayload(supId = null, brand = null) {
     upload_user_code: _lakehouseUserCode(),
     brand_filter: brandFilter,
     allocations: _lakehouseAllocationsFromStep3(_lakehouseMatrixFilterSup(sid), brandFilter),
+    // ผู้ใช้ตรวจรายการที่ไม่ตรงเป้าทีมแล้วกดยืนยัน (ดู _confirmTargetMismatchBeforeSend)
+    // ถ้าไม่ได้ยืนยัน server จะตอบ 409 พร้อมรายการ SKU ที่ไม่ตรง
+    confirm_target_mismatch: !!opts.confirmTargetMismatch,
+    // คนละ flag โดยตั้งใจ — อันนี้แปลว่า "รับทราบว่าบางคู่ไม่มีใน Target Sun
+    // และจะไปเพิ่มจำนวนเองที่นั่น" (ดู _confirmManualTopupBeforeSend)
+    confirm_manual_topup: !!opts.confirmManualTopup,
   };
+}
+
+/**
+ * เป้าจะขาดเพราะบางคู่ไม่มีใน Target Sun — ให้ผู้ใช้เลือก
+ * คืน true = ส่งต่อ (ผู้ใช้รับปากว่าจะไปเพิ่มเองใน Target Sun)
+ * คืน false = กลับไปแก้ไข (เด้งไปที่ SKU แรกที่ขาดให้เลย)
+ */
+function _confirmManualTopupBeforeSend(detail) {
+  return new Promise((resolve) => {
+    let decided = false;
+    _showShortfallModal(detail, {
+      onConfirm: () => { decided = true; resolve(true); },
+    });
+    // ปุ่ม "กลับไปแก้ไข" / ปิด / คลิกนอกกล่อง — ทั้งหมดแปลว่าไม่ส่ง
+    const modal = document.getElementById("infoModal");
+    if (!modal) { resolve(false); return; }
+    const obs = new MutationObserver(() => {
+      if (!document.getElementById("infoModal")) {
+        obs.disconnect();
+        if (!decided) {
+          resolve(false);
+          // พาไปที่ SKU แรกที่ขาดเลย ไม่ต้องให้ไล่หาเอง —
+          // เว้นแต่ผู้ใช้กดปุ่ม "ไปที่" ในรายการอยู่แล้ว จะได้ไม่เด้งทับที่เขาเลือก
+          if (_resultJumpInFlight) return;
+          const first = (detail?.shortfall || [])[0];
+          if (first) jumpToResultCell(first.sku, (first.pairs || [])[0]?.emp_id || "");
+        }
+      }
+    });
+    obs.observe(document.body, { childList: true });
+  });
+}
+
+/**
+ * ปิด modal แล้วเด้งไปที่ช่องของคู่ พนักงาน×สินค้า ในตารางผล
+ *
+ * ต้องล้างตัวกรองก่อน — ถ้าผู้ใช้กรองแบรนด์หรือกรอง ใกล้/ไกล ประวัติ อยู่
+ * คอลัมน์ SKU นั้นอาจไม่มีในตาราง แล้วจะเด้งไปหาอะไรไม่เจอ
+ */
+/**
+ * ตั้งโดย jumpToResultCell — กัน _confirmManualTopupBeforeSend เด้งซ้ำไป SKU แรก
+ * ทับที่ผู้ใช้เพิ่งเลือกเอง (ปุ่มในรายการก็ปิด modal เหมือนกัน ตัว observer จึงแยกไม่ออก)
+ */
+let _resultJumpInFlight = false;
+
+function jumpToResultCell(sku, empId) {
+  const skuKey = String(sku || "").trim();
+  const emp = String(empId || "").trim();
+  if (!skuKey) return;
+  _resultJumpInFlight = true;
+  document.getElementById("infoModal")?.remove();
+
+  const block = document.getElementById("resultBlock");
+  if (!block || block.style.display === "none") {
+    toast("ยังไม่มีตารางผลกระจายให้ดู", "amber");
+    return;
+  }
+
+  let needsRender = false;
+  if (S.activeBrand !== "ALL") { S.activeBrand = "ALL"; needsRender = true; }
+  if (S.histDevFilter) { S.histDevFilter = null; needsRender = true; }
+  if (needsRender) {
+    const bs = document.getElementById("brandSelect");
+    if (bs) bs.value = "ALL";
+    renderResult(S.allocations);
+  }
+
+  // renderResult จบงานวัด sticky ใน double-rAF — ต่อคิวหลังมันเพื่อให้ scroll ไปตำแหน่งที่นิ่งแล้ว
+  requestAnimationFrame(() => requestAnimationFrame(() => _scrollToResultCell(skuKey, emp)));
+}
+
+function _scrollToResultCell(sku, empId) {
+  const scroller = document.querySelector("#resultBlock .tbl-scroll");
+  const colIdx = _visibleResultSkusFromHead().indexOf(sku);
+  if (colIdx < 0) {
+    toast(`ไม่พบคอลัมน์ ${sku} ในตาราง — อาจไม่มีในผลกระจายงวดนี้`, "amber");
+    return;
+  }
+
+  // ไฮไลต์หัวคอลัมน์ทั้งสองแถว (แถวรหัส + แถวชื่อสินค้า ถ้าเปิดอยู่)
+  const head = document.getElementById("resultHead");
+  document.querySelectorAll("#resultHead .sku-th--jump").forEach(el => el.classList.remove("sku-th--jump"));
+  head?.rows?.[0]?.cells?.[colIdx + 2]?.classList.add("sku-th--jump");   // +2 = S/M, W/H
+  head?.rows?.[1]?.cells?.[colIdx]?.classList.add("sku-th--jump");
+
+  const cell = empId
+    ? document.querySelector(
+        `#resultBody .result-box-num[data-emp="${CSS.escape(empId)}"][data-sku="${CSS.escape(sku)}"]`
+      )
+    : null;
+  const target = cell?.closest("td") || head?.rows?.[0]?.cells?.[colIdx + 2];
+  if (!target) return;
+
+  // block:"center" ปลอดภัยแล้วเพราะ .tbl-scroll มี scroll-padding กันหัว/ท้ายที่ตรึงไว้บัง
+  target.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
+  if (cell) {
+    const wrap = cell.closest("td");
+    wrap?.classList.add("result-cell--jump");
+    setTimeout(() => wrap?.classList.remove("result-cell--jump"), 2600);
+    cell.closest("tr")?.classList.add("emp-search-hit");
+    setTimeout(() => cell.closest("tr")?.classList.remove("emp-search-hit"), 2600);
+  }
+  if (scroller) scroller.focus?.({ preventScroll: true });
+  _resultJumpInFlight = false;
+}
+
+/**
+ * เป้าจะขาดเพราะบางคู่ไม่มีใน Target Sun — ให้ผู้ใช้เลือกว่าจะกลับไปแก้ หรือจะไปเพิ่มเอง
+ *
+ * onConfirm = ส่งซ้ำด้วย confirm_manual_topup: true
+ * ถ้าไม่ส่ง onConfirm มา (เช่นเรียกจากหน้าจอ "ส่งสำเร็จแล้ว") จะโชว์เป็นรายการให้ทำต่ออย่างเดียว
+ */
+function _showShortfallModal(detail, { onConfirm = null, alreadySent = false, noteHtml = "", title = "" } = {}) {
+  const list = Array.isArray(detail?.shortfall) ? detail.shortfall : [];
+  if (!list.length) return;
+  const boxes = Number(detail.shortfall_boxes) || list.reduce((s, x) => s + (Number(x.missing_boxes) || 0), 0);
+
+  const rows = list.map(s => {
+    const sku = String(s.sku || "");
+    const info = (S.skus || []).find(x => String(x.sku).trim() === sku) || {};
+    const pname = _skuDisplayName(info);
+    const pairs = Array.isArray(s.pairs) ? s.pairs : [];
+    const shown = pairs.map(p =>
+      `<div class="shortfall-pair">` +
+      `<button type="button" class="shortfall-jump" onclick="jumpToResultCell('${escH(sku)}','${escH(String(p.emp_id || ""))}')" ` +
+      `title="ไปที่ช่องของ ${escH(String(p.emp_id || ""))} × ${escH(sku)} ในตาราง">` +
+      `<code>${escH(String(p.emp_id || ""))}</code> · ${Number(p.allocated_boxes) || 0} หีบ ▸</button></div>`
+    ).join("");
+    const more = (Number(s.pair_count) || pairs.length) - pairs.length;
+    return `<div class="shortfall-sku">
+      <div class="shortfall-sku__head">
+        <div>
+          <code class="shortfall-sku__code">${escH(sku)}</code>
+          ${pname ? `<span class="shortfall-sku__name">${escH(pname)}</span>` : ""}
+          <div class="shortfall-sku__nums">ขาด <strong>${(Number(s.missing_boxes) || 0).toLocaleString("th-TH")}</strong> หีบ`
+          + ` · จะส่งจริง ${(Number(s.sending_boxes) || 0).toLocaleString("th-TH")}`
+          + (s.expected_boxes != null ? ` / เป้าทีม ${Number(s.expected_boxes).toLocaleString("th-TH")}` : "")
+          + `</div>
+        </div>
+        <button type="button" class="shortfall-jump shortfall-jump--col" onclick="jumpToResultCell('${escH(sku)}','')">ไปที่คอลัมน์ ▸</button>
+      </div>
+      ${shown}${more > 0 ? `<div class="shortfall-more">… และอีก ${more.toLocaleString("th-TH")} คน</div>` : ""}
+    </div>`;
+  }).join("");
+
+  const lead = alreadySent
+    ? `<p style="margin:0;text-align:left;line-height:1.7;">ส่งเข้า Target Sun แล้ว แต่มี <strong>${boxes.toLocaleString("th-TH")}</strong> หีบใน <strong>${list.length}</strong> SKU ที่ส่งไปไม่ได้ — <strong>ต้องไปเพิ่มจำนวนเองใน Target Sun</strong> ตามรายการนี้</p>`
+    : `<p style="margin:0;text-align:left;line-height:1.7;">ถ้าส่งตอนนี้ เป้าใน Target Sun จะ<strong>ขาด ${boxes.toLocaleString("th-TH")} หีบ</strong> ใน <strong>${list.length}</strong> SKU เพราะคู่พนักงาน×สินค้าเหล่านี้<strong>ไม่เคยมีใน Target Sun</strong> งวดนี้</p>
+       <p style="margin:10px 0 0;text-align:left;line-height:1.7;color:var(--text-2);">กลับไปแก้ได้โดยโหลดข้อมูลขั้นที่ 1 ใหม่ หรือย้ายหีบไปให้คนอื่นในทีมที่มีเป้าของ SKU นั้น<br><strong style="color:var(--amber);">ถ้าไม่กลับไปแก้ ต้องไปเพิ่มจำนวนเองใน Target Sun</strong> ตามรายการข้างล่าง</p>`;
+
+  _showInfoModal({
+    title: title || (alreadySent ? "ส่งแล้ว — แต่ต้องไปเพิ่มเองใน Target Sun" : "ยังไม่ได้ส่ง — เป้าจะขาด"),
+    bodyHtml: `${lead}${noteHtml}<div class="shortfall-list">${rows}</div>`,
+    primaryLabel: onConfirm ? "ส่งเลย — จะไปเพิ่มเองใน Target Sun" : null,
+    onPrimary: onConfirm || null,
+    secondaryLabel: onConfirm ? "กลับไปแก้ไข" : "ปิด",
+  });
+}
+
+/**
+ * ยอดไม่ตรงเป้าที่ **ฝั่ง server** เป็นคนจับ (409 send_target_mismatch)
+ *
+ * ต่างจาก _confirmTargetMismatchBeforeSend ที่ตรวจจาก S.skus ในเบราว์เซอร์:
+ * ตัวนั้นมองไม่เห็นเป้าที่เปลี่ยนบน server หลังจากโหลดขั้นที่ 1 ไปแล้ว
+ * พอมันคิดว่า "ตรงแล้ว" จึงไม่เด้ง modal และส่ง confirmed:false ไป → server 409 → เดิมตันตรงนี้
+ *
+ * @param {Array<{supId:string, detail:object}>} chunks  409 ของแต่ละ SL
+ * @returns {Promise<boolean>} true = ยืนยันส่งต่อ
+ */
+function _confirmServerMismatchBeforeSend(chunks) {
+  const groups = chunks.map(({ supId, detail }) => {
+    const items = Array.isArray(detail?.mismatches) ? detail.mismatches : [];
+    const rows = items.map((m) => {
+      const sku = String(m.sku || "");
+      const sending = Number(m.sending_boxes) || 0;
+      const expected = Number(m.expected_boxes) || 0;
+      const diff = sending - expected;
+      const info = (S.skus || []).find((x) => String(x.sku).trim() === sku) || {};
+      const pname = _skuDisplayName(info);
+      const missing = !!m.missing_from_payload;
+      return `<div class="shortfall-sku">
+        <div class="shortfall-sku__head">
+          <div>
+            <code class="shortfall-sku__code">${escH(sku)}</code>
+            ${pname ? `<span class="shortfall-sku__name">${escH(pname)}</span>` : ""}
+            <div class="shortfall-sku__nums">`
+        + (missing
+            ? `<strong style="color:var(--red);">ไม่มีในผลกระจายเลย</strong> · เป้าทีม ${expected.toLocaleString("th-TH")} หีบ`
+            : `จะส่ง <strong>${sending.toLocaleString("th-TH")}</strong> / เป้าทีม ${expected.toLocaleString("th-TH")} หีบ `
+              + `<strong class="${diff > 0 ? "rx-up" : "rx-down"}">(${diff > 0 ? "+" : ""}${diff.toLocaleString("th-TH")})</strong>`)
+        + `</div>
+          </div>
+          <button type="button" class="shortfall-jump shortfall-jump--col" onclick="jumpToResultCell('${escH(sku)}','')">ไปที่คอลัมน์ ▸</button>
+        </div>
+      </div>`;
+    }).join("");
+    return `<div style="margin-bottom:10px;"><strong>ทีม ${escH(supId)}</strong>${rows}</div>`;
+  }).join("");
+
+  const missingTotal = chunks.reduce((n, c) => n + (Number(c.detail?.missing_sku_count) || 0), 0);
+  const skuTotal = chunks.reduce((n, c) => n + (Number(c.detail?.mismatch_count) || 0), 0);
+
+  return new Promise((resolve) => {
+    let decided = false;
+    _showInfoModal({
+      title: "ยอดหีบไม่ตรงเป้าของทีม — ยังไม่ได้ส่ง",
+      bodyHtml:
+        `<p style="margin:0;text-align:left;line-height:1.7;">`
+        + `มี <strong>${skuTotal.toLocaleString("th-TH")} SKU</strong> ที่ยอดจะส่งไม่เท่ากับเป้าของทีม`
+        + `</p>`
+        + (missingTotal
+            ? `<p style="margin:10px 0 0;text-align:left;line-height:1.7;color:var(--red);">`
+              + `<strong>${missingTotal.toLocaleString("th-TH")} SKU ไม่มีอยู่ในผลกระจายเลย</strong> — `
+              + `แปลว่าเป้า TGA เปลี่ยนหลังจากคุณโหลดข้อมูลขั้นที่ 1 `
+              + `กรณีนี้ควร<strong>โหลดขั้นที่ 1 ใหม่แล้วกระจายอีกครั้ง</strong> ไม่ควรกดส่งเลย</p>`
+            : `<p style="margin:10px 0 0;text-align:left;line-height:1.7;color:var(--text-2);">`
+              + `ถ้าตั้งใจย้ายหีบข้ามทีมในโหมดรวมภาค กดส่งต่อได้ — แต่ถ้าไม่ได้ตั้งใจ `
+              + `แปลว่าเป้าเปลี่ยนหลังจากคุณโหลดข้อมูล ให้โหลดขั้นที่ 1 ใหม่ก่อน</p>`)
+        + `<div class="shortfall-list">${groups}</div>`,
+      primaryLabel: "ยืนยันส่งตามนี้",
+      onPrimary: () => { decided = true; resolve(true); },
+      secondaryLabel: "กลับไปแก้ไข",
+    });
+    const obs = new MutationObserver(() => {
+      if (!document.getElementById("infoModal")) {
+        obs.disconnect();
+        if (!decided) resolve(false);
+      }
+    });
+    obs.observe(document.body, { childList: true });
+  });
+}
+
+/** รวม shortfall จากหลาย SL เข้าเป็นก้อนเดียวต่อ SKU (ตอนส่งรวมภาคจะได้หลายชุด) */
+function _mergeShortfall(chunks) {
+  const bySku = new Map();
+  for (const s of chunks.flat()) {
+    const sku = String(s?.sku || "").trim();
+    if (!sku) continue;
+    const cur = bySku.get(sku) || {
+      sku, missing_boxes: 0, sending_boxes: 0, expected_boxes: null, pairs: [], pair_count: 0,
+    };
+    cur.missing_boxes += Number(s.missing_boxes) || 0;
+    cur.sending_boxes += Number(s.sending_boxes) || 0;
+    if (s.expected_boxes != null) cur.expected_boxes = (cur.expected_boxes || 0) + Number(s.expected_boxes);
+    cur.pairs = cur.pairs.concat(Array.isArray(s.pairs) ? s.pairs : []);
+    cur.pair_count += Number(s.pair_count) || 0;
+    bySku.set(sku, cur);
+  }
+  return [...bySku.values()].sort((a, b) => b.missing_boxes - a.missing_boxes);
 }
 
 /** แจ้งคู่พนักงาน×สินค้าที่ไม่มีเป้า grain ใน Target Sun ณ ตอนส่ง */
@@ -6622,8 +7467,24 @@ function _handleTargetSunImportResponse(res, j, opts = {}) {
 }
 
 /** server เก่าที่ยังไม่มี POST /lakehouse/prepare-targetsun จะได้ 405 จาก StaticFiles */
-function _targetSunPrepareUnsupported(status) {
-  return status === 405 || status === 404;
+/**
+ * true = server ไม่มี endpoint /lakehouse/prepare-targetsun (รุ่นเก่า) → ถอยไปส่งรวดเดียว
+ *
+ * ⚠️ ห้ามเหมาว่า 404 = server เก่า — endpoint นี้คืน 404 ในกรณีปกติได้ด้วย
+ *    "ไม่พบข้อมูลสำหรับแบรนด์ X" (lakehouse.py `_build_tga_upload_dataframe`)
+ *    ถ้าเหมา จะถอยไปเส้นทางส่งรวดเดียวซึ่ง **ข้ามประตูยืนยันทั้งสองด่าน**
+ *    (ยอดไม่ตรงเป้า / เป้าจะขาด) ที่กันไว้ในลูปเตรียมไฟล์
+ *
+ * แยกด้วยรูปร่างของ detail:
+ *   - route ไม่มีจริง → FastAPI ตอบ detail เป็น string "Not Found"
+ *   - proxy คืน HTML  → parse JSON ไม่ได้ → body ว่าง
+ *   - ข้อผิดพลาดจริงของเรา → detail เป็น object เสมอ (มี message/hint_th)
+ */
+function _targetSunPrepareUnsupported(status, body) {
+  if (status === 405) return true;
+  if (status !== 404) return false;
+  const d = body?.detail;
+  return d == null || typeof d === "string";
 }
 
 async function _fetchTargetSunImport(body) {
@@ -6661,6 +7522,106 @@ async function _importTargetSunForPayload(basePayload) {
   return _handleTargetSunImportResponse(res, j, { supId: basePayload.sup_id });
 }
 
+/**
+ * เป้าหีบของทีมหนึ่ง ๆ ต่อ SKU
+ * โหมดรวมภาคอ่านจาก target_boxes_by_sup (แยกรายทีม)
+ * มุมมองทีมเดียวใช้ S.skus ได้ตรง ๆ เพราะเป็นเป้าของทีมนั้นอยู่แล้ว
+ */
+function _supSkuTargetMap(supId) {
+  if (S.aggregateMode) {
+    return (S.targetBoxesBySup && S.targetBoxesBySup[String(supId).trim().toUpperCase()]) || {};
+  }
+  const out = {};
+  for (const s of S.skus || []) {
+    const sku = String(s.sku || "").trim();
+    if (sku) out[sku] = Number(s.supervisor_target_boxes) || 0;
+  }
+  return out;
+}
+
+/** หา SKU ที่ยอดของทีมนั้นไม่ตรงเป้าตัวเอง — คืน [{supId, sku, got, target}] */
+function _supTargetMismatches(supIds, brand) {
+  const out = [];
+  for (const sid of supIds || []) {
+    const rows = _lakehouseAllocationsFromStep3(_lakehouseMatrixFilterSup(sid), brand);
+    if (!rows.length) continue;
+    const targets = _supSkuTargetMap(sid);
+    const got = {};
+    for (const a of rows) {
+      const sku = String(a.sku || "").trim();
+      if (sku) got[sku] = (got[sku] || 0) + (Number(a.allocated_boxes) || 0);
+    }
+    for (const [sku, total] of Object.entries(got)) {
+      const tgt = targets[sku];
+      if (tgt === undefined) continue;
+      if (Number(total) !== Number(tgt)) {
+        out.push({ supId: sid, sku, got: Number(total), target: Number(tgt) });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * เตือน + ให้ยืนยัน ถ้ายอดที่จะส่งไม่ตรงเป้าของทีม
+ *
+ * กรณีปกติของโหมดรวมภาค: ผู้ใช้ย้ายหีบข้ามทีมโดยตั้งใจ ยอดรายทีมจึงเลื่อน
+ * ระบบไม่ห้าม แต่ต้องให้เห็นรายการก่อนว่าทีมไหน SKU ไหน ต่างเท่าไร
+ *
+ * คืน {proceed, confirmed} — ไม่เก็บลง S.* เพราะค่าจะค้างข้ามการเรียก
+ * แล้วเส้นทางอื่น (ตรวจอย่างเดียว / ดาวน์โหลด Excel) จะพลอยข้ามการเช็คไปด้วย
+ */
+async function _confirmTargetMismatchBeforeSend(supIds, brand) {
+  let issues = [];
+  try {
+    issues = _supTargetMismatches(supIds, brand);
+  } catch (e) {
+    console.warn("_supTargetMismatches:", e);
+    // ตรวจฝั่ง client ไม่ได้ก็อย่าไปขวาง — ฝั่ง server ยังมีประตูอีกชั้น
+    return { proceed: true, confirmed: false };
+  }
+  if (!issues.length) return { proceed: true, confirmed: false };
+
+  const bySup = new Map();
+  for (const it of issues) {
+    if (!bySup.has(it.supId)) bySup.set(it.supId, []);
+    bySup.get(it.supId).push(it);
+  }
+  const blocks = [...bySup.entries()].map(([sid, list]) => {
+    const rows = list.slice(0, 6).map((it) => {
+      const diff = it.got - it.target;
+      const cls = diff > 0 ? "rx-up" : "rx-down";
+      const info = (S.skus || []).find((x) => String(x.sku).trim() === it.sku);
+      const nm = String(info?.product_name_thai || "").trim();
+      return `<li><code>${escapeHtml(it.sku)}</code>${nm ? ` ${escapeHtml(nm)}` : ""} — `
+        + `ส่ง <strong>${it.got}</strong> / เป้า <strong>${it.target}</strong> `
+        + `<strong class="${cls}">(${diff > 0 ? "+" : ""}${diff})</strong></li>`;
+    }).join("");
+    const more = list.length > 6 ? `<li>… อีก ${list.length - 6} SKU</li>` : "";
+    return `<div style="margin-bottom:10px;"><strong>ทีม ${escapeHtml(sid)}</strong>`
+      + `<ul style="margin:4px 0 0 18px;padding:0;line-height:1.6;">${rows}${more}</ul></div>`;
+  }).join("");
+
+  return new Promise((resolve) => {
+    _showInfoModal({
+      title: "ยอดหีบไม่ตรงเป้าของทีม — ตรวจก่อนส่ง",
+      bodyHtml:
+        `<p style="margin:0 0 10px;line-height:1.55;">`
+        + `มี <strong>${issues.length} SKU</strong> ที่ยอดจะส่งไม่เท่ากับเป้าของทีมนั้น `
+        + `มักเกิดจากการ<strong>ย้ายหีบข้ามทีม</strong>ในโหมดรวมภาค`
+        + `</p>`
+        + `<div style="max-height:240px;overflow-y:auto;font-size:13px;">${blocks}</div>`
+        + `<p style="margin:10px 0 0;font-size:12px;color:var(--text-3);line-height:1.55;">`
+        + `กด「ยืนยันส่ง」ถ้าตั้งใจให้เป็นแบบนี้ · กด「ยกเลิก」แล้วกด「คำนวณใหม่」`
+        + `เพื่อให้ทุกทีมกลับไปตรงเป้าของตัวเอง</p>`,
+      primaryLabel: "ยืนยันส่ง",
+      secondaryLabel: "ยกเลิก",
+      onPrimary: () => resolve({ proceed: true, confirmed: true }),
+      onSecondary: () => resolve({ proceed: false, confirmed: false }),
+    });
+  });
+}
+
 async function doLakehouseUpload() {
   const brand = _selectedLakehouseBrand();
   const supIds = _lakehouseSupIdsForExport();
@@ -6671,6 +7632,13 @@ async function doLakehouseUpload() {
   if (S.targetSunPreviewMode) {
     if (!await _confirmPreviewSendToTargetSun()) return;
   } else if (!await _confirmIfServerSnapshotStale(S.supId, "ส่ง Target Sun")) return;
+  // ยอดต่อ SKU ของทีมไหนไม่ตรงเป้า (มักเกิดจากย้ายหีบข้ามทีมในโหมดรวมภาค)
+  // ต้องให้ตรวจและยืนยันก่อน — ไม่ส่งเงียบ ๆ
+  const mismatchDecision = await _confirmTargetMismatchBeforeSend(supIds, brand);
+  if (!mismatchDecision.proceed) return;
+  // ไม่ใช่ const — ถ้า server จับได้ว่าไม่ตรงเป้าทั้งที่ฝั่งเบราว์เซอร์คิดว่าตรง
+  // (เป้าบน server เปลี่ยนหลังโหลดขั้นที่ 1) จะถามแล้วตั้งค่านี้ใหม่ระหว่างเตรียมไฟล์
+  let confirmedMismatch = mismatchDecision.confirmed;
   const hasRows = supIds.some((sid) =>
     _lakehouseAllocationsFromStep3(_lakehouseMatrixFilterSup(sid), brand).length > 0
   );
@@ -6706,43 +7674,138 @@ async function doLakehouseUpload() {
   pushGlobalBusy(UX.busySendStep1, UX.busySendTargetHint);
   setGlobalBusyProgress(5, UX.busySendStep1, UX.busySendTargetHint);
   let sentCount = 0;
+  // ผู้ใช้ยืนยันครั้งเดียวแล้วใช้กับทุกทีมในชุดนี้ — ไม่ถามซ้ำราย SL
+  let confirmedManualTopup = false;
+  let manualTopupList = [];
   try {
+    /* ── เฟส 1: เตรียมไฟล์ให้ครบทุกทีมก่อน ยังไม่ส่งอะไรเลย ──────────────
+       เดิมวน prepare→import ทีละทีม พอทีมท้าย ๆ เจอ "เป้าจะขาด" แล้วถาม
+       ทีมก่อนหน้าก็ส่งเข้า Target Sun ไปแล้ว ย้อนไม่ได้
+       ต้องรู้ปัญหาของทุกทีมให้ครบก่อน แล้วค่อยถามครั้งเดียว แล้วจึงเริ่มส่ง
+       (prepare_token อยู่ได้ 30 นาที — เหลือเฟือสำหรับรอผู้ใช้ตัดสินใจ) */
+    let jobs = [];          // {supId, basePayload, token} — พร้อมส่ง
+    const legacyJobs = [];  // server รุ่นเก่าที่ไม่มี prepare — ต้องส่งรวดเดียว
+    const pendingShortfall = [];
+    const pendingMismatch = [];
+
     for (let i = 0; i < supIds.length; i++) {
       const supId = supIds[i];
-      const basePayload = _lakehouseExportPayload(supId, brand);
+      // เส้นทางส่งจริงเท่านั้นที่แนบผลการยืนยันไปด้วย
+      const basePayload = _lakehouseExportPayload(supId, brand, {
+        confirmTargetMismatch: confirmedMismatch,
+      });
       if (!basePayload.allocations?.length) continue;
-      setGlobalBusyProgress(8, UX.busySendStep1,
-        supIds.length > 1 ? `เตรียม ${supId} (${i + 1}/${supIds.length})…` : UX.busySendTargetHint);
-      const prepRes = await fetchWithTimeout(
-        `${API_BASE_URL}/lakehouse/prepare-targetsun`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(basePayload),
-        },
-        600000
-      );
-      const prep = await prepRes.json().catch(() => ({}));
+      jobs.push({ supId, basePayload, token: null });
+    }
 
-      if (_targetSunPrepareUnsupported(prepRes.status)) {
-        if (!(await _importTargetSunForPayload(basePayload))) return;
-        sentCount += 1;
+    /* วนเตรียมจนกว่าทุกทีมจะได้ token — ประตูฝั่ง server มี 2 ด่าน
+         1) ยอดไม่ตรงเป้าทีม  (409 send_target_mismatch)
+         2) เป้าจะขาดเพราะไม่มีใน TGA (409 send_target_shortfall)
+       ทีมหนึ่งอาจติดด่าน 1 ก่อน พอยืนยันแล้วเตรียมใหม่ค่อยไปติดด่าน 2
+       จึงต้องวนซ้ำได้ ไม่ใช่ผ่านรอบเดียวจบ — แต่ถามผู้ใช้ด่านละครั้งเท่านั้น */
+    for (let round = 0; round < 3; round++) {
+      const todo = jobs.filter((j) => !j.token);
+      if (!todo.length) break;
+      pendingShortfall.length = 0;
+      pendingMismatch.length = 0;
+
+      for (let i = 0; i < todo.length; i++) {
+        const job = todo[i];
+        setGlobalBusyProgress(
+          Math.round(5 + (35 * i) / todo.length),
+          UX.busySendStep1,
+          todo.length > 1 ? `เตรียม ${job.supId} (${i + 1}/${todo.length})…` : UX.busySendTargetHint
+        );
+        const prepRes = await fetchWithTimeout(
+          `${API_BASE_URL}/lakehouse/prepare-targetsun`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(job.basePayload),
+          },
+          600000
+        );
+        const prep = await prepRes.json().catch(() => ({}));
+
+        if (_targetSunPrepareUnsupported(prepRes.status, prep)) {
+          legacyJobs.push({ supId: job.supId, basePayload: job.basePayload });
+          job.token = "__legacy__";   // ออกจากคิวเตรียม แล้วไปส่งทางเส้นเก่า
+          continue;
+        }
+
+        // ติดด่าน — เก็บไว้ถามทีเดียวหลังเตรียมครบ ยังไม่ตัดสินใจตอนนี้
+        if (!prepRes.ok && prep?.detail?.code === "send_target_mismatch") {
+          pendingMismatch.push({ supId: job.supId, detail: prep.detail });
+          continue;
+        }
+        if (!prepRes.ok && prep?.detail?.code === "send_target_shortfall") {
+          pendingShortfall.push({ supId: job.supId, detail: prep.detail });
+          continue;
+        }
+
+        if (!prepRes.ok) {
+          const detail = prep.detail;
+          if (detail && typeof detail === "object") {
+            const n = Number(detail.rows_not_in_targetsun_count) || 0;
+            if (n > 0) _showNotInTargetSunModal(n, detail.rows_not_in_targetsun);
+          }
+          throw new Error(_userFacingError(_formatApiErrorDetail(prep), `เตรียมไฟล์ไม่สำเร็จ (${job.supId})`));
+        }
+        if (!prep.prepare_token) {
+          throw new Error(`เตรียมไฟล์ไม่สำเร็จ — ไม่ได้ prepare_token (${job.supId})`);
+        }
+        if (Array.isArray(prep.shortfall) && prep.shortfall.length) {
+          manualTopupList = manualTopupList.concat(prep.shortfall);
+        }
+        job.token = prep.prepare_token;
+      }
+
+      if (!jobs.some((j) => !j.token)) break;
+
+      /* ── ถามด่านละครั้ง ก่อนส่งทีมแรกเสมอ ─────────────────────────── */
+      if (pendingMismatch.length && !confirmedMismatch) {
+        popGlobalBusy();   // ไม่งั้น modal จะอยู่หลัง overlay
+        const goOn = await _confirmServerMismatchBeforeSend(pendingMismatch);
+        pushGlobalBusy(UX.busySendStep1, UX.busySendTargetHint);
+        if (!goOn) return;   // กลับไปแก้ไข — ยังไม่ได้ส่งทีมไหนเลย
+        confirmedMismatch = true;
+        jobs.forEach((j) => { if (!j.token) j.basePayload.confirm_target_mismatch = true; });
+        continue;
+      }
+      if (pendingShortfall.length && !confirmedManualTopup) {
+        const merged = _mergeShortfall(pendingShortfall.map((p) => p.detail.shortfall || []));
+        popGlobalBusy();
+        const goOn = await _confirmManualTopupBeforeSend({
+          shortfall: merged,
+          shortfall_boxes: merged.reduce((s, x) => s + x.missing_boxes, 0),
+        });
+        pushGlobalBusy(UX.busySendStep1, UX.busySendTargetHint);
+        if (!goOn) return;
+        confirmedManualTopup = true;
+        manualTopupList = manualTopupList.concat(merged);
+        jobs.forEach((j) => { if (!j.token) j.basePayload.confirm_manual_topup = true; });
         continue;
       }
 
-      if (!prepRes.ok) {
-        const detail = prep.detail;
-        if (detail && typeof detail === "object") {
-          const n = Number(detail.rows_not_in_targetsun_count) || 0;
-          if (n > 0) _showNotInTargetSunModal(n, detail.rows_not_in_targetsun);
-        }
-        throw new Error(_userFacingError(_formatApiErrorDetail(prep), `เตรียมไฟล์ไม่สำเร็จ (${supId})`));
-      }
-      const token = prep.prepare_token;
-      if (!token) throw new Error(`เตรียมไฟล์ไม่สำเร็จ — ไม่ได้ prepare_token (${supId})`);
+      // ยืนยันไปแล้วแต่ยังติดอยู่ — อย่าวนต่อจนไม่รู้จบ
+      const stuck = (pendingMismatch[0] || pendingShortfall[0])?.detail;
+      throw new Error(_userFacingError(stuck?.message || "", "เตรียมไฟล์ไม่สำเร็จ"));
+    }
+    jobs = jobs.filter((j) => j.token && j.token !== "__legacy__");
 
-      setGlobalBusyProgress(50, UX.busySendStep2, UX.busySendTargetHint);
-      _startTargetSunProgressCreep(52, 88, UX.busySendStep2, UX.busySendTargetHint);
+    /* ── เฟส 2: ส่งจริง ทุกอย่างผ่านการตรวจและยืนยันแล้ว ────────────── */
+    for (let i = 0; i < legacyJobs.length; i++) {
+      const { basePayload } = legacyJobs[i];
+      if (confirmedManualTopup) basePayload.confirm_manual_topup = true;
+      if (!(await _importTargetSunForPayload(basePayload))) return;
+      sentCount += 1;
+    }
+    for (let i = 0; i < jobs.length; i++) {
+      const { supId, basePayload, token } = jobs[i];
+      const base = Math.round(45 + (45 * i) / Math.max(1, jobs.length));
+      setGlobalBusyProgress(base, UX.busySendStep2,
+        jobs.length > 1 ? `ส่ง ${supId} (${i + 1}/${jobs.length})…` : UX.busySendTargetHint);
+      _startTargetSunProgressCreep(base + 2, base + 6, UX.busySendStep2, UX.busySendTargetHint);
 
       const importBody = {
         sup_id: basePayload.sup_id,
@@ -6768,6 +7831,16 @@ async function doLakehouseUpload() {
     popGlobalBusy();
     if (btn) { btn.textContent = uploadBtnLabel; btn.disabled = false; }
   }
+
+  // ส่งเสร็จแล้วค่อยเตือน — รายการที่ต้องไปเพิ่มจำนวนเองใน Target Sun
+  // ต้องอยู่หลัง popGlobalBusy ไม่งั้น modal จะโดน overlay บัง
+  const pending = _mergeShortfall([manualTopupList]);
+  if (sentCount > 0 && pending.length) {
+    _showShortfallModal(
+      { shortfall: pending, shortfall_boxes: pending.reduce((s, x) => s + x.missing_boxes, 0) },
+      { alreadySent: true }
+    );
+  }
 }
 
 async function doLakehouseValidateOnly() {
@@ -6781,6 +7854,7 @@ async function doLakehouseValidateOnly() {
   if (btn) btn.disabled = true;
   pushGlobalBusy("กำลังตรวจไฟล์ก่อนส่ง…");
   const lines = [];
+  const shortfallChunks = [];
   try {
     for (let i = 0; i < supIds.length; i++) {
       const supId = supIds[i];
@@ -6800,6 +7874,16 @@ async function doLakehouseValidateOnly() {
       );
       const prep = await prepRes.json().catch(() => ({}));
       if (!prepRes.ok) {
+        // 409 หีบขาดไม่ใช่ "ตรวจไม่สำเร็จ" — มันคือผลตรวจที่เราอยากได้พอดี
+        if (prep?.detail?.code === "send_target_shortfall") {
+          const d = prep.detail;
+          shortfallChunks.push(d.shortfall || []);
+          lines.push(
+            `${supId}: ⚠️ เป้าจะขาด ${(Number(d.shortfall_boxes) || 0).toLocaleString("th-TH")} หีบ `
+            + `ใน ${(Number(d.shortfall_skus) || 0).toLocaleString("th-TH")} SKU`
+          );
+          continue;
+        }
         const msg = _formatApiErrorDetail(prep) || `เตรียมไม่สำเร็จ (${supId})`;
         lines.push(`${supId}: ${msg}`);
         continue;
@@ -6813,13 +7897,23 @@ async function doLakehouseValidateOnly() {
         + (dropped ? ` · ตัดออก (ไม่มีใน TS): ${dropped.toLocaleString("th-TH")}` : "")
       );
     }
-    _showInfoModal({
-      title: "ผลตรวจไฟล์ก่อนส่ง Target Sun",
-      bodyHtml: `<ul style="margin:0;padding-left:1.2em;line-height:1.65;text-align:left;">${
-        lines.map((l) => `<li>${escH(l)}</li>`).join("")
-      }</ul><p style="margin:12px 0 0;font-size:12px;color:var(--text-3);">ตรวจเท่านั้น — ยังไม่ส่งเข้า Target Sun</p>`,
-      secondaryLabel: "ปิด",
-    });
+    const summaryHtml = `<ul style="margin:0;padding-left:1.2em;line-height:1.65;text-align:left;">${
+      lines.map((l) => `<li>${escH(l)}</li>`).join("")
+    }</ul><p style="margin:12px 0 0;font-size:12px;color:var(--text-3);">ตรวจเท่านั้น — ยังไม่ส่งเข้า Target Sun</p>`;
+
+    const merged = _mergeShortfall(shortfallChunks);
+    if (merged.length) {
+      _showShortfallModal(
+        { shortfall: merged, shortfall_boxes: merged.reduce((s, x) => s + x.missing_boxes, 0) },
+        { title: "ผลตรวจไฟล์ก่อนส่ง Target Sun", noteHtml: `<div style="margin:12px 0 0;">${summaryHtml}</div>` }
+      );
+    } else {
+      _showInfoModal({
+        title: "ผลตรวจไฟล์ก่อนส่ง Target Sun",
+        bodyHtml: summaryHtml,
+        secondaryLabel: "ปิด",
+      });
+    }
   } catch (err) {
     toast("ตรวจไฟล์ไม่สำเร็จ: " + _userFacingError(err), "red");
   } finally {
@@ -7357,12 +8451,25 @@ async function saveServerAllocationSnapshot(status = "draft", opts = {}) {
 }
 
 async function saveRegionalAllocationSnapshots(allocs, status = "optimized") {
+  // ทีมที่อยู่ในขอบเขตรวมภาคจริง ๆ — กันแถวไร้เจ้าของไปตกที่รหัสผู้จัดการ (R2)
+  const inScope = new Set(_aggregateSupervisorOrder());
   const bySup = new Map();
+  const orphans = [];
   for (const a of allocs || []) {
     const sup = _supervisorCodeForAllocRow(a);
-    if (!sup) continue;
+    if (!sup || (inScope.size && !inScope.has(sup))) {
+      orphans.push(a);
+      continue;
+    }
     if (!bySup.has(sup)) bySup.set(sup, []);
     bySup.get(sup).push(a);
+  }
+  if (orphans.length) {
+    console.warn("saveRegionalAllocationSnapshots: แถวที่ระบุทีมไม่ได้", orphans.length, orphans.slice(0, 5));
+    toast(
+      `⚠️ มี ${orphans.length} แถวที่ระบุทีมเจ้าของไม่ได้ — ไม่ได้บันทึกแถวเหล่านี้ กรุณาโหลดหน้าใหม่แล้วกระจายอีกครั้ง`,
+      "amber"
+    );
   }
   const saved = [];
   for (const [supId, rows] of bySup) {
@@ -8593,14 +9700,7 @@ async function runReAllocationKeepEdits() {
   // เด้งลงหา progress bar ก่อน
   qs("#progList").scrollIntoView({ behavior: "smooth", block: "start" });
 
-  const lockedEdits = S.allocations
-    .filter(a => a.is_edited)
-    .map(a => ({
-      emp_id: a.emp_id,
-      sku: a.sku,
-      locked_boxes: a.allocated_boxes,
-      warehouse_code: a.warehouse_code || null,
-    }));
+  const lockedEdits = _collectLockedEdits();
 
   const allocs = await _doOptimize(lockedEdits);
   if (!allocs) return;
@@ -11584,6 +12684,8 @@ function adminFilterRows() {
     }
   }
 
+  // เก็บไว้ให้ปุ่มยกชุดรู้ว่า "ทุกคน" ตอนนี้หมายถึงใครบ้าง (ตามตัวกรองที่เปิดอยู่)
+  _adminVisibleRows = filtered;
   adminRenderTable(adminSortRows(filtered));
   adminSyncFilterVisuals();
 }
@@ -11848,6 +12950,81 @@ async function adminDeleteRow(email, userpl) {
     await adminLoadRows();
   } catch (e) {
     _adminShowError(e?.message || String(e));
+  }
+}
+
+/** แถวที่แสดงอยู่ตอนนี้หลังผ่านตัวกรอง — ใช้เป็นขอบเขตของปุ่มยกชุด */
+let _adminVisibleRows = [];
+
+/**
+ * เปิด/ปิดสิทธิ์ส่ง Target Sun ให้ทุกคน "ที่แสดงอยู่ตอนนี้"
+ *
+ * ผูกกับตัวกรองบนหัวตารางโดยตั้งใจ — แอดมินกรองภาค/หน่วย/บทบาทก่อนได้
+ * แล้วค่อยกดเปิดยกชุด ปลอดภัยกว่าปุ่ม "ทุกคนในระบบ" ที่มองไม่เห็นว่าโดนใครบ้าง
+ */
+async function adminBulkTargetSun(enabled) {
+  const rows = Array.isArray(_adminVisibleRows) ? _adminVisibleRows : [];
+  const emails = [...new Set(
+    rows.map((r) => String(r.email || "").trim().toLowerCase()).filter((e) => e.includes("@"))
+  )];
+  if (!emails.length) {
+    toast("ไม่มีรายชื่อในตารางตอนนี้ — ลองล้างตัวกรองก่อน", "amber");
+    return;
+  }
+
+  // นับเฉพาะคนที่สถานะจะเปลี่ยนจริง เพื่อให้ตัวเลขในคำยืนยันไม่หลอก
+  const willChange = [...new Set(
+    rows.filter((r) => !!r.can_import_targetsun !== !!enabled)
+        .map((r) => String(r.email || "").trim().toLowerCase())
+        .filter((e) => e.includes("@"))
+  )];
+  if (!willChange.length) {
+    toast(`ทุกคนในรายการนี้${enabled ? "เปิด" : "ปิด"}สิทธิ์อยู่แล้ว (${emails.length} อีเมล)`, "amber");
+    return;
+  }
+
+  const sample = willChange.slice(0, 8).map((e) => `<li>${escapeHtml(e)}</li>`).join("");
+  const more = willChange.length > 8 ? `<li>… อีก ${willChange.length - 8} อีเมล</li>` : "";
+  const isFiltered = rows.length !== (S.adminRows || []).length;
+
+  const ok = await new Promise((resolve) => {
+    _showInfoModal({
+      title: `${enabled ? "เปิด" : "ปิด"}สิทธิ์ส่ง Target Sun ยกชุด`,
+      bodyHtml:
+        `<p style="margin:0 0 10px;line-height:1.55;">`
+        + `จะ<strong>${enabled ? "เปิด" : "ปิด"}</strong>สิทธิ์ส่งเข้า Target Sun ให้ `
+        + `<strong>${willChange.length}</strong> อีเมล`
+        + (isFiltered
+            ? ` <span style="color:var(--text-3);">(เฉพาะที่แสดงอยู่ตอนนี้ ${emails.length} จากทั้งหมด ${(S.adminRows || []).length})</span>`
+            : ` <span style="color:var(--text-3);">(ทั้งหมดในระบบ)</span>`)
+        + `</p>`
+        + `<ul style="margin:0 0 8px 18px;padding:0;line-height:1.6;font-size:13px;max-height:200px;overflow:auto;">${sample}${more}</ul>`
+        + (enabled
+            ? `<p style="margin:0;font-size:12px;color:#c2410c;line-height:1.5;">`
+              + `⚠️ คนเหล่านี้จะส่งข้อมูลจริงเข้า Target Sun ได้ทันที</p>`
+            : ""),
+      primaryLabel: enabled ? "เปิดให้ทั้งหมด" : "ปิดทั้งหมด",
+      secondaryLabel: "ยกเลิก",
+      onPrimary: () => resolve(true),
+      onSecondary: () => resolve(false),
+    });
+  });
+  if (!ok) return;
+
+  try {
+    const res = await fetchWithTimeout(`${API_BASE_URL}/admin/user-access/targetsun/bulk`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ emails: willChange, enabled }),
+    }, 60000);
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(_formatApiErrorDetail(j) || "อัปเดตยกชุดไม่สำเร็จ");
+    toast(`${enabled ? "เปิด" : "ปิด"}สิทธิ์ส่ง Target Sun แล้ว ${j.changed ?? willChange.length} อีเมล`, "green");
+    await adminLoadRows();
+    if (S.viewAsEmail && willChange.includes(S.viewAsEmail)) await loadManagers();
+  } catch (e) {
+    _adminShowError(e?.message || String(e));
+    await adminLoadRows();
   }
 }
 

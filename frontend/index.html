@@ -807,6 +807,7 @@
           <div id="step3SnapshotBadge" class="alloc-snapshot-badge" style="display:none;" aria-live="polite"></div>
           <div id="step3ResultTargetNote" class="fabric-change-inline" style="display:none;margin-bottom:12px;" aria-live="polite"></div>
           <div id="compositeAllocLegend" class="composite-alloc-legend" style="display:none;margin-bottom:12px;" role="note" aria-live="polite"></div>
+          <div id="rebalanceExplain" class="rebalance-explain" style="display:none;margin-bottom:12px;" role="status" aria-live="polite"></div>
 
           <div id="step3TieredNote" class="tiered-result-note" style="display:none;margin-bottom:12px;" aria-live="polite"></div>
 
@@ -1094,6 +1095,12 @@
                     <option value="yes">เปิด</option>
                     <option value="no">ปิด</option>
                   </select>
+                  <div class="admin-ts-bulk">
+                    <button type="button" class="admin-ts-bulk-btn admin-ts-bulk-btn--on"
+                      onclick="adminBulkTargetSun(true)" title="เปิดสิทธิ์ส่ง Target Sun ให้ทุกคนที่แสดงอยู่ตอนนี้">เปิดทุกคน</button>
+                    <button type="button" class="admin-ts-bulk-btn admin-ts-bulk-btn--off"
+                      onclick="adminBulkTargetSun(false)" title="ปิดสิทธิ์ส่ง Target Sun ของทุกคนที่แสดงอยู่ตอนนี้">ปิดทุกคน</button>
+                  </div>
                 </th>
                 <th class="admin-th-stack admin-th-stack--actions"></th>
               </tr>
