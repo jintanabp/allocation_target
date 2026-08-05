@@ -293,26 +293,37 @@ def read_rows() -> list[dict[str, Any]]:
         return read_rows_unlocked()
 
 
-def write_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _write_rows_unlocked(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    เขียนไฟล์โดย **ไม่จับ _STORE_LOCK** — ผู้เรียกต้องถืออยู่แล้ว
+
+    _STORE_LOCK เป็น threading.Lock ธรรมดา ไม่ใช่ RLock
+    เรียก write_rows() ซ้อนอยู่ในบล็อกที่ถือ lock อยู่จะ deadlock ทันที
+    ตัวที่ต้องทำ read-modify-write ครบรอบใต้ lock เดียวจึงต้องใช้ตัวนี้
+    """
     normalized = _dedupe_rows(rows)
     path = user_access_json_path()
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     payload = json.dumps(normalized, ensure_ascii=False, indent=2) + "\n"
     dir_name = os.path.dirname(path) or "."
-    with _STORE_LOCK:
-        fd, tmp = tempfile.mkstemp(prefix=".user_access_", suffix=".json", dir=dir_name)
+    fd, tmp = tempfile.mkstemp(prefix=".user_access_", suffix=".json", dir=dir_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(payload)
+        os.replace(tmp, path)
+    except Exception:
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(payload)
-            os.replace(tmp, path)
-        except Exception:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     logger.info("บันทึก user_access %d แถว → %s", len(normalized), path)
     return normalized
+
+
+def write_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    with _STORE_LOCK:
+        return _write_rows_unlocked(rows)
 
 
 def row_key(email: str, userpl: str) -> tuple[str, str]:
@@ -378,6 +389,41 @@ def emails_with_targetsun(rows: list[dict[str, Any]] | None = None) -> set[str]:
             if "@" in em:
                 out.add(em)
     return out
+
+
+def set_targetsun_flag_bulk(
+    emails: list[str] | None,
+    enabled: bool,
+    *,
+    all_emails: bool = False,
+) -> tuple[list[dict[str, Any]], int]:
+    """
+    ตั้ง can_import_targetsun ให้หลายอีเมลในคราวเดียว — คืน (rows, จำนวนอีเมลที่เปลี่ยนจริง)
+
+    ทำ read-modify-write รอบเดียวใต้ lock เดียว
+    ถ้าวนเรียก set_email_targetsun_flag ทีละคน 200 อีเมล = อ่าน+เขียนไฟล์ 200 รอบ
+    ทั้งช้าและเปิดช่องให้ admin อีกคนเขียนแทรกกลางทาง (ดู docs/CONCURRENCY.md)
+
+    all_emails=True = ทุกแถวในไฟล์ · ไม่งั้นใช้เฉพาะอีเมลใน emails
+    """
+    want = {normalized_email(e) for e in (emails or []) if normalized_email(e)}
+    if not all_emails and not want:
+        return read_rows(), 0
+
+    with _STORE_LOCK:
+        rows = read_rows_unlocked()
+        out: list[dict[str, Any]] = []
+        touched: set[str] = set()
+        for r in rows:
+            nr = dict(r)
+            em = normalized_email(nr.get("email"))
+            if (all_emails and "@" in em) or (em in want):
+                if bool(nr.get("can_import_targetsun")) != bool(enabled):
+                    touched.add(em)
+                nr["can_import_targetsun"] = bool(enabled)
+            out.append(nr)
+        saved = _write_rows_unlocked(out)
+    return saved, len(touched)
 
 
 def set_email_targetsun_flag(email: str, enabled: bool) -> list[dict[str, Any]]:

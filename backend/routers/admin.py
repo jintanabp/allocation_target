@@ -262,6 +262,53 @@ def set_targetsun_for_email(
     return {"ok": True, "email": em, "can_import_targetsun": body.enabled}
 
 
+class TargetSunBulkBody(BaseModel):
+    """
+    เปิด/ปิดสิทธิ์ส่ง Target Sun หลายคนพร้อมกัน
+
+    ต้องระบุ emails ที่ต้องการเสมอ (คือรายการที่แอดมินเห็นบนหน้าจอตอนนั้น)
+    ยกเว้นตั้ง all_emails=true ซึ่งหมายถึง "ทุกคนในไฟล์" — ตั้งใจให้พิมพ์ยากกว่า
+    เพราะเป็นการให้สิทธิ์ส่งข้อมูลจริงเข้า Target Sun
+    """
+
+    emails: list[str] = Field(default_factory=list)
+    enabled: bool
+    all_emails: bool = False
+
+
+@router.put("/user-access/targetsun/bulk")
+def set_targetsun_bulk(
+    body: TargetSunBulkBody,
+    admin: dict = Depends(require_admin_user),
+) -> dict[str, Any]:
+    from ..services.usage_log_store import log_from_user
+    from ..services.user_access_store import set_targetsun_flag_bulk
+
+    if not body.all_emails and not body.emails:
+        raise HTTPException(400, detail="ต้องระบุ emails หรือตั้ง all_emails=true")
+
+    rows, changed = set_targetsun_flag_bulk(
+        body.emails, body.enabled, all_emails=body.all_emails
+    )
+    invalidate_user_access_cache()
+
+    scope = "ทุกคนในระบบ" if body.all_emails else f"{len(body.emails)} อีเมลที่เลือก"
+    log_from_user(
+        admin,
+        level="warn",
+        sup_id="",
+        action="admin_targetsun_bulk",
+        message=f"{'เปิด' if body.enabled else 'ปิด'}สิทธิ์ส่ง Target Sun แบบยกชุด",
+        detail=f"ขอบเขต: {scope} · เปลี่ยนจริง {changed} อีเมล",
+    )
+    return {
+        "ok": True,
+        "enabled": body.enabled,
+        "changed": changed,
+        "total_rows": len(rows),
+    }
+
+
 @router.get("/supervisor-codes")
 def admin_supervisor_codes(_user: dict = Depends(require_admin_or_marketing_team)) -> dict[str, Any]:
     codes = list_supervisor_codes()
