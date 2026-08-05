@@ -5,6 +5,7 @@ import pandas as pd
 from fastapi import HTTPException
 
 from ..OR_engine import (
+    LockedEditsExceedTarget,
     _CAP_MULTIPLIER,
     _DEFAULT_HIST_BAND_PCT,
     _TIER_FLEX_BAND_PCT,
@@ -51,6 +52,20 @@ from .wh_split import (
 )
 
 logger = logging.getLogger("target_allocation")
+
+
+def _allow_allocation_mismatch() -> bool:
+    """
+    ทางออกฉุกเฉิน: ปล่อยผลที่ผลรวมไม่ตรงเป้าให้ผ่าน (ค่าเริ่มต้น = ปิด)
+
+    เปิดเฉพาะตอนต้องกู้สถานการณ์หน้างานจริง ๆ และควรปิดกลับทันที
+    เพราะนี่คือกฎ I1 ที่ทั้งระบบยึดอยู่ (ดู docs/ALLOCATION_INVARIANTS.md)
+    """
+    return (os.environ.get("ALLOC_ALLOW_MISMATCH") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
 
 def _lock_or_emp_id(emp_id: str, warehouse_code: str | None) -> str:
@@ -302,10 +317,23 @@ def run_optimization_service(
         raise HTTPException(500, detail="ไม่พบเป้าหีบของทีมนี้ กรุณาโหลดหน้า Dashboard ก่อน")
 
     df_sku = df_sku.copy()
+    df_sku["sku"] = df_sku["sku"].astype(str).str.strip()
     df_sku["supervisor_target_boxes"] = pd.to_numeric(
         df_sku["supervisor_target_boxes"], errors="coerce"
     ).fillna(0)
     df_sku = df_sku[df_sku["supervisor_target_boxes"] > 0].copy()
+    # ยุบ SKU ซ้ำ "ก่อน" แบ่งกลุ่มตามแบรนด์ (I6)
+    #
+    # allocate_boxes ยุบให้อยู่แล้ว แต่โหมดหลายกลยุทธ์แบ่ง df_sku ตามแบรนด์
+    # ก่อนเรียก — SKU รหัสเดียวที่ติดสองแบรนด์จะไปอยู่คนละกลุ่ม แล้วถูกกระจาย
+    # ครบเป้าในทั้งสองกลุ่ม = ได้หีบสองเท่าของเป้าจริง
+    if df_sku["sku"].duplicated().any():
+        dups = sorted(set(df_sku.loc[df_sku["sku"].duplicated(), "sku"]))
+        logger.warning(
+            "target_boxes ของ %s %s-%02d มี SKU ซ้ำ %d รหัส — ยุบเหลือแถวเดียว: %s",
+            sup_id, target_year, target_month, len(dups), dups[:10],
+        )
+        df_sku = df_sku.drop_duplicates(subset=["sku"], keep="last").reset_index(drop=True)
     if df_sku.empty:
         raise HTTPException(
             400,
@@ -417,6 +445,31 @@ def run_optimization_service(
         for le in req.locked_edits
         if _lock_or_emp_id(le.emp_id, le.warehouse_code) in eligible_set
     ]
+    # ล็อกรวมต้องไม่เกินเป้าของ SKU — ตรวจตั้งแต่รับ request (I2)
+    # ถ้าปล่อยเข้าเครื่องคำนวณ ของเดิมจะกลบส่วนเกินทิ้งแล้วปล่อยผลที่เกินเป้าออกไป
+    # ส่วนฝั่ง LP จะกลายเป็นโจทย์ที่แก้ไม่ได้แล้วตกไป proportional เงียบ ๆ
+    if locked_edits_data:
+        _target_by_sku = {
+            str(r["sku"]).strip(): int(round(float(r["supervisor_target_boxes"] or 0)))
+            for _, r in df_sku.iterrows()
+        }
+        _locked_by_sku: dict[str, int] = {}
+        for _le in locked_edits_data:
+            _s = str(_le["sku"]).strip()
+            _locked_by_sku[_s] = _locked_by_sku.get(_s, 0) + int(_le["locked_boxes"])
+        _over = {
+            s: (tot, _target_by_sku[s])
+            for s, tot in _locked_by_sku.items()
+            if s in _target_by_sku and tot > _target_by_sku[s]
+        }
+        if _over:
+            detail = "หีบที่ล็อกไว้รวมกันเกินเป้าหีบ — " + " | ".join(
+                f"SKU {s}: ล็อกไว้ {tot} หีบ แต่เป้ามี {tgt} หีบ"
+                for s, (tot, tgt) in sorted(_over.items())
+            )
+            logger.warning("optimize ปฏิเสธ: %s", detail)
+            raise HTTPException(400, detail=detail)
+
     sku_ids_opt = df_sku["sku"].astype(str).str.strip().tolist()
     new_product_skus_used, detection_mode = detect_new_product_skus(
         sup_id, target_year, sku_ids_opt, df_hist_3 if not df_hist_3.empty else df_hist_6
@@ -707,19 +760,43 @@ def run_optimization_service(
 
     df_final = restore_allocation_emp_ids(df_final, reverse_map)
 
-    atomic_write_csv(result_path(sup_id), df_final, index=False)
+    # ── ประตูสุดท้าย: ผลรวมหีบต่อ SKU ต้องตรงเป้า (I1) ──────────────────
+    # ต้องตรวจ "ก่อน" เขียนไฟล์และสร้าง Excel
+    # เดิมตรวจแล้วแค่ logger.warning จากนั้นก็เขียนไฟล์ สร้าง Excel และตอบ 200 ตามปกติ
+    # ผลที่ผิดจึงถึงมือผู้ใช้ในสภาพที่ดูเหมือนสำเร็จทุกประการ
+    sku_checks = validate_allocation_vs_targets(df_final, df_sku)
+    if sku_checks:
+        logger.error("allocation vs target mismatch: %s", sku_checks)
+        if not _allow_allocation_mismatch():
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "allocation_mismatch",
+                    "message": (
+                        "ผลกระจายไม่ตรงเป้าหีบ — ระบบไม่บันทึกผลนี้ "
+                        "กรุณาตรวจตัวเลขที่ล็อกไว้แล้วกระจายใหม่"
+                    ),
+                    "sku_total_checks": sku_checks[:20],
+                    "mismatch_count": len(sku_checks),
+                },
+            )
+        logger.warning(
+            "ALLOC_ALLOW_MISMATCH เปิดอยู่ — ปล่อยผลที่ไม่ตรงเป้าผ่าน (%d SKU)",
+            len(sku_checks),
+        )
+
+    # ผูกชื่อไฟล์กับงวด — กันสองงวดของซุปเดียวกันเขียนทับกันแล้ว Excel อ่านผิดงวด
+    result_csv_path = result_path(sup_id, target_month, target_year)
+    atomic_write_csv(result_csv_path, df_final, index=False)
 
     yellow_map: dict[str, float] = {}
     for y in req.yellowTargets:
         em = str(y.emp_id).strip()
         yellow_map[em] = yellow_map.get(em, 0.0) + float(y.yellow_target or 0)
-    sku_checks = validate_allocation_vs_targets(df_final, df_sku)
-    if sku_checks:
-        logger.warning("allocation vs target mismatch: %s", sku_checks)
 
     create_target_excel(
-        result_csv=result_path(sup_id),
-        output_path=excel_path(sup_id),
+        result_csv=result_csv_path,
+        output_path=excel_path(sup_id, target_month, target_year),
         brand_filter="ALL",
         yellow_map=yellow_map,
         sup_id=sup_id,

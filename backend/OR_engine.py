@@ -15,6 +15,14 @@ import logging
 
 logger = logging.getLogger("target_allocation.OR")
 
+
+class LockedEditsExceedTarget(ValueError):
+    """หีบที่ล็อกไว้รวมกันเกินเป้าของ SKU — ต้องให้ผู้ใช้แก้ ไม่ใช่กลบส่วนเกินทิ้ง"""
+
+    def __init__(self, message: str, skus: list[str] | None = None):
+        super().__init__(message)
+        self.skus = skus or []
+
 # ── Cap / band constants
 _CAP_MULTIPLIER = 3.0
 _DEFAULT_REVENUE_TOLERANCE_BAHT = 1000.0
@@ -117,10 +125,107 @@ def _skus_zero_team_hist(df_hist: pd.DataFrame, sku_list: list) -> frozenset[str
     sku_list = [_norm_sku(s) for s in sku_list if _norm_sku(s)]
     if df_hist is None or df_hist.empty:
         return frozenset(sku_list)
+    # ต้อง guard คอลัมน์เหมือน allocation_checks.skus_zero_team_hist_window
+    # ไม่งั้น cache ประวัติที่ไม่มีคอลัมน์ครบทำให้ KeyError กลางการกระจาย
+    if "sku" not in df_hist.columns or "hist_boxes" not in df_hist.columns:
+        return frozenset(sku_list)
     df = df_hist.copy()
     df["sku"] = df["sku"].map(_norm_sku)
     g = df.groupby("sku")["hist_boxes"].sum()
     return frozenset(s for s in sku_list if float(g.get(s, 0) or 0) <= 0)
+
+
+def _normalize_engine_inputs(
+    df_emp_targets: pd.DataFrame,
+    df_sku: pd.DataFrame,
+    df_hist: pd.DataFrame,
+    locked_edits: list | None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list]:
+    """
+    ทำให้ทุกฝั่งใช้คีย์รูปเดียวกันก่อนเข้าเครื่องคำนวณ (แก้ F6 + F8)
+
+    ก่อนหน้านี้ locked_map ใช้ string ดิบจาก request (`s == sku`) แต่ even_skus /
+    base_map / flex_skus ใช้ _norm_sku() ต่างกันแค่ช่องว่างหน้า-หลังก็ทำให้
+    "ล็อกถูกเมินเงียบ ๆ" การแก้มือของผู้ใช้จึงหายไปโดยไม่มีสัญญาณอะไรเลย
+
+    supervisor_target_boxes ปัดเป็น int ที่นี่ครั้งเดียว เพราะ LP ใช้ int() (ตัดทศนิยม)
+    แต่ _proportional และตัวตรวจใช้ int(round()) — เป้า 10.7 จึงกลายเป็น 10 กับ 11
+    คนละที่ แล้วตัวตรวจก็ฟ้อง mismatch ที่ไม่ได้เกิดจากการกระจายจริง
+    """
+    emp = df_emp_targets.copy()
+    emp["emp_id"] = emp["emp_id"].astype(str).str.strip()
+
+    sku = df_sku.copy()
+    sku["sku"] = sku["sku"].astype(str).str.strip()
+    if "supervisor_target_boxes" in sku.columns:
+        sku["supervisor_target_boxes"] = (
+            pd.to_numeric(sku["supervisor_target_boxes"], errors="coerce")
+            .fillna(0)
+            .round()
+            .astype(int)
+        )
+
+    # SKU รหัสเดียวต้องมีแถวเดียว (I6)
+    # dict(zip(...)) ที่ใช้ทั่วไฟล์เก็บแค่แถวสุดท้ายอยู่แล้ว จึงยุบแบบ keep="last"
+    # ให้ตรงกับพฤติกรรมเดิม — แต่ที่สำคัญคือโหมดหลายกลยุทธ์ที่แบ่งกลุ่มตามแบรนด์
+    # SKU เดียวกันจะไปอยู่สองกลุ่มแล้วถูกกระจายซ้ำสองรอบ
+    if sku["sku"].duplicated().any():
+        dup_ids = sorted(set(sku.loc[sku["sku"].duplicated(), "sku"]))
+        conflicting = []
+        for s in dup_ids:
+            rows = sku[sku["sku"] == s]
+            for col in ("supervisor_target_boxes", "price_per_box"):
+                if col in rows.columns and rows[col].nunique(dropna=False) > 1:
+                    conflicting.append(f"{s}:{col}")
+        logger.warning(
+            "พบ SKU ซ้ำ %d รหัส — ยุบเหลือแถวเดียว (keep=last)%s",
+            len(dup_ids),
+            f" | ค่าไม่ตรงกัน: {conflicting}" if conflicting else "",
+        )
+        sku = sku.drop_duplicates(subset=["sku"], keep="last").reset_index(drop=True)
+
+    hist = df_hist
+    if hist is not None and not hist.empty:
+        hist = hist.copy()
+        for col in ("emp_id", "sku"):
+            if col in hist.columns:
+                hist[col] = hist[col].astype(str).str.strip()
+
+    locks: list[dict] = []
+    for le in locked_edits or []:
+        try:
+            locks.append(
+                {
+                    "emp_id": str(le["emp_id"]).strip(),
+                    "sku": _norm_sku(le["sku"]),
+                    "locked_boxes": int(le["locked_boxes"]),
+                }
+            )
+        except (KeyError, TypeError, ValueError):
+            logger.warning("locked_edit รูปแบบไม่ถูกต้อง — ข้าม: %r", le)
+
+    # ล็อกรวมต้องไม่เกินเป้าของ SKU นั้น (I2)
+    # ของเดิมใช้ max(0, total - locked_sum) กลบส่วนเกินทิ้ง แต่ยังใส่เซลล์ที่ล็อกเต็มจำนวน
+    # ผลรวมจึงเกินเป้าเงียบ ๆ และฝั่ง LP ก็กลายเป็นโจทย์ที่แก้ไม่ได้ (lowBound=upBound
+    # ชนกับสมการผลรวม) แล้วตกไปใช้ proportional โดยผู้ใช้ไม่รู้
+    if locks and "supervisor_target_boxes" in sku.columns:
+        target_by_sku = dict(zip(sku["sku"], sku["supervisor_target_boxes"]))
+        locked_sum_by_sku: dict[str, int] = {}
+        for lk in locks:
+            locked_sum_by_sku[lk["sku"]] = locked_sum_by_sku.get(lk["sku"], 0) + lk["locked_boxes"]
+        over = {
+            s: (tot, int(target_by_sku[s]))
+            for s, tot in locked_sum_by_sku.items()
+            if s in target_by_sku and tot > int(target_by_sku[s])
+        }
+        if over:
+            detail = " | ".join(
+                f"SKU {s}: ล็อกไว้รวม {tot} หีบ แต่เป้าหีบมีแค่ {tgt} หีบ"
+                for s, (tot, tgt) in sorted(over.items())
+            )
+            raise LockedEditsExceedTarget(detail, skus=sorted(over))
+
+    return emp, sku, hist, locks
 
 
 def allocate_boxes(
@@ -143,10 +248,15 @@ def allocate_boxes(
     if strategy not in valid:
         strategy = "L3M"
 
+    # ทำคีย์ให้อยู่รูปเดียวกันทั้งหมดตั้งแต่ประตูทางเข้า — ทุกอย่างหลังจากนี้
+    # จึงเทียบ emp_id/sku ได้ตรง ๆ โดยไม่ต้องเดาว่าฝั่งไหน normalize มาแล้วบ้าง
+    df_emp_targets, df_sku, df_hist, locked_edits = _normalize_engine_inputs(
+        df_emp_targets, df_sku, df_hist, locked_edits
+    )
+
     locked_map = {}
-    if locked_edits:
-        for le in locked_edits:
-            locked_map[(le["emp_id"], le["sku"])] = int(le["locked_boxes"])
+    for le in locked_edits:
+        locked_map[(le["emp_id"], le["sku"])] = le["locked_boxes"]
 
     cy_ly_skus: frozenset[str] = frozenset()
     zero_hist_skus: frozenset[str] = frozenset()
@@ -260,6 +370,7 @@ def allocate_boxes(
             strict_band_pct=_TIER_STRICT_BAND_PCT,
             default_band_pct=_DEFAULT_HIST_BAND_PCT,
             even_skus=even_skus,
+            cap_multiplier=effective_cap,
         )
 
     if even_skus:
@@ -427,9 +538,16 @@ def _enforce_even_skus_on_df(
                     rows.append({"emp_id": e, "sku": sku_key, "allocated_boxes": boxes})
             continue
 
-        base_box = 1 if force_min_one and total_target >= n_emps else 0
-        remaining = max(0, total_target - locked_sum - base_box * len(free_emps))
-        parts = _distribute_even_integers(remaining, len(free_emps))
+        # โควตาที่เหลือหลังหักของที่ล็อกไว้ — ทุกอย่างต่อจากนี้ต้องอยู่ในนี้
+        avail = max(0, total_target - locked_sum)
+        free_n = len(free_emps)
+        # base_box ต้องคิดจาก "คนที่ยังแบ่งได้" ไม่ใช่คนทั้งหมด
+        # ของเดิมเช็ค total_target >= n_emps แล้วเอาไปคูณกับ len(free_emps)
+        # พอ max(0, ...) ตัดส่วนเกิน ผลรวมจึงกลายเป็น locked_sum + free_n ซึ่งเกินเป้า
+        # เช่น 10 คน เป้า 10 ล็อก 3 คน คนละ 3 หีบ -> 9 + 7 = 16
+        base_box = 1 if (force_min_one and total_target >= n_emps and avail >= free_n) else 0
+        remaining = avail - base_box * free_n
+        parts = _distribute_even_integers(remaining, free_n)
 
         for e, boxes in locked_by_emp.items():
             if boxes > 0:
@@ -468,6 +586,42 @@ def _tier_cell_anchor_mult(
     if not tiered_allocation or not flex_skus:
         return 1.0
     return _TIER_FLEX_ANCHOR_MULT if sku_key in flex_skus else _TIER_STRICT_ANCHOR_MULT
+
+
+def _zero_baseline_cap_enabled() -> bool:
+    """
+    เพดานของเซลล์ที่ baseline = 0 — **ค่าเริ่มต้นคือปิด**
+
+    ทำไมถึงปิดไว้: วัดกับข้อมูลจริง 8 ทีมแล้ว เปิดแล้วหีบย้ายที่ราว 2-3.5% ของทีม
+    (ผลรวมต่อ SKU ยังตรงเป้าทุกกรณี — แค่ย้ายจากคนที่ไม่มีประวัติขาย SKU นั้น
+    ไปหาคนที่มีประวัติ) ซึ่งเป็นการเปลี่ยนที่หัวหน้าทีมเห็นตัวเลขต่างทันที
+    จึงเป็น "การตัดสินใจเชิงนโยบาย" ไม่ใช่บั๊กที่ต้องรีบปิด
+
+    ตัวคุมชั้นแรกยังทำงานอยู่แล้วทั้งหมด: _cap_and_redistribute (เพดาน mean x cap),
+    anchor term ที่ถ่วงด้วยราคา, และสมการผลรวมต่อ SKU
+
+    ALLOC_ZERO_BASELINE_CAP=1 เพื่อเปิด (บังคับกฎ I5 เต็มรูปแบบ)
+    """
+    import os
+
+    raw = (os.environ.get("ALLOC_ZERO_BASELINE_CAP") or "").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+def _zero_baseline_cap(total_target: int, n_emps: int, cap_multiplier: float | None) -> int:
+    """
+    เพดานของเซลล์ที่ baseline = 0 (คนที่ไม่เคยขาย SKU นั้น)
+
+    เดิมไม่มีขอบบนเลย (`if base <= 0: continue`) เหลือแค่สมการผลรวมต่อ SKU เป็นตัวคุม
+    ในทางปฏิบัติ _cap_and_redistribute + anchor term คุมไว้อยู่แล้ว เพดานนี้จึงเป็น
+    ตัวกันชั้นสอง — ให้เจตนา "ห้ามกองไว้ที่คนที่ไม่มีประวัติ" อยู่ในรูปข้อจำกัดจริง ๆ
+    ไม่ใช่ผลข้างเคียงของ objective ที่แก้เมื่อไหร่ก็หลุดเมื่อนั้น
+    """
+    import math
+
+    n = max(1, int(n_emps))
+    mult = float(cap_multiplier if cap_multiplier is not None else _CAP_MULTIPLIER)
+    return max(1, int(math.ceil(max(0, int(total_target)) / n * max(1.0, mult))))
 
 
 def _hist_band_int_bounds(base: int, band_pct: float, var_min: int = 0) -> tuple[int, int]:
@@ -595,6 +749,22 @@ def _proportional(
     employees = df_emp_targets["emp_id"].tolist()
     target_boxes = dict(zip(df_sku["sku"], df_sku["supervisor_target_boxes"]))
 
+    # สรุปประวัติเป็น dict ครั้งเดียว แทนการ scan ทั้งตารางต่อทุกคู่ (emp, sku)
+    # ของเดิมสร้าง boolean mask 2 ชุด + .map(_norm_sku) ใหม่ทุกรอบในลูปซ้อน
+    # ทีมจริง 638 SKU x 6 คน x 2,311 แถว = ~8.8 ล้าน row-ops ต่อการเรียกหนึ่งครั้ง
+    hist_lookup: dict[tuple[str, str], float] = {}
+    if df_hist is not None and not df_hist.empty and {"emp_id", "sku", "hist_boxes"} <= set(df_hist.columns):
+        g = (
+            df_hist.assign(
+                _e=df_hist["emp_id"].astype(str).str.strip(),
+                _s=df_hist["sku"].map(_norm_sku),
+                _b=pd.to_numeric(df_hist["hist_boxes"], errors="coerce").fillna(0.0),
+            )
+            .groupby(["_e", "_s"], sort=False)["_b"]
+            .sum()
+        )
+        hist_lookup = {(e, s): float(v) for (e, s), v in g.items()}
+
     results = []
 
     for sku, total_orig in target_boxes.items():
@@ -622,15 +792,10 @@ def _proportional(
 
         # ── คำนวณ hist weight ──
         sku_key = _norm_sku(sku)
-        hist_by_emp = {}
-        for emp in active_employees:
-            if df_hist.empty:
-                val = 0.0
-            else:
-                m_emp = df_hist["emp_id"].astype(str).str.strip() == str(emp).strip()
-                m_sku = df_hist["sku"].map(_norm_sku) == sku_key
-                val = df_hist.loc[m_emp & m_sku, "hist_boxes"].sum()
-            hist_by_emp[emp] = max(float(val), 0.0)
+        hist_by_emp = {
+            emp: max(hist_lookup.get((str(emp).strip(), sku_key), 0.0), 0.0)
+            for emp in active_employees
+        }
 
         hist_sum = sum(hist_by_emp.values())
 
@@ -680,6 +845,7 @@ def _greedy_revenue_balancer(
     strict_band_pct: float = _TIER_STRICT_BAND_PCT,
     default_band_pct: float = _DEFAULT_HIST_BAND_PCT,
     even_skus: frozenset | None = None,
+    cap_multiplier: float | None = None,
 ) -> pd.DataFrame:
     if df_out.empty:
         return df_out
@@ -692,7 +858,17 @@ def _greedy_revenue_balancer(
     emps = df_emp_targets["emp_id"].tolist()
     n_emps = len(emps)
 
+    _bounds_cache: dict[tuple[str, str], tuple[int, int] | None] = {}
+
     def _cell_bounds(emp: str, sku: str) -> tuple[int, int] | None:
+        # memoize: ถูกเรียกซ้ำหลักแสนครั้งในลูป แต่ผลขึ้นกับ (emp, sku) ล้วน
+        ck = (emp, sku)
+        if ck in _bounds_cache:
+            return _bounds_cache[ck]
+        _bounds_cache[ck] = _v = _cell_bounds_uncached(emp, sku)
+        return _v
+
+    def _cell_bounds_uncached(emp: str, sku: str) -> tuple[int, int] | None:
         if not base_map:
             return None
         if (emp, sku) in locked_map:
@@ -701,9 +877,16 @@ def _greedy_revenue_balancer(
         if sku_key in even_skus:
             return None
         base = int(base_map.get((str(emp).strip(), sku_key), 0))
-        if base <= 0:
-            return None
         min_box = _min_floor_boxes(sku)
+        if base <= 0:
+            # baseline 0 — ใช้เพดานสัมบูรณ์แทนรั้ว % ให้ตรงกับฝั่ง LP (I5)
+            if not _zero_baseline_cap_enabled():
+                return None
+            try:
+                tgt = int(round(float(target_boxes.get(sku, 0) or 0)))
+            except (TypeError, ValueError):
+                tgt = 0
+            return (min_box, max(min_box, _zero_baseline_cap(tgt, n_emps, cap_multiplier)))
         cell_band = _tier_cell_band_pct(
             sku_key,
             tiered_allocation=tiered_allocation,
@@ -751,15 +934,27 @@ def _greedy_revenue_balancer(
     alloc = {}
     for emp in emps: alloc[emp] = {s: 0 for s in sku_prices.keys()}
     for _, r in df_out.iterrows():
-        if r["emp_id"] in alloc and r["sku"] in sku_prices: 
+        if r["emp_id"] in alloc and r["sku"] in sku_prices:
             alloc[r["emp_id"]][r["sku"]] = r["allocated_boxes"]
 
-    def get_current_rev(emp): return sum(alloc[emp][s] * sku_prices[s] for s in sku_prices)
+    # รายได้ปัจจุบันต่อคน — คิดครั้งเดียวแล้วปรับทีละก้าวตอนย้ายหีบ
+    # ของเดิมเรียก get_current_rev() ใหม่ทั้งตารางทุกรอบ (สูงสุด 50,000 รอบ
+    # x จำนวนคน x จำนวน SKU) ทั้งที่การย้าย 1 หีบเปลี่ยนค่าแค่สองคน
+    rev = {e: sum(alloc[e][s] * sku_prices[s] for s in sku_prices) for e in emps}
+
+    # ค่าที่ไม่เปลี่ยนระหว่างลูป — ยกออกมาคำนวณครั้งเดียว
+    # ลำดับต้องคงเดิมเป๊ะ เพราะการเลือก best ใช้ ">" (ตัวแรกที่ดีที่สุดชนะ)
+    candidates = [
+        (sku, float(price or 0))
+        for sku, price in sku_prices.items()
+        if _norm_sku(sku) not in skip_balance_skus
+    ]
+    floors = {sku: _min_floor_boxes(sku) for sku, _ in candidates}
 
     prev_total_error = float("inf")
     stall_count = 0
     for _ in range(int(max_iters)):
-        diffs = {e: get_current_rev(e) - target_rev.get(e, 0) for e in emps}
+        diffs = {e: rev[e] - target_rev.get(e, 0) for e in emps}
         # เป้าหมาย: ให้ทุกคนคลาดไม่เกิน tolerance
         max_abs = max((abs(v) for v in diffs.values()), default=0.0)
         if max_abs <= float(tolerance_baht or 0):
@@ -790,39 +985,49 @@ def _greedy_revenue_balancer(
         best_sku_to_move = None
         best_improvement = 0
         
-        for sku, price in sku_prices.items():
-            if _norm_sku(sku) in skip_balance_skus:
-                continue
+        d_rich = diffs[rich_emp]
+        d_poor = diffs[poor_emp]
+        current_error = abs(d_rich) + abs(d_poor)
+        alloc_rich = alloc[rich_emp]
+        for sku, price in candidates:
             # 🔴 ข้ามการสลับหีบที่คนพิมพ์แก้ไขไว้แล้ว (ห้ามยุ่งเด็ดขาด)
             if (rich_emp, sku) in locked_map or (poor_emp, sku) in locked_map:
                 continue
 
-            floor = _min_floor_boxes(sku)
             # ห้ามดึงหีบจนเหลือต่ำกว่า floor (กัน force_min_one ถูกทำลายหลัง _proportional)
-            if alloc[rich_emp][sku] <= floor:
+            if alloc_rich[sku] <= floors[sku]:
                 continue
             if not _can_move_box(rich_emp, poor_emp, sku):
                 continue
-            current_error = abs(diffs[rich_emp]) + abs(diffs[poor_emp])
-            new_rich_diff = diffs[rich_emp] - price
-            new_poor_diff = diffs[poor_emp] + price
-            new_error = abs(new_rich_diff) + abs(new_poor_diff)
+            new_error = abs(d_rich - price) + abs(d_poor + price)
 
             improvement = current_error - new_error
             if improvement > best_improvement:
                 best_improvement = improvement
                 best_sku_to_move = sku
-                    
+
         if best_sku_to_move is None:
             break
 
-        fl = _min_floor_boxes(best_sku_to_move)
+        moved_price = float(sku_prices.get(best_sku_to_move, 0) or 0)
         alloc[rich_emp][best_sku_to_move] = max(
-            fl, alloc[rich_emp][best_sku_to_move] - 1
+            floors[best_sku_to_move], alloc[rich_emp][best_sku_to_move] - 1
         )
         alloc[poor_emp][best_sku_to_move] += 1
+        # ปรับรายได้แบบก้าวเดียว แทนการรวมใหม่ทั้งตาราง
+        rev[rich_emp] -= moved_price
+        rev[poor_emp] += moved_price
 
-    final_results = [{"emp_id": emp, "sku": sku, "allocated_boxes": boxes} for emp in emps for sku, boxes in alloc[emp].items() if boxes > 0]
+    # ต้องคืน "ทุกเซลล์" รวมที่เป็น 0 ด้วย
+    #
+    # ของเดิมกรอง `if boxes > 0` ทิ้ง เซลล์ที่ถูกดึงหีบออกจนเหลือ 0 จึงหายไปจากผลลัพธ์
+    # ฝั่ง _post_merge_revenue_balance ที่ merge กลับด้วย .get(key, ค่าเดิม)
+    # เลยดึงค่าก่อนปรับกลับมา = คนให้ไม่ได้ลด แต่คนรับได้เพิ่ม -> หีบงอกเกินเป้า (I1)
+    final_results = [
+        {"emp_id": emp, "sku": sku, "allocated_boxes": boxes}
+        for emp in emps
+        for sku, boxes in alloc[emp].items()
+    ]
     return pd.DataFrame(final_results)
 
 def _lp_optimize(
@@ -876,6 +1081,25 @@ def _lp_optimize(
     target_rev = dict(zip(df_emp_targets["emp_id"], df_emp_targets["yellow_target"]))
     target_boxes = dict(zip(df_sku["sku"], df_sku["supervisor_target_boxes"]))
     sku_prices = dict(zip(df_sku["sku"], df_sku["price_per_box"]))
+
+    # ── ชื่อตัวแปร LP ต้องเป็นเลขล้วน ห้ามเอา emp_id/sku ไปต่อเป็นชื่อ
+    #
+    # PuLP ล้างเฉพาะอักขระใน LpElement.illegal_chars = "-+[] ->/" เท่านั้น จึงมี 2 ปัญหา:
+    #   1. "|" ไม่อยู่ในชุดนั้น — พนักงานหลายคลังมี id เป็น "emp|WH" (ดู wh_split.alloc_key)
+    #      กลายเป็นชื่อ x_E001|WH12_111111 เขียนลงไฟล์ LP ที่ CBC อ่านไม่ได้
+    #   2. "-" ถูกแปลงเป็น "_" → ("A-B","C") กับ ("A","B_C") ได้ชื่อเดียวกัน
+    #      และ PuLP อ่านคำตอบกลับ "โดยอิงชื่อ" ตัวแปรชนกัน = หีบไปตกกับคนผิด
+    # ทั้งสองเคสพังเงียบ (ตกไป fallback proportional) จึงต้องตัดปัญหาที่ต้นทาง
+    _emp_ix = {e: i for i, e in enumerate(employees)}
+    _sku_ix = {s: j for j, s in enumerate(skus)}
+
+    def _vname(prefix: str, emp=None, sku=None) -> str:
+        parts = [prefix]
+        if emp is not None:
+            parts.append(str(_emp_ix[emp]))
+        if sku is not None:
+            parts.append(str(_sku_ix[sku]))
+        return "_".join(parts)
 
     try:
         total_possible_rev = float(
@@ -948,7 +1172,7 @@ def _lp_optimize(
                 if (emp, sku) in locked_map:
                     val = locked_map[(emp, sku)]
                     x[(emp, sku)] = pulp.LpVariable(
-                        f"x_{emp}_{sku}", lowBound=val, upBound=val, cat="Integer"
+                        _vname("x", emp, sku), lowBound=val, upBound=val, cat="Integer"
                     )
                     continue
                 min_box = 1 if force_min_one and int(target_boxes[sku]) >= len(employees) else 0
@@ -958,14 +1182,14 @@ def _lp_optimize(
                 if even_base is not None:
                     # SKU ใหม่แบ่งเท่า — ล็อกตาม baseline เกลี่ยเท่า ไม่ให้ LP/ทดลอง 80/20 ดึงไปปรับเงิน
                     x[(emp, sku)] = pulp.LpVariable(
-                        f"x_{emp}_{sku}", lowBound=even_base, upBound=even_base, cat="Integer"
+                        _vname("x", emp, sku), lowBound=even_base, upBound=even_base, cat="Integer"
                     )
                     continue
                 x[(emp, sku)] = pulp.LpVariable(
-                    f"x_{emp}_{sku}", lowBound=min_box, cat="Integer"
+                    _vname("x", emp, sku), lowBound=min_box, cat="Integer"
                 )
-                dpos[(emp, sku)] = pulp.LpVariable(f"dp_{emp}_{sku}", lowBound=0, cat="Continuous")
-                dneg[(emp, sku)] = pulp.LpVariable(f"dn_{emp}_{sku}", lowBound=0, cat="Continuous")
+                dpos[(emp, sku)] = pulp.LpVariable(_vname("dp", emp, sku), lowBound=0, cat="Continuous")
+                dneg[(emp, sku)] = pulp.LpVariable(_vname("dn", emp, sku), lowBound=0, cat="Continuous")
 
         if band_pct > 0 and base_map:
             for emp in employees:
@@ -976,9 +1200,15 @@ def _lp_optimize(
                     if sku_key in even_skus:
                         continue
                     base = int(base_map.get((str(emp).strip(), sku_key), 0))
-                    if base <= 0:
-                        continue
                     min_box = 1 if force_min_one and int(target_boxes[sku]) >= len(employees) else 0
+                    if base <= 0:
+                        # baseline 0 ไม่มีรั้ว % ให้อ้างอิง — ใช้เพดานสัมบูรณ์แทน (I5)
+                        if _zero_baseline_cap_enabled():
+                            hi0 = max(min_box, _zero_baseline_cap(
+                                int(target_boxes[sku]), len(employees), cap_multiplier
+                            ))
+                            prob += x[(emp, sku)] <= hi0
+                        continue
                     cell_band = _tier_cell_band_pct(
                         sku_key,
                         tiered_allocation=tiered_allocation,
@@ -991,10 +1221,12 @@ def _lp_optimize(
                     prob += x[(emp, sku)] >= lo
                     prob += x[(emp, sku)] <= hi
 
-        shortfall = pulp.LpVariable.dicts("sf", employees, lowBound=0, cat="Continuous")
-        excess = pulp.LpVariable.dicts("ex", employees, lowBound=0, cat="Continuous")
-        sf_pen = pulp.LpVariable.dicts("sfp", employees, lowBound=0, cat="Continuous")
-        ex_pen = pulp.LpVariable.dicts("exp", employees, lowBound=0, cat="Continuous")
+        # LpVariable.dicts จะเอา emp_id ไปต่อเป็นชื่อ ("sf_E001|WH2") — มีปัญหาเดียวกับ x
+        # จึงสร้างเองด้วยชื่อเลขล้วน แต่ยังคีย์ด้วย emp เหมือนเดิม
+        shortfall = {e: pulp.LpVariable(_vname("sf", e), lowBound=0, cat="Continuous") for e in employees}
+        excess = {e: pulp.LpVariable(_vname("ex", e), lowBound=0, cat="Continuous") for e in employees}
+        sf_pen = {e: pulp.LpVariable(_vname("sfp", e), lowBound=0, cat="Continuous") for e in employees}
+        ex_pen = {e: pulp.LpVariable(_vname("exp", e), lowBound=0, cat="Continuous") for e in employees}
 
         anchor_term = 0
         if lp_anchor > 0 and dpos:
