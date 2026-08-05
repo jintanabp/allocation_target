@@ -185,6 +185,11 @@ def mark_sent_targetsun(
     # อ่าน+เขียนต้องอยู่ใน lock เดียวกัน ไม่งั้นมีคน save คั่นกลางแล้ว allocations เดิมหาย
     with _STORE_LOCK:
         existing = _read_snapshot_unlocked(allocation_snapshot_path(sup_id, month, year)) or {}
+        # ต้องส่ง expected_version เสมอ ไม่ใช่ None:
+        # ถ้าเปิด ALLOC_REQUIRE_IF_MATCH=1 แล้วส่ง None + มี snapshot เดิมอยู่
+        # write_snapshot จะโยน SnapshotPreconditionRequired → "ส่ง Target Sun" พังทุกครั้ง
+        # อ่านค่าใต้ _STORE_LOCK เดียวกันอยู่แล้ว (RLock) จึงยังอะตอมมิก
+        expected = _version_of(existing) if existing else None
         body: dict[str, Any] = {
             "sup_id": _normalize_sup(sup_id),
             "target_month": int(month),
@@ -198,7 +203,7 @@ def mark_sent_targetsun(
             "strategy": existing.get("strategy") or "",
             "updated_by": updated_by or existing.get("updated_by") or "",
         }
-        return write_snapshot(body)
+        return write_snapshot(body, expected_version=expected)
 
 
 def _snapshot_has_work(snap: dict[str, Any]) -> bool:

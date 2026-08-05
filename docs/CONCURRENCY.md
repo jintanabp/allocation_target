@@ -104,6 +104,12 @@ client บันทึก → ส่ง if_match_version: 3
 
 การสร้าง snapshot **ใหม่** ยังผ่านเสมอแม้เปิดโหมดบังคับ (ไม่มี lost update ให้กัน)
 
+> **แก้แล้ว:** ก่อนหน้านี้ `mark_sent_targetsun()` เรียก `write_snapshot(body)` โดยไม่ส่ง
+> `expected_version` พอเปิด `ALLOC_REQUIRE_IF_MATCH=1` + มี snapshot อยู่แล้ว มันจะเข้าเงื่อนไข
+> `expected_version is None and current is not None and require_if_match()` แล้วโยน
+> `SnapshotPreconditionRequired` ทุกครั้ง — **"ส่ง Target Sun" จะพังทันทีที่เปิดสวิตช์นี้**
+> ตอนนี้อ่าน version ใต้ `_STORE_LOCK` เดียวกันแล้วส่งเข้าไปด้วย (RLock อยู่แล้ว จึงยังอะตอมมิก)
+
 ## lock ที่มีอยู่ในระบบ
 
 | ไฟล์ | lock | กันอะไร |
@@ -115,6 +121,41 @@ client บันทึก → ส่ง if_match_version: 3
 | `services/app_runtime_settings.py` | `_LOCK` | เขียน settings |
 | `services/usage_log_store.py` | `_LOCK` | append/rewrite jsonl |
 | `services/sl_link_store.py` / `sku_link_store.py` | `_LOCK` | เขียน links |
+| `fabric_dax_connector.py` | `_TOKEN_CACHE_LOCK` | เขียน `data/token_cache.bin` (เฉพาะโหมดล็อกอินผู้ใช้) |
+
+## โหลดรวมภาคทำงานขนานกัน (thread pool ซ้อนใน request)
+
+`services/employees.py: load_employees_bulk()` เดิมวน `for sid in ids:` ยิง DAX ทีละทีม
+8 ทีม = 8 รอบต่อกันจนจบ ตอนนี้ใช้ `ThreadPoolExecutor` เพราะแต่ละทีมอิสระต่อกันจริง:
+
+- `FabricDAXConnector()` **ถูกสร้างใหม่ทุกครั้งที่เรียก** (`employees.py:322, 396, 646`)
+  ไม่มี instance ใช้ร่วมกันระหว่าง thread
+- path ไฟล์ cache แยกตาม `(sup, งวด)` อยู่แล้ว → คนละทีมไม่เขียนไฟล์เดียวกัน
+- ที่ต้องกันเพิ่มคือ `data/token_cache.bin` ซึ่งเป็นไฟล์เดียวร่วมกัน — ใส่ `_TOKEN_CACHE_LOCK`
+  + `atomic_write_text` แล้ว (เข้าเส้นทางนี้เฉพาะโหมดล็อกอินผู้ใช้ ไม่ใช่ Service Principal)
+
+| env | ค่าเริ่มต้น | หมายเหตุ |
+|---|---|---|
+| `AGGREGATE_LOAD_WORKERS` | 6 | เพดาน 8 และไม่เกินจำนวนทีมจริง · ตั้ง `1` = กลับไปโหลดทีละทีมแบบเดิม |
+
+> เพดาน 8 เพื่อไม่ให้ไปเบียด anyio threadpool ของ FastAPI (ค่าเริ่มต้น 40 threads)
+> ถ้ามี request รวมภาคหลายอันพร้อมกัน thread จะถูกใช้เป็นทวีคูณ — อย่าตั้งสูงกว่านี้โดยไม่วัดก่อน
+
+## ไฟล์ผลกระจายผูกกับงวดแล้ว
+
+`result_path()` / `excel_path()` เดิมไม่มีเดือน/ปีในชื่อ:
+
+```
+data/final_allocation_{SUP}.csv        ← เดิม (ยังรองรับตอนอ่าน)
+data/final_allocation_{SUP}_{YYYY}_{MM}.csv   ← ตอนนี้
+data/Final_Dashboard_{SUP}_{YYYY}_{MM}.xlsx
+```
+
+ของเดิมกระจายสองงวดของซุปเดียวกันพร้อมกันจะเขียนทับกัน แล้ว `create_target_excel`
+ที่อ่านไฟล์นั้นต่อทันทีอาจได้ข้อมูลของอีกงวด (`atomic_write_csv` กันได้แค่ torn read
+ไม่ได้กัน TOCTOU ข้ามงวด)
+
+`download_excel_response()` ไม่รับงวด จึงใช้ `latest_excel_path_for_sup()` หยิบงวดล่าสุด
 
 ## ที่ยังไม่ได้แก้ (รู้อยู่)
 
@@ -125,8 +166,11 @@ client บันทึก → ส่ง if_match_version: 3
   ไม่มี temp+replace อยู่บน hot path ของ login ทุกครั้ง (มี try/except รองรับ → แค่ช้าลง ไม่พัง)
 - **export/download TOCTOU** — เขียนไฟล์ตาม sup+brand แล้วให้ client มา GET ทีหลัง
   สองคนที่ดูแล SL **และ** brand เดียวกัน (เช่น manager + supervisor) export พร้อมกันจะทับกัน
-- **cache ราย SL อื่น ๆ ยังใช้ `to_csv` ตรง ๆ** (`employees.py` hist/tga_grain, `employee_payload_cache.py`
-  ที่ใช้ tmp name ตายตัว `f"{path}.tmp"`) — torn read ได้ถ้าคนโหลด SL เดียวกันพร้อมกัน
+- **cache ราย SL อื่น ๆ ยังใช้ `to_csv` ตรง ๆ** (`employees.py` hist/tga_grain) — torn read ได้
+  ถ้าคนโหลด SL เดียวกันพร้อมกัน
+  (`employee_payload_cache.py` ย้ายมาใช้ `atomic_write_json` + `read_locked` แล้ว — เดิมใช้ tmp
+  ชื่อตายตัว `f"{path}.tmp"` ซึ่งชนกันเองได้ และอ่านด้วย `open()` เปล่าซึ่งทำให้ writer พัง
+  `PermissionError` บน Windows พอเขียน cache ไม่สำเร็จก็ตกไปยิง DAX ใหม่ทุกครั้ง = "แอปช้า")
 
 ## เขียน test concurrency ยังไง
 

@@ -8,6 +8,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
+from ..core.atomic_io import atomic_write_json, read_locked
 from ..core.paths import employee_payload_cache_path, safe_id
 
 logger = logging.getLogger("target_allocation")
@@ -17,7 +18,7 @@ _META_KEYS = frozenset({"data_from_cache", "data_cached_at"})
 
 def employee_payload_cache_ttl_sec() -> int:
     """
-    อายุ cache (วินาที). ค่าเริ่มต้น 900 (15 นาที).
+    อายุ cache (วินาที). ค่าเริ่มต้น 3600 (1 ชั่วโมง).
     ตั้ง 0 หรือติดลบ = ปิดการอ่าน/เขียน cache JSON นี้ (ยังยิง DAX ทุกครั้ง).
     """
     raw = (os.environ.get("EMPLOYEE_PAYLOAD_CACHE_TTL_SEC") or "3600").strip()
@@ -49,7 +50,10 @@ def read_cached_employee_payload(
         return None
 
     try:
-        with open(path, encoding="utf-8") as f:
+        # ต้องครอบ read_locked: บน Windows ถ้า reader ถือ handle ค้างตอน writer เรียก
+        # os.replace ตัว writer จะพัง PermissionError (ดู backend/core/atomic_io.py)
+        # โหลดรวมภาคยิงขนานกันแล้ว เคสนี้จึงเกิดได้จริง
+        with read_locked(path), open(path, encoding="utf-8") as f:
             doc = json.load(f)
     except (OSError, json.JSONDecodeError) as e:
         logger.warning("payload cache read failed %s: %s", path, e)
@@ -112,19 +116,14 @@ def write_cached_employee_payload(
         "target_year": int(target_year),
         "payload": _strip_meta(payload),
     }
-    tmp = f"{path}.tmp"
     try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(doc, f, ensure_ascii=False)
-        os.replace(tmp, path)
+        # ใช้ atomic_write_json แทน .tmp ชื่อตายตัว + os.replace ดิบ
+        # ชื่อ .tmp ตายตัวทำให้สอง writer ของ (sup, งวด) เดียวกันชนกัน
+        # และ os.replace ดิบบน Windows พังเป็น PermissionError เมื่อมี reader ถือ handle
+        atomic_write_json(path, doc, ensure_ascii=False)
         logger.info("payload cache saved %s", path)
     except OSError as e:
         logger.warning("payload cache write failed %s: %s", path, e)
-        try:
-            if os.path.isfile(tmp):
-                os.remove(tmp)
-        except OSError:
-            pass
 
 
 def invalidate_employee_payload_cache(

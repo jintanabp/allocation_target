@@ -53,8 +53,12 @@ def cleanup_export_artifacts_keep_latest_per_sup(keep_n: int = 1, sup_id: str | 
     ไฟล์ที่จัดการ:
     - Target_{sup}_{brand}.xlsx
     - export_{sup}_{brand}.csv
-    - Final_Dashboard_{sup}.xlsx (legacy)
-    - final_allocation_{sup}.csv (legacy)
+    - Final_Dashboard_{sup}[_{yyyy}_{mm}].xlsx
+    - final_allocation_{sup}[_{yyyy}_{mm}].csv
+
+    ส่วน _{yyyy}_{mm} เป็นของใหม่ (ผูกไฟล์ผลกระจายกับงวด) ต้อง match ด้วย
+    ไม่งั้นตัวกรอง only_sup จะเทียบ "SL330_2026_08" กับ "SL330" ไม่ตรง
+    แล้วไฟล์ใหม่จะไม่เคยถูกล้างเลย
 
     หมายเหตุ:
     - parse sup จากชื่อไฟล์โดย assume ว่า sup_id ไม่ประกอบด้วย '_' (เช่น SL330)
@@ -71,8 +75,14 @@ def cleanup_export_artifacts_keep_latest_per_sup(keep_n: int = 1, sup_id: str | 
         patterns: list[tuple[str, re.Pattern[str]]] = [
             ("Target", re.compile(r"^Target_(?P<sup>[^_]+)_.+\.xlsx$", re.IGNORECASE)),
             ("export", re.compile(r"^export_(?P<sup>[^_]+)_.+\.csv$", re.IGNORECASE)),
-            ("Final_Dashboard", re.compile(r"^Final_Dashboard_(?P<sup>[^.]+)\.xlsx$", re.IGNORECASE)),
-            ("final_allocation", re.compile(r"^final_allocation_(?P<sup>[^.]+)\.csv$", re.IGNORECASE)),
+            (
+                "Final_Dashboard",
+                re.compile(r"^Final_Dashboard_(?P<sup>[^_.]+)(?:_\d{4}_\d{2})?\.xlsx$", re.IGNORECASE),
+            ),
+            (
+                "final_allocation",
+                re.compile(r"^final_allocation_(?P<sup>[^_.]+)(?:_\d{4}_\d{2})?\.csv$", re.IGNORECASE),
+            ),
         ]
 
         by_sup: dict[str, list[tuple[float, str]]] = {}

@@ -62,12 +62,43 @@ def tga_grain_cache_path(sup_id: str, month: int, year: int) -> str:
     return f"data/tga_lines_{safe_id(sup_id)}_{year}_{month:02d}.csv"
 
 
-def result_path(sup_id: str) -> str:
+def result_path(sup_id: str, month: int | None = None, year: int | None = None) -> str:
+    """
+    ผลกระจายล่าสุดของทีม — ต้องผูกกับงวดด้วย
+
+    ชื่อเดิมไม่มีเดือน/ปี ทำให้กระจายสองงวดของซุปเดียวกันพร้อมกันเขียนทับกัน
+    แล้ว create_target_excel ที่อ่านไฟล์นี้ต่อทันทีอาจได้ข้อมูลของอีกงวด
+    (atomic_write_csv กันได้แค่ "อ่านไฟล์ครึ่งใบ" ไม่ได้กันสองงวดชนกัน)
+
+    ไม่ระบุงวด = ชื่อเดิม — ใช้เฉพาะโค้ดเก่าที่ยังไม่มีบริบทงวด
+    """
+    if month and year:
+        return f"data/final_allocation_{safe_id(sup_id)}_{int(year)}_{int(month):02d}.csv"
     return f"data/final_allocation_{safe_id(sup_id)}.csv"
 
 
-def excel_path(sup_id: str) -> str:
+def excel_path(sup_id: str, month: int | None = None, year: int | None = None) -> str:
+    """Excel ผลกระจาย — ผูกกับงวดด้วยเหตุผลเดียวกับ result_path"""
+    if month and year:
+        return f"data/Final_Dashboard_{safe_id(sup_id)}_{int(year)}_{int(month):02d}.xlsx"
     return f"data/Final_Dashboard_{safe_id(sup_id)}.xlsx"
+
+
+def latest_excel_path_for_sup(sup_id: str) -> str | None:
+    """
+    ไฟล์ Excel ผลกระจายงวดล่าสุดของทีม (ไม่รู้งวด — ใช้ตอน download แบบ backward compat)
+    คืน None ถ้าไม่มีเลย
+    """
+    import glob
+    import os
+
+    sid = safe_id(sup_id)
+    matches = sorted(glob.glob(f"data/Final_Dashboard_{sid}_*.xlsx"), reverse=True)
+    for p in matches:
+        if os.path.isfile(p):
+            return p
+    legacy = f"data/Final_Dashboard_{sid}.xlsx"
+    return legacy if os.path.isfile(legacy) else None
 
 
 def excel_export_path(sup_id: str, brand: str) -> str:

@@ -16,14 +16,19 @@ import os
 import atexit
 import json
 import logging
+import threading
 
 # โหลด .env เมื่อ import โมดูลโดยตรง (เช่นเทส) — main.py ก็โหลดก่อน import อยู่แล้ว
 from .load_env import load_project_dotenv
+from .core.atomic_io import atomic_write_text
 from .core.tga_period import tga_filter_by_selected_period
 
 load_project_dotenv()
 
 _log = logging.getLogger("target_allocation")
+
+# กันหลาย thread เขียน data/token_cache.bin ทับกัน (เฉพาะโหมดล็อกอินผู้ใช้)
+_TOKEN_CACHE_LOCK = threading.Lock()
 
 
 class FabricDAXConnector:
@@ -87,9 +92,12 @@ class FabricDAXConnector:
     def _save_cache(self) -> None:
         if self._use_service_principal or self.cache is None:
             return
-        if self.cache.has_state_changed:
-            with open(self.cache_file, "w") as f:
-                f.write(self.cache.serialize())
+        # โหมดล็อกอินผู้ใช้ (dev) เท่านั้น — โหลดรวมภาคยิงขนานกันแล้ว
+        # หลาย connector จึงเขียน token_cache.bin พร้อมกันได้ ต้องกันไฟล์ฉีก
+        # (โหมด Service Principal บน production ไม่เข้าเส้นทางนี้เลย)
+        with _TOKEN_CACHE_LOCK:
+            if self.cache.has_state_changed:
+                atomic_write_text(self.cache_file, self.cache.serialize())
 
     def _get_access_token(self) -> str:
         if self._cca is not None:

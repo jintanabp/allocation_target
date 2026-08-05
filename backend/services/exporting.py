@@ -9,8 +9,8 @@ from ..core.atomic_io import atomic_write_csv
 from ..core.caches import cleanup_export_artifacts_keep_latest_per_sup
 from ..core.paths import (
     excel_export_path,
-    excel_path,
     export_result_path,
+    latest_excel_path_for_sup,
     safe_id,
     target_boxes_cache_path,
 )
@@ -120,10 +120,12 @@ def export_excel_service(
 def download_excel_response(sup_id: str, brand: str) -> FileResponse:
     fpath = excel_export_path(sup_id, brand)
     if not os.path.exists(fpath):
-        # backward compat: ถ้ายังไม่ได้ export ตามแบรนด์ ให้ลองไฟล์เดิม
-        fpath = excel_path(sup_id)
-        if not os.path.exists(fpath):
+        # backward compat: ถ้ายังไม่ได้ export ตามแบรนด์ ให้ลองไฟล์ผลกระจาย
+        # ตอนนี้ไฟล์ผูกกับงวดแล้ว แต่ endpoint นี้ไม่รับงวด จึงหยิบงวดล่าสุดของทีม
+        fallback = latest_excel_path_for_sup(sup_id)
+        if not fallback:
             raise HTTPException(404, detail="ไม่พบไฟล์ Excel กรุณา Optimize หรือ Export ก่อน")
+        fpath = fallback
 
     return FileResponse(
         fpath,
