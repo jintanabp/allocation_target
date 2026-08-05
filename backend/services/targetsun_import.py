@@ -61,9 +61,11 @@ def _save_prepare_bundle(
     dropped_dims: int,
     not_in_ts: list,
     upload_user_code: str | None,
+    shortfall: list | None = None,
 ) -> None:
     _prepare_dir()
     (_prepare_dir() / f"{token}.xlsx").write_bytes(content)
+    shortfall = shortfall or []
     meta = {
         "filename": fname,
         "sup_id": sup_id.strip().upper(),
@@ -72,6 +74,9 @@ def _save_prepare_bundle(
         "rows_dropped_missing_dims": dropped_dims,
         "rows_not_in_targetsun": not_in_ts,
         "rows_not_in_targetsun_count": dropped_dims,
+        # คู่ที่ผู้ใช้ต้องไปเพิ่มจำนวนเองใน Target Sun — ต้องติดไปถึงหน้าจอ "ส่งสำเร็จ"
+        "shortfall": shortfall,
+        "shortfall_boxes": sum(int(s.get("missing_boxes") or 0) for s in shortfall),
         "upload_user_code": upload_user_code,
         "created_at": time.time(),
     }
@@ -131,8 +136,8 @@ def prepare_targetsun_import(req: LakehouseUploadRequest) -> dict:
         raise HTTPException(400, detail="ไม่มีข้อมูลผลกระจายหีบให้ส่ง")
 
     t0 = time.perf_counter()
-    content, fname, df, dropped_dims, not_in_ts = prepare_lakehouse_xlsx(
-        req, drop_incomplete_rows=True
+    content, fname, df, dropped_dims, not_in_ts, shortfall = prepare_lakehouse_xlsx(
+        req, drop_incomplete_rows=True, enforce_targets=True
     )
     nrow = int(len(df))
     zero_rows = int((df["QUANTITYCASE"] == 0).sum()) if "QUANTITYCASE" in df.columns else 0
@@ -147,6 +152,7 @@ def prepare_targetsun_import(req: LakehouseUploadRequest) -> dict:
         dropped_dims=int(dropped_dims),
         not_in_ts=not_in_ts,
         upload_user_code=req.upload_user_code,
+        shortfall=shortfall,
     )
     logger.info(
         "TargetSun prepare: token=%s rows=%d build=%.2fs",
@@ -162,6 +168,8 @@ def prepare_targetsun_import(req: LakehouseUploadRequest) -> dict:
         "rows_dropped_missing_dims": int(dropped_dims),
         "rows_not_in_targetsun": not_in_ts,
         "rows_not_in_targetsun_count": int(dropped_dims),
+        "shortfall": shortfall,
+        "shortfall_boxes": sum(int(s.get("missing_boxes") or 0) for s in shortfall),
         "step": "prepare",
     }
 
@@ -175,6 +183,7 @@ def _post_targetsun_multipart(
     dropped_dims: int,
     not_in_ts: list,
     import_url: str | None = None,
+    shortfall: list | None = None,
 ) -> dict:
     url = (import_url or targetsun_import_excel_url()).strip()
 
@@ -297,6 +306,7 @@ def _post_targetsun_multipart(
             },
         )
 
+    shortfall = shortfall or []
     out = {
         "upload_filename": fname,
         "rows_sent": nrow,
@@ -304,6 +314,9 @@ def _post_targetsun_multipart(
         "rows_dropped_missing_dims": int(dropped_dims),
         "rows_not_in_targetsun": not_in_ts,
         "rows_not_in_targetsun_count": int(dropped_dims),
+        # ส่งสำเร็จแล้วก็ยังต้องเตือน — คู่เหล่านี้ต้องไปเพิ่มจำนวนเองใน Target Sun
+        "shortfall": shortfall,
+        "shortfall_boxes": sum(int(s.get("missing_boxes") or 0) for s in shortfall),
         "import_url": url,
         "http_status": int(r.status_code),
         "targetsun": body,
@@ -349,6 +362,7 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
     zero_rows = int(meta.get("zero_rows_sent") or 0)
     dropped_dims = int(meta.get("rows_dropped_missing_dims") or 0)
     not_in_ts = meta.get("rows_not_in_targetsun") or []
+    shortfall = meta.get("shortfall") or []
 
     try:
         out = _post_targetsun_multipart(
@@ -358,6 +372,7 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
             zero_rows=zero_rows,
             dropped_dims=dropped_dims,
             not_in_ts=not_in_ts if isinstance(not_in_ts, list) else [],
+            shortfall=shortfall if isinstance(shortfall, list) else [],
         )
     finally:
         _delete_prepare_bundle(token)
@@ -378,8 +393,8 @@ def import_allocations_to_targetsun(req: LakehouseUploadRequest) -> dict:
     t0 = time.perf_counter()
     logger.info("TargetSun import: start allocations_in=%d", len(req.allocations or []))
 
-    content, fname, df, dropped_dims, not_in_ts = prepare_lakehouse_xlsx(
-        req, drop_incomplete_rows=True
+    content, fname, df, dropped_dims, not_in_ts, shortfall = prepare_lakehouse_xlsx(
+        req, drop_incomplete_rows=True, enforce_targets=True
     )
     t_build = time.perf_counter()
     nrow = int(len(df))
@@ -399,6 +414,7 @@ def import_allocations_to_targetsun(req: LakehouseUploadRequest) -> dict:
         dropped_dims=int(dropped_dims),
         not_in_ts=not_in_ts,
         import_url=url,
+        shortfall=shortfall,
     )
     logger.info(
         "TargetSun import timing: build_xlsx=%.2fs post_upstream=%.2fs total=%.2fs rows=%d",

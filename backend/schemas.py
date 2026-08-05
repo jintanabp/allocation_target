@@ -18,6 +18,12 @@ class LockedEditInput(BaseModel):
     sku: str
     locked_boxes: int = Field(ge=0)
     warehouse_code: str | None = None
+    """
+    ทีมเจ้าของล็อก — โหมดรวมภาคส่งมาด้วยเพราะ emp_id ซ้ำข้ามทีมได้
+    backend ไม่ได้ใช้ตัดสินใจ (แต่ละ call ผูกกับ sup_id เดียวอยู่แล้ว)
+    แต่ประกาศไว้ให้ payload อ่านรู้เรื่องและ log ตามรอยได้
+    """
+    supervisor_code: str | None = None
 
 
 class OptimizeRequest(BaseModel):
@@ -104,3 +110,19 @@ class LakehouseUploadRequest(BaseModel):
     brand_filter: str = "ALL"
     """จาก POST /lakehouse/prepare-targetsun — ส่ง import โดยไม่สร้าง Excel ซ้ำ"""
     prepare_token: str | None = None
+    """
+    ผู้ใช้ยืนยันแล้วว่ายอดหีบต่อ SKU ไม่ตรงเป้าทีมโดยตั้งใจ (เช่นย้ายข้ามทีมในโหมดรวมภาค)
+
+    ค่าเริ่มต้น False = server ปฏิเสธด้วย 409 พร้อมรายการ SKU ที่ไม่ตรง
+    frontend เอารายการนั้นไปแสดงให้ตรวจ แล้วส่งซ้ำด้วย true เมื่อผู้ใช้กดยืนยัน
+    """
+    confirm_target_mismatch: bool = False
+    """
+    ผู้ใช้รับทราบแล้วว่าบางคู่พนักงาน×สินค้าไม่มีใน Target Sun งวดนี้ → หีบเหล่านั้นจะไม่ถูกส่ง
+    และผู้ใช้จะไปเพิ่มจำนวนเองใน Target Sun
+
+    **คนละ flag กับ confirm_target_mismatch โดยตั้งใจ** — อันนั้นแปลว่า "แก้มือแล้วไม่ตรงเป้า"
+    ซึ่งในโหมดรวมภาคเป็นเรื่องปกติตาม I7 คนจึงกดยืนยันจนชิน ถ้าใช้ flag เดียวกัน
+    ปัญหา master data จะถูกกดข้ามไปโดยไม่ได้อ่าน
+    """
+    confirm_manual_topup: bool = False

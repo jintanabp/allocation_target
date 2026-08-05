@@ -662,6 +662,92 @@ def _drop_rows_missing_tga_import_key(
     return kept, dropped, preview
 
 
+def _shortfall_from_dropped_rows(
+    df: pd.DataFrame,
+    sup_id: str,
+    month: int,
+    year: int,
+    *,
+    max_skus: int = 50,
+    max_pairs: int = 300,
+) -> list[dict]:
+    """
+    หีบที่จะหายไปจริง เพราะแถวถูกตัดที่ _drop_rows_missing_tga_import_key
+    เรียกด้วย df **ก่อน** drop
+
+    ทำไมไม่ย้าย _assert_send_matches_sup_targets มาตรวจหลัง drop แทน:
+      1. ฟังก์ชันนั้นวนจาก df.groupby("sku") คือ "SKU ที่ยังเหลือ" — ถ้า SKU ถูกตัดทั้งตัว
+         (สินค้าใหม่ที่ TGA ยังไม่ตั้งเป้าให้ใครในทีมเลย) มันหายไปจาก groupby แล้วผ่านเงียบ
+         ตัวนี้ดูจาก "แถวที่ถูกตัด" จึงจับเคสนั้นได้
+      2. 409 ของฟังก์ชันนั้นแปลว่า "แก้มือไม่ตรงเป้า" (ข้ามได้ด้วย confirm_target_mismatch
+         ซึ่งในโหมดรวมภาคเป็นเรื่องปกติตาม I7) — ถ้าเอาปัญหา master data ไปรวม
+         จะถูกกดยืนยันข้ามไปโดยไม่ได้ตั้งใจ
+
+    นับเฉพาะแถวที่ allocated_boxes > 0 — ตัดแถวหีบ 0 ไม่ทำให้เป้าขาด (ไม่มีอะไรให้ทับใน Oracle)
+    """
+    if df is None or df.empty:
+        return []
+    mask = _import_key_mask(df)
+    bad = df[~mask]
+    if bad.empty:
+        return []
+
+    bad = bad.assign(
+        _sku=bad["sku"].astype(str).str.strip(),
+        _boxes=pd.to_numeric(bad["allocated_boxes"], errors="coerce").fillna(0).astype(int),
+    )
+    bad = bad[bad["_boxes"] > 0]
+    if bad.empty:
+        return []
+
+    kept = df[mask]
+    if kept.empty:
+        sending: dict[str, int] = {}
+    else:
+        sending = (
+            pd.to_numeric(kept["allocated_boxes"], errors="coerce")
+            .fillna(0)
+            .astype(int)
+            .groupby(kept["sku"].astype(str).str.strip())
+            .sum()
+            .to_dict()
+        )
+
+    # อ่านเป้าไม่ได้ก็ยังรายงานได้ — จำนวนหีบที่หายไม่ได้ขึ้นกับไฟล์เป้า
+    targets = _sup_target_boxes_by_sku(sup_id, month, year) or {}
+
+    out: list[dict] = []
+    for sku, grp in bad.groupby("_sku", sort=False):
+        # ผู้ใช้ต้องเอารายการนี้ไปกรอกเองใน Target Sun — ห้ามตัดทิ้งเงียบ ๆ
+        # ถ้าเกิน max_pairs จริง ๆ ให้ pair_count บอกจำนวนเต็มไว้ (ดูครบได้จากไฟล์ตรวจก่อนส่ง)
+        pairs = grp.groupby("emp_id", sort=False)["_boxes"].sum().sort_values(ascending=False)
+        out.append(
+            {
+                "sku": str(sku),
+                "missing_boxes": int(grp["_boxes"].sum()),
+                "sending_boxes": int(sending.get(str(sku), 0)),
+                "expected_boxes": targets.get(str(sku)),
+                "pairs": [
+                    {"emp_id": str(e), "allocated_boxes": int(b)} for e, b in pairs.items()
+                ],
+                "pair_count": int(len(pairs)),
+            }
+        )
+    out.sort(key=lambda x: (-x["missing_boxes"], x["sku"]))
+    out = out[:max_skus]
+
+    # เพดานรวมกันเพย์โหลดบวม — ตัดจาก SKU ที่ขาดน้อยสุดก่อน และ pair_count ยังบอกจำนวนจริง
+    budget = max_pairs
+    for item in out:
+        if budget <= 0:
+            item["pairs"] = []
+            continue
+        if len(item["pairs"]) > budget:
+            item["pairs"] = item["pairs"][:budget]
+        budget -= len(item["pairs"])
+    return out
+
+
 def _normalize_brand_label(value: object) -> str:
     return str(value or "").strip()
 
@@ -837,11 +923,169 @@ def _enrich_emp_dimensions(
     return df
 
 
+def _allow_send_mismatch() -> bool:
+    """ทางออกฉุกเฉิน — ใช้ตัวเดียวกับประตูใน /optimize เพื่อไม่ให้มีสวิตช์หลายตัว"""
+    return (os.environ.get("ALLOC_ALLOW_MISMATCH") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def _sup_target_boxes_by_sku(sup_id: str, month: int, year: int) -> dict[str, int] | None:
+    """
+    เป้าหีบต่อ SKU ของทีมนี้จากไฟล์เป้า — คืน None เมื่ออ่านไม่ได้ (ผู้เรียกต้องไม่บล็อกการส่ง)
+
+    ใช้ร่วมกันระหว่าง _assert_send_matches_sup_targets (ตรวจก่อน drop)
+    และ _shortfall_from_dropped_rows (ตรวจหลัง drop) — ต้องอ่านจากแหล่งเดียวกัน
+    """
+    from ..core.targets import load_target_csv_for
+
+    sid = str(sup_id or "").strip().upper()
+    try:
+        df_sku, _ = load_target_csv_for(sid, int(month), int(year))
+    except Exception as e:
+        logger.warning("อ่านเป้าทีมก่อนส่ง Target Sun ไม่ได้ (%s): %s", sid, e)
+        return None
+    if df_sku is None or df_sku.empty:
+        logger.warning("อ่านเป้าทีมก่อนส่ง Target Sun: ไม่พบไฟล์เป้าของ %s %s-%02d", sid, year, month)
+        return None
+
+    targets: dict[str, int] = {}
+    for _, r in df_sku.iterrows():
+        sku = str(r.get("sku") or "").strip()
+        if not sku:
+            continue
+        try:
+            targets[sku] = int(round(float(r.get("supervisor_target_boxes") or 0)))
+        except (TypeError, ValueError):
+            targets[sku] = 0
+    return targets
+
+
+def _assert_send_matches_sup_targets(
+    df: pd.DataFrame,
+    sup_id: str,
+    month: int,
+    year: int,
+    *,
+    confirmed: bool = False,
+    check_missing_skus: bool = False,
+) -> None:
+    """
+    ประตูสุดท้ายก่อนส่งเข้า Target Sun — ผลรวมหีบต่อ SKU ของทีมนี้ต้องตรงเป้าของทีมนี้
+
+    ทำไมต้องตรวจซ้ำทั้งที่ /optimize ตรวจแล้ว:
+      ระหว่าง optimize -> ส่ง ยังมีอีกหลายก้าวที่ไม่มีใครตรวจเลย
+        - แก้มือในตาราง (โหมดรวมภาคย้ายหีบข้ามทีมได้ตามที่ออกแบบไว้)
+        - PUT /data/allocations บันทึก snapshot โดยไม่ตรวจผลรวม
+        - โหลด snapshot เก่ากลับมาส่ง ทั้งที่เป้า TGA เปลี่ยนไปแล้ว
+      ตัวเลขที่ถึง Target Sun จึงต่างจากเป้าของทีมได้ ทั้งที่ตอนกระจายถูกต้อง
+
+    check_missing_skus — ตรวจ "SKU ที่มีเป้าแต่ไม่มีใน payload เลย" ด้วย
+      เปิดเฉพาะตอนส่งทุกแบรนด์ เพราะตอนนั้น payload ต้องครอบคลุมทุก SKU ที่มีเป้า
+      ถ้าส่งแยกแบรนด์ payload มีแค่บาง SKU อยู่แล้ว เปิดไว้จะฟ้องผิดทั้งกระดาน
+
+      เคสที่จับได้: หน้าเว็บจำรายชื่อ SKU ไว้ตั้งแต่โหลดขั้นที่ 1 ถ้าหลังจากนั้น
+      มีการนำเข้าเป้า TGA ที่เพิ่ม SKU ใหม่ SKU นั้นจะไม่อยู่ใน payload เลย
+      การวนจาก payload อย่างเดียวจึงไม่มีทางเห็นมัน
+    """
+    if df is None or df.empty:
+        return
+    sid = str(sup_id or "").strip().upper()
+    targets = _sup_target_boxes_by_sku(sid, month, year)
+    if targets is None:
+        return  # อ่านเป้าไม่ได้ = ตรวจไม่ได้ อย่าไปบล็อกการส่ง
+
+    got = df.groupby("sku")["allocated_boxes"].sum().astype(int).to_dict()
+    got = {str(k).strip(): int(v) for k, v in got.items()}
+
+    # วนจาก "SKU ที่มีเป้า" ไม่ใช่ "SKU ที่ส่ง" เมื่อ payload ควรครบ —
+    # ไม่งั้น SKU ที่หายไปทั้งตัวจะไม่เคยถูกหยิบมาเทียบ
+    if check_missing_skus:
+        keys = sorted(set(targets) | set(got))
+    else:
+        keys = sorted(got)
+
+    problems = []
+    for sku in keys:
+        tgt = targets.get(sku)
+        if tgt is None:
+            continue  # SKU ไม่มีเป้าในงวดนี้ — ปล่อยให้เส้นทางเดิมจัดการ
+        total = got.get(sku, 0)
+        if total != int(tgt):
+            problems.append(
+                {
+                    "sku": sku,
+                    "sending_boxes": int(total),
+                    "expected_boxes": int(tgt),
+                    # ไม่มีแถวเลย ต่างจากส่งมาแต่จำนวนไม่ตรง — หน้าเว็บใช้แยกข้อความ
+                    "missing_from_payload": sku not in got,
+                }
+            )
+
+    if not problems:
+        return
+
+    logger.error(
+        "ส่ง Target Sun ไม่ตรงเป้าทีม %s %s-%02d: %s", sid, year, month, problems[:20]
+    )
+    if confirmed:
+        # ผู้ใช้เห็นรายการแล้วและกดยืนยัน — เช่นย้ายหีบข้ามทีมในโหมดรวมภาคโดยตั้งใจ
+        logger.warning(
+            "ผู้ใช้ยืนยันส่งทั้งที่ไม่ตรงเป้าทีม %s (%d SKU ไม่ตรง)", sid, len(problems)
+        )
+        return
+    if _allow_send_mismatch():
+        logger.warning("ALLOC_ALLOW_MISMATCH เปิดอยู่ — ปล่อยให้ส่งทั้งที่ไม่ตรงเป้า")
+        return
+
+    missing = [p for p in problems if p.get("missing_from_payload")]
+    hint = (
+        "มักเกิดจากการแก้ตัวเลขข้ามทีมในโหมดรวมภาค หรือเป้า Target Sun "
+        "เปลี่ยนหลังจากกระจายไปแล้ว — กด「คำนวณใหม่」แล้วส่งอีกครั้ง"
+    )
+    if missing:
+        # SKU ที่ไม่มีในสิ่งที่ส่งเลย = หน้าเว็บยังไม่รู้จักมัน (เป้าเพิ่มมาหลังโหลดขั้นที่ 1)
+        # กด「คำนวณใหม่」เฉย ๆ ไม่พอ ต้องโหลดขั้นที่ 1 ใหม่ให้เห็น SKU ก่อน
+        hint = (
+            f"มี {len(missing)} SKU ที่มีเป้าแต่ไม่มีอยู่ในผลกระจายเลย — "
+            "แปลว่าเป้า TGA เปลี่ยนหลังจากคุณโหลดข้อมูลขั้นที่ 1 "
+            "ให้โหลดขั้นที่ 1 ใหม่ แล้วกระจายหีบอีกครั้งก่อนส่ง"
+        )
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "send_target_mismatch",
+            "message": (
+                f"ยอดหีบที่จะส่งไม่ตรงเป้าของทีม {sid} — ระบบยังไม่ส่ง "
+                f"({len(problems)} SKU ไม่ตรง"
+                + (f", {len(missing)} SKU ไม่มีในผลกระจาย" if missing else "")
+                + ")"
+            ),
+            "hint_th": hint,
+            "mismatches": problems[:20],
+            "mismatch_count": len(problems),
+            "missing_sku_count": len(missing),
+            "sup_id": sid,
+            "confirm_field": "confirm_target_mismatch",
+        },
+    )
+
+
 def _build_tga_upload_dataframe(
     req: LakehouseUploadRequest,
     *,
     drop_incomplete_rows: bool = False,
+    enforce_targets: bool = False,
 ) -> tuple[pd.DataFrame, int, list[dict]]:
+    """
+    enforce_targets — ตรวจว่าผลรวมหีบต่อ SKU ตรงเป้าทีมหรือไม่ (409 ถ้าไม่ตรง)
+
+    เปิดเฉพาะ "เส้นทางส่งจริง" เท่านั้น ห้ามเปิดกับการสร้างไฟล์เพื่อดาวน์โหลด
+    เพราะผู้ใช้ต้องโหลด Excel มาตรวจได้แม้ตัวเลขยังไม่ตรง — ถ้าบล็อกตรงนั้นด้วย
+    จะกลายเป็นว่ายิ่งมีปัญหายิ่งตรวจไม่ได้
+    """
     t0 = time.perf_counter()
     rows_raw = [a.model_dump() for a in req.allocations]
     df = pd.DataFrame(rows_raw)
@@ -883,6 +1127,16 @@ def _build_tga_upload_dataframe(
             )
 
     df = _normalize_allocation_payload(df)
+    if enforce_targets:
+        _assert_send_matches_sup_targets(
+            df,
+            req.sup_id,
+            int(req.target_month),
+            int(req.target_year),
+            confirmed=bool(getattr(req, "confirm_target_mismatch", False)),
+            # ส่งทุกแบรนด์เท่านั้นที่ payload ควรครอบคลุมทุก SKU ที่มีเป้า
+            check_missing_skus=(brand_filter or "ALL").upper() == "ALL",
+        )
     zero_pairs_full = _zero_sum_emp_sku_pairs(df)
 
     grain_dg = _read_tga_grain_cache(req.sup_id, int(req.target_month), int(req.target_year))
@@ -931,6 +1185,11 @@ def _build_tga_upload_dataframe(
         )
     t_enrich = time.perf_counter()
 
+    # ต้องคิดจาก df ก่อน drop — หลัง drop แถวที่หายไปไม่เหลือให้นับแล้ว
+    shortfall = _shortfall_from_dropped_rows(
+        df, req.sup_id, int(req.target_month), int(req.target_year)
+    )
+
     if drop_incomplete_rows:
         df, dropped_dims, not_in_ts = _drop_rows_missing_tga_import_key(df)
         if df.empty:
@@ -949,6 +1208,50 @@ def _build_tga_upload_dataframe(
     else:
         not_in_ts = _preview_not_in_targetsun(df)
         dropped_dims = int((~_import_key_mask(df)).sum())
+
+    # ประตูที่สอง: แถวที่ถูกตัดมีหีบ > 0 → เป้าจะขาดจริง
+    # ยืนยันข้ามได้ แต่ต้องผ่าน confirm_manual_topup เท่านั้น (ไม่ใช่ confirm_target_mismatch)
+    # เพราะการยืนยันตรงนี้แปลว่า "รับปากว่าจะไปเพิ่มจำนวนเองใน Target Sun"
+    if enforce_targets and shortfall:
+        total_missing = sum(int(s["missing_boxes"]) for s in shortfall)
+        if getattr(req, "confirm_manual_topup", False):
+            logger.warning(
+                "ผู้ใช้ยืนยันส่งทั้งที่เป้าจะขาด %s: %d หีบ ใน %d SKU — ต้องไปเพิ่มเองใน Target Sun: %s",
+                str(req.sup_id or "").strip().upper(),
+                total_missing,
+                len(shortfall),
+                shortfall[:5],
+            )
+        else:
+            logger.error(
+                "ส่ง Target Sun แล้วเป้าจะขาด %s: %d หีบ ใน %d SKU — %s",
+                str(req.sup_id or "").strip().upper(),
+                total_missing,
+                len(shortfall),
+                shortfall[:5],
+            )
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "send_target_shortfall",
+                    "message": (
+                        f"ยังไม่ได้ส่ง — ถ้าส่งตอนนี้ เป้าใน Target Sun จะขาด "
+                        f"{total_missing:,} หีบ ใน {len(shortfall)} SKU "
+                        "เพราะคู่พนักงาน×สินค้าเหล่านี้ไม่เคยมีใน Target Sun งวดนี้"
+                    ),
+                    "hint_th": (
+                        "กลับไปแก้: โหลดข้อมูลขั้นที่ 1 ใหม่ ถ้ายังขาดอยู่แปลว่าคู่นั้นไม่มีเป้าใน TGA จริง "
+                        "ให้ย้ายหีบไปให้คนอื่นในทีมที่มีเป้าของ SKU นั้น — "
+                        "หรือถ้าไม่แก้ ต้องไปเพิ่มจำนวนเองใน Target Sun ตามรายการนี้"
+                    ),
+                    "shortfall": shortfall,
+                    "shortfall_skus": len(shortfall),
+                    "shortfall_boxes": total_missing,
+                    "rows_not_in_targetsun": not_in_ts,
+                    "rows_not_in_targetsun_count": dropped_dims,
+                    "confirm_field": "confirm_manual_topup",
+                },
+            )
 
     if df.empty:
         raise HTTPException(400, detail="ไม่มีข้อมูล allocations สำหรับส่งออก")
@@ -983,7 +1286,7 @@ def _build_tga_upload_dataframe(
         len(out),
         grain_ok,
     )
-    return out[LAKEHOUSE_CSV_COLUMNS], dropped_dims, not_in_ts
+    return out[LAKEHOUSE_CSV_COLUMNS], dropped_dims, not_in_ts, shortfall
 
 
 def _export_basename(req: LakehouseUploadRequest) -> str:
@@ -993,7 +1296,7 @@ def _export_basename(req: LakehouseUploadRequest) -> str:
 
 def prepare_lakehouse_csv(req: LakehouseUploadRequest) -> tuple[bytes, str, pd.DataFrame]:
     """CSV สำหรับ ingest / OneLake (ค่าวันที่เป็นข้อความ d/M/yyyy HH:mm:ss)"""
-    df, _dropped, _preview = _build_tga_upload_dataframe(req, drop_incomplete_rows=True)
+    df, _dropped, _preview, _shortfall = _build_tga_upload_dataframe(req, drop_incomplete_rows=True)
     buf = io.StringIO()
     df.to_csv(buf, index=False)
     content = ("\ufeff" + buf.getvalue()).encode("utf-8")
@@ -1032,15 +1335,22 @@ def prepare_lakehouse_xlsx(
     req: LakehouseUploadRequest,
     *,
     drop_incomplete_rows: bool = False,
-) -> tuple[bytes, str, pd.DataFrame, int, list[dict]]:
+    enforce_targets: bool = False,
+) -> tuple[bytes, str, pd.DataFrame, int, list[dict], list[dict]]:
     """
     Excel รูปแบบ tga_target_salesman_next — ชีตเดียวชื่อ TGA (เหมือน alloc_*.xlsx)
     คอลัมน์วันที่เป็นข้อความ (@) เลี่ยง Excel แปลงเป็น 12:00 AM
+
+    enforce_targets=True เฉพาะเส้นทางส่งจริง — การดาวน์โหลดไฟล์มาตรวจต้องทำได้เสมอ
+
+    ตัวสุดท้ายที่คืน = shortfall (SKU ที่เป้าจะขาดเพราะแถวถูกตัด) — ผู้เรียกเอาไปบอกผู้ใช้
+    ว่าต้องไปเพิ่มจำนวนเองใน Target Sun คู่ไหนบ้าง
     """
     t0 = time.perf_counter()
-    df, dropped_dims, not_in_ts = _build_tga_upload_dataframe(
+    df, dropped_dims, not_in_ts, shortfall = _build_tga_upload_dataframe(
         req,
         drop_incomplete_rows=drop_incomplete_rows,
+        enforce_targets=enforce_targets,
     )
     t_df = time.perf_counter()
     content = _build_xlsx_bytes(df)
@@ -1052,7 +1362,7 @@ def prepare_lakehouse_xlsx(
         t_xlsx - t0,
         len(df),
     )
-    return content, f"{_export_basename(req)}.xlsx", df, dropped_dims, not_in_ts
+    return content, f"{_export_basename(req)}.xlsx", df, dropped_dims, not_in_ts, shortfall
 
 
 def _upload_bytes_to_onelake(file_path: str, content: bytes, token: str) -> None:
@@ -1101,7 +1411,7 @@ def export_allocations_excel(req: LakehouseUploadRequest) -> dict:
     if not req.allocations:
         raise HTTPException(400, detail="ไม่มีข้อมูล allocations สำหรับส่งออก")
 
-    content, fname, df, dropped_dims, not_in_ts = prepare_lakehouse_xlsx(
+    content, fname, df, dropped_dims, not_in_ts, shortfall = prepare_lakehouse_xlsx(
         req, drop_incomplete_rows=True
     )
     zero_rows = int((df["QUANTITYCASE"] == 0).sum())
@@ -1113,6 +1423,8 @@ def export_allocations_excel(req: LakehouseUploadRequest) -> dict:
         "dropped_missing_dims": dropped_dims,
         "rows_not_in_targetsun": not_in_ts,
         "rows_not_in_targetsun_count": dropped_dims,
+        "shortfall": shortfall,
+        "shortfall_boxes": sum(int(s["missing_boxes"]) for s in shortfall),
         "columns": LAKEHOUSE_CSV_COLUMNS,
     }
 
