@@ -186,8 +186,8 @@ TTL: `EMPLOYEE_PAYLOAD_CACHE_TTL_SEC`, `MANAGERS_CACHE_TTL_SEC`, `ADMIN_TEAM_CAC
 |----------|-------------|---------|
 | `GET /managers` | ไม่ | Dropdown Manager/Supervisor |
 | `GET /data/employees` | ใช่ | Payload ขั้นที่ 1 |
-| `GET /data/employees/aggregate` | ใช่ | รวมหลาย Supervisor |
-| `POST /optimize` | บางส่วน | ตรวจ TGA period |
+| `GET /data/employees/aggregate` | ใช่ | รวมหลาย Supervisor — โหลดขนานกัน (`AGGREGATE_LOAD_WORKERS`) |
+| `POST /optimize` | บางส่วน | ตรวจ TGA period · **409 ถ้าผลรวมต่อ SKU ไม่ตรงเป้า** · **400 ถ้าล็อกเกินเป้า** |
 | `POST /export/excel`, `GET /download/excel` | ไม่ | Export จาก cache |
 | `POST /lakehouse/*` | บางส่วน | Excel / TargetSun / OneLake |
 | `GET /admin/user-access` | ไม่ | จัดการสิทธิ |
@@ -219,6 +219,30 @@ TTL: `EMPLOYEE_PAYLOAD_CACHE_TTL_SEC`, `MANAGERS_CACHE_TTL_SEC`, `ADMIN_TEAM_CAC
 
 ---
 
+### `POST /optimize` — ลำดับภายในและประตูตรวจ
+
+```
+locked_edits ──► ตรวจ "ล็อกรวม <= เป้าของ SKU"  ──► 400 ถ้าเกิน (ไม่กลบส่วนเกินทิ้ง)
+                          │
+                          ▼
+   allocate_boxes()  1. normalize คีย์ + ปัดเป้าเป็น int + ยุบ SKU ซ้ำ
+                     2. _proportional      baseline จากประวัติ + cap
+                     3. _lp_optimize (CBC) ปรับมูลค่าเงินภายในรั้ว ±%
+                        └ แก้ไม่ได้ → ใช้ผลข้อ 2 (optimization_fallback=True)
+                     4. _greedy_revenue_balancer  ปิดช่องว่างเงินที่เหลือ
+                     5. _enforce_even_skus_on_df  สินค้าใหม่แบ่งเท่า
+                          │
+                          ▼
+   validate_allocation_vs_targets ──► 409 ถ้าไม่ตรงเป้า (ไม่เขียนไฟล์ ไม่สร้าง Excel)
+                          │
+                          ▼
+   data/final_allocation_{SL}_{YYYY}_{MM}.csv  +  Final_Dashboard_{SL}_{YYYY}_{MM}.xlsx
+```
+
+กฎที่แต่ละขั้นต้องรักษา: `docs/ALLOCATION_INVARIANTS.md`
+
+---
+
 ## 4. Snapshot ผลกระจายบน server + Peer viewing
 
 | Endpoint | การใช้ |
@@ -232,6 +256,9 @@ TTL: `EMPLOYEE_PAYLOAD_CACHE_TTL_SEC`, `MANAGERS_CACHE_TTL_SEC`, `ADMIN_TEAM_CAC
 
 - Supervisor ดูและ**แก้**ทีมอื่นในภาค+หน่วยเดียวกันได้ (allowed peers)
 - โหมด「ทั้งภาค」: แก้เป้าเงิน · กระจายทีละ SL · บันทึก snapshot แยกต่อ `sup_id` · ส่ง Target Sun ทั้งกลุ่มในครั้งเดียว (เหมือน Manager รวมภาค)
+- **แก้มือย้ายหีบข้ามทีมได้** (ตั้งใจ) — `autoRebalance()` เกลี่ยโดยยึดผลรวมต่อ SKU **ทั้งภาค**
+  สัดส่วนรายทีมจึงเลื่อนจากเป้า TGA ของทีมนั้นได้ · ตารางมี **แถวรวมรายทีม** บอกส่วนต่าง
+  โดยอ่านเป้ารายทีมจาก `target_boxes_by_sup` ใน payload · กด **คำนวณใหม่** = ทุกทีมกลับไปตรงเป้าตัวเอง
 - Frontend สลับ peer รายคน: โหลดข้อมูลเต็มและเขียนได้ (ไม่ใช่ snapshot-only อีกต่อไป)
 - สรุปทุก SL (`/summary`) cache ใน `sessionStorage` ~2 นาที · invalidate หลังบันทึกผลกระจาย
 

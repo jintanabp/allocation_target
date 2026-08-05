@@ -411,6 +411,8 @@ hr { display: none; }
 <li><a href="#4-ขั้นที่-3-กระจายหีบ">ขั้นที่ 3: กระจายหีบ</a></li>
 <li><a href="#5-อ่านตารางผลลัพธ์">อ่านตารางผลลัพธ์</a></li>
 <li><a href="#6-ส่งผล-excel-และ-target-sun">ส่งผล (Excel และ Target Sun)</a></li>
+<li><a href="#7-ดูและแก้เป้าทีมอื่นในกลุ่มเดียวกัน-peer">ดูและแก้เป้าทีมอื่นในกลุ่มเดียวกัน (Peer)</a></li>
+<li><a href="#8-แอดมิน-it">แอดมิน (IT)</a></li>
       </ol>
     </nav>
     <article>
@@ -423,11 +425,9 @@ hr { display: none; }
 <ul>
 <li>เปิด URL แอป: <a href="https://spc-ai.sahapat.com/allocation_target/" target="_blank" rel="noopener">https://spc-ai.sahapat.com/allocation_target/</a></li>
 <li>(แนะนำ) กด <strong>อ่านคู่มือก่อนใช้งาน</strong> บนการ์ดเข้าสู่ระบบ (อ่านได้ก่อนล็อกอิน) หรือกดปุ่ม <strong>คู่มือ</strong> มุมขวาบน</li>
-<li>กด <strong>ล็อกอินด้วย Microsoft</strong> ด้วยบัญชีองค์กร</li>
-<li>รอ dropdown <strong>ผู้รับผิดชอบ (Supervisor / Manager)</strong> โหลดเสร็จ</li>
-<li>เลือกรหัสทีมที่ต้องการกระจายเป้า</li>
-<li>เลือก <strong>งวดเดือนที่จะกระจายเป้า</strong> (ค่าเริ่มต้นมักเป็นเดือนถัดจากวันนี้)</li>
-<li>กด <strong>เข้าสู่ระบบ Dashboard</strong></li>
+<li>กด <strong>ล็อกอินด้วย Microsoft</strong> ด้วยบัญชีองค์กร — ระบบจำบัญชีในเบราว์เซอร์ (เปิดใหม่ไม่ต้องล็อกอินซ้ำจนกว่า token หมดอายุ) · กด <strong>ออกจากบัญชี Microsoft</strong> เมื่อต้องการสลับบัญชี</li>
+<li><strong>ผู้ใช้ทั่วไป:</strong> รอ dropdown โหลด → เลือก Supervisor/Manager → เลือกงวด → กด <strong>เข้าสู่ระบบ Dashboard</strong> (ปุ่มจะเปิดเมื่อล็อกอิน MS แล้ว)</li>
+<li><strong>แอดมิน IT</strong> (<code>ALLOCATION_ADMIN_EMAILS</code>): หลังล็อกอิน MS เห็นปุ่ม <strong>เข้าสู่ระบบแอดมิน</strong> อย่างเดียว — กดเพื่อจัดการสิทธิ์ (ถ้าต้องทดสอบ Dashboard ใช้ <strong>View as</strong> ในแอดมิน)</li>
 </ul>
 <figure class="shot"><img src="images/01-login.png" alt="หน้าเข้าสู่ระบบ, ล็อกอิน Microsoft และเลือก Supervisor / งวด"><figcaption>หน้าเข้าสู่ระบบ, ล็อกอิน Microsoft และเลือก Supervisor / งวด</figcaption></figure>
 </section>
@@ -525,6 +525,36 @@ hr { display: none; }
 <li>กด <strong>↩️ Undo</strong> ถ้าต้องการย้อน</li>
 <li>กด <strong>💾 บันทึกร่าง</strong> เก็บไว้ในเครื่อง (ยังไม่ใช่การส่งเข้า Target Sun)</li>
 </ul>
+<p>ตัวเลขที่แก้เองจะถูก <strong>ล็อกไว้</strong> ระบบจะไม่ขยับให้อีก แม้กดคำนวณใหม่</p>
+<p><strong>ในโหมดรวมภาค — แก้แล้วหีบย้ายข้ามทีมได้</strong></p>
+<p>เมื่อคุณเพิ่มหีบให้พนักงานคนหนึ่ง ระบบจะไปลดของคนอื่นเพื่อให้ยอดรวมต่อสินค้า <strong>ทั้งภาค</strong></p>
+<p>เท่าเดิม และคนที่ถูกลดอาจอยู่ <strong>คนละทีม</strong> กับคนที่คุณเพิ่มให้</p>
+<p>ให้ดู <strong>แถวรวมทีม</strong> (แถบสีท้ายกลุ่มของแต่ละซุป) — จะบอกว่าตอนนี้ทีมนั้นได้กี่หีบต่อสินค้า</p>
+<p>และ <strong>เกิน/ขาด</strong> เป้าของทีมตัวเองเท่าไร</p>
+<ul>
+<li>ตัวเลขสีส้ม <code>+3</code> = ทีมนี้ได้เกินเป้าตัวเอง 3 หีบ</li>
+<li>ตัวเลขสีน้ำเงิน <code>-3</code> = ทีมนี้ได้น้อยกว่าเป้าตัวเอง 3 หีบ</li>
+<li>ขึ้นว่า「ตรงเป้าทีมทุก SKU」= ยังไม่มีการย้ายข้ามทีม</li>
+</ul>
+<p>ถ้าต้องการให้ทุกทีมกลับไปตรงเป้าของตัวเอง ให้กด <strong>คำนวณใหม่</strong></p>
+<p><strong>แผง「ผลจากการแก้ล่าสุด」</strong> จะขึ้นใต้ตารางทุกครั้งที่แก้ บอกว่า:</p>
+<ul>
+<li>คุณแก้ของใคร เพิ่ม/ลดกี่หีบ</li>
+<li>ระบบไปดึง/เติมจากใครบ้าง คนละกี่หีบ</li>
+<li>ถ้าดึงจากคนละทีม จะมีคำเตือน <strong>⚠️ ดึงข้ามทีม</strong> พร้อมรหัสทีม</li>
+</ul>
+<p><strong>ก่อนส่งเข้า Target Sun</strong> ถ้ายอดของทีมไหนไม่ตรงเป้าตัวเอง ระบบจะเปิดหน้าต่างให้ตรวจก่อน</p>
+<p>แสดงเป็นรายทีม/ราย SKU ว่าจะส่งเท่าไร เป้าเท่าไร ต่างเท่าไร</p>
+<ul>
+<li>ตั้งใจให้เป็นแบบนั้น → กด <strong>ยืนยันส่ง</strong></li>
+<li>ไม่ได้ตั้งใจ → กด <strong>ยกเลิก</strong> แล้วกด <strong>คำนวณใหม่</strong></li>
+</ul>
+<p><strong>ถ้าขึ้นข้อความว่า「หีบที่ล็อกไว้รวมกันเกินเป้าหีบ」</strong></p>
+<p>แปลว่าตัวเลขที่แก้เองใน SKU นั้นรวมกันมากกว่าเป้าที่หัวหน้าตั้งไว้</p>
+<p>ข้อความจะบอกรหัสสินค้า จำนวนที่ล็อกไว้ และเป้าจริง — ลดตัวเลขลงให้ไม่เกินเป้าแล้วคำนวณใหม่</p>
+<p><strong>ถ้าขึ้นข้อความว่า「ผลกระจายไม่ตรงเป้าหีบ」</strong></p>
+<p>ระบบตรวจแล้วพบว่าผลรวมไม่เท่าเป้า จึง <strong>ไม่บันทึกผลนั้น</strong> เพื่อไม่ให้ตัวเลขผิดหลุดไปถึง Target Sun</p>
+<p>ลองตรวจตัวเลขที่แก้เองแล้วกดคำนวณใหม่ ถ้ายังไม่หายให้แจ้ง IT</p>
 </section>
 <section class="chapter">
 <h3 id="6-ส่งผล-excel-และ-target-sun">6. ส่งผล (Excel และ Target Sun)</h3>
@@ -548,7 +578,39 @@ hr { display: none; }
 <li>[ ] แก้มือแล้วกดกรอง <strong>⚠</strong> ในแถบด้านบน ตรวจ SKU ที่เกินช่วง ±20%</li>
 </ul>
 <p>สินค้าที่ไม่มีใน Target Sun จะไม่ถูกส่ง ระบบแจ้งจำนวนใน<strong>หน้าต่างแจ้งผล</strong>หลังส่ง</p>
+<h4 id="ตรวจไฟล์ก่อนส่ง">ตรวจไฟล์ก่อนส่ง</h4>
+<p>ในหน้าต่างส่ง Target Sun กด <strong>ตรวจไฟล์ก่อนส่ง</strong> — ระบบเตรียม Excel (prepare-only) แล้วสรุปจำนวนแถว / หีบ 0 / แถวที่ตัดออก โดย<strong>ยังไม่ส่ง</strong>เข้า Oracle</p>
+<h4 id="ส่งแยกแบรนด์">ส่งแยกแบรนด์</h4>
+<p>เลือกแบรนด์ในหน้าต่างส่ง — Target Sun จะได้เฉพาะ SKU แบรนด์นั้น (แบรนด์อื่นไม่ถูกทับ)</p>
 </section>
+<section class="chapter">
+<h3 id="7-ดูและแก้เป้าทีมอื่นในกลุ่มเดียวกัน-peer">7. ดูและแก้เป้าทีมอื่นในกลุ่มเดียวกัน (Peer)</h3>
+<p>ถ้าสิทธิ์ <code>region_peers</code> / หน่วย van·credit หรือ Manager ดูหลาย SL:</p>
+<ul>
+<li>สลับ Supervisor ใน dropdown — โหลดข้อมูลเต็มและ<strong>แก้เป้า/กระจาย/บันทึก/ส่ง Target Sun ได้</strong>ทุกทีมในกลุ่ม (division + ภาค + หน่วยเดียวกัน)</li>
+<li>โหมด「ทั้งภาค」: ตารางรวมหลาย SL — แก้เป้าเงิน · กดกระจายแล้วระบบคำนวณทีละ SL · บันทึก snapshot แยกราย Supervisor · กดส่ง Target Sun แล้ววนส่งทั้งกลุ่ม</li>
+<li>แถบด้านบนแสดงว่าใครกระจายล่าสุด เมื่อไหร่ (จาก snapshot บน server)</li>
+<li><strong>ล็อกอินครั้งถัดไป</strong> — ถ้ามี snapshot บนเซิร์ฟเวอร์ ระบบกู้คืนผลกระจายอัตโนมัติ</li>
+</ul>
+<p><strong>โหมดรวมทั้งภาค (Manager):</strong> ตารางรวมหลาย SL — ทีมที่กระจายแล้วแสดงจาก snapshot · ทีมที่ยังไม่กระจายใช้เป้า Target Sun ล่าสุด (แถบสีซ้ายแยกทีม)</p>
+<p><strong>สรุปผลกระจายทุก SL</strong> — แผงใต้ขั้นที่ 3 (Manager / peer) โหลดอัตโนมัติ แสดงสถานะ · เวลา · โดยใคร · ปุ่ม <strong>ดู</strong> เปิดผลกระจายทันที</p>
+</section>
+<section class="chapter">
+<h3 id="8-แอดมิน-it">8. แอดมิน (IT)</h3>
+<p>ผู้ใช้ใน <code>ALLOCATION_ADMIN_EMAILS</code> — หลังล็อกอิน Microsoft กด <strong>เข้าสู่ระบบแอดมิน</strong> โดยตรง</p>
+<div class="table-wrap"><table>
+<thead><tr><th>กลุ่ม</th><th>ใช้ทำอะไร</th></tr></thead>
+<tbody>
+<tr><td>สิทธิ์</td><td>ผู้ใช้, Target Sun toggle, ดาวน์โหลดสำรอง <code>user_access.json</code>, อัปเดตลำดับสิทธิ์</td></tr>
+<tr><td>การผูกรหัส</td><td>SL links, SKU links (งวดเป้าอัตโนมัติ — แสดงเฉพาะ SKU ที่มีเป้า &gt; 0)</td></tr>
+<tr><td>ข้อมูล</td><td>Inventory, แหล่งเป้า (Target Sun / Fabric), <strong>URL อ่านเป้า / ส่งผล</strong> (preset ทดสอบหรือ Prod), แคช</td></tr>
+<tr><td>ปฏิบัติการ</td><td>Snapshot ผลกระจาย (ดู/สำรอง/ลบ), <strong>บันทึกความผิดพลาด</strong> (รับทราบแล้วลบรายการ)</td></tr>
+<tr><td>ทีม</td><td>รายชื่อพนักงานต่อ SL</td></tr>
+</tbody></table></div>
+<p>Marketing (<code>login_kind: marketing</code>) เห็นเฉพาะทีม + ผูกรหัส (ดูอย่างเดียว)</p>
+<p>มุมล่างหน้าเว็บแสดง <strong>build</strong> (git hash) ยืนยันเวอร์ชัน server</p>
+</section>
+<p class="footer-note">อัปเดต: ก.ค. 2026 — MS localStorage, admin login ปุ่มเดียว, peer fast view, SKU catalog อัตโนมัติ</p>
     </article>
   </div>
 </body>

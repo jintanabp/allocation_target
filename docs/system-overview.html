@@ -1,0 +1,532 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Target Allocation — คู่มือการทำงานของระบบ</title>
+<style>
+  :root{
+    --bg:#fbfbfa; --panel:#fff; --ink:#1a1a18; --ink-2:#55534e; --ink-3:#87847d;
+    --line:#e5e3de; --line-2:#efede8; --code-bg:#f4f2ee;
+    --accent:#2a5f8f; --accent-bg:#eef4fa;
+    --ok:#2f6f4f; --ok-bg:#eaf4ee;
+    --warn:#8a6516; --warn-bg:#fdf7e8;
+    --stop:#b34a24; --stop-bg:#fdf1ec;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#191917; --panel:#20201e; --ink:#eeece7; --ink-2:#b3afa6; --ink-3:#8a867d;
+      --line:#34332f; --line-2:#2a2a27; --code-bg:#262623;
+      --accent:#7fb0dd; --accent-bg:#18242e;
+      --ok:#7fbf9a; --ok-bg:#182420;
+      --warn:#d4ac52; --warn-bg:#2b2517;
+      --stop:#e08a5f; --stop-bg:#2e1f18;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);line-height:1.75;font-size:16px;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Sarabun","Noto Sans Thai","Leelawadee UI",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:960px;margin:0 auto;padding:44px 24px 100px}
+  h1{font-size:31px;line-height:1.3;margin:0 0 6px;letter-spacing:-.01em}
+  h2{font-size:23px;margin:60px 0 6px;letter-spacing:-.01em;padding-bottom:8px;border-bottom:2px solid var(--line);scroll-margin-top:16px}
+  h3{font-size:17.5px;margin:30px 0 6px}
+  h4{font-size:15px;margin:20px 0 4px;color:var(--ink-2)}
+  p{margin:11px 0}
+  code{font-family:ui-monospace,SFMono-Regular,"Cascadia Code",Menlo,monospace;font-size:.86em;
+    background:var(--code-bg);padding:.12em .38em;border-radius:4px;word-break:break-word}
+  pre{background:var(--code-bg);padding:14px 16px;border-radius:10px;overflow-x:auto;
+    font-size:12.5px;line-height:1.7;margin:14px 0;border:1px solid var(--line-2)}
+  pre code{background:none;padding:0;font-size:inherit}
+  a{color:var(--accent)}
+  .lede{color:var(--ink-2);font-size:17px;margin:0}
+  .meta{color:var(--ink-3);font-size:13px;margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+  .box{border:1px solid var(--line);border-left:3px solid var(--accent);background:var(--panel);
+    border-radius:10px;padding:16px 20px;margin:20px 0}
+  .box.ok{border-left-color:var(--ok);background:var(--ok-bg)}
+  .box.warn{border-left-color:var(--warn);background:var(--warn-bg)}
+  .box.stop{border-left-color:var(--stop);background:var(--stop-bg)}
+  .box h4{margin:0 0 6px;color:inherit;font-size:15.5px;font-weight:700}
+  .box p:last-child,.box ul:last-child{margin-bottom:0}
+  .tw{overflow-x:auto;margin:16px 0;border:1px solid var(--line);border-radius:10px}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:540px}
+  th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--line-2);vertical-align:top}
+  th{background:var(--code-bg);font-weight:600;font-size:12.5px;color:var(--ink-2);white-space:nowrap;border-bottom:1px solid var(--line)}
+  tr:last-child td{border-bottom:none}
+  ul.tight{margin:9px 0;padding-left:22px} ul.tight li{margin:4px 0}
+  .toc{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 20px;margin:26px 0}
+  .toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:30px}
+  .toc li{margin:3px 0;break-inside:avoid}
+  .toc a{text-decoration:none} .toc a:hover{text-decoration:underline}
+  .pill{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;vertical-align:2px}
+  .p-ok{background:var(--ok-bg);color:var(--ok)}
+  .p-warn{background:var(--warn-bg);color:var(--warn)}
+  .p-stop{background:var(--stop-bg);color:var(--stop)}
+  .p-acc{background:var(--accent-bg);color:var(--accent)}
+  .flow{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:4px 18px;margin:16px 0}
+  @media (max-width:620px){.toc ol{columns:1}.wrap{padding:30px 16px 70px}h1{font-size:25px}}
+
+  /* ── โหมดพิมพ์ / บันทึกเป็น PDF ─────────────────────────────
+     บังคับโทนสว่างเสมอ (ไม่ตามธีมเครื่อง) และคลาย overflow ของตาราง
+     ไม่งั้นตารางกว้างจะถูกตัดขอบขวาหายไปในไฟล์ PDF */
+  @media print{
+    :root{
+      color-scheme:light;
+      --bg:#fff; --panel:#fff; --ink:#000; --ink-2:#333; --ink-3:#666;
+      --line:#bbb; --line-2:#ddd; --code-bg:#f2f2f2;
+      --accent:#1f4e79; --accent-bg:#eef4fa;
+      --ok:#1f6b45; --ok-bg:#eef7f1;
+      --warn:#7a5a10; --warn-bg:#fdf8ea;
+      --stop:#9c3d1c; --stop-bg:#fdf0eb;
+    }
+    body{background:#fff;font-size:10.5pt;line-height:1.6}
+    .wrap{max-width:none;padding:0}
+    h1{font-size:20pt} h2{font-size:14.5pt;break-before:page;break-after:avoid}
+    h2:first-of-type{break-before:auto}
+    h3{font-size:12pt;break-after:avoid} h4{break-after:avoid}
+    .toc{break-inside:avoid}
+    .toc ol{columns:2}
+    .box,.flow,.tw,pre{break-inside:avoid}
+    tr,li{break-inside:avoid}
+    .tw{overflow:visible;border-radius:0}
+    table{min-width:0;font-size:8.5pt;table-layout:fixed;width:100%}
+    th,td{padding:5px 7px;word-break:break-word;white-space:normal}
+    th{white-space:normal}
+    pre{font-size:7.8pt;white-space:pre-wrap;word-break:break-word;line-height:1.5}
+    code{word-break:break-word}
+    a{color:inherit;text-decoration:none}
+    .pill{border:1px solid currentColor}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Target Allocation — คู่มือการทำงานของระบบ</h1>
+<p class="lede">ระบบกระจายเป้าหีบจากหัวหน้าทีมลงพนักงานขายรายคน แล้วส่งกลับเข้า Target Sun</p>
+<p class="meta">
+เอกสารนี้อธิบาย <strong>สภาพระบบ ณ ปัจจุบัน</strong> หลังการแก้ไขรอบล่าสุด ·
+ทุกหมายเลขบรรทัดและค่าคงที่ตรวจจาก source จริง ·
+กฎเชิงลึกของการกระจายดูที่ <code>docs/ALLOCATION_INVARIANTS.md</code>
+</p>
+
+<div class="toc">
+  <b style="font-size:14px">สารบัญ</b>
+  <ol>
+    <li><a href="#what">ระบบนี้ทำอะไร</a></li>
+    <li><a href="#data">ข้อมูลเข้า–ออก</a></li>
+    <li><a href="#flow">ขั้นตอนการใช้งาน 3 ขั้น</a></li>
+    <li><a href="#engine">เครื่องกระจายหีบ</a></li>
+    <li><a href="#rules">กฎที่ระบบบังคับ</a></li>
+    <li><a href="#edit">แก้มือและการเกลี่ยอัตโนมัติ</a></li>
+    <li><a href="#region">โหมดรวมภาค</a></li>
+    <li><a href="#send">ส่งเข้า Target Sun</a></li>
+    <li><a href="#roles">บทบาทและสิทธิ์</a></li>
+    <li><a href="#files">ไฟล์ใน data/ และการใช้พร้อมกัน</a></li>
+    <li><a href="#env">สวิตช์ที่ตั้งได้</a></li>
+    <li><a href="#api">API ทั้งหมด</a></li>
+    <li><a href="#test">การทดสอบ</a></li>
+  </ol>
+</div>
+
+<h2 id="what">1 · ระบบนี้ทำอะไร</h2>
+
+<p>โจทย์: Target Sun กำหนด <strong>เป้าหีบรวมต่อ SKU ของทั้งทีม</strong> มาให้ หัวหน้าทีม (Supervisor)
+ต้องแตกเป้านั้นลงไปว่า <strong>พนักงานขายคนไหนควรได้กี่หีบของสินค้าตัวไหน</strong> แล้วส่งผลกลับเข้า Target Sun</p>
+
+<p>ทำมือไม่ไหวเพราะทีมหนึ่งมี SKU ระดับ 200–650 รายการ × พนักงาน 5–30 คน = หลายพันช่อง
+และต้องพอใจสองเงื่อนไขพร้อมกัน:</p>
+
+<ul class="tight">
+  <li><strong>หีบต่อ SKU ต้องครบเป้า</strong> ห้ามขาดห้ามเกิน</li>
+  <li><strong>มูลค่าเงินต่อคนต้องใกล้เป้ารายคน</strong> (เป้าเหลือง / <code>yellow_target</code>)</li>
+</ul>
+
+<p>ระบบแก้ให้ด้วยการผสม <em>สัดส่วนจากประวัติการขาย</em> กับ <em>Linear Programming</em>
+แล้วให้หัวหน้าปรับมือทับได้ในจุดที่ต้องการ</p>
+
+<div class="box">
+  <h4>ศัพท์ที่ใช้ตลอดเอกสาร</h4>
+  <table style="min-width:0"><tbody>
+    <tr><td><code>หีบ</code> / box</td><td>หน่วยนับสินค้าที่กระจาย</td></tr>
+    <tr><td><code>เป้าหีบ</code></td><td><code>supervisor_target_boxes</code> — เป้าต่อ SKU ของทั้งทีม มาจาก Target Sun</td></tr>
+    <tr><td><code>เป้าเหลือง</code></td><td><code>yellow_target</code> — เป้า<strong>เงิน</strong>รายคน (บาท)</td></tr>
+    <tr><td><code>SL / SuperCode</code></td><td>รหัสทีม เช่น <code>SL330</code></td></tr>
+    <tr><td><code>baseline</code></td><td>จำนวนหีบที่คำนวณจากสัดส่วนประวัติ ใช้เป็นหลักยึด</td></tr>
+    <tr><td><code>ล็อก</code></td><td>ช่องที่ผู้ใช้พิมพ์แก้เอง ระบบห้ามขยับ</td></tr>
+  </tbody></table>
+</div>
+
+<h2 id="data">2 · ข้อมูลเข้า–ออก</h2>
+
+<div class="flow"><pre><code>Power BI / Microsoft Fabric ──┐
+  · รายชื่อพนักงานใต้ SL      ├─► ระบบ ─► กระจายหีบ ─► Target Sun (ส่งกลับ)
+  · ยอดขายย้อนหลัง 3M/6M/LY   │              │
+  · ราคาต่อหีบ, ชื่อสินค้า      │              └─► Excel (ดาวน์โหลดตรวจ)
+Target Sun Read API ──────────┘
+  · เป้าหีบต่อ SKU (TGA)</code></pre></div>
+
+<h3>แหล่งเป้าหีบสลับได้</h3>
+<p>ค่า <code>target_read_source</code> ใน <code>config/app_runtime.json</code> เลือกว่าจะอ่านเป้าจาก
+<strong>Target Sun Read API</strong> หรือ <strong>Fabric</strong> สลับได้จากหน้าแอดมิน ไม่ต้อง deploy</p>
+
+<p>URL ของ Target Sun <strong>ไม่ได้อยู่ใน .env</strong> — ตั้งใน
+<code>backend/services/targetsun_endpoints.py</code> แล้วสลับ preset (<code>test</code> / <code>uat</code> /
+<code>prod</code> / <code>code</code>) จากหน้าแอดมิน ทำให้ทดสอบแบบ <em>อ่านจาก Prod ส่งเข้า UAT</em> ได้</p>
+
+<h3>ประวัติที่ใช้</h3>
+<div class="tw"><table>
+<tr><th>ชุด</th><th>คือ</th><th>ใช้ตอน</th></tr>
+<tr><td><code>hist_cache_*.csv</code></td><td>ยอดหีบ emp×sku ย้อนหลัง 3 เดือน</td><td>กลยุทธ์ L3M (ค่าเริ่มต้น)</td></tr>
+<tr><td><code>hist_cache_*_6m.csv</code></td><td>ย้อนหลัง 6 เดือน</td><td>กลยุทธ์ L6M</td></tr>
+<tr><td><code>hist_lysm_*.csv</code></td><td>เดือนเดียวกันปีที่แล้ว</td><td>กลยุทธ์ LY · คอลัมน์เทียบในตาราง</td></tr>
+<tr><td><code>hist_prev_*.csv</code></td><td>เดือนก่อนหน้า</td><td>คอลัมน์เทียบในตาราง</td></tr>
+<tr><td><code>hist_cy_*.csv</code></td><td>ทั้งปีปฏิทิน (ปีนี้ + ปีที่แล้ว)</td><td>ตรวจว่า SKU ไหนเป็น "สินค้าใหม่"</td></tr>
+</table></div>
+
+<h2 id="flow">3 · ขั้นตอนการใช้งาน 3 ขั้น</h2>
+
+<h3><span class="pill p-acc">ขั้น 1</span> ข้อมูลตั้งต้น</h3>
+<p>เลือกทีม + งวด (เดือน/ปี) ระบบดึงพนักงาน เป้าหีบ ราคา และประวัติ แล้วเขียนลง cache ใน <code>data/</code>
+ทุกไฟล์แยกตาม <code>(ทีม, งวด)</code></p>
+<p>ถ้างวดที่เลือกไม่มีเป้าใน TGA ระบบตอบ <strong>409</strong> และไม่ให้เข้าหน้าถัดไป</p>
+
+<h3><span class="pill p-acc">ขั้น 2</span> กำหนดเป้าเงินรายคน <span style="font-weight:400;color:var(--ink-3)">(ไม่บังคับ)</span></h3>
+<p>ปรับ <strong>เป้าเหลือง</strong> รายคนได้ ถ้าไม่แตะ ระบบใช้ค่าจาก Target Sun ตามเดิม
+มีช่องบันทึกเหตุผลกรณีเป้าโตติดลบ และหักลด BUI</p>
+
+<h3><span class="pill p-acc">ขั้น 3</span> กระจายหีบ</h3>
+<p>เลือกวิธี (เลือกได้มากกว่า 1 แล้วกำหนดว่าแบรนด์ไหนใช้วิธีไหน) กด <strong>เริ่มคำนวณ</strong>
+ได้ตารางผลลัพธ์ที่แก้ตัวเลขได้ แล้วดาวน์โหลด Excel หรือส่งเข้า Target Sun</p>
+
+<h2 id="engine">4 · เครื่องกระจายหีบ</h2>
+
+<p>อยู่ใน <code>backend/OR_engine.py</code> — import แค่ <code>pandas</code> กับ <code>logging</code>
+ไม่แตะไฟล์ ไม่แตะเน็ต ไม่แตะฐานข้อมูล ทดสอบได้ในหน่วยความจำล้วน</p>
+
+<h3>วิธีกระจายที่เลือกได้</h3>
+<div class="tw"><table>
+<tr><th>รหัส</th><th>หลักการ</th><th>ผ่าน LP?</th><th>เห็นใน UI?</th></tr>
+<tr><td><strong>L3M</strong> <span class="pill p-ok">ค่าเริ่มต้น</span></td><td>สัดส่วนยอดขายเฉลี่ย 3 เดือนย้อนหลัง</td><td>ใช่</td><td>เห็น</td></tr>
+<tr><td><strong>L6M</strong></td><td>สัดส่วนยอดขายเฉลี่ย 6 เดือน</td><td>ใช่</td><td>เห็น</td></tr>
+<tr><td><strong>LY</strong></td><td>สัดส่วนเดือนเดียวกันปีที่แล้ว</td><td>ใช่</td><td>เห็น</td></tr>
+<tr><td><strong>PUSH</strong></td><td>ผลักดันคนขายน้อย — ให้น้ำหนักกลับด้าน <code>max − hist</code></td><td>ไม่</td><td>เห็น</td></tr>
+<tr><td><strong>EVEN</strong></td><td>เกลี่ยเท่ากันทุกคน</td><td>ไม่</td><td><span class="pill p-warn">ซ่อน</span></td></tr>
+<tr><td><strong>LP</strong></td><td>ยึดเป้าเงินเป็นหลัก (baseline L3M)</td><td>ใช่</td><td><span class="pill p-warn">ซ่อน</span></td></tr>
+</table></div>
+<p style="color:var(--ink-3);font-size:14px">ทั้ง 6 ตัวรองรับใน backend (<code>VALID_STRATEGIES</code>) แต่
+<strong>EVEN และ LP ถูกคอมเมนต์ปิดไว้ใน <code>frontend/index.html</code></strong> ชั่วคราว —
+UI จึงแสดงแค่ 4 ตัว ยิงผ่าน API ตรง ๆ ยังใช้ได้ทั้ง 6</p>
+
+<h3>ลำดับการทำงาน 6 ขั้น</h3>
+<div class="flow"><pre><code>1. _normalize_engine_inputs   ทำคีย์ให้อยู่รูปเดียวกัน · ปัดเป้าเป็น int · ยุบ SKU ซ้ำ
+                              · ปฏิเสธถ้าหีบที่ล็อกรวมกันเกินเป้า SKU
+        │
+2. _proportional              แบ่งตามสัดส่วนประวัติ + เพดานกันกระจุก (mean × 3.0)
+                              → ได้ baseline ที่ทุกขั้นถัดไปใช้อ้างอิง
+        │
+3. _lp_optimize (CBC)         ปรับให้มูลค่าเงินต่อคนใกล้เป้า ภายในรั้ว ±% จาก baseline
+        │                     แก้ไม่ได้ → ใช้ผลข้อ 2 แทน (ตั้ง optimization_fallback)
+        │
+4. _greedy_revenue_balancer   โยนหีบทีละใบระหว่างคนที่เกิน↔ขาด ปิดช่องว่างที่เหลือ
+        │
+5. _enforce_even_skus_on_df   สินค้าใหม่ที่ติ๊กไว้ → บังคับแบ่งเท่าทุกคน
+        │
+6. validate_allocation_vs_targets   ประตู: ผลรวมต่อ SKU ต้องตรงเป้า ไม่งั้น 409</code></pre></div>
+
+<h3>รั้วกันตัวเลขเพี้ยน</h3>
+<p>หัวใจคือ <strong>baseline จากประวัติ</strong> แล้วอนุญาตให้ LP ขยับได้แค่ในกรอบ %:</p>
+<div class="tw"><table>
+<tr><th>ประเภท SKU</th><th>รั้ว</th><th>ค่าคงที่</th></tr>
+<tr><td>SKU หลัก (สะสมมูลค่าเป้าถึง 80% แบบ Pareto)</td><td>±35%</td><td><code>_TIER_FLEX_BAND_PCT</code></td></tr>
+<tr><td>SKU รอง</td><td>±12%</td><td><code>_TIER_STRICT_BAND_PCT</code></td></tr>
+<tr><td>ไม่เปิดโหมดหลัก/รอง</td><td>±20%</td><td><code>_DEFAULT_HIST_BAND_PCT</code></td></tr>
+<tr><td>สินค้าใหม่ที่ติ๊กแบ่งเท่า</td><td>ล็อกตายตามค่าแบ่งเท่า</td><td>—</td></tr>
+<tr><td>คนที่ไม่มีประวัติ SKU นั้น (baseline 0)</td><td>เพดาน <code>ceil(เป้า ÷ คน × 3.0)</code></td><td><span class="pill p-warn">ปิดเป็นค่าเริ่มต้น</span></td></tr>
+</table></div>
+
+<div class="box warn">
+  <h4>ทำไมเพดาน baseline 0 ถึงปิดไว้</h4>
+  <p>วัดกับข้อมูลจริง 8 ทีมแล้ว เปิดแล้วหีบ<strong>ย้ายที่ราว 2–3.5% ของทั้งทีม</strong>
+  (ผลรวมต่อ SKU ยังตรงเป้าทุกกรณี แค่ย้ายจากคนไม่มีประวัติไปหาคนมีประวัติ)
+  หัวหน้าทีมจะเห็นตัวเลขต่างทันที จึงถือเป็น<strong>การตัดสินใจเชิงนโยบาย</strong> ไม่ใช่บั๊ก</p>
+  <p style="margin-bottom:0">เปิดได้ด้วย <code>ALLOC_ZERO_BASELINE_CAP=1</code> ·
+  ตัวคุมชั้นแรก (เพดาน mean×3, anchor term ถ่วงด้วยราคา, สมการผลรวมต่อ SKU) ทำงานอยู่แล้วทั้งหมด</p>
+</div>
+
+<h3>ค่าที่หน้าเว็บส่งมาจริง</h3>
+<div class="tw"><table>
+<tr><th>พารามิเตอร์</th><th>ค่า</th><th>ความหมาย</th></tr>
+<tr><td><code>tiered_allocation</code></td><td><code>true</code></td><td>เปิดโหมด SKU หลัก/รอง</td></tr>
+<tr><td><code>tier_pct</code></td><td><code>0.80</code></td><td>SKU หลัก = สะสมมูลค่าเป้าถึง 80%</td></tr>
+<tr><td><code>hist_balance</code></td><td><code>0.35</code></td><td>น้ำหนักยึด baseline ใน LP</td></tr>
+<tr><td><code>revenue_tolerance_baht</code></td><td><code>1000</code></td><td>ยอมให้มูลค่าต่อคนคลาดเป้าได้เท่าไร</td></tr>
+</table></div>
+
+<div class="box stop">
+  <h4>ข้อควรระวังสำหรับคนแก้โค้ด — ชื่อตัวแปร LP</h4>
+  <p style="margin-bottom:0"><strong>ห้ามเอา <code>emp_id</code> / <code>sku</code> ไปต่อเป็นชื่อตัวแปร PuLP</strong>
+  PuLP ล้างเฉพาะอักขระใน <code>"-+[] -&gt;/"</code> ซึ่งแปลง <code>-</code> เป็น <code>_</code>
+  ทำให้ <code>("A-B","C")</code> กับ <code>("A","B_C")</code> ได้ชื่อชนกัน → CBC พังเป็น
+  <code>PulpSolverError</code> → ตกไป fallback แบบเงียบ ๆ
+  ใช้ <code>_vname()</code> ที่สร้างชื่อจากเลขลำดับเท่านั้น</p>
+</div>
+
+<h2 id="rules">5 · กฎที่ระบบบังคับ</h2>
+<p>รายละเอียดเต็มอยู่ใน <code>docs/ALLOCATION_INVARIANTS.md</code> — ย่อไว้ที่นี่</p>
+
+<div class="tw"><table>
+<tr><th>#</th><th>กฎ</th><th>บังคับที่ไหน</th></tr>
+<tr><td><strong>I1</strong></td><td>ผลรวมหีบต่อ SKU = เป้าหีบ เป๊ะ ๆ</td><td><code>/optimize</code> ตอบ 409 · ไม่เขียนไฟล์ ไม่สร้าง Excel</td></tr>
+<tr><td><strong>I2</strong></td><td>เซลล์ที่ล็อกออกมาตรงค่าที่ล็อก</td><td>คีย์ normalize ที่ประตูเข้า · ล็อกเกินเป้าตอบ 400</td></tr>
+<tr><td><strong>I3</strong></td><td>หีบเป็นจำนวนเต็ม ไม่ติดลบ</td><td>ปัดเป็น int ครั้งเดียวที่ประตูเข้า</td></tr>
+<tr><td><strong>I4</strong></td><td><code>force_min_one</code> → ทุกคนได้ ≥ 1 หีบ (เมื่อเป้า ≥ จำนวนคน)</td><td>รอดผ่านทั้ง proportional → LP → greedy</td></tr>
+<tr><td><strong>I5</strong></td><td>เซลล์อยู่ในรั้ว % จาก baseline</td><td>ข้อจำกัดใน LP + ขอบเขตใน greedy</td></tr>
+<tr><td><strong>I6</strong></td><td>SKU รหัสเดียวถูกกระจายรอบเดียว</td><td>ยุบซ้ำก่อนแบ่งกลุ่มตามแบรนด์</td></tr>
+<tr><td><strong>I7</strong></td><td>โหมดรวมภาคไม่ปน <em>ตัวตน</em> ข้ามทีม</td><td>คีย์ล็อกมีรหัสซุปนำหน้า · ห้าม fallback ไปรหัสผู้จัดการ</td></tr>
+</table></div>
+
+<h2 id="edit">6 · แก้มือและการเกลี่ยอัตโนมัติ</h2>
+
+<p>คลิกตัวเลขในตารางแล้วพิมพ์ใหม่ → ช่องนั้นกลายเป็น <strong>ล็อก</strong> ระบบจะไม่ขยับอีก
+แม้กดคำนวณใหม่ (ส่งไปเป็น <code>locked_edits</code>)</p>
+
+<p>แต่ผลรวมต่อ SKU ต้องคงเดิม ระบบจึงไป <strong>เกลี่ยจากคนที่ยังไม่ถูกแก้</strong> โดยอัตโนมัติ
+(<code>autoRebalance</code>) น้ำหนักการเกลี่ยใช้ <code>hist_avg</code> ของแต่ละคน</p>
+
+<div class="box ok">
+  <h4>แผง「ผลจากการแก้ล่าสุด」</h4>
+  <p>ทุกครั้งที่แก้ จะมีแผงขึ้นใต้ตารางบอกว่าไปกระทบใครบ้าง:</p>
+<pre style="margin:8px 0 0"><code>ผลจากการแก้ล่าสุด                                  ✕
+  111294  ฟลอเร่สบู่ขมิ้น 80 ก.
+  [คุณแก้]         C431 สมชาย  +1
+  [ระบบเกลี่ยจาก]  C439 ชานนท์ SL460  −1
+  ⚠️ ดึงข้ามทีม: SL460</code></pre>
+  <p style="margin-bottom:0">ทำงานโดยถ่ายภาพก่อนแก้แล้ว diff หลังเกลี่ยเสร็จ จึงจับได้ทุกเส้นทาง
+  ไม่ต้องพึ่งตัวเกลี่ยรายงานเอง</p>
+</div>
+
+<h2 id="region">7 · โหมดรวมภาค</h2>
+
+<p>ผู้จัดการ (หรือซุปที่มี peer ในภาคเดียวกัน) เปิดดูหลายทีมพร้อมกันในตารางเดียวได้
+และ<strong>กระจายหีบได้ทั้งภาค</strong></p>
+
+<h3>สิ่งที่ตรึง กับ สิ่งที่ขยับได้ — ต่างกันตามจังหวะ</h3>
+<div class="tw"><table>
+<tr><th>จังหวะ</th><th>ขอบเขตที่ถูกตรึง</th><th>เพราะอะไร</th></tr>
+<tr><td><strong>กดคำนวณ / คำนวณใหม่</strong></td><td><span class="pill p-ok">ต่อทีม</span></td>
+    <td>แต่ละซุปยิง <code>/optimize</code> แยก ใช้เป้าของตัวเอง + ประตู 409 บังคับ</td></tr>
+<tr><td><strong>แก้มือแล้วระบบเกลี่ยต่อ</strong></td><td><span class="pill p-warn">ทั้งภาค</span></td>
+    <td><code>autoRebalance</code> จัดกลุ่มด้วย <code>sku</code> ล้วน เทียบกับผลรวมเป้าทั้งภาค</td></tr>
+</table></div>
+
+<p>ผลคือหลังแก้มือ ผลรวม SKU <strong>ทั้งภาค</strong> ยังตรง แต่สัดส่วน <strong>รายทีม</strong>
+เลื่อนจากเป้า TGA ของทีมนั้นได้ — <strong>เป็นพฤติกรรมที่ตั้งใจ</strong></p>
+
+<div class="box">
+  <h4>แถวรวมทีม — จุดเดียวที่มองเห็นการเลื่อน</h4>
+  <p>ท้ายกลุ่มของแต่ละซุปมีแถบสรุปบอกยอดต่อ SKU และส่วนต่างจากเป้าของทีมนั้น</p>
+  <ul class="tight">
+    <li><code>+3</code> สีส้ม = ทีมนี้ได้เกินเป้าตัวเอง 3 หีบ</li>
+    <li><code>−3</code> สีน้ำเงิน = ได้น้อยกว่าเป้าตัวเอง 3 หีบ</li>
+    <li>「ตรงเป้าทีมทุก SKU」 = ยังไม่มีการย้ายข้ามทีม</li>
+  </ul>
+  <p style="margin-bottom:0">เป้ารายทีมอ่านจาก <code>target_boxes_by_sup</code> ใน payload รวมภาค
+  ไม่ใช่ยอดบวกรวมทั้งภาค</p>
+</div>
+
+<div class="box warn">
+  <h4>ตารางรวมภาคไม่ได้มาจากการกระจายสดเสมอไป</h4>
+  <p>ตอนเปิดหน้ามา ระบบประกอบตารางจากสองแหล่งต่อทีม:</p>
+  <ul class="tight">
+    <li>ทีมที่เคยกระจาย → <strong>snapshot เก่า</strong> ที่บันทึกไว้ตอนนั้น</li>
+    <li>ทีมที่ยังไม่เคยกระจาย → <strong>ตัวเลขจาก Target Sun ตรง ๆ</strong></li>
+  </ul>
+  <p style="margin-bottom:0">แถวรวมทีมจึงแสดงป้ายต่างกันตามแหล่ง — ทีมที่มาจาก Target Sun
+  จะขึ้นว่า「ยังไม่ได้กระจาย」และ<strong>ไม่แสดง +/−</strong> เพราะเทียบกันไม่ได้</p>
+</div>
+
+<h3>อื่น ๆ ที่ต่างจากมุมมองทีมเดียว</h3>
+<ul class="tight">
+  <li><strong>โหลดขนานกัน</strong> — <code>ThreadPoolExecutor</code> 6 thread (เพดาน 8) ปรับด้วย <code>AGGREGATE_LOAD_WORKERS</code></li>
+  <li><strong>ทีมพังทีมเดียวไม่ล้มทั้งภาค</strong> — เก็บ error รายทีม รายงานว่าทีมไหนพลาด ทีมที่สำเร็จบันทึกแล้ว</li>
+  <li><strong>คำเตือน fallback รวมทุกทีม</strong> — ถ้าทีมใดตกไปใช้ proportional จะเตือนพร้อมระบุชื่อทีม</li>
+  <li><strong>คีย์ล็อกมีรหัสซุปนำหน้า</strong> (<code>SL330::E001</code>) เพราะ <code>emp_id</code> ซ้ำข้ามทีมได้</li>
+</ul>
+
+<h2 id="send">8 · ส่งเข้า Target Sun</h2>
+
+<div class="flow"><pre><code>ตรวจฝั่งหน้าเว็บ ─► ยอดทีมไหนไม่ตรงเป้า? ─┬─ ไม่ตรง ─► modal ให้ตรวจ ─► ยืนยัน/ยกเลิก
+                                          └─ ตรง ────────────────────┐
+                                                                     ▼
+POST /lakehouse/prepare-targetsun   ขั้น 1: สร้าง Excel รูปแบบ TGA เก็บชั่วคราว → prepare_token
+                                             ▲ ประตูตรวจเป้า (409 ถ้าไม่ตรงและไม่ได้ยืนยัน)
+                                                                     │
+POST /lakehouse/import-targetsun    ขั้น 2: ส่งไฟล์ตาม token เข้า API ฝั่ง SPC</code></pre></div>
+
+<h3>ชั้นการตรวจ</h3>
+<div class="tw"><table>
+<tr><th>จุด</th><th>ตรวจอะไร</th><th>ผ่านได้ยังไง</th></tr>
+<tr><td><code>/optimize</code></td><td>ผลรวมต่อ SKU ต่อทีม ทันทีหลังกระจาย</td><td>ต้องตรงเสมอ</td></tr>
+<tr><td><code>PUT /data/allocations</code></td><td>ไม่ตรวจ</td><td>— (ตั้งใจ ให้แก้ระหว่างทางได้)</td></tr>
+<tr><td><strong>ดาวน์โหลด Excel</strong></td><td><strong>ไม่ตรวจ โดยตั้งใจ</strong></td><td>ต้องโหลดมาตรวจได้เสมอแม้ตัวเลขยังไม่ตรง</td></tr>
+<tr><td>ส่ง Target Sun</td><td>ผลรวมต่อ SKU ต่อทีม เทียบเป้าปัจจุบัน</td><td>ผู้ใช้กดยืนยันหลังเห็นรายการ</td></tr>
+</table></div>
+
+<div class="box stop">
+  <h4>สำหรับคนแก้โค้ด</h4>
+  <p style="margin-bottom:0"><code>_build_tga_upload_dataframe()</code> ถูกใช้ร่วมกันทั้งการสร้างไฟล์ให้
+  <strong>ดาวน์โหลด</strong> และการ <strong>ส่งจริง</strong> ประตูจึงคุมด้วยพารามิเตอร์
+  <code>enforce_targets</code> (ค่าเริ่มต้น <code>False</code>) และเปิดเป็น <code>True</code>
+  เฉพาะใน <code>targetsun_import.py</code> เท่านั้น —
+  <strong>ห้ามย้ายการตรวจเข้าไปในตัวสร้างแบบไม่มีเงื่อนไข</strong> ไม่งั้นยิ่งตัวเลขมีปัญหา
+  ยิ่งโหลดไฟล์มาตรวจไม่ได้</p>
+</div>
+
+<h3>รูปแบบไฟล์ที่ส่ง</h3>
+<p>Excel ชีตเดียวชื่อ <code>TGA</code> คอลัมน์ตาม <code>tga_target_salesman_next</code>:</p>
+<pre><code>PRODUCTCODE · SALESTYPE · DIVISIONCODE · SALESMANCODE · AREACODE
+PROVINCECODE · WAREHOUSECODE · QUANTITYCASE · EFFECTIVEDATE · UPDATEDATE · USERCODE</code></pre>
+<p>แถว <code>QUANTITYCASE = 0</code> ถูกส่งไปด้วย <strong>โดยตั้งใจ</strong> เพื่อทับเป้าเดิมใน Target Sun ให้เป็นศูนย์
+· วันที่เป็นข้อความปี พ.ศ. รูปแบบ <code>d/M/yyyy HH:mm:ss</code></p>
+
+<h2 id="roles">9 · บทบาทและสิทธิ์</h2>
+
+<p>สิทธิ์มาจาก <code>config/user_access.json</code> (อีเมล + รหัส USERPL) และลำดับชั้นใน
+<code>config/access_hierarchy.json</code> ล็อกอินผ่าน Microsoft Entra</p>
+
+<div class="tw"><table>
+<tr><th>บทบาท</th><th>เห็นอะไร</th><th>ทำอะไรได้</th></tr>
+<tr><td><strong>supervisor</strong></td><td>ทีมตัวเอง</td><td>กระจาย · แก้ · บันทึก · ส่ง</td></tr>
+<tr><td><strong>supervisor_acc</strong> (region peers)</td><td>ทุกทีมใน div+ภาค+หน่วยเดียวกัน</td><td>แก้และกระจายทีมอื่นในกลุ่มได้</td></tr>
+<tr><td><strong>regional_manager</strong></td><td>ทีมในภาคตัวเอง</td><td>รายคน + รวมภาค (กระจายได้)</td></tr>
+<tr><td><strong>manager_acc</strong> (division)</td><td>ทั้ง division</td><td>รวมทั้งหมด = <strong>ดูอย่างเดียว</strong> · ต้องเลือกรายคนหรือรวมภาคจึงกระจายได้</td></tr>
+<tr><td><strong>marketing</strong></td><td>ตามที่กำหนด</td><td>เข้าบางส่วนของหน้าแอดมิน</td></tr>
+</table></div>
+
+<h3>สิทธิ์ส่ง Target Sun</h3>
+<p>คุมแยกต่างหากด้วย <code>can_import_targetsun</code> ต่ออีเมล ตั้งจากหน้าแอดมิน</p>
+<p>คอลัมน์ Target Sun มีปุ่ม <strong>เปิดทุกคน / ปิดทุกคน</strong> ทำงานกับ
+<strong>แถวที่แสดงอยู่ตอนนั้น</strong> (กรองภาค/หน่วย/บทบาทก่อนได้) ถามยืนยันพร้อมบอกจำนวนที่เปลี่ยนจริง
+และบันทึกลง usage log ทุกครั้ง</p>
+
+<h2 id="files">10 · ไฟล์ใน data/ และการใช้พร้อมกัน</h2>
+
+<p>ทุกไฟล์แยกตาม <code>(ทีม, งวด)</code> — <strong>ห้ามสร้างไฟล์ที่ไม่มีรหัสทีมในชื่อ</strong></p>
+<pre><code>target_boxes_{SL}_{YYYY}_{MM}.csv        เป้าหีบราย SKU
+target_sun_{SL}_{YYYY}_{MM}.csv          เป้าเงินราย emp
+emp_cache_{SL}_{YYYY}_{MM}.csv           รายชื่อพนักงาน
+hist_cache_{SL}_{YYYY}_{MM}.csv          ประวัติ 3M  (+ _6m)
+hist_cy_{SL}_{YYYY}.csv                  ประวัติทั้งปี — ใช้ตรวจสินค้าใหม่
+tga_lines_{SL}_{YYYY}_{MM}.csv           TGA grain เต็ม (ใช้ตอนส่ง)
+payload_cache_{SL}_{YYYY}_{MM}.json      cache ผล GET /data/employees
+final_allocation_{SL}_{YYYY}_{MM}.csv    ผลกระจายล่าสุด
+Final_Dashboard_{SL}_{YYYY}_{MM}.xlsx    Excel ผลกระจาย
+allocations/{SL}_{YYYY}_{MM}.json        snapshot บน server</code></pre>
+
+<div class="box stop">
+  <h4>ข้อสมมติที่ทั้งระบบแบกอยู่: uvicorn 1 worker เท่านั้น</h4>
+  <p>route handler ทุกตัวเป็น <code>def</code> ไม่ใช่ <code>async def</code> → FastAPI โยนเข้า
+  anyio threadpool (40 threads) → <strong>request หลายคนรันขนานกันจริงในโปรเซสเดียว</strong>
+  ระบบจึงใช้ <code>threading.Lock</code> ป้องกัน</p>
+  <p style="margin-bottom:0"><strong>เพิ่มเป็น 2 worker หรือขึ้นหลาย container เมื่อไหร่ lock ทุกตัวไร้ผลทันที</strong>
+  เพราะเป็น lock ระดับโปรเซส ต้องเปลี่ยนไปใช้ file lock หรือฐานข้อมูลก่อน —
+  ไม่ใช่แค่เพิ่มตัวเลข worker</p>
+</div>
+
+<h3>การบันทึกผลกระจาย — optimistic concurrency</h3>
+<pre><code>client โหลด → เห็น version: 3
+client บันทึก → ส่ง if_match_version: 3
+   server: version บนดิสก์ == 3?  → เขียน version: 4 → 200
+                          != 3?  → 409 พร้อมบอก version ปัจจุบัน</code></pre>
+<p>ใช้ <code>version</code> เป็นเลขจำนวนเต็ม ไม่ใช่ <code>updated_at</code> เพราะ autosave debounce 800ms
+ทำให้สอง save ในวินาทีเดียวกันได้ timestamp เท่ากัน = precondition มีรูให้เล็ดลอด</p>
+
+<h2 id="env">11 · สวิตช์ที่ตั้งได้</h2>
+
+<div class="tw"><table>
+<tr><th>ตัวแปร</th><th>ค่าเริ่มต้น</th><th>ผล</th></tr>
+<tr><td><code>AGGREGATE_LOAD_WORKERS</code></td><td>6</td><td>thread โหลดรวมภาค (เพดาน 8) · <code>1</code> = ทีละทีมแบบเดิม</td></tr>
+<tr><td><code>EMPLOYEE_PAYLOAD_CACHE_TTL_SEC</code></td><td>3600</td><td>อายุ cache ขั้น 1 · <code>0</code> = ปิด (ยิง DAX ทุกครั้ง)</td></tr>
+<tr><td><code>ALLOC_ZERO_BASELINE_CAP</code></td><td>ปิด</td><td>เปิดเพดานคนไม่มีประวัติ — <strong>ตัวเลขขยับ 2–3.5%</strong></td></tr>
+<tr><td><code>ALLOC_ALLOW_MISMATCH</code></td><td>ปิด</td><td><strong>ฉุกเฉินเท่านั้น</strong> — ปล่อยผลที่ไม่ตรงเป้าให้ผ่านทั้ง optimize และตอนส่ง</td></tr>
+<tr><td><code>ALLOC_REQUIRE_IF_MATCH</code></td><td>ปิด</td><td>บังคับ client ส่ง version ตอนบันทึก (กัน tab เก่าเขียนทับ)</td></tr>
+<tr><td><code>USE_LEGACY_TARGET_CSV</code></td><td>ปิด</td><td><strong>dev เท่านั้น</strong> — อ่านไฟล์เป้าแบบ global ที่วางเอง</td></tr>
+<tr><td><code>ENABLE_DEBUG_ENDPOINTS</code></td><td>ปิด</td><td>เปิด <code>GET /debug/fabric</code></td></tr>
+</table></div>
+
+<h2 id="api">12 · API ทั้งหมด</h2>
+
+<h4>ข้อมูลและการกระจาย</h4>
+<div class="tw"><table>
+<tr><th>Method</th><th>Path</th><th>หน้าที่</th></tr>
+<tr><td>GET</td><td><code>/managers</code></td><td>Dropdown ทีม/ผู้จัดการ</td></tr>
+<tr><td>GET</td><td><code>/data/employees</code></td><td>Payload ขั้น 1 ของทีมเดียว</td></tr>
+<tr><td>GET</td><td><code>/data/employees/aggregate</code></td><td>รวมหลายทีม (ผู้จัดการ) — โหลดขนาน</td></tr>
+<tr><td>GET</td><td><code>/data/employees/region-peers</code></td><td>รวมทุกทีมในภาค (ซุป peer)</td></tr>
+<tr><td>GET</td><td><code>/data/targets/live</code></td><td>ดึงเป้าล่าสุดจาก Target Sun</td></tr>
+<tr><td>POST</td><td><code>/optimize</code></td><td><strong>กระจายหีบ</strong> · 400 ล็อกเกินเป้า · 409 ผลรวมไม่ตรง</td></tr>
+</table></div>
+
+<h4>บันทึกผลและส่งออก</h4>
+<div class="tw"><table>
+<tr><th>Method</th><th>Path</th><th>หน้าที่</th></tr>
+<tr><td>GET/PUT/DELETE</td><td><code>/data/allocations</code></td><td>snapshot ผลกระจายบน server (CAS ด้วย version)</td></tr>
+<tr><td>GET</td><td><code>/data/allocations/summary</code></td><td>สรุปสถานะทุกทีมที่เข้าถึงได้</td></tr>
+<tr><td>POST</td><td><code>/export/excel</code> · GET <code>/download/excel</code></td><td>Excel สรุป Dashboard</td></tr>
+<tr><td>POST</td><td><code>/lakehouse/export-csv</code></td><td>CSV รูปแบบ TGA</td></tr>
+<tr><td>POST</td><td><code>/lakehouse/prepare-targetsun</code></td><td>ขั้น 1 ของการส่ง — สร้างไฟล์ + token</td></tr>
+<tr><td>POST</td><td><code>/lakehouse/import-targetsun</code></td><td>ขั้น 2 — ส่งเข้า Target Sun</td></tr>
+<tr><td>POST</td><td><code>/lakehouse/upload</code></td><td>อัปโหลดเข้า OneLake (API เท่านั้น ไม่มีปุ่มใน UI)</td></tr>
+</table></div>
+
+<h4>แอดมิน</h4>
+<div class="tw"><table>
+<tr><th>Method</th><th>Path</th><th>หน้าที่</th></tr>
+<tr><td>GET/POST/PUT/DELETE</td><td><code>/admin/user-access</code></td><td>จัดการสิทธิ์ผู้ใช้</td></tr>
+<tr><td>PUT</td><td><code>/admin/user-access/targetsun</code></td><td>เปิด/ปิดสิทธิ์ส่ง ทีละอีเมล</td></tr>
+<tr><td>PUT</td><td><code>/admin/user-access/targetsun/bulk</code></td><td><strong>เปิด/ปิดยกชุด</strong></td></tr>
+<tr><td>GET/POST/PUT/DELETE</td><td><code>/admin/sl-links</code> · <code>/admin/sku-links</code></td><td>ผูกรหัส SL / รหัส SKU</td></tr>
+<tr><td>PUT</td><td><code>/admin/settings/target-source</code></td><td>สลับแหล่งเป้า + preset URL</td></tr>
+<tr><td>GET</td><td><code>/admin/usage-logs</code></td><td>บันทึกการใช้งาน</td></tr>
+<tr><td>GET</td><td><code>/health</code> · <code>/health/build</code></td><td>ตรวจสถานะ</td></tr>
+</table></div>
+
+<h2 id="test">13 · การทดสอบ</h2>
+
+<pre><code># ทั้งหมด (161 เทสต์)
+python run_tests.py
+
+# กฎคงที่ของการกระจาย — ในหน่วยความจำล้วน ไม่แตะไฟล์/เน็ต/DB
+python -m pytest tests/test_or_engine_invariants.py -q
+
+# ก่อน/หลังแก้อะไรที่อาจทำให้ตัวเลขขยับ
+python scripts/golden_allocation.py capture
+python scripts/golden_allocation.py compare -v</code></pre>
+
+<div class="box">
+  <h4>สิ่งที่ต้องรู้เกี่ยวกับ golden harness</h4>
+  <ul class="tight">
+    <li><strong>CBC ไม่ deterministic 100%</strong> — มี time limit สูงสุด 60 วินาทีต่อการแก้หนึ่งครั้ง
+    ทีมที่ SKU เยอะพอจะชน limit จะได้คำตอบ "ดีที่สุดเท่าที่หาทัน" รันซ้ำอาจต่าง 1–2 เคส</li>
+    <li><strong><code>data/</code> เป็น cache ที่แอปเขียนทับได้ตลอด</strong> เป้าจึงเปลี่ยนโดยไม่มีใครแก้โค้ด
+    harness เก็บลายนิ้วมือข้อมูลเข้าไว้ ถ้าต่างจะรายงานเป็น <code>[ข้อมูลต้นทางเปลี่ยน]</code> แยกออกมา</li>
+    <li><strong><code>sku_mismatches</code> ต้องเป็น 0 เสมอ</strong> ไม่ว่ากรณีไหน — ถ้าไม่ใช่คือกฎ I1 พัง</li>
+  </ul>
+</div>
+
+<p><code>run_tests.py</code> ถ่าย snapshot ไฟล์ config สำคัญก่อนรัน ถ้าเทสต์ไปแก้ไฟล์จริงจะ
+<strong>กู้คืนอัตโนมัติ + เตือน + exit 1</strong> (เคยพบว่า <code>config/app_runtime.json</code>
+ถูกเปลี่ยน preset ปลายทาง Target Sun ระหว่างรันเทสต์)</p>
+
+<p class="meta">
+เอกสารประกอบ: <code>docs/ALLOCATION_INVARIANTS.md</code> (กฎการกระจายฉบับเต็ม) ·
+<code>docs/CONCURRENCY.md</code> (การใช้พร้อมกัน) ·
+<code>docs/DATA_FLOW.md</code> (แหล่งข้อมูล) ·
+<code>docs/DEPLOY_QA_CHECKLIST.md</code> (ตรวจก่อน go-live) ·
+<code>docs/user-manual-th.html</code> (คู่มือผู้ใช้)
+</p>
+
+</div>
+</body>
+</html>

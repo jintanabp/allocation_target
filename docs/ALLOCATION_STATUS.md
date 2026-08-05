@@ -32,7 +32,21 @@
 `target_sun_sent_at` ถูกรักษาไว้ **ฝั่ง server** (`allocation_store.write_snapshot`) ไม่พึ่ง client
 ส่งกลับมา — ไม่งั้น client เก่าที่ไม่รู้จัก field นี้จะลบประวัติทิ้ง
 
-**3. snapshot ไม่ถูกลบหลังส่ง**
+**3. โหมดรวมภาค — snapshot ต้องลงทีมเจ้าของจริงเท่านั้น**
+
+`saveRegionalAllocationSnapshots()` แยกแถวตาม `supervisor_code` แล้วบันทึกทีละทีม
+แถวที่ระบุทีมไม่ได้ **ต้องไม่ถูกบันทึก** และต้องเตือนผู้ใช้
+
+> ⚠️ **ห้ามให้ `_supervisorCodeForAllocRow()` fallback ไป `S.supId` ในโหมดรวมภาค** —
+> `S.supId` ตอนนั้นคือ **รหัสของผู้จัดการ** ไม่ใช่ทีมของแถวนั้น เดิม
+> `_mergeLockedEditsIntoAllocs()` push แถวใหม่โดยไม่ใส่ `supervisor_code`
+> แถวนั้นจึงไปโผล่ใน snapshot ของผู้จัดการแทนทีมจริง
+>
+> ด้วยเหตุผลเดียวกัน คีย์จับคู่ล็อกในโหมดรวมภาคต้องมีรหัสซุปนำหน้า (`SL330::E001`)
+> เพราะ `emp_id` ซ้ำข้ามทีมได้ — ไม่งั้นล็อกของทีมหนึ่งจะไปตกกับคนของอีกทีม
+> (ดู `_lockIdentityKey()` และ `docs/ALLOCATION_INVARIANTS.md` ข้อ I7)
+
+**4. snapshot ไม่ถูกลบหลังส่ง**
 
 เดิม `_markAllocationSentTargetSun` เรียก `deleteServerAllocationSnapshot` ทำให้
 สถานะ `sent_targetsun` **ไปไม่ถึงเลยตั้งแต่วันแรก** (ใส่มาพร้อมกันใน commit `b860324`)
