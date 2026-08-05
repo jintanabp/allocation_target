@@ -55,13 +55,39 @@ class TestTargetSunEndpointSplit(unittest.TestCase):
 
 class TestRuntimeEndpointPreset(unittest.TestCase):
     def test_set_preset_persists(self):
+        """
+        เทสต์นี้ "เขียนไฟล์จริง" ได้ถ้าเปลี่ยนเส้นทางไม่สำเร็จ — และค่าที่เขียนคือ
+        preset ปลายทาง Target Sun ซึ่งตัดสินว่าข้อมูลจะถูกส่งไปที่ไหน
+
+        จึงกันสองชั้น:
+          1. ตั้ง APP_RUNTIME_SETTINGS_PATH (settings_json_path() เช็คตัวนี้เป็นอันดับแรก)
+             — ได้ผลแม้โค้ดภายในจะเรียก settings_json_path() จากที่อื่น
+          2. patch.object ทับอีกชั้นเผื่อ env ถูกอ่านไปแล้ว
+        แล้ว assert ตอนท้ายว่าไฟล์จริงไม่ถูกแตะ
+        """
+        real_path = os.path.join(REPO, "config", "app_runtime.json")
+        before = None
+        if os.path.isfile(real_path):
+            with open(real_path, encoding="utf-8") as f:
+                before = f.read()
+
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "app_runtime.json")
-            with patch.object(ars, "settings_json_path", return_value=path):
-                data = ars.set_target_endpoint_preset("uat")
-                self.assertEqual(data["target_endpoint_preset"], "uat")
-                cfg = ars.get_target_endpoint_config()
-                self.assertEqual(cfg["preset"], "uat")
+            with patch.dict(os.environ, {"APP_RUNTIME_SETTINGS_PATH": path}):
+                with patch.object(ars, "settings_json_path", return_value=path):
+                    data = ars.set_target_endpoint_preset("uat")
+                    self.assertEqual(data["target_endpoint_preset"], "uat")
+                    cfg = ars.get_target_endpoint_config()
+                    self.assertEqual(cfg["preset"], "uat")
+            self.assertTrue(os.path.isfile(path), "ต้องเขียนลงไฟล์ชั่วคราว")
+
+        if before is not None:
+            with open(real_path, encoding="utf-8") as f:
+                self.assertEqual(
+                    f.read(), before,
+                    "config/app_runtime.json ของจริงถูกแก้ระหว่างเทสต์ — "
+                    "ห้ามเด็ดขาด เพราะเป็นค่าที่ชี้ปลายทางส่ง Target Sun",
+                )
 
 
 if __name__ == "__main__":

@@ -47,6 +47,46 @@ def build_suite(module: str | None) -> unittest.TestSuite:
     return loader.loadTestsFromName(f"tests.{stem}")
 
 
+# ไฟล์ config ที่เทสต์ "ห้ามแตะ" — ค่าในนี้ตัดสินว่าข้อมูลจริงถูกส่งไปที่ไหน
+# เคยพบว่า config/app_runtime.json ถูกเปลี่ยน test -> uat ระหว่างรันชุดเต็ม
+# (เกิดเป็นครั้งคราว ยังหาตัวการไม่เจอ) ถ้าเกิดบนเซิร์ฟเวอร์คือส่งข้อมูลผิดปลายทาง
+# ตัวกันนี้จับได้ทุกเทสต์ไม่ว่าตัวไหนเป็นคนเขียน แล้วกู้คืนให้อัตโนมัติ
+_PROTECTED_CONFIGS = (
+    "config/app_runtime.json",
+    "config/user_access.json",
+    "config/sl_links.json",
+    "config/sku_links.json",
+    "config/access_hierarchy.json",
+)
+
+
+def _snapshot_protected() -> dict[str, bytes]:
+    out: dict[str, bytes] = {}
+    for rel in _PROTECTED_CONFIGS:
+        p = os.path.join(repo_root(), rel)
+        if os.path.isfile(p):
+            with open(p, "rb") as f:
+                out[rel] = f.read()
+    return out
+
+
+def _restore_protected(before: dict[str, bytes]) -> list[str]:
+    """คืนค่าไฟล์ที่ถูกแก้ คืนรายชื่อไฟล์ที่โดน"""
+    dirty: list[str] = []
+    for rel, data in before.items():
+        p = os.path.join(repo_root(), rel)
+        try:
+            with open(p, "rb") as f:
+                now = f.read()
+        except OSError:
+            continue
+        if now != data:
+            dirty.append(rel)
+            with open(p, "wb") as f:
+                f.write(data)
+    return dirty
+
+
 def main(argv: list[str] | None = None) -> int:
     ensure_repo_on_path()
     parser = argparse.ArgumentParser(
@@ -61,7 +101,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
     suite = build_suite(args.module)
+    protected_before = _snapshot_protected()
     result = unittest.TextTestRunner(verbosity=2 if args.verbose else 1).run(suite)
+
+    dirty = _restore_protected(protected_before)
+    if dirty:
+        print(
+            "\n"
+            + "!" * 70
+            + "\nเทสต์ไปแก้ไฟล์ config จริง (กู้คืนให้แล้ว):\n  - "
+            + "\n  - ".join(dirty)
+            + "\n\nเทสต์ต้องเขียนลงไฟล์ชั่วคราวเสมอ — ตั้ง env ของ store นั้น"
+            "\n(เช่น APP_RUNTIME_SETTINGS_PATH) ชี้ไป tempdir ก่อนเรียกฟังก์ชันที่เขียนไฟล์"
+            "\n" + "!" * 70,
+            file=sys.stderr,
+        )
+        return 1
+
     return 0 if result.wasSuccessful() else 1
 
 
