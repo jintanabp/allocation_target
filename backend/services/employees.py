@@ -1,5 +1,6 @@
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pandas as pd
@@ -1094,6 +1095,10 @@ def merge_employees_payloads(
     warnings: list[dict[str, Any]] = []
     new_products: set[str] = set()
     skipped: list[dict[str, str]] = []
+    # เป้าหีบแยกรายซุป — ต้องเก็บไว้ ไม่ใช่บวกทิ้ง
+    # โหมดรวมภาคย้ายหีบข้ามทีมได้ตามที่ออกแบบไว้ หน้าจอจึงต้องบอกได้ว่า
+    # ตอนนี้แต่ละทีม "เกิน/ขาด" เป้าของตัวเองอยู่เท่าไร ไม่งั้นย้ายไปโดยไม่รู้ตัว
+    target_by_sup: dict[str, dict[str, int]] = {}
 
     for p in payloads:
         sid = str(p.get("_source_sup_id") or "").strip().upper()
@@ -1106,6 +1111,9 @@ def merge_employees_payloads(
             if not sku:
                 continue
             boxes = float(s.get("supervisor_target_boxes") or 0)
+            if boxes and sid:
+                per_sup = target_by_sup.setdefault(sid, {})
+                per_sup[sku] = int(per_sup.get(sku, 0) + round(boxes))
             if sku in sku_map:
                 sku_map[sku]["supervisor_target_boxes"] = (
                     float(sku_map[sku].get("supervisor_target_boxes") or 0) + boxes
@@ -1149,7 +1157,23 @@ def merge_employees_payloads(
         "aggregate_mode": True,
         "aggregate_sup_ids": aggregate_sup_ids,
         "skipped_supervisors": skipped,
+        # {sup_id: {sku: เป้าหีบของทีมนั้น}} — ใช้แสดงแถวรวมรายทีมในตารางรวมภาค
+        "target_boxes_by_sup": target_by_sup,
     }
+
+
+def _aggregate_load_workers(n_teams: int) -> int:
+    """
+    จำนวน thread สำหรับโหลดรวมภาค — ไม่เกินจำนวนทีมจริง
+    ตั้ง AGGREGATE_LOAD_WORKERS=1 = กลับไปโหลดทีละทีม (พฤติกรรมเดิม)
+    เพดาน 8 กันไม่ให้ไปเบียด anyio threadpool ของ FastAPI (ค่าเริ่มต้น 40 threads)
+    """
+    raw = (os.environ.get("AGGREGATE_LOAD_WORKERS") or "6").strip()
+    try:
+        want = int(raw)
+    except ValueError:
+        want = 6
+    return max(1, min(want, 8, max(1, int(n_teams))))
 
 
 def load_employees_bulk(
@@ -1164,21 +1188,37 @@ def load_employees_bulk(
     if not ids:
         raise HTTPException(400, detail="ไม่มีรหัส Supervisor สำหรับโหลดแบบรวม")
 
-    payloads: list[dict[str, Any]] = []
-    skipped: list[dict[str, str]] = []
-    for sid in ids:
+    def _load_one(sid: str) -> tuple[str, dict[str, Any] | None, str]:
+        """คืน (sup_id, payload, detail) — ไม่โยน exception ออกมา เพื่อให้ทีมอื่นโหลดต่อได้"""
         try:
             p = load_employees_payload(
                 sid, target_month, target_year, refresh=refresh
             )
             p["_source_sup_id"] = sid
-            payloads.append(p)
+            return sid, p, ""
         except HTTPException as ex:
-            skipped.append({"sup_id": sid, "detail": str(ex.detail)})
-            logger.warning("bulk skip %s: %s", sid, ex.detail)
+            return sid, None, str(ex.detail)
         except Exception as ex:
-            skipped.append({"sup_id": sid, "detail": str(ex)})
-            logger.warning("bulk skip %s: %s", sid, ex)
+            return sid, None, str(ex)
+
+    # โหลดขนานกัน: แต่ละซุปยิง DAX แยกกันและไม่แชร์ state
+    # (FabricDAXConnector ถูกสร้างใหม่ต่อการเรียก และ path ไฟล์ cache แยกตามซุป)
+    # ตั้ง AGGREGATE_LOAD_WORKERS=1 เพื่อกลับไปโหลดทีละทีมแบบเดิมได้ถ้าต้องไล่ปัญหา
+    workers = _aggregate_load_workers(len(ids))
+    if workers > 1:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(_load_one, ids))
+    else:
+        results = [_load_one(sid) for sid in ids]
+
+    payloads: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
+    for sid, payload, detail in results:
+        if payload is None:
+            skipped.append({"sup_id": sid, "detail": detail})
+            logger.warning("bulk skip %s: %s", sid, detail)
+        else:
+            payloads.append(payload)
 
     if not payloads:
         raise HTTPException(
