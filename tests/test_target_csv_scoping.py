@@ -118,10 +118,15 @@ class TestTargetCsvScoping(unittest.TestCase):
         atomic_write_csv(target_sun_cache_path("SL330", 7, 2026), _sun_df(["E1"]))
         self.assertTrue(target_csv_ready("SL330", 7, 2026))
 
-    def test_cleanup_removes_legacy_global_with_per_sup_files(self):
+    def test_cleanup_removes_legacy_global_but_keeps_per_sup_targets(self):
         """
-        regression: ถ้าลบเฉพาะไฟล์ราย sup แต่ปล่อยไฟล์ global เก่าไว้
-        load_target_csv_for จะตกกลับไปอ่าน global = ได้เป้าทีมอื่น (บั๊กเดิมกลับมา)
+        regression เดิม: ลบไฟล์ราย sup แต่ปล่อยไฟล์ global เก่าไว้
+        load_target_csv_for จะตกกลับไปอ่าน global = ได้เป้าทีมอื่น
+
+        ตอนนี้ปิดสองชั้น (เปลี่ยนพฤติกรรมโดยตั้งใจ):
+          - ไฟล์เป้าราย sup ไม่ถูกล้างตามอายุอีกแล้ว เพราะเป็นหลักฐานที่ประตู
+            ตรวจก่อนส่งใช้เทียบ ถ้ามันหายการส่งจะถูกบล็อกด้วย send_target_unverifiable
+          - ไฟล์ global เก่ายังถูกลบเหมือนเดิม
         """
         import time
 
@@ -140,8 +145,15 @@ class TestTargetCsvScoping(unittest.TestCase):
             os.path.exists("data/target_boxes.csv"),
             "ไฟล์ global เก่าต้องถูกลบด้วย ไม่งั้นกลายเป็น fallback ที่ให้ข้อมูลทีมอื่น",
         )
+        self.assertTrue(
+            os.path.exists(target_boxes_cache_path("SL330", 7, 2026)),
+            "ไฟล์เป้าราย sup ต้องอยู่ต่อ — ประตูตรวจก่อนส่งใช้ไฟล์นี้เป็นหลักฐาน",
+        )
         df, _ = load_target_csv_for("SL330", 7, 2026)
-        self.assertIsNone(df, "ไม่มีไฟล์แล้วต้องคืน None ให้ caller แจ้งผู้ใช้โหลด Dashboard ใหม่")
+        self.assertEqual(
+            df["sku"].tolist(), ["MINE"],
+            "ต้องได้เป้าของทีมตัวเองเสมอ ห้ามได้ของทีมอื่นไม่ว่ากรณีใด",
+        )
 
     def test_cleanup_keeps_legacy_global_in_dev_mode(self):
         """โหมด dev วางไฟล์ global เอง — ห้ามลบของเขา"""

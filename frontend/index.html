@@ -9,10 +9,14 @@
   <meta http-equiv="Expires" content="0" />
   <title>Target Allocation</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <!-- โหลดจากที่เดียว: เดิม index โหลด Sarabun + Instrument Serif ส่วน style.css @import
+       Inter อีกตัว รวมเป็น 3 ตระกูล ทั้งที่ Instrument Serif ไม่ถูกใช้เลย และ @import
+       ใน CSS บล็อกการ render (เบราว์เซอร์ต้องโหลด CSS จบก่อนถึงจะเห็นว่าต้องโหลดฟอนต์) -->
   <link
-    href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Instrument+Serif:ital@0;1&display=swap"
+    href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=2026080501" />
+  <link rel="stylesheet" href="style.css?v=2026081910" />
 </head>
 
 <body>
@@ -34,6 +38,22 @@
         <div class="topbar-period" id="topbarPeriodContainer" style="display:none;">
           <span id="topbarPeriodText">—</span>
         </div>
+        <!-- ไอคอนสองอันอยู่ในปุ่มเดียว สลับการแสดงผลด้วย CSS ตาม data-theme
+             (ไม่ต้องให้ JS มายุ่งกับเนื้อในปุ่ม) -->
+        <button id="themeToggleBtn" class="btn-theme-toggle" type="button"
+          onclick="toggleTheme()" title="สลับเป็นโหมดมืด" aria-label="สลับโหมดสว่างหรือมืด">
+          <svg class="btn-theme-toggle__icon icon-moon" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+            aria-hidden="true">
+            <path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a6.6 6.6 0 0 0 9.8 9.8z" />
+          </svg>
+          <svg class="btn-theme-toggle__icon icon-sun" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+            aria-hidden="true">
+            <circle cx="12" cy="12" r="4.2" />
+            <path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4L6 18M18 6l1.4-1.4" />
+          </svg>
+        </button>
         <button id="adminNavBtn" class="btn-admin-nav" type="button" style="display:none;" onclick="openAdminView()">
           แอดมิน
         </button>
@@ -736,6 +756,27 @@
 
         <div id="fabricChangeStep3Notice" class="fabric-change-inline" style="display:none;" aria-live="polite"></div>
 
+        <!-- โหมดรวมภาคเท่านั้น: บางงวดเป้าเข้ามาใต้ซุปคนเดียว แต่ต้องเกลี่ยทั้งหน่วย -->
+        <div class="alloc-scope" id="allocScopeWrap" style="display:none;">
+          <div class="alloc-scope__title">ขอบเขตการกระจาย</div>
+          <label class="alloc-scope__opt">
+            <input type="radio" name="allocScope" value="team" checked onchange="onAllocScopeChange()" />
+            <span>แยกตามทีมของแต่ละ Supervisor <em>(แบบเดิม)</em></span>
+          </label>
+          <label class="alloc-scope__opt">
+            <input type="radio" name="allocScope" value="unit" onchange="onAllocScopeChange()" />
+            <span>รวมทั้งหน่วย (credit/van) ในภาคเดียวกัน</span>
+          </label>
+          <div class="alloc-scope__owner" id="allocScopeOwnerWrap" style="display:none;">
+            เป้าอยู่ที่ทีม
+            <select id="allocScopeOwner" class="field-select" aria-label="ทีมที่ถือเป้าของหน่วย"></select>
+            <span class="alloc-scope__hint">
+              ระบบจะใช้เป้าของทีมนี้ แล้วเกลี่ยหีบให้พนักงานทุกทีมที่แสดงอยู่
+              · คู่พนักงาน×สินค้าที่ Target Sun ยังไม่มี จะถูกสร้างใหม่ตอนส่ง
+            </span>
+          </div>
+        </div>
+
         <div class="run-card">
           <div class="run-left">
             <div class="run-emoji" id="runEmoji">🤖</div>
@@ -766,6 +807,23 @@
                   oninput="onEmpSearchInput(this.value)" />
                 <span class="emp-search__count" id="empSearchCount" aria-live="polite"></span>
               </div>
+              <label class="result-toolbar-check" title="ซ่อนแถวที่ไม่ตรงคำค้น แทนการไฮไลต์เฉย ๆ">
+                <input type="checkbox" id="empSearchFilterOnly" onchange="onEmpSearchFilterToggle(this.checked)" />
+                แสดงเฉพาะที่พบ
+              </label>
+              <label class="result-toolbar-check" title="เหลือเฉพาะคอลัมน์สินค้าที่ยอดยังไม่เท่าเป้า">
+                <input type="checkbox" id="offTargetOnly" onchange="onOffTargetToggle(this.checked)" />
+                เฉพาะที่ยังไม่ตรงเป้า
+              </label>
+              <select id="rowSortSelect" class="field-select"
+                style="min-width: 150px; padding: 6px 30px 6px 12px; height: auto; border-radius: 6px;"
+                aria-label="เรียงลำดับแถวพนักงาน"
+                onchange="onResultRowSortChange(this.value)">
+                <option value="default">เรียงพนักงาน: ตามเดิม</option>
+                <option value="name">เรียงพนักงาน: ชื่อ/รหัส</option>
+                <option value="boxes_desc">เรียงพนักงาน: หีบรวม (มาก→น้อย)</option>
+                <option value="value_desc">เรียงพนักงาน: ยอดเงิน (มาก→น้อย)</option>
+              </select>
               <select id="skuSortSelect" class="field-select"
                 style="min-width: 140px; padding: 6px 30px 6px 12px; height: auto; border-radius: 6px;"
                 onchange="renderResult(S.allocations)">
@@ -896,14 +954,31 @@
   <!-- ─── ADMIN VIEW ─── -->
   <div id="adminView" class="admin-view" style="display:none;" aria-hidden="true">
     <div class="admin-shell">
+      <!-- หัวหน้าจอแยกเป็นสองชั้น: ชั้นบน "ชื่อหน้า + ปุ่มที่กดได้"
+           ชั้นล่าง "ตัวเลขสรุป" ที่เป็นข้อมูลอ่านอย่างเดียว
+           เดิมทั้งหมดอยู่แถวเดียวกัน 12 ชิ้น น้ำหนักสีเท่ากันหมด เลยลายตาจนหาปุ่มที่ต้องการไม่เจอ -->
       <header class="admin-top">
+        <div class="admin-top__row">
         <div class="admin-top__title">
           <p class="admin-view__breadcrumb" id="adminViewBreadcrumb">สิทธิ์ / สิทธิผู้ใช้</p>
           <h1 class="admin-view__title" id="adminViewTitle">แอดมิน</h1>
           <p class="admin-view__sub" id="adminViewSub">จัดการระบบและดูข้อมูล</p>
         </div>
-        <div id="adminStats" class="admin-stats admin-stats--compact" aria-live="polite"></div>
         <div class="admin-top__actions" id="adminTopActionsUsers">
+          <!-- ผู้ใช้ที่ข้อมูลไม่ครบ (ไม่มีตำแหน่ง / manager ไม่มี Division-ภาค / ซุปไม่มีภาค)
+               ยังล็อกอินได้ตามปกติ แต่จะเห็นทีมครบหรือไม่ขึ้นกับข้อมูลที่มี
+               กระดิ่งนี้คือรายการงานค้างให้แอดมินตามเก็บ ไม่ใช่การบล็อกใคร -->
+          <button type="button" class="admin-bell" id="adminIncompleteBell"
+            onclick="adminToggleIncompleteFilter()" style="display:none;"
+            title="ผู้ใช้ที่ข้อมูลไม่ครบ — กดเพื่อดูเฉพาะรายการนี้">
+            <svg class="admin-bell__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+              <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+            </svg>
+            <span class="admin-bell__label">ต้องตรวจสอบ</span>
+            <span class="admin-bell__count" id="adminIncompleteCount">0</span>
+          </button>
           <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminShowAddForm()">+ เพิ่มผู้ใช้</button>
           <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminExportUserAccess()" title="ดาวน์โหลดไฟล์ JSON รายชื่อผู้ใช้ทั้งหมด — เก็บสำรองก่อนแก้บน production">ดาวน์โหลดสำรองรายชื่อผู้ใช้</button>
           <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminRebuildHierarchy()" title="คำนวณใหม่ว่า Manager/Supervisor ดูทีม SL ไหนได้ — หลังเพิ่มหรือแก้ผู้ใช้">อัปเดตลำดับสิทธิ์</button>
@@ -919,6 +994,8 @@
             <span>กลับแอป</span>
           </button>
         </div>
+        </div>
+        <div id="adminStats" class="admin-stats admin-stats--compact" aria-live="polite"></div>
       </header>
 
       <div class="admin-layout">
@@ -926,6 +1003,7 @@
         <div class="admin-nav-group">
           <div class="admin-nav-group__label">สิทธิ์</div>
           <button type="button" class="admin-nav-item admin-nav-item--active" role="tab" data-tab="users" aria-selected="true" onclick="adminSwitchTab('users')">ผู้ใช้</button>
+          <button type="button" class="admin-nav-item" role="tab" data-tab="roles" aria-selected="false" onclick="adminSwitchTab('roles')">ผู้ดูแลระบบ</button>
         </div>
         <div class="admin-nav-group">
           <div class="admin-nav-group__label">การผูกรหัส</div>
@@ -949,13 +1027,6 @@
 
       <div class="admin-content">
       <div id="adminPanelUsers" class="admin-panel" data-panel="users">
-      <div class="admin-help-strip">
-        <p class="admin-help-strip__title">ปุ่มด้านบนทำอะไร?</p>
-        <ul class="admin-help-strip__list">
-          <li><strong>ดาวน์โหลดสำรองรายชื่อผู้ใช้</strong> — เก็บไฟล์ <code>user_access.json</code> ไว้ก่อนแก้สิทธิบน server (กู้คืนได้ถ้าแก้ผิด)</li>
-          <li><strong>อัปเดตลำดับสิทธิ์</strong> — หลังเพิ่ม/แก้ผู้ใช้ ให้ระบบคำนวณใหม่ว่าแต่ละคน <em>ดูทีม SL ไหนได้</em> (เขียนไฟล์ <code>access_hierarchy.json</code>)</li>
-        </ul>
-      </div>
       <section id="adminAddPanel" class="admin-card admin-card--add" style="display:none;">
         <h2 class="admin-card__title">เพิ่มผู้ใช้ใหม่</h2>
         <div class="admin-add-grid">
@@ -1095,11 +1166,14 @@
                     <option value="yes">เปิด</option>
                     <option value="no">ปิด</option>
                   </select>
-                  <div class="admin-ts-bulk">
-                    <button type="button" class="admin-ts-bulk-btn admin-ts-bulk-btn--on"
-                      onclick="adminBulkTargetSun(true)" title="เปิดสิทธิ์ส่ง Target Sun ให้ทุกคนที่แสดงอยู่ตอนนี้">เปิดทุกคน</button>
-                    <button type="button" class="admin-ts-bulk-btn admin-ts-bulk-btn--off"
-                      onclick="adminBulkTargetSun(false)" title="ปิดสิทธิ์ส่ง Target Sun ของทุกคนที่แสดงอยู่ตอนนี้">ปิดทุกคน</button>
+                  <div class="admin-ts-bulk" role="group" aria-label="ตั้งสิทธิ์ส่ง Target Sun ให้ทุกคนที่แสดงอยู่">
+                    <span class="admin-ts-bulk__label">ทุกคนที่แสดง</span>
+                    <div class="admin-ts-bulk__seg">
+                      <button type="button" class="admin-ts-bulk-btn admin-ts-bulk-btn--on"
+                        onclick="adminBulkTargetSun(true)" title="เปิดสิทธิ์ส่ง Target Sun ให้ทุกคนที่แสดงอยู่ตอนนี้">เปิด</button>
+                      <button type="button" class="admin-ts-bulk-btn admin-ts-bulk-btn--off"
+                        onclick="adminBulkTargetSun(false)" title="ปิดสิทธิ์ส่ง Target Sun ของทุกคนที่แสดงอยู่ตอนนี้">ปิด</button>
+                    </div>
                   </div>
                 </th>
                 <th class="admin-th-stack admin-th-stack--actions"></th>
@@ -1110,6 +1184,46 @@
         </div>
         <datalist id="adminRegionDatalist"></datalist>
       </section>
+      </div>
+
+      <div id="adminPanelRoles" class="admin-panel" data-panel="roles" style="display:none;">
+        <section class="admin-card">
+          <div class="admin-data-head">
+            <h2 class="admin-card__title">ผู้ดูแลระบบ</h2>
+            <div class="admin-data-actions">
+              <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminRolesShowAdd()">+ เพิ่มผู้ดูแล</button>
+              <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminLoadRows()">โหลดใหม่</button>
+            </div>
+          </div>
+          <div class="roles-legend">
+            <div class="roles-legend__item">
+              <span class="admin-sysrole-chip admin-sysrole-chip--dev">Dev</span>
+              <span>เห็นและทำได้ทุกอย่างทั้งระบบ รวมการตั้งค่าปลายทางที่ส่งข้อมูลจริง</span>
+            </div>
+            <div class="roles-legend__item">
+              <span class="admin-sysrole-chip admin-sysrole-chip--admin">แอดมิน</span>
+              <span>จัดการผู้ใช้ / ผูกรหัส / ดูผลการกระจาย ตาม<strong>ขอบเขต</strong>ที่กำหนดให้ แต่แตะการตั้งค่าระบบไม่ได้</span>
+            </div>
+            <p class="roles-legend__note">
+              สิทธิ์นี้<strong>ซ้อนทับตำแหน่งเดิม</strong> — คนหนึ่งเป็นทั้ง Supervisor และแอดมินได้พร้อมกัน ตำแหน่งงานและการเห็นข้อมูลทีมยังเหมือนเดิมทุกอย่าง
+            </p>
+          </div>
+          <div class="admin-table-wrap">
+            <table class="admin-table roles-table">
+              <thead>
+                <tr>
+                  <th>ผู้ดูแล</th>
+                  <th>ตำแหน่งงาน</th>
+                  <th>สิทธิ์</th>
+                  <th>ขอบเขต (แก้ผู้ใช้คนไหนได้)</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="adminRolesBody"></tbody>
+            </table>
+          </div>
+          <p id="adminRolesEmpty" class="roles-empty" style="display:none;">ยังไม่มีใครได้รับสิทธิ์ดูแลระบบ — กด “+ เพิ่มผู้ดูแล” เพื่อกำหนด</p>
+        </section>
       </div>
 
       <div id="adminPanelSlLinks" class="admin-panel" data-panel="slLinks" style="display:none;">
@@ -1362,7 +1476,7 @@
 
   <!-- ใช้ไฟล์ในโปรเจกต์ — เครือข่ายองค์กรมักบล็อก alcdn.msauth.net ทำให้ msal ไม่โหลด -->
   <script src="vendor/msal-browser.min.js"></script>
-  <script src="app.js?v=2026080503"></script>
+  <script src="app.js?v=2026081910"></script>
 </body>
 
 </html>

@@ -120,6 +120,34 @@ def _read_hist_cache(path: str, emp_list: list[str]) -> pd.DataFrame:
     return collapse_hist_to_canonical(df)
 
 
+def _read_hist_cache_across_teams(
+    path_fn,
+    sup_ids: list[str],
+    emp_list: list[str],
+) -> pd.DataFrame:
+    """
+    อ่านประวัติขายจาก cache ของหลายทีมแล้วต่อกัน
+
+    ตอนกระจายรวมทั้งหน่วย พนักงานมาจากหลายทีม แต่ cache ประวัติแยกไฟล์ตามทีม
+    ถ้าอ่านแค่ไฟล์ของทีมเจ้าของเป้า คนทีมอื่นจะถูกมองว่าไม่มีประวัติ แล้วได้
+    น้ำหนักขั้นต่ำ (0.01) — กระจายออกมาเบี้ยวจนใช้ไม่ได้
+
+    ตัดคู่ (emp, sku) ซ้ำทิ้ง (ปกติไม่ควรซ้ำเพราะพนักงานหนึ่งคนอยู่ทีมเดียว)
+    เพื่อกันประวัติถูกนับสองรอบถ้าไฟล์ทีมทับซ้อนกัน
+    """
+    frames = []
+    for sid in sup_ids:
+        df = _read_hist_cache(path_fn(sid), emp_list)
+        if not df.empty:
+            frames.append(df)
+    if not frames:
+        return pd.DataFrame(columns=["emp_id", "sku", "hist_boxes"])
+    out = pd.concat(frames, ignore_index=True)
+    if {"emp_id", "sku"} <= set(out.columns):
+        out = out.drop_duplicates(subset=["emp_id", "sku"], keep="first").reset_index(drop=True)
+    return out
+
+
 def _hist_input_for_strategy(
     strategy_u: str,
     df_hist_3: pd.DataFrame,
@@ -225,10 +253,18 @@ def _post_merge_revenue_balance(
     if not flex_skus:
         return df_allocation
 
-    locked_map = {
-        (le["emp_id"], le["sku"]): int(le["locked_boxes"])
-        for le in (locked_edits_data or [])
-    }
+    # คีย์ต้อง normalize แบบเดียวกับที่ OR_engine ทำใน _normalize_engine_inputs (I2)
+    # เดิมใช้ string ดิบจาก request ตรง ๆ ขณะที่ base_map / flex_skus / even_skus
+    # ใช้ _norm_sku() — ต่างกันแค่ช่องว่างหน้า-หลังก็ทำให้ล็อกของผู้ใช้ถูกเมินเงียบ ๆ
+    # แล้วเซลล์ที่กดล็อกไว้ก็ถูกขยับในโหมดหลายกลยุทธ์ + tiered โดยไม่มีสัญญาณอะไรเลย
+    locked_map: dict[tuple[str, str], int] = {}
+    for le in (locked_edits_data or []):
+        try:
+            locked_map[(str(le["emp_id"]).strip(), _norm_sku(le["sku"]))] = int(
+                le["locked_boxes"]
+            )
+        except (KeyError, TypeError, ValueError):
+            logger.warning("locked_edit รูปแบบไม่ถูกต้อง — ข้าม: %r", le)
     base_map = _build_multi_strategy_base_map(
         df_emp_targets,
         df_sku,
@@ -372,10 +408,30 @@ def run_optimization_service(
     )
 
     strategy_u = req.strategy.upper()
-    cache_6 = hist_cache_path(sup_id, target_month, target_year, n_months=6)
-    cache_3 = hist_cache_path(sup_id, target_month, target_year, n_months=3)
-    df_hist_3 = _read_hist_cache(cache_3, real_emp_list)
-    df_hist_6 = _read_hist_cache(cache_6, real_emp_list)
+    # กระจายรวมทั้งหน่วย: พนักงานมาจากหลายทีม ต้องอ่านประวัติจาก cache ของทุกทีมที่เกี่ยว
+    # (ทีมเจ้าของเป้าอยู่ในลิสต์เสมอ และเรียงมาก่อนเพื่อให้ชนะตอนตัดคู่ซ้ำ)
+    hist_sup_ids = [sup_id] + [
+        s for s in (
+            str(x).strip().upper() for x in (getattr(req, "peer_sup_ids", None) or [])
+        )
+        if s and s != str(sup_id).strip().upper()
+    ]
+    df_hist_3 = _read_hist_cache_across_teams(
+        lambda sid: hist_cache_path(sid, target_month, target_year, n_months=3),
+        hist_sup_ids,
+        real_emp_list,
+    )
+    df_hist_6 = _read_hist_cache_across_teams(
+        lambda sid: hist_cache_path(sid, target_month, target_year, n_months=6),
+        hist_sup_ids,
+        real_emp_list,
+    )
+    if len(hist_sup_ids) > 1:
+        logger.info(
+            "optimize: กระจายรวมทั้งหน่วย อ่านประวัติจาก %d ทีม (%s)",
+            len(hist_sup_ids),
+            ", ".join(hist_sup_ids[:6]),
+        )
     if df_hist_3.empty and df_hist_6.empty:
         logger.warning("ไม่พบ hist cache → ใช้ตารางเปล่า")
     else:
@@ -386,20 +442,20 @@ def run_optimization_service(
             loaded.append(f"6M={len(df_hist_6)}")
         logger.info("hist cache loaded (%s)", ", ".join(loaded))
 
-    lysm_path = hist_ly_same_month_cache_path(sup_id, target_month, target_year)
-    df_hist_lysm = pd.DataFrame()
-    if os.path.exists(lysm_path):
-        try:
-            df_hist_lysm = pd.read_csv(lysm_path, dtype={"sku": str, "emp_id": str})
-            df_hist_lysm = df_hist_lysm[df_hist_lysm["emp_id"].isin(real_emp_list)]
-            df_hist_lysm = collapse_hist_to_canonical(df_hist_lysm)
+    try:
+        df_hist_lysm = _read_hist_cache_across_teams(
+            lambda sid: hist_ly_same_month_cache_path(sid, target_month, target_year),
+            hist_sup_ids,
+            real_emp_list,
+        )
+        if not df_hist_lysm.empty:
             logger.info(
                 "hist LY same-month loaded: %d rows (blend weight env ALLOC_HIST_LYM_WEIGHT, default 0.5)",
                 len(df_hist_lysm),
             )
-        except Exception as e:
-            logger.warning("hist LY same-month cache read failed: %s", e)
-            df_hist_lysm = pd.DataFrame()
+    except Exception as e:
+        logger.warning("hist LY same-month cache read failed: %s", e)
+        df_hist_lysm = pd.DataFrame()
 
     df_hist_3 = _maybe_split_hist(df_hist_3, reverse_map, value_shares)
     df_hist_6 = _maybe_split_hist(df_hist_6, reverse_map, value_shares)
@@ -416,17 +472,17 @@ def run_optimization_service(
     )
     df_hist = df_hist_3 if not df_hist_3.empty else df_hist_6
 
-    prev_path = hist_prev_month_cache_path(sup_id, target_month, target_year)
-    df_hist_prev = pd.DataFrame()
-    if os.path.exists(prev_path):
-        try:
-            df_hist_prev = pd.read_csv(prev_path, dtype={"sku": str, "emp_id": str})
-            df_hist_prev = df_hist_prev[df_hist_prev["emp_id"].isin(real_emp_list)]
-            df_hist_prev = collapse_hist_to_canonical(df_hist_prev)
+    try:
+        df_hist_prev = _read_hist_cache_across_teams(
+            lambda sid: hist_prev_month_cache_path(sid, target_month, target_year),
+            hist_sup_ids,
+            real_emp_list,
+        )
+        if not df_hist_prev.empty:
             logger.info("hist prev-month loaded: %d rows", len(df_hist_prev))
-        except Exception as e:
-            logger.warning("hist prev-month cache read failed: %s", e)
-            df_hist_prev = pd.DataFrame()
+    except Exception as e:
+        logger.warning("hist prev-month cache read failed: %s", e)
+        df_hist_prev = pd.DataFrame()
 
     df_hist_prev = _maybe_split_hist(df_hist_prev, reverse_map, value_shares)
 

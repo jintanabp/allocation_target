@@ -1741,6 +1741,11 @@
       "supervisor_code": "SL509",
       "depend_on": "",
       "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL540",
+      "depend_on": "",
+      "manager_code": ""
     }
   ],
   "by_manager": {
@@ -2168,6 +2173,7 @@
     "SL532",
     "SL535",
     "SL539",
+    "SL540",
     "SL629",
     "SL958",
     "SL959"

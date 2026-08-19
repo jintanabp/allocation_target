@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 import unittest
 
@@ -18,6 +19,7 @@ class TestSlLinks(unittest.TestCase):
 
     def tearDown(self) -> None:
         os.environ.pop("SL_LINKS_JSON_PATH", None)
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def _write(self, links: list[dict]) -> None:
         with open(self._path, "w", encoding="utf-8") as f:
@@ -89,6 +91,7 @@ class TestSlLinkAccess(unittest.TestCase):
 
     def tearDown(self) -> None:
         os.environ.pop("SL_LINKS_JSON_PATH", None)
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def test_compute_allowed_merges_canonical_row(self) -> None:
         from backend.services.access_control import compute_allowed_supervisor_codes

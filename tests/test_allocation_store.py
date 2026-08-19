@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import shutil
 import tempfile
 import unittest
 
@@ -21,6 +22,7 @@ class TestAllocationStore(unittest.TestCase):
 
     def tearDown(self):
         store.allocations_dir = self._orig_dir  # type: ignore[method-assign]
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def test_write_and_read_snapshot(self):
         body = {

@@ -59,7 +59,9 @@ def tga_filter_by_selected_period() -> bool:
     """
     กรองแถว TGA ตาม YEAR/MONTH(EFFECTIVEDATE) = งวดที่ผู้ใช้เลือก
 
-    ค่า TGA_FILTER_BY_EFFECTIVE=0 ใน .env ไม่ปิดการกรอง — แอปใช้กติกานี้เสมอ
+    เป็นกติกาตายตัวของแอป ไม่มีสวิตช์ปิด — เดิมมี TGA_FILTER_BY_EFFECTIVE ใน
+    .env.example ซึ่งไม่เคยมีผลกับโค้ดเลย ทำให้เข้าใจผิดว่าปิดได้ จึงเอาออกแล้ว
+    (ถ้ายังมีค่านี้ค้างใน .env บน server ก็ไม่เป็นไร — โค้ดไม่ได้อ่าน)
     """
     return True
 

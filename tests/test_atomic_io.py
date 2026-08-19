@@ -94,6 +94,11 @@ class TestAtomicIO(unittest.TestCase):
         atomic_write_json(p, {"rows": []})
         stop = threading.Event()
         torn: list[str] = []
+        # error ฝั่ง reader ที่เป็นเรื่อง "ไฟล์ถูกล็อก/สลับตัวอยู่" ไม่ใช่ "อ่านได้ครึ่งใบ"
+        # บน Windows เปิดไฟล์ตอน replace กำลังเกิดจะได้ PermissionError/FileNotFoundError
+        # ซึ่งเป็นข้อจำกัดของ OS ไม่ใช่ atomicity พัง — เดิมนับรวมเป็น torn ทำให้เทสต์
+        # ล้มแบบสุ่มเวลาเครื่องงานหนัก (เจอจริงตอนรัน node check พร้อมชุดเทสต์)
+        locked: list[str] = []
         writer_denied = [0]
         reads = [0]
         lock = threading.Lock()
@@ -118,7 +123,10 @@ class TestAtomicIO(unittest.TestCase):
                             torn.append("rows ไม่ใช่ list")
                     with lock:
                         reads[0] += 1
-                except Exception as e:  # torn read จะโผล่ที่นี่
+                except (PermissionError, FileNotFoundError) as e:
+                    with lock:
+                        locked.append(f"{type(e).__name__}: {e}")
+                except Exception as e:  # torn read (JSON ครึ่งใบ) จะโผล่ที่นี่
                     with lock:
                         torn.append(f"{type(e).__name__}: {e}")
 
@@ -136,6 +144,9 @@ class TestAtomicIO(unittest.TestCase):
         if os.name != "nt":
             self.assertEqual(
                 writer_denied[0], 0, "POSIX ไม่ควรมี PermissionError จาก rename เลย"
+            )
+            self.assertEqual(
+                locked[:5], [], "POSIX ไม่ควรมี error จากการล็อกไฟล์ฝั่ง reader เลย"
             )
 
     def test_writer_not_blocked_by_locked_readers(self):

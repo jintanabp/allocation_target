@@ -149,8 +149,12 @@ def read_logs(
     target_year: int | None = None,
     target_month: int | None = None,
     scan_all: bool = False,
+    action: str | None = None,
+    sup_id: str | None = None,
 ) -> list[dict[str, Any]]:
     want_level = str(level or "").strip().lower()
+    want_action = str(action or "").strip().lower()
+    want_sup = str(sup_id or "").strip().upper()
     paths = _list_log_paths(
         date=date,
         target_year=target_year,
@@ -173,6 +177,10 @@ def read_logs(
                     except json.JSONDecodeError:
                         continue
                     if want_level and str(row.get("level") or "").lower() != want_level:
+                        continue
+                    if want_action and str(row.get("action") or "").lower() != want_action:
+                        continue
+                    if want_sup and str(row.get("sup_id") or "").strip().upper() != want_sup:
                         continue
                     if not isinstance(row, dict):
                         continue

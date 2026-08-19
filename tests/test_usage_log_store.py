@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import shutil
 import tempfile
 import unittest
 
@@ -21,6 +22,7 @@ class TestUsageLogStore(unittest.TestCase):
 
     def tearDown(self):
         logs.logs_dir = self._orig  # type: ignore[method-assign]
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def test_append_and_read(self):
         row = logs.append_log(

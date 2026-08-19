@@ -115,6 +115,15 @@
     ]
   },
   {
+    "email": "assamaporn.i@sahapat.co.th",
+    "userpl": "",
+    "can_import_targetsun": false,
+    "note": "บัญชีผู้ดูแลระบบ (ไม่มีตำแหน่งงาน)",
+    "login_kind": "standard",
+    "role": "admin",
+    "admin_scope": "all"
+  },
+  {
     "email": "atthaporn.n@sahapat.co.th",
     "userpl": "SL527",
     "can_import_targetsun": false,
@@ -207,6 +216,22 @@
     ]
   },
   {
+    "email": "chanyakrit.k@sahapat.co.th",
+    "userpl": "SL540",
+    "can_import_targetsun": false,
+    "note": "",
+    "acc_region": "กรุงเทพ",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc",
+    "acc_division": "Div.E",
+    "acc_unit": "van",
+    "acc_scope": "van",
+    "visible_supervisor_codes": [
+      "SL540"
+    ]
+  },
+  {
     "email": "chartri.n@sahapat.co.th",
     "userpl": "SL406",
     "can_import_targetsun": false,
@@ -293,6 +318,53 @@
     "login_kind": "standard",
     "visible_supervisor_codes": [
       "SL386"
+    ]
+  },
+  {
+    "email": "demoadmin@sahapat.co.th",
+    "userpl": "",
+    "can_import_targetsun": false,
+    "note": "บัญชีสาธิต — แอดมินอย่างเดียว ไม่มีตำแหน่งงาน",
+    "login_kind": "standard",
+    "role": "admin",
+    "admin_scope": "all"
+  },
+  {
+    "email": "demosuper@sahapat.co.th",
+    "userpl": "SLDEMO1",
+    "can_import_targetsun": false,
+    "note": "บัญชีสาธิต — ข้อมูลสมมติ ใช้เดโมเท่านั้น",
+    "acc_region": "ภาคสาธิต",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc",
+    "acc_division": "Div.B",
+    "acc_unit": "credit",
+    "acc_scope": "credit",
+    "visible_supervisor_codes": [
+      "SLDEMO1",
+      "SLDEMO2",
+      "SLDEMO3"
+    ]
+  },
+  {
+    "email": "demosuperwithadmin@sahapat.co.th",
+    "userpl": "SLDEMO2",
+    "can_import_targetsun": false,
+    "note": "บัญชีสาธิต — Supervisor ที่มีสิทธิ์แอดมินซ้อน",
+    "acc_region": "ภาคสาธิต",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc",
+    "acc_division": "Div.B",
+    "acc_unit": "credit",
+    "acc_scope": "credit",
+    "role": "admin",
+    "admin_scope": "division_region",
+    "visible_supervisor_codes": [
+      "SLDEMO1",
+      "SLDEMO2",
+      "SLDEMO3"
     ]
   },
   {
@@ -1082,8 +1154,9 @@
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
     "acc_division": "Div.E",
+    "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯ Div.E ภาคกทม.",
-    "acc_scope": "region_peers",
+    "acc_scope": "van",
     "visible_supervisor_codes": [
       "SL315",
       "SL320",

@@ -1,6 +1,6 @@
 {
   "target_read_source": "targetsun",
-  "target_endpoint_preset": "test",
+  "target_endpoint_preset": "uat",
   "target_read_api_base": null,
   "target_import_api_base": null
 }

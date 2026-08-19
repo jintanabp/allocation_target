@@ -560,9 +560,36 @@ SUMMARIZECOLUMNS(
         return skus
 
     # ── 3. ข้อมูลสินค้า (brand, ชื่อ, ราคา) ──────────
-    def get_product_info(self, sku_list: list = None) -> pd.DataFrame:
-        """ดึงข้อมูลสินค้า + แบรนด์จาก Dim_Product"""
-        print("📡 [Dim_Product] ดึงข้อมูลสินค้า...")
+    @staticmethod
+    def _price_asof_dax(target_year: int | None, target_month: int | None) -> str:
+        """
+        วันที่ที่ใช้เลือกราคาใน cfm_product_characteristic (ตารางราคาแบบมีช่วงวันที่)
+
+        ต้องเป็น **วันที่ในงวดเป้า** ไม่ใช่ TODAY() — เพราะปกติเราทำเป้าของเดือนหน้า
+        ล่วงหน้า ถ้าใช้ TODAY() แล้วสินค้าตัวนั้นขึ้นราคาโดยเริ่มมีผลวันที่ 1 ของงวด
+        ระบบจะหยิบราคาเก่ามาคิดเป้าบาท ทำให้ยอดต่ำกว่าความจริงแบบเงียบ ๆ
+        (ของจริงที่เจอ: SL346 งวด ก.ย.2026 หาย 10,477 บาทจาก 5 SKU ที่ราคาขึ้น 1 ก.ย.)
+
+        ไม่รู้งวด → ถอยไปใช้ TODAY() แบบเดิม
+        """
+        try:
+            y = int(target_year or 0)
+            m = int(target_month or 0)
+        except (TypeError, ValueError):
+            return "TODAY()"
+        if y > 0 and 1 <= m <= 12:
+            return f"DATE({y}, {m}, 1)"
+        return "TODAY()"
+
+    def get_product_info(
+        self,
+        sku_list: list = None,
+        target_year: int | None = None,
+        target_month: int | None = None,
+    ) -> pd.DataFrame:
+        """ดึงข้อมูลสินค้า + แบรนด์จาก Dim_Product (ราคาคิด ณ วันที่ 1 ของงวดเป้า)"""
+        asof = self._price_asof_dax(target_year, target_month)
+        print(f"📡 [Dim_Product] ดึงข้อมูลสินค้า... (ราคา ณ {asof})")
         if sku_list:
             s = ", ".join(f'"{x}"' for x in sku_list)
             table_expr = f"FILTER('Dim_Product', 'Dim_Product'[ProductCode] IN {{{s}}})"
@@ -596,7 +623,7 @@ SELECTCOLUMNS(
                              )
                            ),
     "CreditUnitPrice",     VAR pc = 'Dim_Product'[ProductCode]
-                           VAR t = TODAY()
+                           VAR t = {asof}
                            VAR cr =
                              CALCULATE(
                                MAX('cfm_product_characteristic'[CREDITUNITPRICE]),
@@ -645,7 +672,7 @@ SELECTCOLUMNS(
                              )
                            ),
     "CreditUnitPrice",     VAR pc = 'Dim_Product'[ProductCode]
-                           VAR t = TODAY()
+                           VAR t = {asof}
                            VAR cr =
                              CALCULATE(
                                MAX('cfm_product_characteristic'[CREDITUNITPRICE]),
@@ -708,8 +735,13 @@ SELECTCOLUMNS(
         return df
 
     # backward-compat alias
-    def get_brands_and_skus(self, sku_list: list = None) -> pd.DataFrame:
-        return self.get_product_info(sku_list)
+    def get_brands_and_skus(
+        self,
+        sku_list: list = None,
+        target_year: int | None = None,
+        target_month: int | None = None,
+    ) -> pd.DataFrame:
+        return self.get_product_info(sku_list, target_year, target_month)
 
     # ── 4. Historical ย้อนหลัง n เดือน รายคู่ emp×sku ──────────
     def get_historical_sales(self,

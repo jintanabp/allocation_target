@@ -6,10 +6,17 @@ from fastapi import Header, HTTPException
 
 from . import auth_entra
 from .services.access_control import (
+    ROLE_DEV,
+    ROLE_REGION_ADMIN,
+    admin_scope_for_email,
+    admin_scope_is_usable,
     build_user_access_context,
     is_allocation_admin_email,
     is_marketing_email,
+    is_region_admin_email,
     normalized_email,
+    role_for_email,
+    row_is_in_admin_scope,
     unrestricted_user_context,
     user_can_import_targetsun,
 )
@@ -80,29 +87,150 @@ def require_authenticated_user(
 def require_admin_user(
     authorization: Annotated[str | None, Header()] = None,
 ) -> dict:
-    """แอดมินเต็มรูปแบบเท่านั้น — ไม่รับ view-as (ใช้ JWT จริง)"""
+    """
+    role dev เท่านั้น — ทำได้ทุกอย่างทั้งระบบ ไม่รับ view-as (ใช้ JWT จริง)
+
+    ใช้กับของที่มีผลทั้งระบบ: ตั้งค่าปลายทาง/แหล่งข้อมูล, rebuild ลำดับชั้น,
+    ล้าง cache, ลบผลกระจาย, export รายชื่อทั้งไฟล์, เปิดสิทธิ์ส่งแบบยกชุด
+    """
     if not auth_entra.auth_enabled():
-        return {"auth_disabled": True, "email": None, "is_admin": True, "is_marketing": False}
+        return {
+            "auth_disabled": True, "email": None, "is_admin": True,
+            "is_marketing": False, "role": ROLE_DEV, "admin_scope": None,
+        }
     ident = _identity_from_bearer(authorization)
     email = normalized_email(ident.get("email"))
     if not is_allocation_admin_email(email):
-        raise HTTPException(status_code=403, detail="เฉพาะผู้ดูแลระบบเท่านั้น")
-    return {"email": email, "is_admin": True, "is_marketing": False}
+        raise HTTPException(
+            status_code=403,
+            detail="เฉพาะผู้ดูแลระบบ (dev) เท่านั้น — แอดมินรายภาคไม่มีสิทธิ์ส่วนนี้",
+        )
+    return {
+        "email": email, "is_admin": True, "is_marketing": False,
+        "role": ROLE_DEV, "admin_scope": None,
+    }
+
+
+def require_admin_scoped(
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict:
+    """
+    dev หรือแอดมินรายภาค — คืนขอบเขตมาด้วยเสมอ
+
+    dev ได้ admin_scope = None (ไม่จำกัด) ส่วนแอดมินรายภาคได้ "เซ็ตจริง" เสมอ
+    ผู้เรียกต้องกรอง/ตรวจด้วย ensure_row_in_admin_scope หรือ admin_scope["sl_codes"]
+    ไม่ใช่แค่ผ่านด่านนี้แล้วถือว่าทำได้ทุกแถว
+    """
+    if not auth_entra.auth_enabled():
+        return {
+            "auth_disabled": True, "email": None, "is_admin": True,
+            "is_marketing": False, "role": ROLE_DEV, "admin_scope": None,
+        }
+    ident = _identity_from_bearer(authorization)
+    email = normalized_email(ident.get("email"))
+    if is_allocation_admin_email(email):
+        return {
+            "email": email, "is_admin": True, "is_marketing": False,
+            "role": ROLE_DEV, "admin_scope": None,
+        }
+    if is_region_admin_email(email):
+        scope = admin_scope_for_email(email)
+        if not admin_scope_is_usable(scope):
+            # ขอบเขตที่ตั้งไว้ต้องมีข้อมูลรองรับ (ภาค/ดิวิชันของตัวเอง)
+            # ไม่งั้น = ไม่มีอะไรให้ดูแล ต้องไม่กลายเป็น "เห็นทั้งระบบ"
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "บัญชีแอดมินนี้ยังไม่ได้ระบุภาค/ดิวิชันตามขอบเขตที่ตั้งไว้ — "
+                    "ให้ผู้ดูแลระบบเติมข้อมูล หรือเปลี่ยนขอบเขตเป็น 'ทุกคนในระบบ'"
+                ),
+            )
+        return {
+            "email": email, "is_admin": False, "is_marketing": False,
+            "role": ROLE_REGION_ADMIN, "admin_scope": scope,
+        }
+    raise HTTPException(status_code=403, detail="ไม่มีสิทธิ์เข้าถึงหน้านี้")
+
+
+def ensure_row_in_admin_scope(user: dict, row: dict | None) -> None:
+    """
+    แถวผู้ใช้แถวนี้อยู่ในภาคที่คนนี้ดูแลไหม — ใช้ทั้งตอนอ่านแถวเดิมและตอนตรวจค่าที่ส่งมา
+
+    ต้องตรวจ **ทั้งสองฝั่ง**: แถวเป้าหมายเดิม และค่าใหม่ที่จะบันทึก
+    ไม่งั้นแอดมินภาคจะย้ายคนออกนอกภาคตัวเอง (หรือดึงคนของภาคอื่นเข้ามา) ได้
+    """
+    if user.get("auth_disabled") or user.get("role") == ROLE_DEV:
+        return
+    scope = user.get("admin_scope") or {}
+    if row is not None and row_is_in_admin_scope(row, scope):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail="แถวนี้อยู่นอกภาคที่บัญชีนี้ดูแล",
+    )
+
+
+def ensure_sup_in_admin_scope(user: dict, sup_id: str) -> None:
+    """รหัส Supervisor นี้อยู่ในภาคที่คนนี้ดูแลไหม"""
+    if user.get("auth_disabled") or user.get("role") == ROLE_DEV:
+        return
+    scope = user.get("admin_scope") or {}
+    codes = {str(c).strip().upper() for c in (scope.get("sl_codes") or set())}
+    if str(sup_id or "").strip().upper() in codes:
+        return
+    raise HTTPException(
+        status_code=403,
+        detail="รหัส Supervisor นี้อยู่นอกภาคที่บัญชีนี้ดูแล",
+    )
 
 
 def require_admin_or_marketing_team(
     authorization: Annotated[str | None, Header()] = None,
 ) -> dict:
-    """แอดมิน หรือ Marketing (ทีมพนักงาน)"""
+    """dev, แอดมินรายภาค หรือ Marketing (ทีมพนักงาน)"""
     if not auth_entra.auth_enabled():
-        return {"auth_disabled": True, "email": None, "is_admin": True, "is_marketing": True}
+        return {
+            "auth_disabled": True, "email": None, "is_admin": True,
+            "is_marketing": True, "role": ROLE_DEV, "admin_scope": None,
+        }
     ident = _identity_from_bearer(authorization)
     email = normalized_email(ident.get("email"))
     if is_allocation_admin_email(email):
-        return {"email": email, "is_admin": True, "is_marketing": False}
+        return {
+            "email": email, "is_admin": True, "is_marketing": False,
+            "role": ROLE_DEV, "admin_scope": None,
+        }
+    if is_region_admin_email(email):
+        return {
+            "email": email, "is_admin": False, "is_marketing": False,
+            "role": ROLE_REGION_ADMIN, "admin_scope": admin_scope_for_email(email),
+        }
     if is_marketing_email(email):
-        return {"email": email, "is_admin": False, "is_marketing": True}
+        return {
+            "email": email, "is_admin": False, "is_marketing": True,
+            "role": "marketing", "admin_scope": None,
+        }
     raise HTTPException(status_code=403, detail="ไม่มีสิทธิ์เข้าถึงหน้านี้")
+
+
+def ensure_demo_team_not_sent(sup_id) -> None:
+    """
+    ทีมสาธิตส่งเข้า Target Sun ไม่ได้เด็ดขาด
+
+    ชั้นแรกคือ can_import_targetsun=false ในไฟล์ แต่ dev มีสิทธิ์ส่งอยู่แล้ว
+    ถ้า dev กด "ดูแบบนี้" เป็นบัญชีสาธิตแล้วเผลอกดส่ง ข้อมูลสมมติจะเข้าระบบจริง
+    — ด่านนี้ปิดตาย ไม่มีปุ่มยืนยันข้าม เพราะไม่มีเหตุผลใดที่ควรส่งข้อมูลปลอม
+    """
+    from .services.demo_data import is_demo_supervisor
+
+    if is_demo_supervisor(sup_id):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"'{sup_id}' เป็นทีมสาธิต (ข้อมูลสมมติ) — ส่งเข้า Target Sun ไม่ได้ "
+                "ใช้สำหรับสาธิตหน้าจอเท่านั้น"
+            ),
+        )
 
 
 def ensure_targetsun_import_allowed(user: dict) -> None:

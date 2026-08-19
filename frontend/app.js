@@ -6,7 +6,8 @@
  * - Auto Rebalance (เป้าเงิน + เป้าหีบ)
  * - Sorting & Sticky Columns
  */
-console.info("[allocation_target] app.js build 2026062616");
+// ต้องตรงกับ ?v= ของ app.js ใน index.html เสมอ — ไว้เทียบว่าเบราว์เซอร์โหลดไฟล์ใหม่จริงไหม
+console.info("[allocation_target] app.js build 2026081910");
 
 /**
  * API ชี้ไปที่ origin เดียวกับหน้าเว็บเสมอ (ยกเว้นเปิดไฟล์ file://)
@@ -42,7 +43,58 @@ const GRAPH_USER_READ_SCOPE = "https://graph.microsoft.com/User.Read";
 let AUTH_CONFIG = { authRequired: false, tenantId: null, clientId: null };
 let msalInstance = null;
 
+/**
+ * แสดง error ให้ผู้ใช้เห็น
+ *
+ * เดิมเขียนลงกล่อง error ของหน้าล็อกอินเสมอ — คนที่อยู่หน้า dashboard จึงไม่เห็นอะไรเลย
+ * (ข้อความไปกองอยู่ในกล่องที่ถูกซ่อน) แล้วพอกลับไปหน้าล็อกอินก็เจอ error เก่าค้าง
+ * ตอนนี้ดูก่อนว่าอยู่หน้าไหน
+ */
+/* ── โหมดสว่าง/มืด ────────────────────────────────────────────────────────
+   ค่าเริ่มต้นคือสว่างเสมอ และไม่ตามการตั้งค่าของเครื่อง — ผู้ใช้กลุ่มนี้คุ้นกับ
+   หน้าจอเดิม จอที่เปลี่ยนเองโดยไม่ได้สั่งจะสร้างความสับสนมากกว่าช่วย
+   จำไว้เฉพาะเครื่องนั้น (localStorage) ไม่ผูกกับบัญชี                        */
+const THEME_KEY = "AllocTheme_v1";
+
+function _applyTheme(theme) {
+  const dark = theme === "dark";
+  document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+  const btn = document.getElementById("themeToggleBtn");
+  // ไอคอนเป็น SVG สองอันใน HTML สลับกันด้วย CSS — ห้ามเขียนทับเนื้อในปุ่มตรงนี้
+  // (เคยตั้ง textContent เป็นอิโมจิ ซึ่งลบ SVG ทิ้งทุกครั้งที่สลับโหมด)
+  if (btn) btn.title = dark ? "กลับโหมดสว่าง" : "สลับเป็นโหมดมืด";
+}
+
+function initTheme() {
+  let saved = "light";
+  try {
+    saved = localStorage.getItem(THEME_KEY) === "dark" ? "dark" : "light";
+  } catch (_) {
+    /* โหมดส่วนตัว/บล็อก storage — ใช้ค่าเริ่มต้น */
+  }
+  _applyTheme(saved);
+}
+
+function toggleTheme() {
+  const next =
+    document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+  _applyTheme(next);
+  try {
+    localStorage.setItem(THEME_KEY, next);
+  } catch (_) {
+    /* บันทึกไม่ได้ก็ยังใช้ได้ในรอบนี้ */
+  }
+}
+
 function _uiError(msg) {
+  const login = document.getElementById("loginView");
+  const onLogin = !!login && login.style.display !== "none";
+  if (!onLogin) {
+    if (typeof toast === "function") {
+      toast(`เกิดข้อผิดพลาดในหน้าจอ — ${String(msg).split("\n")[0]}\nถ้าหน้าจอค้าง ให้กด F5 แล้วลองใหม่`, "red");
+    }
+    return;
+  }
   const el = document.getElementById("loginError");
   if (!el) return;
   el.style.display = "block";
@@ -208,15 +260,26 @@ function _clearTargetSunProgressTimer() {
 }
 
 /** ค่อยๆ เพิ่ม % ระหว่างรอขั้นที่ 2 (สูงสุด maxPct) */
+/**
+ * ระหว่างรอ Target Sun ตอบ — บอกเวลาที่ผ่านไปจริง ไม่ใช่เปอร์เซ็นต์ที่เดาเอง
+ *
+ * เดิมขยับแถบ +1% ทุก 450ms ทั้งที่ไม่รู้ความคืบหน้าจริงเลย (upstream เป็น POST
+ * ก้อนเดียวที่ไม่รายงานอะไรกลับมาระหว่างทาง) พอมันไปค้างที่ 88% คนก็เข้าใจว่าจวนเสร็จ
+ * แล้วรออีกนาน — หรือคิดว่าค้างแล้วกดซ้ำ บอกวินาทีที่ผ่านไปตรง ๆ ซื่อสัตย์กว่า
+ */
 function _startTargetSunProgressCreep(fromPct, maxPct, message, hint) {
   _clearTargetSunProgressTimer();
-  let p = fromPct;
+  void maxPct;
+  const startedAt = Date.now();
+  setGlobalBusyProgress(fromPct, message, hint);
   _targetSunProgressTimer = setInterval(() => {
-    if (p < maxPct) {
-      p = Math.min(maxPct, p + 1);
-      setGlobalBusyProgress(p, message, hint);
-    }
-  }, 450);
+    const sec = Math.round((Date.now() - startedAt) / 1000);
+    setGlobalBusyProgress(
+      fromPct,
+      message,
+      `${hint || ""}${hint ? " · " : ""}ผ่านไป ${sec} วินาที — ยังรอ Target Sun ตอบกลับ อย่าปิดหน้าต่าง`
+    );
+  }, 1000);
 }
 
 function _setControlsDisabled(disabled) {
@@ -266,6 +329,87 @@ function popGlobalBusy() {
   }
 }
 
+/* ── มารยาทพื้นฐานของกล่องโต้ตอบ ────────────────────────────────────────
+   เดิมทุก modal ในระบบไม่มีสามอย่างนี้เลย: กด Escape ปิดไม่ได้, Tab หลุดออกไป
+   โฟกัสของที่อยู่หลังฉาก, และพอปิดแล้วโฟกัสหายไปอยู่ต้นหน้า
+   ทำเป็นตัวช่วยกลางเพื่อให้ modal ทุกตัว (ทั้งที่สร้างสดและที่อยู่ใน HTML) ได้เหมือนกัน */
+const _FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function _modalFocusables(root) {
+  return [...root.querySelectorAll(_FOCUSABLE)].filter(
+    (el) => el.offsetParent !== null || el === document.activeElement
+  );
+}
+
+/**
+ * ผูก Escape + กักโฟกัส + คืนโฟกัสให้ปุ่มที่เปิด
+ * @returns {() => void} เรียกเพื่อถอดการผูกทั้งหมด (ปลอดภัยถ้าเรียกซ้ำ)
+ */
+function bindModalBehaviour(root, onEscape) {
+  if (!root || root.dataset.modalBound === "1") return () => {};
+  root.dataset.modalBound = "1";
+  const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+  const onKey = (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      onEscape && onEscape();
+      return;
+    }
+    if (e.key !== "Tab") return;
+    const items = _modalFocusables(root);
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+  document.addEventListener("keydown", onKey, true);
+
+  // โฟกัสปุ่มหลักก่อน ถ้าไม่มีก็ตัวแรกที่โฟกัสได้ — คนใช้คีย์บอร์ดจะได้ไม่ต้องไล่หา
+  requestAnimationFrame(() => {
+    const items = _modalFocusables(root);
+    const primary = root.querySelector(".btn-run, [data-modal-primary]");
+    (primary || items[0])?.focus?.();
+  });
+
+  return () => {
+    document.removeEventListener("keydown", onKey, true);
+    delete root.dataset.modalBound;
+    if (opener && document.contains(opener)) opener.focus?.();
+  };
+}
+
+/**
+ * แทน window.confirm — หน้าตาเดียวกับกล่องอื่นในระบบ และปิดด้วย Escape ได้
+ *
+ * confirm() ของเบราว์เซอร์บล็อกทั้งหน้า สไตล์ไม่เข้ากับที่เหลือ และบนบางเบราว์เซอร์
+ * มีตัวเลือก "ไม่ต้องแสดงอีก" ที่ทำให้กล่องสำคัญหายไปเลย
+ *
+ * @returns {Promise<boolean>}
+ */
+function _confirmDialog(message, { title = "ยืนยัน", okLabel = "ตกลง", cancelLabel = "ยกเลิก" } = {}) {
+  return new Promise((resolve) => {
+    let decided = false;
+    _showInfoModal({
+      title,
+      bodyHtml: String(message)
+        .split("\n")
+        .map((line) => `<p style="margin:0 0 8px;text-align:left;line-height:1.7;">${escH(line)}</p>`)
+        .join(""),
+      primaryLabel: okLabel,
+      onPrimary: () => { decided = true; resolve(true); },
+      secondaryLabel: cancelLabel,
+      onSecondary: () => { if (!decided) { decided = true; resolve(false); } },
+    });
+  });
+}
+
 function _showInfoModal({ title, bodyHtml, primaryLabel, onPrimary, secondaryLabel = "ปิด", onSecondary } = {}) {
   const existing = document.getElementById("infoModal");
   if (existing) existing.remove();
@@ -287,7 +431,19 @@ function _showInfoModal({ title, bodyHtml, primaryLabel, onPrimary, secondaryLab
     </div>`;
 
   document.body.appendChild(modal);
-  const close = () => modal.remove();
+  let unbind = () => {};
+  const close = () => {
+    unbind();
+    modal.remove();
+  };
+  // Escape = เหมือนกดปุ่มรอง (ยกเลิก) — ต้องเรียก onSecondary ด้วย ไม่งั้นตัวที่รอคำตอบค้าง
+  unbind = bindModalBehaviour(modal, () => {
+    try {
+      onSecondary && onSecondary();
+    } finally {
+      close();
+    }
+  });
   document.getElementById("infoModalCloseBtn")?.addEventListener(
     "click",
     (ev) => {
@@ -550,6 +706,8 @@ async function ensureGraphToken() {
 
 /* ── STATE ──────────────────────────────────────────────── */
 let S = {
+  /** งวดที่ต้องทำตาม server (เวลาไทย) — null = ยังไม่ได้โหลด ให้คิดเองจากเวลาไทยฝั่งเบราว์เซอร์ */
+  expectedPeriod: null,
   employees: [],
   skus: [],
   totalTarget: 0,
@@ -632,8 +790,20 @@ let S = {
   resultFooterScopeSup: null,
   /** snapshot ที่โหลดจาก server ล่าสุด — ใช้เตือนก่อน save ทับ */
   serverSnapshotMeta: null,
-  /** แอดมิน (ALLOCATION_ADMIN_EMAILS) */
+  /** แก้เป้าเงินขั้นที่ 2 ค้างไว้ (ยังไม่ได้บันทึก/คำนวณ) — ใช้เตือนก่อนปิดแท็บ */
+  _step2Dirty: false,
+  /** มุมมองตารางผล (เรียงแถว/โหมดค้นหา) — คงไว้ข้าม re-render ที่เกิดทุกครั้งที่แก้ตัวเลข */
+  resultView: { rowSort: "default", searchFilterOnly: false, offTargetOnly: false },
+  /** ทีมเจ้าของเป้าเมื่อกระจายรวมทั้งหน่วย (null = กระจายแบบแยกทีมตามปกติ) */
+  unitWideOwnerSup: null,
+  /** dev — ทำได้ทุกอย่างทั้งระบบ (ALLOCATION_ADMIN_EMAILS หรือ role=dev) */
   isAdmin: false,
+  /** role จริงจาก server: dev | admin | marketing | user */
+  role: "user",
+  /** แอดมินรายภาค — จัดการเฉพาะภาคตัวเอง แตะการตั้งค่าระบบไม่ได้ */
+  isRegionAdmin: false,
+  /** ภาคที่แอดมินรายภาคคนนี้ดูแล (ใช้แสดงบนหน้าจอ) */
+  adminRegions: [],
   /** Marketing — แอดมินแท็บทีมพนักงานเท่านั้น */
   isMarketing: false,
   /** โหมดทดสอบมุมมองผู้ใช้อื่น */
@@ -1633,6 +1803,7 @@ async function _finalizeDashboardAfterLoad(gen) {
   updateValidation();
   _updateNegGrowthReasonState();
   _renderBrandStrategyPanel();
+  syncAllocScopeUi();
   _showSkuWarnings();
   _setUndoEnabled();
   updateDashboardSupBadge();
@@ -2023,7 +2194,10 @@ async function refreshManagerDashboardData() {
     return;
   }
   if (S._hasUnsaved && S.managerViewMode !== "individual") {
-    const ok = window.confirm("มีการแก้ไขที่ยังไม่ได้บันทึก — ต้องการเปลี่ยนมุมมองต่อหรือไม่?");
+    const ok = await _confirmDialog(
+      "มีการแก้ไขที่ยังไม่ได้บันทึก\nถ้าเปลี่ยนมุมมองต่อ การแก้ไขนั้นจะหายไป",
+      { title: "ยังมีงานที่ไม่ได้บันทึก", okLabel: "เปลี่ยนมุมมองต่อ", cancelLabel: "อยู่หน้าเดิม" }
+    );
     if (!ok) {
       updateManagerViewControlsUI();
       updateSupervisorSwitcherUI();
@@ -2197,7 +2371,10 @@ async function switchSupervisorContext(newSupId) {
   if (!ns || ns === cur) return;
   if (S.loginRole === "manager" && S.managerViewMode !== "individual") return;
   if (S._hasUnsaved) {
-    const ok = window.confirm("มีการแก้ไขที่ยังไม่ได้บันทึกหรือดาวน์โหลด — ต้องการสลับ Supervisor ต่อหรือไม่?");
+    const ok = await _confirmDialog(
+      "มีการแก้ไขที่ยังไม่ได้บันทึกหรือยังไม่ได้ดาวน์โหลด\nถ้าสลับ Supervisor ต่อ การแก้ไขนั้นจะหายไป",
+      { title: "ยังมีงานที่ไม่ได้บันทึก", okLabel: "สลับต่อ", cancelLabel: "อยู่ทีมเดิม" }
+    );
     if (!ok) {
       updateSupervisorSwitcherUI();
       return;
@@ -2371,6 +2548,7 @@ function setBusyStatus(state, msg) {
    INIT
 ══════════════════════════════════════════════ */
 document.addEventListener("DOMContentLoaded", async () => {
+  initTheme();
   _primeMsAuthBlock();
 
   // ปุ่ม login อย่าใส่ onclick ใน HTML ด้วย — ถ้ามีซ้ำจะเรียก handleLogin สองครั้งต่อคลิก
@@ -2412,7 +2590,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   syncHistAllocNote();
 
   window.addEventListener("beforeunload", e => {
-    if (S.allocations && S.allocations.length > 0 && S._hasUnsaved) {
+    /* เดิมเตือนเฉพาะเมื่อมีผลกระจายแล้ว — คนที่กรอกเป้าเงินขั้นที่ 2 ค้างไว้
+       (ยังไม่ได้กดคำนวณ) ปิดแท็บแล้วงานหายเงียบ ๆ โดยไม่มีอะไรทัดทาน */
+    const hasStep3Unsaved = S.allocations && S.allocations.length > 0 && S._hasUnsaved;
+    if (hasStep3Unsaved || S._step2Dirty) {
       e.preventDefault();
       e.returnValue = "";
     }
@@ -2541,12 +2722,34 @@ function ensureYearSelectHasOption(ceYear) {
   sorted.forEach(o => sel.appendChild(o));
 }
 
-/** งวดเป้าเริ่มต้น = เดือนถัดจากวันนี้ (ใช้เกลี่ยเป้าเดือนหน้า) — ธ.ค. → ม.ค. ปีถัดไป */
-function getNextMonthPeriod() {
+/** วันนี้ตามเวลาไทย — backend ใช้ Asia/Bangkok ตายตัว ถ้าเบราว์เซอร์คิดด้วย
+ *  timezone ของเครื่อง (โน้ตบุ๊กตั้งผิด หรือใช้งานจากต่างประเทศ) จะข้ามวัน
+ *  ไม่ตรงกัน ปลายเดือนจึงได้คนละงวดกับที่ server คาดไว้ */
+function _todayInBangkok() {
+  try {
+    // en-CA ให้รูปแบบ YYYY-MM-DD เสมอ
+    const s = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Bangkok",
+      year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date());
+    const [y, m] = s.split("-").map(Number);
+    if (y > 2000 && m >= 1 && m <= 12) return { year: y, month: m };
+  } catch (_) { /* เบราว์เซอร์เก่าไม่มี timeZone → ตกไปใช้เวลาเครื่อง */ }
   const d = new Date();
-  let m = d.getMonth() + 1;
-  let y = d.getFullYear();
-  m += 1;
+  return { year: d.getFullYear(), month: d.getMonth() + 1 };
+}
+
+/** งวดเป้าเริ่มต้น = เดือนถัดจากวันนี้ (ใช้เกลี่ยเป้าเดือนหน้า) — ธ.ค. → ม.ค. ปีถัดไป
+ *  ยึดค่าที่ server บอกมาก่อน (S.expectedPeriod จาก /managers) เพราะเป็นตัวเดียวกับ
+ *  ที่ backend ใช้ตัดสินว่า "งวดนี้คืองวดที่ต้องทำไหม" — ไม่งั้นเถียงกันเองได้ */
+function getNextMonthPeriod() {
+  const srv = S.expectedPeriod;
+  if (srv && Number(srv.month) >= 1 && Number(srv.month) <= 12 && Number(srv.year) > 2000) {
+    return { month: Number(srv.month), year: Number(srv.year) };
+  }
+  const t = _todayInBangkok();
+  let m = t.month + 1;
+  let y = t.year;
   if (m > 12) {
     m = 1;
     y += 1;
@@ -2867,6 +3070,13 @@ async function loadManagers(force = false) {
       if (typeof data.can_import_targetsun === "boolean") {
         S.canImportTargetSun = data.can_import_targetsun;
       }
+      // งวดที่ต้องทำจาก server (เวลาไทย) — กันเบราว์เซอร์คิดคนละเดือนตอนปลายเดือน
+      if (data.expected_period && Number(data.expected_period.month) >= 1) {
+        S.expectedPeriod = {
+          month: Number(data.expected_period.month),
+          year: Number(data.expected_period.year),
+        };
+      }
       if (typeof data.targetsun_read_enabled === "boolean") {
         S.targetsunReadEnabled = data.targetsun_read_enabled;
       }
@@ -2882,6 +3092,12 @@ async function loadManagers(force = false) {
       } else {
         S.isMarketing = false;
       }
+      /* role จริงจาก server: dev | admin (รายภาค) | marketing | user
+         is_admin คงไว้เพื่อความเข้ากันได้ = dev เท่านั้น
+         แอดมินรายภาคต้องไม่ถูกนับเป็น dev ที่ไหนเลย ไม่งั้นจะเห็นแท็บตั้งค่าระบบ */
+      S.role = S.viewAsEmail ? "user" : String(data.role || (data.is_admin ? "dev" : "user"));
+      S.isRegionAdmin = S.role === "admin";
+      S.adminRegions = Array.isArray(data.admin_regions) ? data.admin_regions : [];
       updateViewAsBanner();
       updateAdminNavVisibility();
       applyAdminLoginLayout();
@@ -3087,7 +3303,11 @@ async function handleLogin() {
       updateAllocationSummaryVisibility();
     } catch (err) {
       console.error("RENDER ERROR:", err);
-      alert("Render error: " + err.message);
+      toast(
+        "แสดงผลหน้าจอไม่สำเร็จ — กด F5 รีเฟรชแล้วลองใหม่\n"
+        + "ถ้ายังเป็นอยู่ ให้แจ้ง IT พร้อมบอกว่าทำอะไรอยู่ตอนนั้น",
+        "red"
+      );
     }
 
     loginBtn.textContent = "เข้าสู่ระบบ Dashboard";
@@ -4783,10 +5003,15 @@ function renderYellowTable() {
 function onYellowChange(input) {
   if (_isStep2ReadOnlyView()) return;
   const akey = input.dataset.allocKey || input.dataset.emp;
-  const val = Math.max(0, parseFloat(input.value.replace(/,/g, "")) || 0);
+  const parsed = parseMoney(input.value);
+  const val = parsed.value;
+  if (parsed.invalid) {
+    toast(`「${String(input.value).trim()}」ไม่ใช่จำนวนเงินที่ถูกต้อง — ปรับเป็น ${val.toLocaleString("th-TH")}`, "amber");
+  }
 
   S.yellow[akey] = val;
   S.yellowLocked[akey] = true;
+  S._step2Dirty = true;
 
   // เรียก _allocEligibleEmployees() ครั้งเดียว (เดิมเรียกซ้ำ) — แบ่ง locked/unlocked จากชุดเดียวกัน
   const eligible = _allocEligibleEmployees();
@@ -4798,13 +5023,18 @@ function onYellowChange(input) {
   if (remainingTarget < 0) remainingTarget = 0;
 
   if (unlockedRows.length > 0) {
-    const baseSum = unlockedRows.reduce((acc, e) => acc + (e.ly_sales || 0.1), 0);
+    /* น้ำหนักต้องเป็นบวกเสมอ — `e.ly_sales || 0.1` แทนค่าให้เฉพาะค่า falsy
+       ยอดปีที่แล้วติดลบ (คืนของ/ลดหนี้) จึงเล็ดลอดเข้ามาได้ ผลคือ baseSum เป็น 0
+       (share = Infinity → NaN) หรือแถวสุดท้ายได้เป้าติดลบแล้วไปตกที่ 422 ที่อ่านไม่รู้เรื่อง */
+    const weightOf = (e) => Math.max(0, Number(e.ly_sales) || 0) + 0.1;
+    const baseSum = unlockedRows.reduce((acc, e) => acc + weightOf(e), 0);
     let distributed = 0;
     unlockedRows.forEach((e, i) => {
       const k = _allocKey(e);
-      if (i === unlockedRows.length - 1) S.yellow[k] = remainingTarget - distributed;
-      else {
-        const share = remainingTarget * ((e.ly_sales || 0.1) / baseSum);
+      if (i === unlockedRows.length - 1) {
+        S.yellow[k] = Math.max(0, remainingTarget - distributed);
+      } else {
+        const share = remainingTarget * (weightOf(e) / baseSum);
         S.yellow[k] = share;
         distributed += share;
       }
@@ -4832,7 +5062,7 @@ function unlockYellow(allocKey) {
   updateValidation();
 }
 
-function resetYellowToTargetSun() {
+async function resetYellowToTargetSun() {
   if (_isStep2ReadOnlyView()) return;
   if (!S.employees || S.employees.length === 0) {
     toast("ยังไม่มีรายชื่อพนักงาน — โหลดข้อมูล Step 1 ก่อน", "red");
@@ -4848,13 +5078,11 @@ function resetYellowToTargetSun() {
     return;
   }
   const n = differs.length;
-  if (
-    !window.confirm(
-      `รีเซ็ตเป้าหมายที่กำหนดเองให้เท่ากับเป้า Target Sun (${n} คน)?\n\nการล็อกเป้าจะถูกยกเลิก`
-    )
-  ) {
-    return;
-  }
+  const ok = await _confirmDialog(
+    `จะรีเซ็ตเป้าหมายที่กำหนดเองของ ${n.toLocaleString("th-TH")} คน ให้เท่ากับเป้า Target Sun\nการล็อกเป้าทั้งหมดจะถูกยกเลิก และย้อนกลับไม่ได้`,
+    { title: "รีเซ็ตเป้าเป็น Target Sun", okLabel: "รีเซ็ตเลย", cancelLabel: "ยกเลิก" }
+  );
+  if (!ok) return;
   S.yellowLocked = {};
   _allocEligibleEmployees().forEach(e => {
     const base = Number(e.target_sun);
@@ -5232,12 +5460,55 @@ async function _doOptimize(lockedEdits = []) {
 
     let allocs = [];
 
-    if (_regionalAggregateWritable()) {
+    if (_regionalAggregateWritable() && _selectedAllocScope() === "unit") {
+      /* กระจายรวมทั้งหน่วย — เรียก optimize ครั้งเดียวด้วยพนักงานทุกทีมที่แสดงอยู่
+         ใช้เป้าของทีมที่ผู้ใช้ระบุว่าเป็นเจ้าของเป้า และบอก server ว่าให้ไปอ่าน
+         ประวัติขายจาก cache ของทีมอื่นด้วย ไม่งั้นคนทีมอื่นจะถูกมองว่าไม่มีประวัติ */
       const grouped = _employeesGroupedBySupervisor();
       const supOrder = _aggregateSupervisorOrder().filter((sid) => grouped.has(sid));
       if (!supOrder.length) {
         throw new Error("ไม่พบพนักงานใต้ Supervisor ในโหมดรวมภาค");
       }
+      const owner = _allocScopeOwnerSup(supOrder);
+      const allEmps = supOrder.flatMap((sid) => grouped.get(sid) || []);
+      const yellowTargets = allEmps.map((e) => _yellowTargetPayloadRow(e)).filter(Boolean);
+      if (!yellowTargets.length) {
+        throw new Error("ไม่มีพนักงานที่มีเป้าเงินสำหรับกระจายรวมทั้งหน่วย");
+      }
+      qs("#runSub").textContent =
+        `กำลังกระจายรวมทั้งหน่วย (${supOrder.length} ทีม · เป้าของ ${owner})…`;
+      const json = await _callOptimizeApi(owner, {
+        ...basePayload,
+        yellowTargets,
+        peer_sup_ids: supOrder,
+        locked_edits: _lockedEditsForEmployees(lockedEdits, allEmps),
+      });
+      _applyOptimizeMetaFromSups({ [owner]: json });
+      S.regionalFailedSups = [];
+      const part = Array.isArray(json.allocations) ? json.allocations : [];
+      // ติดทีมจริงของแต่ละคนกลับเข้าไป — ตอนส่งจะได้แยก prepare ตามทีมได้ถูก
+      const supByEmp = new Map();
+      supOrder.forEach((sid) => {
+        (grouped.get(sid) || []).forEach((e) => {
+          supByEmp.set(String(e.emp_id || "").trim(), sid);
+        });
+      });
+      part.forEach((a) => {
+        a.supervisor_code = supByEmp.get(String(a.emp_id || "").trim()) || owner;
+      });
+      allocs.push(...part);
+      if (!allocs.length) {
+        throw new Error("ไม่ได้รับผลกระจายหีบจากเซิร์ฟเวอร์");
+      }
+      allocs = _mergeLockedEditsIntoAllocs(allocs, lockedEdits);
+      S.unitWideOwnerSup = owner;
+    } else if (_regionalAggregateWritable()) {
+      const grouped = _employeesGroupedBySupervisor();
+      const supOrder = _aggregateSupervisorOrder().filter((sid) => grouped.has(sid));
+      if (!supOrder.length) {
+        throw new Error("ไม่พบพนักงานใต้ Supervisor ในโหมดรวมภาค");
+      }
+      S.unitWideOwnerSup = null;
       // เก็บผลรายทีม: ทีมที่พังไม่ควรลบผลของทีมที่สำเร็จไปแล้ว (R4)
       const failedSups = [];
       const okSups = [];
@@ -5427,6 +5698,31 @@ function renderResult(allocs) {
     skusObjArr = skusObjArr.filter(o => skuSet.has(o.sku));
   }
 
+  /* เหลือเฉพาะ SKU ที่ยอดยังไม่ตรงเป้า — ตรงกับสิ่งที่ต้องแก้ก่อนกดส่ง
+     (ท้ายตารางมีเครื่องหมาย ✓/⚠️ อยู่แล้ว แต่ทีมที่มี SKU เป็นร้อยต้องไล่หาเอง) */
+  if (S.resultView?.offTargetOnly) {
+    const sumBySku = new Map();
+    for (const a of filtered) {
+      const k = String(a.sku || "").trim();
+      sumBySku.set(k, (sumBySku.get(k) || 0) + (Number(a.allocated_boxes) || 0));
+    }
+    const targetBySku = new Map(
+      (S.skus || []).map(x => [String(x.sku).trim(), Number(x.supervisor_target_boxes) || 0])
+    );
+    const before = skusObjArr.length;
+    skusObjArr = skusObjArr.filter(o => {
+      const t = targetBySku.get(o.sku);
+      if (t == null) return true;   // ไม่มีเป้า = ตัดสินไม่ได้ ปล่อยให้เห็นไว้
+      return (sumBySku.get(o.sku) || 0) !== t;
+    });
+    if (!skusObjArr.length && before) {
+      // ตรงเป้าครบทุกตัวแล้ว — อย่าโชว์ตารางเปล่าให้งง
+      S.resultView.offTargetOnly = false;
+      skusObjArr = Object.values(uniqueSkusObj);
+      toast("ทุก SKU ตรงเป้าแล้ว — แสดงทั้งหมดตามเดิม", "green");
+    }
+  }
+
   const skus = skusObjArr.map(o => o.sku);
   const resultReadOnly = _isAllocReadOnlyView() || _aggregateBlocksWrite();
   const eligibleKeys = new Set(_allocEligibleEmployees().map(e => _allocKey(e)));
@@ -5434,6 +5730,7 @@ function renderResult(allocs) {
   if (!rowKeys.length) {
     rowKeys = [...eligibleKeys];
   }
+  rowKeys = _sortResultRowKeys(rowKeys, allocs, skusObjArr);
 
   const lk = {};
   const lkHistRoll = {};
@@ -5616,18 +5913,25 @@ function renderResult(allocs) {
 
       const hText = `<div class="hist-sub"><div>${lineRoll}</div><div>${linePrev}</div>${lineLyDiv}</div>`;
 
-      const colorClass = _editedSet.has(`${rk}::${s}`) ? "is-edited" : "";
+      const isEdited = _editedSet.has(`${rk}::${s}`);
+      const colorClass = isEdited ? "is-edited" : "";
       const dev = lkHistDev[rk]?.[s] || { status: "", pct: null, baseline: 0 };
       const flagHtml = _histDevFlagHtml(dev.status, dev.pct, dev.baseline);
       const devLineHtml = _histDevLineHtml(dev.status, dev.pct, dev.baseline);
+      // ปุ่มคืนค่าโผล่เฉพาะช่องที่แก้มือแล้ว — เดิมพิมพ์ผิดต้องจำเลขเดิมเอง
+      // (Undo ย้อนได้ทั้งชุด ไม่ใช่เฉพาะช่องที่ตั้งใจ)
+      const revertHtml = isEdited && !resultReadOnly
+        ? `<button type="button" class="cell-revert" title="คืนค่าที่ระบบกระจายให้ช่องนี้"
+            onclick="revertResultCell('${escH(empId)}','${escH(s)}','${escH(whKey)}')">↺</button>`
+        : "";
 
       rowHtml += `<td class="r result-cell" style="vertical-align:top;">
         <div class="result-box-wrap">
           <div class="result-box-num ${colorClass}" contenteditable="${resultReadOnly ? "false" : "true"}"
             data-emp="${escH(empId)}" data-wh="${escH(whKey)}" data-sku="${escH(s)}" onblur="onResultEdit(this)"
             ${resultReadOnly ? "" : `onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
-            onpaste="event.preventDefault();document.execCommand('insertText',false,parseInt(event.clipboardData.getData('text').replace(/,/g,''))||0)"`}
-          >${b}</div>${flagHtml}
+            onpaste="onResultCellPaste(event, this)"`}
+          >${Number(b).toLocaleString("th-TH")}</div>${flagHtml}${revertHtml}
         </div>${devLineHtml}${hText}</td>`;
     });
 
@@ -5661,7 +5965,6 @@ function renderResult(allocs) {
   syncCompositeAllocLegend();
   _renderHistDevSummary(allocs, skus.length);
   syncStep3ResultReadOnlyUI();
-  syncStep3ResultFabricNote();
   syncStep3TieredNote();
   syncStep3ReviewNotes();
   const scaleNoteHost = document.getElementById("step3RevenueScaleNote");
@@ -5681,6 +5984,13 @@ function renderResult(allocs) {
     if (scrollerPre) scrollerPre.dataset.stickyGapPx = gapPx;
   }
   _reapplyEmpSearchIfActive();
+  // คงตัวเลือกมุมมองไว้หลัง re-render (ตารางถูกสร้างใหม่ทุกครั้งที่แก้ตัวเลข)
+  const _rowSortEl = document.getElementById("rowSortSelect");
+  if (_rowSortEl) _rowSortEl.value = S.resultView?.rowSort || "default";
+  const _filterOnlyEl = document.getElementById("empSearchFilterOnly");
+  if (_filterOnlyEl) _filterOnlyEl.checked = !!S.resultView?.searchFilterOnly;
+  const _offTargetEl = document.getElementById("offTargetOnly");
+  if (_offTargetEl) _offTargetEl.checked = !!S.resultView?.offTargetOnly;
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       // ลำดับสำคัญ: gap ก่อน (เปลี่ยนความกว้าง → แถวอาจ wrap ใหม่ ความสูงหัวเปลี่ยน)
@@ -5869,11 +6179,6 @@ function pinStickyLeftColumns(scroller) {
     ro.observe(scroller);
     scroller.__pinObs = ro;
   }
-}
-
-/** @deprecated ใช้ checkSnapshotChanges จัดการแจ้งเตือนเป้าเปลี่ยนแล้ว — คงไว้กัน caller เก่า */
-function syncStep3ResultFabricNote() {
-  /* no-op: ไม่คัดลอกซ้ำไป step3ResultTargetNote อีก */
 }
 
 /** แบนเนอร์ขอให้รีเช็ค — LP fallback, เกลี่ยหีบค้าง, SKU เบี่ยงประวัติ */
@@ -6105,14 +6410,78 @@ function onEmpSearchInput(q) {
 }
 
 /** ไฮไลต์ + กระโดดไปแถวพนักงานที่ตรงคำค้น (จับจาก data-emp-search: รหัส/ชื่อ/คลัง) */
+/**
+ * เรียงลำดับแถวพนักงานในตารางผล
+ *
+ * เดิมเรียงตามลำดับที่ข้อมูลเข้ามาอย่างเดียว หาคนไม่เจอเมื่อทีมใหญ่
+ * (คอลัมน์ SKU เรียงได้ 4 แบบมานานแล้ว แต่แถวทำไม่ได้เลย)
+ */
+function _sortResultRowKeys(rowKeys, allocs, skusObjArr) {
+  const mode = String(S.resultView?.rowSort || "default");
+  if (mode === "default") return rowKeys;
+
+  const priceBySku = new Map((skusObjArr || []).map(o => [o.sku, Number(o.price_per_box) || 0]));
+  const stat = new Map();
+  for (const a of allocs || []) {
+    const rk = _allocResultKey(a);
+    if (!rk) continue;
+    let s = stat.get(rk);
+    if (!s) { s = { boxes: 0, value: 0 }; stat.set(rk, s); }
+    const b = Number(a.allocated_boxes) || 0;
+    s.boxes += b;
+    s.value += b * (priceBySku.get(a.sku) ?? Number(a.price_per_box) ?? 0);
+  }
+
+  // ชื่อพนักงานมาจากรายการที่ใช้ render แถวเดียวกัน (ไม่มีชื่อก็ตกไปใช้รหัส)
+  const nameByKey = new Map();
+  for (const e of _allocEligibleEmployees() || []) {
+    nameByKey.set(_allocKey(e), String(e.emp_name || e.emp_id || "").trim());
+  }
+  const labelOf = (rk) => (nameByKey.get(rk) || String(rk)).toLowerCase();
+
+  const sorted = [...rowKeys];
+  if (mode === "name") {
+    sorted.sort((x, y) => labelOf(x).localeCompare(labelOf(y), "th"));
+  } else if (mode === "boxes_desc") {
+    sorted.sort((x, y) => (stat.get(y)?.boxes || 0) - (stat.get(x)?.boxes || 0));
+  } else if (mode === "value_desc") {
+    sorted.sort((x, y) => (stat.get(y)?.value || 0) - (stat.get(x)?.value || 0));
+  }
+  return sorted;
+}
+
+function onResultRowSortChange(mode) {
+  S.resultView = S.resultView || {};
+  S.resultView.rowSort = String(mode || "default");
+  renderResult(S.allocations);
+}
+
+function onOffTargetToggle(on) {
+  S.resultView = S.resultView || {};
+  S.resultView.offTargetOnly = !!on;
+  renderResult(S.allocations);
+}
+
+function onEmpSearchFilterToggle(on) {
+  S.resultView = S.resultView || {};
+  S.resultView.searchFilterOnly = !!on;
+  const input = document.getElementById("empSearchInput");
+  _applyEmpSearch(input ? input.value : "");
+}
+
 function _applyEmpSearch(q) {
   const body = document.getElementById("resultBody");
   if (!body) return;
   const countEl = document.getElementById("empSearchCount");
   const query = String(q ?? "").trim().toLowerCase();
   const rows = body.querySelectorAll("tr");
+  // โหมด "แสดงเฉพาะที่พบ" — เดิมค้นหาได้แค่ไฮไลต์ ทีมใหญ่ยังต้องเลื่อนหาเองอยู่ดี
+  const filterOnly = !!S.resultView?.searchFilterOnly;
   if (!query) {
-    rows.forEach(r => r.classList.remove("emp-search-hit"));
+    rows.forEach(r => {
+      r.classList.remove("emp-search-hit");
+      r.style.display = "";
+    });
     if (countEl) countEl.textContent = "";
     return;
   }
@@ -6121,10 +6490,13 @@ function _applyEmpSearch(q) {
   rows.forEach(r => {
     const hit = (r.dataset.empSearch || "").includes(query);
     r.classList.toggle("emp-search-hit", hit);
+    r.style.display = filterOnly && !hit ? "none" : "";
     if (hit) { n++; if (!first) first = r; }
   });
   if (countEl) countEl.textContent = n ? `พบ ${n}` : "ไม่พบ";
-  if (first) first.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+  if (first && !filterOnly) {
+    first.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+  }
 }
 
 /** เรียกหลัง renderResult เพื่อคงไฮไลต์ค้นหาไว้เมื่อตารางถูกสร้างใหม่ */
@@ -6137,10 +6509,12 @@ function _reapplyEmpSearchIfActive() {
   if (!body) return;
   const query = q.toLowerCase();
   const countEl = document.getElementById("empSearchCount");
+  const filterOnly = !!S.resultView?.searchFilterOnly;
   let n = 0;
   body.querySelectorAll("tr").forEach(r => {
     const hit = (r.dataset.empSearch || "").includes(query);
     r.classList.toggle("emp-search-hit", hit);
+    r.style.display = filterOnly && !hit ? "none" : "";
     if (hit) n++;
   });
   if (countEl) countEl.textContent = n ? `พบ ${n}` : "ไม่พบ";
@@ -6166,15 +6540,46 @@ function _snapshotAllocBoxes() {
   return m;
 }
 
+/**
+ * คืนค่าที่ระบบกระจายให้ "เฉพาะช่องนี้"
+ *
+ * Undo ที่มีอยู่ย้อนได้ทีละชุดการแก้ ซึ่งกว้างเกินไปเวลาพิมพ์ผิดช่องเดียวแล้วรู้ตัวทีหลัง
+ * — และคนใช้ต้องจำเองว่าเลขเดิมคืออะไร
+ */
+function revertResultCell(empId, sku, wh) {
+  if (_isAllocReadOnlyView() || _aggregateBlocksWrite()) return;
+  const alloc = (S.allocations || []).find(
+    a => String(a.emp_id) === String(empId) && String(a.sku) === String(sku)
+      && String(a.warehouse_code || "") === String(wh || "")
+  );
+  if (!alloc || alloc._engine_boxes == null) {
+    toast("ไม่มีค่าเดิมของช่องนี้ให้คืน", "amber");
+    return;
+  }
+  _pushUndoState(`revert:${empId}:${sku}`);
+  alloc.allocated_boxes = Number(alloc._engine_boxes) || 0;
+  alloc.is_edited = false;
+  delete alloc._engine_boxes;
+  S._hasUnsaved = true;
+  // เกลี่ยใหม่ให้ยอดต่อ SKU กลับมาตรงเป้า เหมือนตอนแก้ช่องปกติ (มันเรียก render ให้เอง)
+  autoRebalance(true);
+  saveDraft(true);
+  toast(`คืนค่าเดิมของ ${empId} · ${sku} แล้ว`, "green");
+}
+
 function onResultEdit(el) {
   if (_isAllocReadOnlyView() || _aggregateBlocksWrite()) return;
   const emp = el.dataset.emp;
   const sku = el.dataset.sku;
   const wh = el.dataset.wh || "";
 
-  const raw = parseInt(el.textContent.replace(/[^0-9]/g, "")) || 0;
-  const val = Math.max(0, raw);
-  el.textContent = val;
+  const parsed = parseBoxCount(el.textContent);
+  const val = parsed.value;
+  if (parsed.invalid) {
+    toast(`「${String(el.textContent).trim()}」ไม่ใช่จำนวนหีบที่ถูกต้อง — ปรับเป็น ${val.toLocaleString("th-TH")}`, "amber");
+  }
+  // แสดงคั่นหลักให้เหมือนช่องยอดรวม (ตัวแปลงตัดคอมมาออกตอนอ่านอยู่แล้ว)
+  el.textContent = val.toLocaleString("th-TH");
 
   let alloc = S.allocations.find(
     a => String(a.emp_id) === String(emp) && String(a.sku) === String(sku)
@@ -6214,6 +6619,12 @@ function onResultEdit(el) {
     // เคยแก้แล้วแต่ครั้งนี้ไม่ได้เปลี่ยน: ไม่สร้าง undo/ไม่ถือเป็นแก้อีกครั้ง
     el.classList.add("is-edited");
     return;
+  }
+
+  // จำค่าที่ระบบกระจายให้ครั้งแรก — ใช้ตอนกดคืนค่าเฉพาะช่องนี้
+  // (บันทึกครั้งเดียวเท่านั้น แก้ซ้ำหลายรอบต้องยังคืนไปที่ค่าของระบบ ไม่ใช่ค่าก่อนหน้า)
+  if (alloc && alloc._engine_boxes == null && !wasEdited) {
+    alloc._engine_boxes = prev;
   }
 
   // เก็บภาพ "ก่อนแก้" ครั้งแรกของชุดนี้ (debounce รวมหลายช่องเป็นชุดเดียว)
@@ -6563,10 +6974,18 @@ function autoRebalance(silent = false, opts = {}) {
   const skus = [...allocsBySku.keys()];
   let changed = false;
   const residuals = [];
+  const unknownSkus = [];
 
   skus.forEach(sku => {
     const targetInfo = skuInfoByCode.get(sku);
-    const target = targetInfo ? (Number(targetInfo.supervisor_target_boxes) || 0) : 0;
+    if (!targetInfo) {
+      /* ไม่รู้จัก SKU นี้ = ไม่รู้เป้า ไม่ใช่ "เป้าเป็น 0"
+         เดิมตีเป็น 0 แล้วสาขาไล่เกลี่ยลงจะกวาดหีบของทุกคนที่ยังไม่ได้แก้มือทิ้งเงียบ ๆ
+         (และไม่โผล่ใน residuals ด้วย เพราะ 0 === 0) */
+      unknownSkus.push(sku);
+      return;
+    }
+    const target = Number(targetInfo.supervisor_target_boxes) || 0;
     const allocs = allocsBySku.get(sku) || [];
     const currentSum = allocs.reduce((s, a) => s + (a.allocated_boxes || 0), 0);
 
@@ -6641,6 +7060,14 @@ function autoRebalance(silent = false, opts = {}) {
   if (!skipRender) {
     renderResult(S.allocations);
   }
+  if (unknownSkus.length && !silent) {
+    toast(
+      `ข้ามการเกลี่ย ${unknownSkus.length} SKU ที่ไม่พบเป้าในรายการสินค้า `
+      + `(${unknownSkus.slice(0, 3).join(", ")}${unknownSkus.length > 3 ? "…" : ""}) — `
+      + "ลองโหลดข้อมูลขั้นที่ 1 ใหม่",
+      "amber"
+    );
+  }
   if (changed && !silent) toast("⚖️ เกลี่ยส่วนต่างหีบสำเร็จ (แจกจ่ายให้พนักงานอื่นแล้ว)", "green");
   if (changed) saveDraft(true);
   return { changed, residuals };
@@ -6678,9 +7105,22 @@ function showExportModal() {
     </label>
   `).join("");
   qs("#exportModal").style.display = "flex";
+  _staticModalUnbind.exportModal = bindModalBehaviour(qs("#exportModal"), closeExportModal);
 }
 
-function closeExportModal() { qs("#exportModal").style.display = "none"; }
+/** ตัวถอด Escape/focus-trap ของ modal ที่อยู่ใน HTML (ไม่ได้สร้างสดแบบ _showInfoModal) */
+const _staticModalUnbind = {};
+
+function _closeStaticModal(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = "none";
+  if (_staticModalUnbind[id]) {
+    _staticModalUnbind[id]();
+    delete _staticModalUnbind[id];
+  }
+}
+
+function closeExportModal() { _closeStaticModal("exportModal"); }
 function closeModalOnBg(e) { if (e.target === qs("#exportModal")) closeExportModal(); }
 
 /* ══════════════════════════════════════════════
@@ -6867,10 +7307,15 @@ function showLakehouseUploadModal() {
         ⏱ อาจใช้เวลาสักครู่ — อย่าปิดหน้าจอหรือกดส่งซ้ำจนกว่าจะขึ้นว่าสำเร็จหรือมีข้อผิดพลาด
       </div>
 
+      <details class="lakehouse-tech" id="lakehouseHistoryWrap">
+        <summary>ประวัติการส่งของทีมนี้</summary>
+        <div class="lakehouse-tech__body" id="lakehouseHistoryBody">กำลังโหลด…</div>
+      </details>
+
       <details class="lakehouse-tech">
         <summary>รายละเอียดสำหรับ IT</summary>
         <div class="lakehouse-tech__body">
-          สภาพแวดล้อมทดสอบ (UAT) · ข้อมูลเขต/คลังดึงจากเป้าทีมตอนเข้าหน้าจัดสรร
+          <span id="lakehouseEnvLabel">กำลังตรวจสอบปลายทาง…</span> · ข้อมูลเขต/คลังดึงจากเป้าทีมตอนเข้าหน้าจัดสรร
           ${zeros > 0 ? ` · ส่งหีบ 0 จำนวน ${zeros.toLocaleString("th-TH")} แถว` : ""}<br><br>
           <code>TGA_TARGET_SALESMAN_NEXT</code>
           · <code>backend/services/targetsun_endpoints.py</code>
@@ -6880,10 +7325,15 @@ function showLakehouseUploadModal() {
   `;
   const el = document.getElementById("lakehouseBody");
   if (el) el.innerHTML = body;
+  _loadSendHistoryIntoModal();
+  _loadSendEnvLabel();
   qs("#lakehouseModal").style.display = "flex";
+  _staticModalUnbind.lakehouseModal = bindModalBehaviour(
+    qs("#lakehouseModal"), closeLakehouseUploadModal
+  );
 }
 
-function closeLakehouseUploadModal() { qs("#lakehouseModal").style.display = "none"; }
+function closeLakehouseUploadModal() { _closeStaticModal("lakehouseModal"); }
 function closeLakehouseModalOnBg(e) { if (e.target === qs("#lakehouseModal")) closeLakehouseUploadModal(); }
 
 function _empWarehouseForLakehouse(empId) {
@@ -6940,6 +7390,54 @@ function _lakehouseNonZeroInAllocs(brand = null) {
     if (!brandSkus) return true;
     return brandSkus.has(String(a.sku || "").trim());
   }).length;
+}
+
+/* ── ขอบเขตการกระจาย (โหมดรวมภาค) ─────────────────────────────────────────
+   บางงวดเป้าเข้ามาใต้ซุปคนเดียว แต่ต้องเกลี่ยให้พนักงานทั้งหน่วยในภาคเดียวกัน
+   ค่าเริ่มต้นคือแบบเดิมเสมอ (แยกตามทีม) — ไม่จำข้ามงวด                     */
+function _selectedAllocScope() {
+  if (!_regionalAggregateWritable()) return "team";
+  const picked = document.querySelector('input[name="allocScope"]:checked');
+  return picked && picked.value === "unit" ? "unit" : "team";
+}
+
+/** ทีมที่ถือเป้าของหน่วยงวดนี้ (ผู้ใช้เลือกเอง — ระบบเดาให้ไม่ได้) */
+function _allocScopeOwnerSup(supOrder) {
+  const el = document.getElementById("allocScopeOwner");
+  const picked = String(el?.value || "").trim().toUpperCase();
+  if (picked && supOrder.includes(picked)) return picked;
+  const cur = String(S.supId || "").trim().toUpperCase();
+  if (cur && supOrder.includes(cur)) return cur;
+  return supOrder[0];
+}
+
+function onAllocScopeChange() {
+  const wrap = document.getElementById("allocScopeOwnerWrap");
+  if (wrap) wrap.style.display = _selectedAllocScope() === "unit" ? "flex" : "none";
+}
+
+/** แสดง/ซ่อนตัวเลือกขอบเขต + เติมรายชื่อทีม — เรียกตอนเข้าขั้นที่ 3 */
+function syncAllocScopeUi() {
+  const wrap = document.getElementById("allocScopeWrap");
+  if (!wrap) return;
+  const on = _regionalAggregateWritable();
+  wrap.style.display = on ? "block" : "none";
+  if (!on) return;
+
+  const grouped = _employeesGroupedBySupervisor();
+  const supOrder = _aggregateSupervisorOrder().filter((sid) => grouped.has(sid));
+  const sel = document.getElementById("allocScopeOwner");
+  if (sel) {
+    const keep = String(sel.value || "").trim().toUpperCase();
+    sel.innerHTML = supOrder.map((sid) => {
+      const n = (grouped.get(sid) || []).length;
+      return `<option value="${escH(sid)}">${escH(sid)} (${n} คน)</option>`;
+    }).join("");
+    const cur = String(S.supId || "").trim().toUpperCase();
+    if (keep && supOrder.includes(keep)) sel.value = keep;
+    else if (cur && supOrder.includes(cur)) sel.value = cur;
+  }
+  onAllocScopeChange();
 }
 
 /** SKU ที่มีเป้าหีบใน Target Sun งวดนี้ (supervisor_target_boxes > 0) + SKU ในผลกระจาย */
@@ -6999,6 +7497,11 @@ function _lakehouseAllocationsFromStep3(filterSupId = null, brand = null) {
     : empRows;
   const scopedSkus = _lakehouseSkusForExport(brand);
   const out = [];
+  /* กันปล่อยแถวเดิมซ้ำ — _lakehouseMergeIntoMap ผูก entry เดียวไว้สองคีย์
+     (emp|wh::sku และ emp::sku) พนักงานที่แยกคลัง ถ้าคลังใดหาไม่เจอ จะตกไปได้
+     entry ของอีกคลังมา แล้ว push วัตถุเดิมซ้ำ → หลังบ้านรวมยอดตาม (emp, sku, wh)
+     ก็ได้หีบเป็นสองเท่า คลังที่ไม่มีของตัวเองต้องเป็นแถวศูนย์ ไม่ใช่สำเนาของคลังอื่น */
+  const emitted = new Set();
   for (const e of scopedEmpRows) {
     const emp = String(e.emp_id || "").trim();
     const wh = e.wh_split
@@ -7006,14 +7509,17 @@ function _lakehouseAllocationsFromStep3(filterSupId = null, brand = null) {
       : _lakehouseWhForEmp(emp, e.warehouse_code);
     for (const sku of scopedSkus) {
       const hit = _lakehouseLookupFromMap(byKey, emp, sku, wh);
-      out.push(
-        hit || {
+      if (hit && !emitted.has(hit)) {
+        emitted.add(hit);
+        out.push(hit);
+      } else {
+        out.push({
           emp_id: emp,
           sku,
           allocated_boxes: 0,
           warehouse_code: wh || null,
-        }
-      );
+        });
+      }
     }
   }
   return out;
@@ -7076,6 +7582,9 @@ function _lakehouseExportPayload(supId = null, brand = null, opts = {}) {
     // คนละ flag โดยตั้งใจ — อันนี้แปลว่า "รับทราบว่าบางคู่ไม่มีใน Target Sun
     // และจะไปเพิ่มจำนวนเองที่นั่น" (ดู _confirmManualTopupBeforeSend)
     confirm_manual_topup: !!opts.confirmManualTopup,
+    // กระจายรวมทั้งหน่วยแล้วเท่านั้นที่ยอมให้สร้างแถวเป้าใหม่ — คนทีมอื่นย่อมยัง
+    // ไม่เคยมีเป้าสินค้านั้น ถ้าไม่เปิด SKU ทั้งตัวจะถูกตัดแล้วฟีเจอร์นี้ไร้ความหมาย
+    allow_new_targetsun_rows: !!S.unitWideOwnerSup,
   };
 }
 
@@ -7087,26 +7596,27 @@ function _lakehouseExportPayload(supId = null, brand = null, opts = {}) {
 function _confirmManualTopupBeforeSend(detail) {
   return new Promise((resolve) => {
     let decided = false;
+    // ปุ่ม "กลับไปแก้ไข" / ปิด / Escape / คลิกนอกกล่อง — ทั้งหมดแปลว่าไม่ส่ง
+    // (เดิมเฝ้าด้วย MutationObserver บน body ซึ่งเปราะ: ถ้ามี modal อื่นซ้อน
+    //  หรือ DOM ถูกแทนที่ด้วยวิธีอื่น จะไม่ยิง แล้ว Promise ค้างตลอดกาล = ปุ่มส่งตาย)
     _showShortfallModal(detail, {
       onConfirm: () => { decided = true; resolve(true); },
+      onCancel: () => {
+        if (decided) return;
+        decided = true;
+        resolve(false);
+        // พาไปที่ SKU แรกที่ขาดเลย ไม่ต้องให้ไล่หาเอง —
+        // เว้นแต่ผู้ใช้กดปุ่ม "ไปที่" ในรายการอยู่แล้ว จะได้ไม่เด้งทับที่เขาเลือก
+        if (_resultJumpInFlight) return;
+        const first = (detail?.shortfall || [])[0];
+        if (first) jumpToResultCell(first.sku, (first.pairs || [])[0]?.emp_id || "");
+      },
     });
-    // ปุ่ม "กลับไปแก้ไข" / ปิด / คลิกนอกกล่อง — ทั้งหมดแปลว่าไม่ส่ง
-    const modal = document.getElementById("infoModal");
-    if (!modal) { resolve(false); return; }
-    const obs = new MutationObserver(() => {
-      if (!document.getElementById("infoModal")) {
-        obs.disconnect();
-        if (!decided) {
-          resolve(false);
-          // พาไปที่ SKU แรกที่ขาดเลย ไม่ต้องให้ไล่หาเอง —
-          // เว้นแต่ผู้ใช้กดปุ่ม "ไปที่" ในรายการอยู่แล้ว จะได้ไม่เด้งทับที่เขาเลือก
-          if (_resultJumpInFlight) return;
-          const first = (detail?.shortfall || [])[0];
-          if (first) jumpToResultCell(first.sku, (first.pairs || [])[0]?.emp_id || "");
-        }
-      }
-    });
-    obs.observe(document.body, { childList: true });
+    // รายการว่าง = _showShortfallModal ไม่เปิดอะไรเลย ต้องไม่ค้างรอคำตอบ
+    if (!document.getElementById("infoModal") && !decided) {
+      decided = true;
+      resolve(false);
+    }
   });
 }
 
@@ -7189,10 +7699,15 @@ function _scrollToResultCell(sku, empId) {
  * onConfirm = ส่งซ้ำด้วย confirm_manual_topup: true
  * ถ้าไม่ส่ง onConfirm มา (เช่นเรียกจากหน้าจอ "ส่งสำเร็จแล้ว") จะโชว์เป็นรายการให้ทำต่ออย่างเดียว
  */
-function _showShortfallModal(detail, { onConfirm = null, alreadySent = false, noteHtml = "", title = "" } = {}) {
+function _showShortfallModal(detail, { onConfirm = null, onCancel = null, alreadySent = false, noteHtml = "", title = "" } = {}) {
   const list = Array.isArray(detail?.shortfall) ? detail.shortfall : [];
   if (!list.length) return;
-  const boxes = Number(detail.shortfall_boxes) || list.reduce((s, x) => s + (Number(x.missing_boxes) || 0), 0);
+  // server รุ่นใหม่ตัด SKU ที่ส่งไม่ครบทิ้งทั้งตัว — ตัวเลขที่ผู้ใช้ต้องรู้จึงเป็น
+  // "หีบทั้ง SKU ที่จะไม่ถูกส่ง" ไม่ใช่แค่ส่วนที่ไม่มีเป้าใน TGA
+  const wholeSku = !!detail?.whole_sku_excluded || list.some((s) => s.excluded_whole_sku);
+  const boxes = wholeSku
+    ? (Number(detail.excluded_boxes) || list.reduce((s, x) => s + (Number(x.excluded_boxes) || Number(x.missing_boxes) || 0), 0))
+    : (Number(detail.shortfall_boxes) || list.reduce((s, x) => s + (Number(x.missing_boxes) || 0), 0));
 
   const rows = list.map(s => {
     const sku = String(s.sku || "");
@@ -7211,8 +7726,12 @@ function _showShortfallModal(detail, { onConfirm = null, alreadySent = false, no
         <div>
           <code class="shortfall-sku__code">${escH(sku)}</code>
           ${pname ? `<span class="shortfall-sku__name">${escH(pname)}</span>` : ""}
-          <div class="shortfall-sku__nums">ขาด <strong>${(Number(s.missing_boxes) || 0).toLocaleString("th-TH")}</strong> หีบ`
-          + ` · จะส่งจริง ${(Number(s.sending_boxes) || 0).toLocaleString("th-TH")}`
+          <div class="shortfall-sku__nums">`
+          + (s.excluded_whole_sku
+              ? `<strong style="color:var(--red);">ไม่ส่ง SKU นี้ทั้งตัว ${(Number(s.excluded_boxes) || 0).toLocaleString("th-TH")} หีบ</strong>`
+                + ` · ในนั้นไม่มีเป้าใน Target Sun ${(Number(s.missing_boxes) || 0).toLocaleString("th-TH")} หีบ`
+              : `ขาด <strong>${(Number(s.missing_boxes) || 0).toLocaleString("th-TH")}</strong> หีบ`
+                + ` · จะส่งจริง ${(Number(s.sending_boxes) || 0).toLocaleString("th-TH")}`)
           + (s.expected_boxes != null ? ` / เป้าทีม ${Number(s.expected_boxes).toLocaleString("th-TH")}` : "")
           + `</div>
         </div>
@@ -7222,17 +7741,32 @@ function _showShortfallModal(detail, { onConfirm = null, alreadySent = false, no
     </div>`;
   }).join("");
 
-  const lead = alreadySent
-    ? `<p style="margin:0;text-align:left;line-height:1.7;">ส่งเข้า Target Sun แล้ว แต่มี <strong>${boxes.toLocaleString("th-TH")}</strong> หีบใน <strong>${list.length}</strong> SKU ที่ส่งไปไม่ได้ — <strong>ต้องไปเพิ่มจำนวนเองใน Target Sun</strong> ตามรายการนี้</p>`
-    : `<p style="margin:0;text-align:left;line-height:1.7;">ถ้าส่งตอนนี้ เป้าใน Target Sun จะ<strong>ขาด ${boxes.toLocaleString("th-TH")} หีบ</strong> ใน <strong>${list.length}</strong> SKU เพราะคู่พนักงาน×สินค้าเหล่านี้<strong>ไม่เคยมีใน Target Sun</strong> งวดนี้</p>
-       <p style="margin:10px 0 0;text-align:left;line-height:1.7;color:var(--text-2);">กลับไปแก้ได้โดยโหลดข้อมูลขั้นที่ 1 ใหม่ หรือย้ายหีบไปให้คนอื่นในทีมที่มีเป้าของ SKU นั้น<br><strong style="color:var(--amber);">ถ้าไม่กลับไปแก้ ต้องไปเพิ่มจำนวนเองใน Target Sun</strong> ตามรายการข้างล่าง</p>`;
+  let lead;
+  if (wholeSku) {
+    lead = alreadySent
+      ? `<p style="margin:0;text-align:left;line-height:1.7;">ส่งเข้า Target Sun แล้ว แต่ <strong>${list.length}</strong> SKU ไม่ได้ถูกส่ง (รวม <strong>${boxes.toLocaleString("th-TH")}</strong> หีบ) — <strong>ต้องไปเกลี่ยหีบเองใน Target Sun</strong> ตามรายการนี้</p>`
+      : `<p style="margin:0;text-align:left;line-height:1.7;">มี <strong>${list.length}</strong> SKU ที่ส่งได้ไม่ครบ เพราะบางคู่พนักงาน×สินค้า<strong>ไม่เคยมีใน Target Sun</strong> งวดนี้ จึงเขียนทับไม่ได้<br>ระบบจะ<strong>ไม่ส่ง SKU เหล่านี้ทั้งตัว</strong> (รวม ${boxes.toLocaleString("th-TH")} หีบ) เพื่อไม่ให้เป้าของ SKU นั้นกลายเป็นครึ่ง ๆ กลาง ๆ</p>
+         <p style="margin:10px 0 0;text-align:left;line-height:1.7;color:var(--text-2);">ทางที่ดีที่สุดคือโหลดข้อมูลขั้นที่ 1 ใหม่ หรือย้ายหีบไปให้คนอื่นในทีมที่มีเป้าของ SKU นั้น<br><strong style="color:var(--amber);">ถ้าส่งต่อ ของเดิมใน Target Sun จะไม่ถูกแตะ (ยอดไม่หาย) แต่ต้องไปเกลี่ยหีบเอง</strong> ตามรายการข้างล่าง</p>`;
+  } else {
+    lead = alreadySent
+      ? `<p style="margin:0;text-align:left;line-height:1.7;">ส่งเข้า Target Sun แล้ว แต่มี <strong>${boxes.toLocaleString("th-TH")}</strong> หีบใน <strong>${list.length}</strong> SKU ที่ส่งไปไม่ได้ — <strong>ต้องไปเพิ่มจำนวนเองใน Target Sun</strong> ตามรายการนี้</p>`
+      : `<p style="margin:0;text-align:left;line-height:1.7;">ถ้าส่งตอนนี้ เป้าใน Target Sun จะ<strong>ขาด ${boxes.toLocaleString("th-TH")} หีบ</strong> ใน <strong>${list.length}</strong> SKU เพราะคู่พนักงาน×สินค้าเหล่านี้<strong>ไม่เคยมีใน Target Sun</strong> งวดนี้</p>
+         <p style="margin:10px 0 0;text-align:left;line-height:1.7;color:var(--text-2);">กลับไปแก้ได้โดยโหลดข้อมูลขั้นที่ 1 ใหม่ หรือย้ายหีบไปให้คนอื่นในทีมที่มีเป้าของ SKU นั้น<br><strong style="color:var(--amber);">ถ้าไม่กลับไปแก้ ต้องไปเพิ่มจำนวนเองใน Target Sun</strong> ตามรายการข้างล่าง</p>`;
+  }
+
+  const defaultTitle = alreadySent
+    ? (wholeSku ? "ส่งแล้ว — แต่มี SKU ที่ไม่ได้ส่ง" : "ส่งแล้ว — แต่ต้องไปเพิ่มเองใน Target Sun")
+    : (wholeSku ? "ยังไม่ได้ส่ง — มี SKU ที่จะถูกข้าม" : "ยังไม่ได้ส่ง — เป้าจะขาด");
 
   _showInfoModal({
-    title: title || (alreadySent ? "ส่งแล้ว — แต่ต้องไปเพิ่มเองใน Target Sun" : "ยังไม่ได้ส่ง — เป้าจะขาด"),
+    title: title || defaultTitle,
     bodyHtml: `${lead}${noteHtml}<div class="shortfall-list">${rows}</div>`,
-    primaryLabel: onConfirm ? "ส่งเลย — จะไปเพิ่มเองใน Target Sun" : null,
+    primaryLabel: onConfirm
+      ? (wholeSku ? "ส่งเฉพาะ SKU ที่ครบ — จะไปเกลี่ยเอง" : "ส่งเลย — จะไปเพิ่มเองใน Target Sun")
+      : null,
     onPrimary: onConfirm || null,
     secondaryLabel: onConfirm ? "กลับไปแก้ไข" : "ปิด",
+    onSecondary: onCancel || null,
   });
 }
 
@@ -7299,15 +7833,297 @@ function _confirmServerMismatchBeforeSend(chunks) {
       primaryLabel: "ยืนยันส่งตามนี้",
       onPrimary: () => { decided = true; resolve(true); },
       secondaryLabel: "กลับไปแก้ไข",
+      // ปิด/Escape/คลิกนอกกล่อง = ไม่ส่ง — _showInfoModal เรียก onSecondary ให้ทุกทาง
+      // (เดิมเฝ้าด้วย MutationObserver บน body ซึ่งพลาดได้แล้ว Promise ค้างถาวร)
+      onSecondary: () => { if (!decided) { decided = true; resolve(false); } },
     });
-    const obs = new MutationObserver(() => {
-      if (!document.getElementById("infoModal")) {
-        obs.disconnect();
-        if (!decided) resolve(false);
-      }
-    });
-    obs.observe(document.body, { childList: true });
   });
+}
+
+/**
+ * server ตรวจยอดกับเป้าไม่ได้เลย เพราะไม่มีไฟล์เป้าของทีมนี้งวดนี้ (409 send_target_unverifiable)
+ *
+ * ต่างจากอีกสองด่านตรงที่นี่ไม่ใช่ "ตรวจแล้วไม่ตรง" แต่คือ "ไม่มีอะไรให้ตรวจ"
+ * มักเกิดตอนเปิดผลกระจายเก่ามาส่งหลังไฟล์เป้าถูกล้างไปแล้ว
+ * ทางแก้ที่ถูกคือโหลดขั้นที่ 1 ใหม่ ปุ่มหลักจึงเป็น "กลับไปโหลด" ไม่ใช่ "ส่งเลย"
+ *
+ * @param {Array<{supId:string, detail:object}>} chunks  409 ของแต่ละ SL
+ */
+function _confirmUnverifiableTargetBeforeSend(chunks) {
+  const teams = chunks.map((c) => String(c.supId || "")).filter(Boolean);
+  const list = teams.map((t) => `<code>${escH(t)}</code>`).join(" ");
+  return new Promise((resolve) => {
+    let decided = false;
+    _showInfoModal({
+      title: "ตรวจยอดกับเป้าไม่ได้ — ยังไม่ได้ส่ง",
+      bodyHtml:
+        `<p style="margin:0;text-align:left;line-height:1.7;">`
+        + `ระบบไม่มีไฟล์เป้าของ ${teams.length > 1 ? "ทีมเหล่านี้" : "ทีมนี้"} ในงวดที่เลือก `
+        + `จึง<strong>ยืนยันไม่ได้ว่ายอดที่จะส่งตรงกับเป้า</strong></p>`
+        + `<p style="margin:10px 0 0;text-align:left;line-height:1.7;">${list}</p>`
+        + `<p style="margin:10px 0 0;text-align:left;line-height:1.7;color:var(--text-2);">`
+        + `มักเกิดตอนเปิดผลกระจายที่บันทึกไว้นานแล้วมาส่ง — `
+        + `<strong>กลับไปโหลดข้อมูลขั้นที่ 1 ใหม่</strong> ระบบจะดึงเป้ามาเก็บอีกครั้ง แล้วค่อยส่ง<br>`
+        + `<strong style="color:var(--amber);">ถ้ายืนยันส่งเลย จะไม่มีอะไรตรวจทานยอดให้</strong></p>`,
+      primaryLabel: "ยืนยันส่งทั้งที่ตรวจไม่ได้",
+      onPrimary: () => { decided = true; resolve(true); },
+      secondaryLabel: "กลับไปโหลดขั้นที่ 1 ใหม่",
+      // ปิด/Escape/คลิกนอกกล่อง = ไม่ส่ง — _showInfoModal เรียก onSecondary ให้ทุกทาง
+      // (เดิมเฝ้าด้วย MutationObserver บน body ซึ่งพลาดได้แล้ว Promise ค้างถาวร)
+      onSecondary: () => { if (!decided) { decided = true; resolve(false); } },
+    });
+  });
+}
+
+/**
+ * เป้าใน Target Sun เปลี่ยนไปหลังจากผู้ใช้โหลดข้อมูลขั้นที่ 1 (409 send_target_stale)
+ *
+ * ไม่ใช่ความผิดพลาดของตัวเลข — ไฟล์ยังตรงกับเป้าชุดที่ผู้ใช้เห็นตอนกระจาย
+ * แต่ถ้าเป้าต้นทางขยับแล้ว การส่งทับด้วยแผนเดิมอาจไม่ใช่สิ่งที่ต้องการ ให้เลือกเอง
+ */
+function _confirmStaleTargetBeforeSend(chunks) {
+  const groups = chunks.map(({ supId, detail }) => {
+    const items = Array.isArray(detail?.drifts) ? detail.drifts : [];
+    const rows = items.map((d) => {
+      const sku = String(d.sku || "");
+      const info = (S.skus || []).find((x) => String(x.sku).trim() === sku) || {};
+      const pname = _skuDisplayName(info);
+      const diff = Number(d.diff) || 0;
+      return `<div class="shortfall-sku">
+        <div class="shortfall-sku__head">
+          <div>
+            <code class="shortfall-sku__code">${escH(sku)}</code>
+            ${pname ? `<span class="shortfall-sku__name">${escH(pname)}</span>` : ""}
+            <div class="shortfall-sku__nums">ตอนโหลด ${(Number(d.loaded_boxes) || 0).toLocaleString("th-TH")}`
+        + ` → ตอนนี้ <strong>${(Number(d.current_boxes) || 0).toLocaleString("th-TH")}</strong> หีบ `
+        + `<strong class="${diff > 0 ? "rx-up" : "rx-down"}">(${diff > 0 ? "+" : ""}${diff.toLocaleString("th-TH")})</strong></div>
+          </div>
+          <button type="button" class="shortfall-jump shortfall-jump--col" onclick="jumpToResultCell('${escH(sku)}','')">ไปที่คอลัมน์ ▸</button>
+        </div>
+      </div>`;
+    }).join("");
+    return `<div style="margin-bottom:10px;"><strong>ทีม ${escH(supId)}</strong>${rows}</div>`;
+  }).join("");
+
+  const skuTotal = chunks.reduce((n, c) => n + (Number(c.detail?.drift_count) || 0), 0);
+
+  return new Promise((resolve) => {
+    let decided = false;
+    _showInfoModal({
+      title: "เป้าใน Target Sun เปลี่ยนไปแล้ว — ยังไม่ได้ส่ง",
+      bodyHtml:
+        `<p style="margin:0;text-align:left;line-height:1.7;">`
+        + `เป้าต้นทางขยับ <strong>${skuTotal.toLocaleString("th-TH")} SKU</strong> `
+        + `หลังจากคุณโหลดข้อมูลขั้นที่ 1</p>`
+        + `<p style="margin:10px 0 0;text-align:left;line-height:1.7;color:var(--text-2);">`
+        + `ผลกระจายที่ทำไว้อิงเป้าชุดเดิม — ถ้าอยากกระจายตามเป้าใหม่ ให้`
+        + `<strong>โหลดขั้นที่ 1 ใหม่แล้วกระจายอีกครั้ง</strong><br>`
+        + `ถ้ายืนยัน ระบบจะส่งตามแผนที่กระจายไว้เดิม (ยอดยังตรงกับเป้าชุดที่คุณเห็น)</p>`
+        + `<div class="shortfall-list">${groups}</div>`,
+      primaryLabel: "ยืนยันส่งตามแผนเดิม",
+      onPrimary: () => { decided = true; resolve(true); },
+      secondaryLabel: "กลับไปโหลดขั้นที่ 1 ใหม่",
+      // ปิด/Escape/คลิกนอกกล่อง = ไม่ส่ง — _showInfoModal เรียก onSecondary ให้ทุกทาง
+      // (เดิมเฝ้าด้วย MutationObserver บน body ซึ่งพลาดได้แล้ว Promise ค้างถาวร)
+      onSecondary: () => { if (!decided) { decided = true; resolve(false); } },
+    });
+  });
+}
+
+/**
+ * ยอดที่ "ลงจริง" ใน Target Sun ไม่ตรงกับไฟล์ที่เพิ่งส่ง — แจ้งหลังส่งเท่านั้น
+ *
+ * ตาข่ายชั้นเดียวที่จับได้ว่าปลายทางปฏิเสธหรือข้ามบางแถวเงียบ ๆ ทั้งที่ตอบว่าสำเร็จ
+ * ย้อนไม่ได้แล้ว จึงเป็นการรายงานให้ไปตรวจ ไม่ใช่ประตู
+ */
+function _showReadbackMismatchModal(issues, extraNoteHtml = "") {
+  const blocks = issues.map(({ supId, readback }) => {
+    const rows = (readback.diffs || []).map((d) => {
+      const sku = String(d.sku || "");
+      const diff = Number(d.diff) || 0;
+      return `<div class="shortfall-sku"><div class="shortfall-sku__head"><div>`
+        + `<code class="shortfall-sku__code">${escH(sku)}</code>`
+        + `<div class="shortfall-sku__nums">ส่งไป ${(Number(d.sent_boxes) || 0).toLocaleString("th-TH")}`
+        + ` → ลงจริง <strong>${(Number(d.landed_boxes) || 0).toLocaleString("th-TH")}</strong> หีบ `
+        + `<strong class="${diff > 0 ? "rx-up" : "rx-down"}">(${diff > 0 ? "+" : ""}${diff.toLocaleString("th-TH")})</strong>`
+        + `</div></div></div></div>`;
+    }).join("");
+    return `<div style="margin-bottom:10px;"><strong>ทีม ${escH(supId)}</strong>${rows}</div>`;
+  }).join("");
+
+  const boxes = issues.reduce((n, i) => n + (Number(i.readback?.diff_boxes) || 0), 0);
+  _showInfoModal({
+    title: "ส่งแล้ว — แต่ยอดที่ลงจริงไม่ตรงกับไฟล์",
+    bodyHtml:
+      `<p style="margin:0;text-align:left;line-height:1.7;color:var(--red);">`
+      + `<strong>ตรวจหลังส่งแล้วพบว่ายอดใน Target Sun ไม่เท่ากับไฟล์ที่ส่งไป `
+      + `(ต่างรวม ${boxes > 0 ? "+" : ""}${boxes.toLocaleString("th-TH")} หีบ)</strong></p>`
+      + `<p style="margin:10px 0 0;text-align:left;line-height:1.7;color:var(--text-2);">`
+      + `แปลว่าปลายทางรับไม่ครบ — กรุณาตรวจใน Target Sun แล้วแจ้ง IT พร้อมรหัสทีมและงวดนี้ `
+      + `อย่าเพิ่งกดส่งซ้ำจนกว่าจะรู้สาเหตุ</p>`
+      + extraNoteHtml
+      + `<div class="shortfall-list">${blocks}</div>`,
+    primaryLabel: null,
+    secondaryLabel: "ปิด",
+  });
+}
+
+/**
+ * ยอดรวมของทั้งภาคไม่เท่าเป้ารวม — แจ้งอย่างเดียว ไม่มีปุ่มยืนยันส่งต่อ
+ *
+ * ย้ายหีบข้ามทีมได้ตามที่ออกแบบไว้ แต่ยอดรวมของภาคต้องเท่าเดิม ส่วนต่างตรงนี้
+ * แปลว่าหีบหายหรืองอกจริง ไม่ใช่แค่ย้ายที่ จึงไม่ควรมีทางกดข้าม
+ */
+function _showBatchTotalMismatchModal(detail) {
+  const diffs = Array.isArray(detail?.diffs) ? detail.diffs : [];
+  const rows = diffs.map((d) => {
+    const sku = String(d.sku || "");
+    const info = (S.skus || []).find((x) => String(x.sku).trim() === sku) || {};
+    const pname = _skuDisplayName(info);
+    const diff = Number(d.diff) || 0;
+    return `<div class="shortfall-sku">
+      <div class="shortfall-sku__head">
+        <div>
+          <code class="shortfall-sku__code">${escH(sku)}</code>
+          ${pname ? `<span class="shortfall-sku__name">${escH(pname)}</span>` : ""}
+          <div class="shortfall-sku__nums">รวมทั้งภาคจะส่ง <strong>${(Number(d.sending_boxes) || 0).toLocaleString("th-TH")}</strong>`
+      + ` / เป้ารวม ${(Number(d.expected_boxes) || 0).toLocaleString("th-TH")} หีบ `
+      + `<strong class="${diff > 0 ? "rx-up" : "rx-down"}">(${diff > 0 ? "+" : ""}${diff.toLocaleString("th-TH")})</strong></div>
+        </div>
+        <button type="button" class="shortfall-jump shortfall-jump--col" onclick="jumpToResultCell('${escH(sku)}','')">ไปที่คอลัมน์ ▸</button>
+      </div>
+    </div>`;
+  }).join("");
+
+  const boxes = Number(detail?.diff_boxes) || 0;
+  return new Promise((resolve) => {
+    let done = false;
+    _showInfoModal({
+      title: "ยอดรวมทั้งภาคไม่ตรงเป้ารวม — ยังไม่ได้ส่ง",
+      bodyHtml:
+        `<p style="margin:0;text-align:left;line-height:1.7;">`
+        + `ยอดรวมของทุกทีมในชุดนี้ต่างจากเป้ารวม <strong>${Number(detail?.diff_count) || diffs.length} SKU</strong> `
+        + `(รวม <strong>${boxes > 0 ? "+" : ""}${boxes.toLocaleString("th-TH")}</strong> หีบ)</p>`
+        + `<p style="margin:10px 0 0;text-align:left;line-height:1.7;color:var(--text-2);">`
+        + `ย้ายหีบข้ามทีมได้ แต่<strong>ยอดรวมของภาคต้องเท่าเดิม</strong> — ส่วนต่างแปลว่าหีบหายหรืองอกจริง<br>`
+        + `กลับไปตรวจตารางผลกระจาย หรือโหลดข้อมูลขั้นที่ 1 ใหม่แล้วกระจายอีกครั้ง</p>`
+        + `<div class="shortfall-list">${rows}</div>`,
+      primaryLabel: null,
+      secondaryLabel: "ปิด",
+      onSecondary: () => { if (!done) { done = true; resolve(); } },
+    });
+  });
+}
+
+/**
+ * ตรวจยอดรวมของไฟล์ที่เตรียมไว้ "ทั้งชุด" ก่อนส่งทีมแรก
+ *
+ * ต้องอยู่หลังเตรียมครบทุกทีมและก่อน import เสมอ — ถ้าตรวจหลังส่ง ทีมแรก ๆ
+ * ก็เข้า Target Sun ไปแล้ว ย้อนไม่ได้
+ *
+ * @returns {{ok:boolean, excludeSkus?:string[]}}
+ *   ok:true = ส่งต่อได้ · excludeSkus = ให้ตัด SKU ชุดนี้ทุกทีมแล้วเตรียมใหม่
+ */
+async function _verifySendBatchBeforeImport(jobs) {
+  const tokens = jobs.map((j) => j.token).filter((t) => t && t !== "__legacy__");
+  if (!tokens.length) return { ok: true };
+
+  const res = await fetchWithTimeout(
+    `${API_BASE_URL}/lakehouse/verify-send-batch`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tokens }),
+    },
+    120000
+  );
+  const body = await res.json().catch(() => ({}));
+
+  if (res.ok) {
+    // ตรวจไม่ได้ (เช่นอ่านเป้าบางทีมไม่ได้) ไม่ใช่ตรวจแล้วไม่ผ่าน — ด่านรายทีมถามไปแล้ว
+    if (body?.verified === false) {
+      console.warn("[targetsun] ตรวจยอดรวมทั้งชุดไม่ได้:", body?.reason, body);
+    }
+    return { ok: true };
+  }
+
+  const detail = body?.detail;
+  // server รุ่นเก่ายังไม่มี endpoint นี้ — ตัว 404 ของ FastAPI คือ "Not Found" ตรงตัว
+  // ส่วน 404 เชิงธุรกิจของเราเป็นข้อความไทย (ไฟล์เตรียมหมดอายุ) ต้องไม่เหมารวมกัน
+  if (res.status === 405 || (res.status === 404 && String(detail || "") === "Not Found")) {
+    console.warn("[targetsun] server ยังไม่มีด่านตรวจยอดรวมทั้งชุด — ข้ามขั้นนี้");
+    return { ok: true };
+  }
+  if (detail?.code === "send_batch_sku_partial") {
+    return { ok: false, excludeSkus: Array.isArray(detail.exclude_skus) ? detail.exclude_skus : [] };
+  }
+  if (detail?.code === "send_batch_total_mismatch") {
+    popGlobalBusy();
+    await _showBatchTotalMismatchModal(detail);
+    pushGlobalBusy(UX.busySendStep1, UX.busySendTargetHint);
+    return { ok: false };
+  }
+  throw new Error(_userFacingError(_formatApiErrorDetail(body), "ตรวจยอดรวมก่อนส่งไม่สำเร็จ"));
+}
+
+/**
+ * ประวัติการส่งของทีมนี้ในกล่องยืนยันส่ง
+ *
+ * เดิมผลการส่งอยู่แค่ในข้อความแจ้งเตือนที่หายไปเอง ไม่มีที่เปิดดูย้อนหลังว่า
+ * ทีมนี้ส่งไปแล้วหรือยัง ส่งเมื่อไหร่ ได้ผลยังไง ทั้งที่ server บันทึกไว้ครบ
+ */
+async function _loadSendHistoryIntoModal() {
+  const box = document.getElementById("lakehouseHistoryBody");
+  if (!box) return;
+  const sup = String(S.supId || "").trim();
+  if (!sup) { box.textContent = "—"; return; }
+  try {
+    const res = await fetchWithTimeout(
+      `${API_BASE_URL}/data/send-history?sup_id=${encodeURIComponent(sup)}`
+      + `&target_month=${S.targetMonth}&target_year=${S.targetYear}&limit=10`,
+      {},
+      20000
+    );
+    if (!res.ok) throw new Error(String(res.status));
+    const j = await res.json();
+    const items = Array.isArray(j.items) ? j.items : [];
+    if (!items.length) {
+      box.textContent = "ยังไม่เคยส่งงวดนี้";
+      return;
+    }
+    box.innerHTML = items.map((it) => {
+      const when = it.ts ? new Date(it.ts).toLocaleString("th-TH") : "-";
+      const bad = String(it.level || "") === "error";
+      return `<div style="padding:6px 0;border-bottom:1px solid var(--border);">`
+        + `<div style="color:${bad ? "var(--red)" : "var(--green)"};font-weight:600;">`
+        + `${bad ? "✕" : "✓"} ${escH(String(it.message || ""))}</div>`
+        + `<div style="color:var(--text-3);">${escH(when)} · ${escH(String(it.email || "-"))}</div>`
+        + `<div>${escH(String(it.detail || ""))}</div></div>`;
+    }).join("");
+  } catch (e) {
+    console.warn("[targetsun] โหลดประวัติการส่งไม่ได้:", e);
+    box.textContent = "ดูประวัติไม่ได้ตอนนี้";
+  }
+}
+
+/** ปลายทางจริงที่จะส่ง — เดิมกล่องยืนยันเขียนตายตัวว่า UAT ไม่ว่าจริงจะเป็นอะไร */
+async function _loadSendEnvLabel() {
+  const el = document.getElementById("lakehouseEnvLabel");
+  if (!el) return;
+  try {
+    const res = await fetchWithTimeout(`${API_BASE_URL}/lakehouse/send-env`, {}, 15000);
+    if (!res.ok) throw new Error(String(res.status));
+    const j = await res.json();
+    const label = String(j.import_host_label || "").trim() || "ไม่ทราบ";
+    const isProd = /prod/i.test(label) && !/uat/i.test(label);
+    el.textContent = `ปลายทางที่จะส่ง: ${label}`;
+    el.style.fontWeight = "700";
+    el.style.color = isProd ? "var(--red)" : "var(--text-2)";
+    if (isProd) el.textContent += " — ระบบจริง";
+  } catch (e) {
+    console.warn("[targetsun] อ่านปลายทางไม่ได้:", e);
+    el.textContent = "ปลายทางที่จะส่ง: ตรวจสอบไม่ได้";
+  }
 }
 
 /** รวม shortfall จากหลาย SL เข้าเป็นก้อนเดียวต่อ SKU (ตอนส่งรวมภาคจะได้หลายชุด) */
@@ -7317,10 +8133,14 @@ function _mergeShortfall(chunks) {
     const sku = String(s?.sku || "").trim();
     if (!sku) continue;
     const cur = bySku.get(sku) || {
-      sku, missing_boxes: 0, sending_boxes: 0, expected_boxes: null, pairs: [], pair_count: 0,
+      sku, missing_boxes: 0, sending_boxes: 0, excluded_boxes: 0,
+      excluded_whole_sku: false, expected_boxes: null, pairs: [], pair_count: 0,
     };
     cur.missing_boxes += Number(s.missing_boxes) || 0;
     cur.sending_boxes += Number(s.sending_boxes) || 0;
+    // SKU เดียวกันถูกตัดในทีมไหนก็ตาม = ตัดทั้ง SKU ต้องรวมหีบของทุกทีมมาบอกให้ครบ
+    cur.excluded_boxes += Number(s.excluded_boxes) || 0;
+    if (s.excluded_whole_sku) cur.excluded_whole_sku = true;
     if (s.expected_boxes != null) cur.expected_boxes = (cur.expected_boxes || 0) + Number(s.expected_boxes);
     cur.pairs = cur.pairs.concat(Array.isArray(s.pairs) ? s.pairs : []);
     cur.pair_count += Number(s.pair_count) || 0;
@@ -7622,7 +8442,26 @@ async function _confirmTargetMismatchBeforeSend(supIds, brand) {
   });
 }
 
+/* กันกดปุ่มส่งซ้ำ — ต้องเป็นบรรทัดแรกสุดของฟังก์ชัน
+   ปุ่มถูก disable หลัง await หลายตัว (ยืนยัน snapshot / ยืนยันยอดไม่ตรงเป้า)
+   ระหว่างนั้นปุ่มยังกดได้ ดับเบิลคลิกจึงยิง pipeline ส่งซ้อนกันสองชุด
+   แต่ละชุดเตรียมไฟล์และ import แยกกัน = ส่งเป้าเข้า Target Sun สองรอบ */
+let _lakehouseSendInFlight = false;
+
 async function doLakehouseUpload() {
+  if (_lakehouseSendInFlight) {
+    toast("กำลังส่งอยู่แล้ว — รอให้รอบนี้เสร็จก่อน", "amber");
+    return;
+  }
+  _lakehouseSendInFlight = true;
+  try {
+    return await _doLakehouseUploadInner();
+  } finally {
+    _lakehouseSendInFlight = false;
+  }
+}
+
+async function _doLakehouseUploadInner() {
   const brand = _selectedLakehouseBrand();
   const supIds = _lakehouseSupIdsForExport();
   if (!supIds.length) {
@@ -7676,7 +8515,19 @@ async function doLakehouseUpload() {
   let sentCount = 0;
   // ผู้ใช้ยืนยันครั้งเดียวแล้วใช้กับทุกทีมในชุดนี้ — ไม่ถามซ้ำราย SL
   let confirmedManualTopup = false;
-  let manualTopupList = [];
+  let confirmedUnverifiable = false;
+  let confirmedStale = false;
+  // ทีมที่ยอดลงจริงไม่ตรงไฟล์ — รวมไว้แจ้งทีเดียวหลังส่งจบ
+  const readbackIssues = [];
+  // ผลรายทีมของเฟสส่ง — เดิมทีมกลางล้มแล้ว return ทิ้งทันที ผู้ใช้จึงไม่รู้ว่า
+  // ทีมไหนส่งไปแล้วบ้าง (ย้อนไม่ได้) ทีมไหนยังไม่ได้ส่ง และรายการที่ต้องไป
+  // เกลี่ยหีบเองใน Target Sun ก็หายไปด้วยเพราะโค้ดสรุปอยู่ท้ายฟังก์ชัน
+  const sentSupIds = [];
+  let failedSup = null;      // {supId} ทีมที่ล้ม — ทีมถัดไปจะไม่ถูกส่งต่อ
+  const notSentSupIds = [];
+  // เก็บรายทีม ไม่ใช่สะสมรวม — รอบที่เตรียมไฟล์ใหม่ (เช่นหลังตัด SKU ระดับชุด)
+  // จะได้ทับของเดิมแทนที่จะบวกซ้ำ ไม่งั้นรายการหลังส่งจะโชว์จำนวนหีบเป็นสองเท่า
+  const shortfallBySup = new Map();
   try {
     /* ── เฟส 1: เตรียมไฟล์ให้ครบทุกทีมก่อน ยังไม่ส่งอะไรเลย ──────────────
        เดิมวน prepare→import ทีละทีม พอทีมท้าย ๆ เจอ "เป้าจะขาด" แล้วถาม
@@ -7687,6 +8538,8 @@ async function doLakehouseUpload() {
     const legacyJobs = [];  // server รุ่นเก่าที่ไม่มี prepare — ต้องส่งรวดเดียว
     const pendingShortfall = [];
     const pendingMismatch = [];
+    const pendingUnverifiable = [];
+    const pendingStale = [];
 
     for (let i = 0; i < supIds.length; i++) {
       const supId = supIds[i];
@@ -7698,16 +8551,19 @@ async function doLakehouseUpload() {
       jobs.push({ supId, basePayload, token: null });
     }
 
-    /* วนเตรียมจนกว่าทุกทีมจะได้ token — ประตูฝั่ง server มี 2 ด่าน
+    /* วนเตรียมจนกว่าทุกทีมจะได้ token — ประตูฝั่ง server มี 3 ด่าน
          1) ยอดไม่ตรงเป้าทีม  (409 send_target_mismatch)
-         2) เป้าจะขาดเพราะไม่มีใน TGA (409 send_target_shortfall)
+         2) SKU ที่ส่งไม่ครบจะถูกตัดทั้งตัว (409 send_target_shortfall)
+         3) ไม่มีไฟล์เป้าให้ตรวจเลย (409 send_target_unverifiable)
        ทีมหนึ่งอาจติดด่าน 1 ก่อน พอยืนยันแล้วเตรียมใหม่ค่อยไปติดด่าน 2
-       จึงต้องวนซ้ำได้ ไม่ใช่ผ่านรอบเดียวจบ — แต่ถามผู้ใช้ด่านละครั้งเท่านั้น */
-    for (let round = 0; round < 3; round++) {
+       จึงต้องวนซ้ำได้ ไม่ใช่ผ่านรอบเดียวจบ — แต่ถามผู้ใช้ด่านละครั้งเท่านั้น
+       เพดานต้องมากกว่าจำนวนด่านอย่างน้อย 1 รอบ ไว้ให้รอบสุดท้ายได้เตรียมไฟล์จริง */
+    for (let round = 0; round < 8; round++) {
       const todo = jobs.filter((j) => !j.token);
-      if (!todo.length) break;
       pendingShortfall.length = 0;
       pendingMismatch.length = 0;
+      pendingUnverifiable.length = 0;
+      pendingStale.length = 0;
 
       for (let i = 0; i < todo.length; i++) {
         const job = todo[i];
@@ -7742,6 +8598,14 @@ async function doLakehouseUpload() {
           pendingShortfall.push({ supId: job.supId, detail: prep.detail });
           continue;
         }
+        if (!prepRes.ok && prep?.detail?.code === "send_target_unverifiable") {
+          pendingUnverifiable.push({ supId: job.supId, detail: prep.detail });
+          continue;
+        }
+        if (!prepRes.ok && prep?.detail?.code === "send_target_stale") {
+          pendingStale.push({ supId: job.supId, detail: prep.detail });
+          continue;
+        }
 
         if (!prepRes.ok) {
           const detail = prep.detail;
@@ -7754,13 +8618,25 @@ async function doLakehouseUpload() {
         if (!prep.prepare_token) {
           throw new Error(`เตรียมไฟล์ไม่สำเร็จ — ไม่ได้ prepare_token (${job.supId})`);
         }
-        if (Array.isArray(prep.shortfall) && prep.shortfall.length) {
-          manualTopupList = manualTopupList.concat(prep.shortfall);
-        }
+        shortfallBySup.set(job.supId, Array.isArray(prep.shortfall) ? prep.shortfall : []);
         job.token = prep.prepare_token;
       }
 
-      if (!jobs.some((j) => !j.token)) break;
+      /* เตรียมครบทุกทีมแล้ว — ตรวจยอดรวมทั้งชุดก่อน ยังไม่ส่งอะไรทั้งสิ้น
+         ถ้าทีมหนึ่งตัด SKU ไป อีกทีมต้องตัดชุดเดียวกัน แล้วเตรียมใหม่อีกรอบ */
+      if (!jobs.some((j) => !j.token)) {
+        const verdict = await _verifySendBatchBeforeImport(jobs);
+        if (verdict.ok) break;
+        if (!verdict.excludeSkus) return;   // ยอดรวมภาคไม่ตรง — ไม่ส่งทีมไหนเลย
+        jobs.forEach((j) => {
+          if (j.token === "__legacy__") return;
+          j.basePayload.exclude_skus = verdict.excludeSkus;
+          // ผู้ใช้เห็นรายการ SKU ที่ถูกตัดและกดยืนยันมาแล้วตั้งแต่ด่านรายทีม
+          j.basePayload.confirm_manual_topup = true;
+          j.token = null;
+        });
+        continue;
+      }
 
       /* ── ถามด่านละครั้ง ก่อนส่งทีมแรกเสมอ ─────────────────────────── */
       if (pendingMismatch.length && !confirmedMismatch) {
@@ -7782,13 +8658,34 @@ async function doLakehouseUpload() {
         pushGlobalBusy(UX.busySendStep1, UX.busySendTargetHint);
         if (!goOn) return;
         confirmedManualTopup = true;
-        manualTopupList = manualTopupList.concat(merged);
+        // ไม่ต้องเก็บ merged ไว้เอง — รอบถัดไปที่เตรียมสำเร็จ server จะคืน shortfall
+        // ชุดเดียวกันกลับมาใน prep.shortfall แล้วเก็บลง shortfallBySup รายทีม
         jobs.forEach((j) => { if (!j.token) j.basePayload.confirm_manual_topup = true; });
+        continue;
+      }
+      if (pendingUnverifiable.length && !confirmedUnverifiable) {
+        popGlobalBusy();
+        const goOn = await _confirmUnverifiableTargetBeforeSend(pendingUnverifiable);
+        pushGlobalBusy(UX.busySendStep1, UX.busySendTargetHint);
+        if (!goOn) return;
+        confirmedUnverifiable = true;
+        jobs.forEach((j) => { if (!j.token) j.basePayload.confirm_unverifiable_target = true; });
+        continue;
+      }
+      if (pendingStale.length && !confirmedStale) {
+        popGlobalBusy();
+        const goOn = await _confirmStaleTargetBeforeSend(pendingStale);
+        pushGlobalBusy(UX.busySendStep1, UX.busySendTargetHint);
+        if (!goOn) return;
+        confirmedStale = true;
+        jobs.forEach((j) => { if (!j.token) j.basePayload.confirm_stale_target = true; });
         continue;
       }
 
       // ยืนยันไปแล้วแต่ยังติดอยู่ — อย่าวนต่อจนไม่รู้จบ
-      const stuck = (pendingMismatch[0] || pendingShortfall[0])?.detail;
+      const stuck = (
+        pendingMismatch[0] || pendingShortfall[0] || pendingUnverifiable[0] || pendingStale[0]
+      )?.detail;
       throw new Error(_userFacingError(stuck?.message || "", "เตรียมไฟล์ไม่สำเร็จ"));
     }
     jobs = jobs.filter((j) => j.token && j.token !== "__legacy__");
@@ -7797,10 +8694,18 @@ async function doLakehouseUpload() {
     for (let i = 0; i < legacyJobs.length; i++) {
       const { basePayload } = legacyJobs[i];
       if (confirmedManualTopup) basePayload.confirm_manual_topup = true;
-      if (!(await _importTargetSunForPayload(basePayload))) return;
+      if (!(await _importTargetSunForPayload(basePayload))) {
+        // หยุดที่ทีมนี้ แต่ต้องไม่ทิ้งงานสรุปท้ายฟังก์ชัน — ผู้ใช้ต้องรู้ว่า
+        // ทีมก่อนหน้าส่งไปแล้วจริง ๆ และเหลือทีมไหนที่ยังไม่ได้ส่ง
+        failedSup = { supId: basePayload.sup_id };
+        legacyJobs.slice(i + 1).forEach((x) => notSentSupIds.push(x.supId));
+        jobs.forEach((x) => notSentSupIds.push(x.supId));
+        break;
+      }
+      sentSupIds.push(basePayload.sup_id);
       sentCount += 1;
     }
-    for (let i = 0; i < jobs.length; i++) {
+    for (let i = 0; i < jobs.length && !failedSup; i++) {
       const { supId, basePayload, token } = jobs[i];
       const base = Math.round(45 + (45 * i) / Math.max(1, jobs.length));
       setGlobalBusyProgress(base, UX.busySendStep2,
@@ -7818,13 +8723,26 @@ async function doLakehouseUpload() {
       const { res, j } = await _fetchTargetSunImport(importBody);
       _clearTargetSunProgressTimer();
       setGlobalBusyProgress(95, "กำลังสรุปผล…", UX.busySendTargetHint);
-      if (!_handleTargetSunImportResponse(res, j, { supId: basePayload.sup_id })) return;
+      if (!_handleTargetSunImportResponse(res, j, { supId: basePayload.sup_id })) {
+        failedSup = { supId: basePayload.sup_id };
+        jobs.slice(i + 1).forEach((x) => notSentSupIds.push(x.supId));
+        break;
+      }
+      // ปลายทางตอบว่าสำเร็จได้ทั้งที่กินไม่ครบ — เก็บไว้แจ้งทีเดียวหลังส่งจบ
+      if (j?.readback?.checked && j.readback.ok === false) {
+        readbackIssues.push({ supId: basePayload.sup_id, readback: j.readback });
+      }
+      sentSupIds.push(basePayload.sup_id);
       sentCount += 1;
     }
-    if (sentCount === 0) {
+    if (sentCount === 0 && !failedSup) {
       throw new Error("ไม่มีข้อมูลที่ส่งได้ — ตรวจแบรนด์และผลกระจายหีบ");
     }
-    setGlobalBusyProgress(100, "ส่งเข้า Target Sun เสร็จแล้ว", "");
+    setGlobalBusyProgress(
+      100,
+      failedSup ? "หยุดกลางคัน — ดูสรุปผลรายทีม" : "ส่งเข้า Target Sun เสร็จแล้ว",
+      ""
+    );
   } catch (err) {
     toast("❌ ส่งข้อมูลไม่สำเร็จ: " + _userFacingError(err), "red");
   } finally {
@@ -7834,13 +8752,79 @@ async function doLakehouseUpload() {
 
   // ส่งเสร็จแล้วค่อยเตือน — รายการที่ต้องไปเพิ่มจำนวนเองใน Target Sun
   // ต้องอยู่หลัง popGlobalBusy ไม่งั้น modal จะโดน overlay บัง
-  const pending = _mergeShortfall([manualTopupList]);
+  const pending = _mergeShortfall([...shortfallBySup.values()]);
+
+  // ส่งไม่ครบทุกทีม — บอกให้ชัดว่าอะไรเข้าไปแล้วบ้าง เพราะย้อนคืนไม่ได้
+  if (failedSup) {
+    _showPartialSendSummaryModal({
+      sent: sentSupIds,
+      failed: failedSup.supId,
+      notSent: notSentSupIds,
+      pending,
+    });
+    return;
+  }
+
+  // ยอดลงจริงไม่ตรงไฟล์ด่วนกว่า และเปิดได้ทีละกล่อง — ถ้ามีรายการที่ต้องไปเกลี่ยเองด้วย
+  // ให้พ่วงเป็นบรรทัดเดียวในกล่องเดียวกัน จะได้ไม่หายไปเงียบ ๆ
+  if (readbackIssues.length) {
+    _showReadbackMismatchModal(
+      readbackIssues,
+      pending.length
+        ? `<p style="margin:10px 0 0;text-align:left;line-height:1.7;color:var(--amber);">`
+          + `นอกจากนี้ยังมี <strong>${pending.length}</strong> SKU ที่ไม่ได้ถูกส่ง `
+          + `และต้องไปเกลี่ยหีบเองใน Target Sun</p>`
+        : ""
+    );
+    return;
+  }
+
   if (sentCount > 0 && pending.length) {
     _showShortfallModal(
       { shortfall: pending, shortfall_boxes: pending.reduce((s, x) => s + x.missing_boxes, 0) },
       { alreadySent: true }
     );
   }
+}
+
+/* สรุปผลเมื่อส่งหลายทีมแล้วหยุดกลางคัน
+
+   เดิมเจอทีมล้มแล้ว return ทันที ผู้ใช้เห็นแค่ toast ว่าทีมนั้นล้ม โดยไม่รู้ว่า
+   ทีมก่อนหน้าเข้า Target Sun ไปแล้ว (ย้อนไม่ได้) และไม่รู้ว่าเหลือทีมไหน
+   ที่ยังไม่ได้ส่ง — ต้องส่งซ้ำเฉพาะทีมที่เหลือ ไม่ใช่ส่งใหม่ทั้งชุด */
+function _showPartialSendSummaryModal({ sent, failed, notSent, pending }) {
+  const chip = (s, cls) =>
+    `<span class="send-sum__chip send-sum__chip--${cls}">${escapeHtml(s)}</span>`;
+  const line = (label, ids, cls, note) =>
+    !ids.length
+      ? ""
+      : `<div class="send-sum__row">
+           <div class="send-sum__label">${escapeHtml(label)} (${ids.length})</div>
+           <div class="send-sum__ids">${ids.map((s) => chip(s, cls)).join("")}</div>
+           ${note ? `<div class="send-sum__note">${note}</div>` : ""}
+         </div>`;
+
+  _showInfoModal({
+    title: "ส่งไม่ครบทุกทีม",
+    bodyHtml: `
+      <div class="send-sum">
+        ${line("เข้า Target Sun แล้ว", sent, "ok",
+               "ข้อมูลเข้าไปแล้วจริง ย้อนคืนไม่ได้ — ห้ามส่งทีมเหล่านี้ซ้ำ")}
+        ${line("ล้มที่ทีมนี้", [failed], "bad",
+               "ดูข้อความที่เพิ่งแจ้งเพื่อแก้ต้นเหตุ แล้วส่งทีมนี้ใหม่")}
+        ${line("ยังไม่ได้ส่ง", notSent, "wait",
+               "หยุดไว้ตั้งแต่ทีมที่ล้ม — ยังไม่มีอะไรเข้า Target Sun")}
+        ${
+          pending.length
+            ? `<p class="send-sum__pending">นอกจากนี้ยังมี <strong>${pending.length}</strong> `
+              + `SKU ที่ไม่ได้ถูกส่ง ต้องไปเกลี่ยหีบเองใน Target Sun</p>`
+            : ""
+        }
+        <p class="send-sum__how">วิธีส่งต่อ: แก้ต้นเหตุแล้วเลือกเฉพาะทีมที่ยังไม่เข้า
+          แล้วกดส่งใหม่ — อย่ากดส่งทั้งชุดซ้ำ</p>
+      </div>`,
+    secondaryLabel: "รับทราบ",
+  });
 }
 
 async function doLakehouseValidateOnly() {
@@ -8113,30 +9097,130 @@ function _discardDraftStartFresh() {
   _updateNegGrowthReasonState();
   _renderBrandStrategyPanel();
   syncLakehouseButton();
-  if (typeof syncStep3ResultFabricNote === "function") {
-    syncStep3ResultFabricNote();
+}
+
+/**
+ * แจ้งเตือนมุมขวาบน
+ *
+ * เดิมรู้จักแค่ "green" ที่เหลือถูกวาดเป็นสีแดงหมด — ข้อความเตือน 18 จุดที่ส่ง
+ * "amber" มาจึงหน้าตาเหมือน error ทำให้คนชินกับสีแดงแล้วเลิกอ่าน
+ *
+ * ซ้อนกันได้ (เดิมทับกันที่พิกัดเดิม) และปิดเองได้ ส่วนสีแดงอยู่นานกว่าเพราะ
+ * มักเป็นข้อความที่ต้องอ่านจริง ๆ
+ */
+const TOAST_KINDS = {
+  green: { bg: "var(--green-bg)", brd: "var(--green-brd)", fg: "var(--green)", ms: 5000 },
+  amber: { bg: "var(--amber-bg)", brd: "var(--amber-brd)", fg: "var(--amber)", ms: 7000 },
+  red: { bg: "var(--red-bg)", brd: "var(--red-brd)", fg: "var(--red)", ms: 10000 },
+};
+
+/* ── แปลงข้อความเป็นตัวเลข — ที่เดียวสำหรับทุกช่องกรอก ────────────────────
+   เดิมมีสามสูตรที่ให้คำตอบต่างกันกับ input เดียวกัน:
+     ช่องหีบพิมพ์เอง  parseInt(ตัดทุกอย่างที่ไม่ใช่ 0-9)  "1.5" → 15, "-3" → 3
+     ช่องหีบวาง       parseInt(ตัด comma)                "1.5" → 1
+     ช่องเงิน/บิว     parseFloat(ตัด comma)              "1.5" → 1.5
+   ตัวเลขที่แก้มือกลายเป็น locked_edit ที่ engine ถือว่าเป็นเจตนาของผู้ใช้
+   ค่าที่เพี้ยนตรงนี้จึงลามไปทั้งการกระจาย                                  */
+const _THAI_DIGITS = "๐๑๒๓๔๕๖๗๘๙";
+
+function _normalizeNumericText(raw) {
+  let s = String(raw ?? "").trim();
+  if (!s) return "";
+  s = s.replace(/[๐-๙]/g, (d) => String(_THAI_DIGITS.indexOf(d)));
+  return s.replace(/[,\s ]/g, "");
+}
+
+/** จำนวนหีบ — จำนวนเต็มไม่ติดลบ; invalid = พิมพ์อะไรที่ไม่ใช่ตัวเลขล้วน */
+function parseBoxCount(raw) {
+  const s = _normalizeNumericText(raw);
+  if (s === "") return { value: 0, invalid: false };
+  const n = Number(s);
+  if (!Number.isFinite(n)) return { value: 0, invalid: true };
+  const value = Math.max(0, Math.round(n));
+  return { value, invalid: !/^\d+$/.test(s) };
+}
+
+/**
+ * วางค่าลงช่องจำนวนหีบ — ใช้ตัวแปลงตัวเดียวกับการพิมพ์เอง
+ *
+ * เดิมเป็น inline onpaste ที่เรียก document.execCommand('insertText') ซึ่งเลิกใช้แล้ว
+ * และใช้สูตรแปลงเลขคนละตัวกับตอนพิมพ์ ทำให้ผลต่างกันกับ input เดียวกัน
+ */
+function onResultCellPaste(event, el) {
+  event.preventDefault();
+  const raw = (event.clipboardData || window.clipboardData)?.getData("text") ?? "";
+  const { value } = parseBoxCount(raw);
+  el.textContent = value.toLocaleString("th-TH");
+  // ให้เคอร์เซอร์ไปท้ายข้อความ ไม่งั้นพิมพ์ต่อแล้วตัวเลขสลับตำแหน่ง
+  const sel = window.getSelection?.();
+  if (sel && el.firstChild) {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(range);
   }
 }
 
+/** จำนวนเงิน — ทศนิยมได้ ไม่ติดลบ */
+function parseMoney(raw) {
+  const s = _normalizeNumericText(raw);
+  if (s === "") return { value: 0, invalid: false };
+  const n = Number(s);
+  if (!Number.isFinite(n)) return { value: 0, invalid: true };
+  return { value: Math.max(0, n), invalid: n < 0 };
+}
+
+function _toastStack() {
+  let stack = document.getElementById("appToastStack");
+  if (!stack) {
+    stack = document.createElement("div");
+    stack.id = "appToastStack";
+    Object.assign(stack.style, {
+      position: "fixed", top: "60px", right: "20px", zIndex: "100001",
+      display: "flex", flexDirection: "column", gap: "8px",
+      alignItems: "flex-end", pointerEvents: "none", maxWidth: "min(420px, 92vw)",
+    });
+    document.body.appendChild(stack);
+  }
+  return stack;
+}
+
 function toast(msg, type = "red") {
+  const kind = TOAST_KINDS[String(type || "").toLowerCase()] || TOAST_KINDS.red;
   const el = document.createElement("div");
   el.setAttribute("data-app-toast", "1");
+  el.setAttribute("role", kind === TOAST_KINDS.red ? "alert" : "status");
+
+  const body = document.createElement("div");
   // ใช้ textContent แทน innerHTML กัน XSS จาก error message ของ API
-  msg.split("\n").forEach((line, i) => {
-    if (i > 0) el.appendChild(document.createElement("br"));
-    el.appendChild(document.createTextNode(line));
+  String(msg).split("\n").forEach((line, i) => {
+    if (i > 0) body.appendChild(document.createElement("br"));
+    body.appendChild(document.createTextNode(line));
   });
-  const isGreen = type === "green";
+
+  const close = document.createElement("button");
+  close.type = "button";
+  close.textContent = "✕";
+  close.setAttribute("aria-label", "ปิดข้อความนี้");
+  Object.assign(close.style, {
+    background: "none", border: "none", color: "inherit", cursor: "pointer",
+    fontSize: "13px", lineHeight: "1", padding: "2px 0 0 4px", opacity: ".65",
+  });
+  close.onclick = () => el.remove();
+
   Object.assign(el.style, {
-    position: "fixed", top: "60px", right: "20px", zIndex: "100001",
-    background: isGreen ? "var(--green-bg)" : "var(--red-bg)",
-    border: `1px solid ${isGreen ? "var(--green-brd)" : "var(--red-brd)"}`,
-    color: isGreen ? "var(--green)" : "var(--red)",
-    padding: "10px 18px", borderRadius: "8px", fontSize: "13px",
-    maxWidth: "400px", boxShadow: "0 4px 12px rgba(0,0,0,.1)", lineHeight: "1.5",
+    background: kind.bg,
+    border: `1px solid ${kind.brd}`,
+    color: kind.fg,
+    padding: "10px 14px 10px 18px", borderRadius: "8px", fontSize: "13px",
+    boxShadow: "0 4px 12px rgba(0,0,0,.1)", lineHeight: "1.5",
+    display: "flex", alignItems: "flex-start", gap: "8px", pointerEvents: "auto",
   });
-  document.body.appendChild(el);
-  setTimeout(() => el.remove(), 5000);
+  el.appendChild(body);
+  el.appendChild(close);
+  _toastStack().appendChild(el);
+  setTimeout(() => el.remove(), kind.ms);
 }
 
 /* ══════════════════════════════════════════════
@@ -9243,6 +10327,8 @@ function saveDraft(silent = false) {
   try {
     _persistDraftToLocal(draftKey, draftData);
     S._hasUnsaved = false;
+    // เป้าเงินขั้นที่ 2 ถูกเก็บลงแบบร่างแล้ว (draftData.yellow) ไม่ต้องเตือนตอนปิดแท็บอีก
+    S._step2Dirty = false;
     _saveAllocationSnapshot();
     checkSnapshotChanges();
     // อย่าฮาร์ดโค้ด "draft": ฟังก์ชันนี้ถูกเรียกตอน "โหลดแบบร่าง" ด้วย (:8293)
@@ -9352,7 +10438,6 @@ function checkAndLoadDraft() {
         buildBrandTabs(S.allocations);
         renderResult(S.allocations);
         syncLakehouseButton();
-        syncStep3ResultFabricNote();
         qs("#runEmoji").textContent = "✅";
         qs("#runTitle").textContent = "โหลดแบบร่างสำเร็จ";
         qs("#runSub").textContent = "กรองแบรนด์ · แก้ตัวเลข · ดาวน์โหลด Excel";
@@ -10033,12 +11118,14 @@ function showManualModal() {
   _manualStepIdx = 0;
   _renderManualStep();
   const m = document.getElementById("manualModal");
-  if (m) m.style.display = "flex";
+  if (m) {
+    m.style.display = "flex";
+    _staticModalUnbind.manualModal = bindModalBehaviour(m, closeManualModal);
+  }
 }
 
 function closeManualModal() {
-  const m = document.getElementById("manualModal");
-  if (m) m.style.display = "none";
+  _closeStaticModal("manualModal");
 }
 
 function closeManualModalOnBg(e) {
@@ -10121,7 +11208,8 @@ function toggleBuiColumn() {
 function onBuiChange(input) {
   if (_isStep2ReadOnlyView()) return;
   const emp = input.dataset.emp;
-  const val = Math.max(0, parseFloat(String(input.value).replace(/,/g, "")) || 0);
+  const val = parseMoney(input.value).value;
+  S._step2Dirty = true;
   if (val > 0) S.buiDeductions[emp] = val;
   else delete S.buiDeductions[emp];
   renderYellowTable();
@@ -10688,6 +11776,20 @@ function _adminValidateAccessDraft(draft) {
 const ADMIN_DIVISION_OPTS = ["", "Div.B", "Div.E", "Div.S"];
 const ADMIN_UNIT_OPTS = ["", "van", "credit"];
 
+// ขอบเขตของ "แอดมินภาค" — แก้ผู้ใช้คนไหนได้บ้าง (ต้องตรงกับ ASSIGNABLE_ADMIN_SCOPES ฝั่ง backend)
+// เรียงแคบ → กว้าง ให้ค่าที่ปลอดภัยสุดอยู่บนสุดของรายการ
+const ADMIN_SCOPE_OPTS = [
+  ["division_region", "ดิวิชัน + ภาคของตัวเอง"],
+  ["division", "ทั้งดิวิชันของตัวเอง"],
+  ["all", "ทุกคนในระบบ"],
+];
+const ADMIN_SCOPE_DEFAULT = "division_region";
+const ADMIN_SCOPE_DETAIL = {
+  division_region: "ดูแลได้เฉพาะคนที่อยู่ดิวิชัน + ภาคเดียวกับตัวเอง (แคบสุด)",
+  division: "ดูแลได้ทุกคนในดิวิชันเดียวกับตัวเอง ทุกภาค",
+  all: "ดูแลได้ทุกคนในระบบ รวมคนที่ยังไม่มีภาค/ดิวิชัน — ใช้สำหรับคนที่ต้องเก็บงานข้อมูลไม่ครบ",
+};
+
 function _adminInlineFieldHtml(label, innerHtml, wrapAttr) {
   const wrap = wrapAttr ? ` ${wrapAttr}` : "";
   return `<label class="admin-inline-field"${wrap}><span class="admin-inline-field__label">${escapeHtml(label)}</span>${innerHtml}</label>`;
@@ -10722,16 +11824,20 @@ function updateAdminNavVisibility() {
   const loginBtn = document.getElementById("adminNavLoginBtn");
   const onLogin = document.getElementById("loginView")?.style.display !== "none";
   const inAdmin = document.getElementById("adminView")?.style.display !== "none";
-  const adminUi = (S.isAdmin || S.isMarketing) && !S.viewAsEmail;
+  const adminUi = (S.isAdmin || S.isRegionAdmin || S.isMarketing) && !S.viewAsEmail;
   if (topBtn) {
     topBtn.style.display = adminUi && !onLogin && !inAdmin ? "inline-flex" : "none";
     if (S.isMarketing && !S.isAdmin) {
       topBtn.textContent = "ทีมพนักงาน";
+    } else if (S.isRegionAdmin) {
+      topBtn.textContent = "แอดมินภาค";
     } else {
       topBtn.textContent = "แอดมิน";
     }
   }
   if (loginBtn && !document.body.classList.contains("is-admin-login-only")) {
+    // แอดมินรายภาคเป็น super manager ที่ใช้ dashboard ด้วย — ปุ่มนี้อยู่บน topbar พอ
+    // ไม่ต้องดันขึ้นหน้าล็อกอินแบบ dev (ที่ไม่ได้ใช้ dashboard)
     loginBtn.style.display = S.isAdmin && onLogin ? "block" : "none";
     if (S.isAdmin && onLogin) {
       loginBtn.textContent = "จัดการสิทธิ์ผู้ใช้ (แอดมิน)";
@@ -10791,8 +11897,8 @@ function _adminShowTablePlaceholder(message) {
 }
 
 function openAdminView(opts = {}) {
-  const teamOnly = opts.teamOnly === true || (S.isMarketing && !S.isAdmin);
-  if ((!S.isAdmin && !S.isMarketing) || S.viewAsEmail) return;
+  const teamOnly = opts.teamOnly === true || (S.isMarketing && !S.isAdmin && !S.isRegionAdmin);
+  if ((!S.isAdmin && !S.isRegionAdmin && !S.isMarketing) || S.viewAsEmail) return;
   const av = document.getElementById("adminView");
   const dash = document.getElementById("dashboardView");
   const login = document.getElementById("loginView");
@@ -10829,14 +11935,27 @@ function openAdminView(opts = {}) {
   adminLoadRows();
 }
 
+/** ผูกรหัส SL/SKU — dev และแอดมินรายภาคทำได้ (ฝั่ง server ตรวจขอบเขตภาคอีกชั้น) */
+function _canManageLinks() {
+  return !!(S.isAdmin || S.isRegionAdmin);
+}
+
+/* แท็บที่แต่ละ role เข้าได้ — null = ทุกแท็บ
+   แอดมินรายภาคไม่ได้ "แหล่งข้อมูล" (ตั้งค่าปลายทาง/แหล่งเป้า/ล้าง cache) เพราะมีผลทั้งระบบ */
+const ADMIN_TABS_MARKETING = ["team", "skuLinks", "slLinks"];
+const ADMIN_TABS_REGION = ["users", "slLinks", "skuLinks", "allocations", "usageLogs", "team"];
+
+function _adminAllowedTabs(teamOnly) {
+  if (teamOnly) return ADMIN_TABS_MARKETING;
+  if (S.isRegionAdmin && !S.isAdmin) return ADMIN_TABS_REGION;
+  return null;
+}
+
 function _adminApplyTabAccess(teamOnly) {
+  const allowed = _adminAllowedTabs(teamOnly);
   document.querySelectorAll(".admin-nav-item, .admin-tab").forEach((btn) => {
     const tab = btn.dataset.tab;
-    if (teamOnly) {
-      btn.style.display = (tab === "team" || tab === "skuLinks" || tab === "slLinks") ? "" : "none";
-    } else {
-      btn.style.display = "";
-    }
+    btn.style.display = !allowed || allowed.includes(tab) ? "" : "none";
   });
   document.querySelectorAll(".admin-nav-group").forEach((grp) => {
     const items = grp.querySelectorAll(".admin-nav-item");
@@ -10888,6 +12007,7 @@ let _adminSupervisorCodes = [];
 
 const ADMIN_TAB_META = {
   users: { group: "สิทธิ์", title: "สิทธิผู้ใช้", sub: "อีเมล + รหัส SL — แก้แล้วมีผลทันที" },
+  roles: { group: "สิทธิ์", title: "ผู้ดูแลระบบ", sub: "ใครเป็น Dev / แอดมิน และดูแลผู้ใช้ได้กว้างแค่ไหน" },
   slLinks: { group: "การผูกรหัส", title: "ผูกรหัส SL", sub: "รหัสใหม่สืบทอดสิทธิ/ทีมจากรหัสเก่า — เช่น SL524 → SL508" },
   skuLinks: { group: "การผูกรหัส", title: "ผูกรหัส SKU", sub: "รวมประวัติขายข้ามรหัสเก่า — แสดงรายการสินค้าทันทีเมื่อเปิดแท็บ" },
   data: { group: "ข้อมูล", title: "แหล่งข้อมูล", sub: "สรุปการดึง ใช้ และส่งข้อมูลในระบบ + แคช" },
@@ -10901,12 +12021,10 @@ let _adminSlLinkRows = [];
 let _adminSlLinkEditOld = null;
 
 function adminSwitchTab(tab) {
-  const teamOnly = S.isMarketing && !S.isAdmin;
-  if (teamOnly && tab !== "team" && tab !== "skuLinks" && tab !== "slLinks") {
-    tab = "team";
-  }
-  if (!S.isAdmin && (tab === "usageLogs" || tab === "allocations")) {
-    tab = teamOnly ? "team" : "users";
+  const teamOnly = S.isMarketing && !S.isAdmin && !S.isRegionAdmin;
+  const allowed = _adminAllowedTabs(teamOnly);
+  if (allowed && !allowed.includes(tab)) {
+    tab = allowed[0];
   }
   _adminActiveTab = tab || "users";
   document.querySelectorAll(".admin-nav-item, .admin-tab").forEach((btn) => {
@@ -10935,6 +12053,7 @@ function adminSwitchTab(tab) {
   if (otherActions) otherActions.style.display = _adminActiveTab === "users" ? "none" : "";
   const stats = document.getElementById("adminStats");
   if (stats) stats.style.display = _adminActiveTab === "users" ? "" : "none";
+  if (_adminActiveTab === "roles") adminInitRolesPanel();
   if (_adminActiveTab === "team") adminInitTeamPanel();
   if (_adminActiveTab === "data") {
     adminLoadInventory(false);
@@ -11468,21 +12587,112 @@ async function adminExportUserAccess() {
   }
 }
 
-async function adminRebuildHierarchy() {
-  if (!window.confirm(
-    "อัปเดตลำดับสิทธิ์จากรายชื่อผู้ใช้ปัจจุบัน?\n\n"
-    + "ระบบจะคำนวณใหม่ว่า Manager/Supervisor ดูทีม SL ไหนได้ "
-    + "และเขียน access_hierarchy.json\n"
-    + "(ควรทำหลังเพิ่มหรือแก้ผู้ใช้)"
-  )) return;
+/**
+ * ยืนยันเมื่อการอัปเดตลำดับสิทธิ์จะทำให้ผู้จัดการเห็นทีมน้อยลง
+ *
+ * เคยเกิดจริง: กดครั้งเดียว ผู้จัดการ 8 คนเหลือทีมจาก 12 → 1 โดยหน้าจอไม่บอกอะไรเลย
+ */
+function _confirmHierarchyShrink(detail) {
+  const rows = (detail?.shrinking || []).map((s) =>
+    `<div class="shortfall-sku"><div class="shortfall-sku__head"><div>`
+    + `<code class="shortfall-sku__code">${escH(String(s.manager_code || ""))}</code>`
+    + `<div class="shortfall-sku__nums">ทีมใต้สังกัด ${Number(s.before) || 0} → `
+    + `<strong style="color:var(--red);">${Number(s.after) || 0}</strong></div>`
+    + `</div></div></div>`
+  ).join("");
+  return new Promise((resolve) => {
+    let decided = false;
+    _showInfoModal({
+      title: "จะทำให้ผู้จัดการเห็นทีมน้อยลง — ยังไม่อัปเดต",
+      bodyHtml:
+        `<p style="margin:0;text-align:left;line-height:1.7;">`
+        + `ผู้จัดการ <strong>${Number(detail?.shrinking_count) || 0} คน</strong> จะเห็นทีมใต้สังกัดน้อยลง</p>`
+        + `<p style="margin:10px 0 0;text-align:left;line-height:1.7;color:var(--text-2);">`
+        + `มักเกิดเมื่อแถวของผู้จัดการไม่มี Division/ภาค ระบบจึงคำนวณทีมกลับไม่ได้ — `
+        + `<strong>ควรเติมข้อมูลให้ครบก่อน</strong> หรือนำเข้าจากไฟล์ roster ใหม่</p>`
+        + `<div class="shortfall-list">${rows}</div>`,
+      primaryLabel: "ยืนยันอัปเดตทั้งที่ทีมจะหด",
+      onPrimary: () => { decided = true; resolve(true); },
+      secondaryLabel: "ยกเลิก",
+      onSecondary: () => { if (!decided) { decided = true; resolve(false); } },
+    });
+  });
+}
+
+/* อัปเดตลำดับสิทธิ์ให้เองหลังแก้รายชื่อ — ไม่ต้องให้คนจำว่าต้องกดปุ่ม
+
+   เป็นขั้นตอนที่ลืมกันบ่อยที่สุด: เพิ่มผู้ใช้แล้วไม่กด คนนั้นจะยังไม่เห็นทีมตัวเอง
+   ทำอัตโนมัติได้อย่างปลอดภัยเพราะ server มีด่านกันอยู่แล้ว — ถ้าผลลัพธ์จะทำให้
+   ผู้จัดการคนไหนเห็นทีมน้อยลง จะตอบ 409 กลับมา เราจะ **ไม่ยืนยันแทนผู้ใช้**
+   แต่บอกให้ไปกดปุ่มเองเพื่อดูรายชื่อก่อนตัดสินใจ
+
+   @returns {"ok"|"needs_review"|"failed"} */
+async function _autoRebuildHierarchy() {
   try {
-    const res = await fetchWithTimeout(`${API_BASE_URL}/admin/access-hierarchy/rebuild`, { method: "POST" }, 60000);
+    const res = await fetchWithTimeout(
+      `${API_BASE_URL}/admin/access-hierarchy/rebuild`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm_shrink: false }),
+      },
+      60000
+    );
+    if (res.ok) return "ok";
     const j = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(j.detail || "อัปเดตไม่สำเร็จ");
+    if (j?.detail?.code === "hierarchy_rebuild_shrinks_teams") return "needs_review";
+    return "failed";
+  } catch (_) {
+    return "failed";
+  }
+}
+
+/** บอกผลการอัปเดตอัตโนมัติต่อท้ายข้อความหลัก โดยไม่กลบข้อความว่างานหลักสำเร็จแล้ว */
+function _toastWithAutoRebuild(mainMsg, status) {
+  if (status === "ok") {
+    toast(`${mainMsg} · อัปเดตลำดับสิทธิ์ให้แล้ว`, "green");
+  } else if (status === "needs_review") {
+    toast(`${mainMsg} — แต่ลำดับสิทธิ์ยังไม่อัปเดต`, "green");
+    toast('การอัปเดตจะทำให้บางทีมเล็กลง — กด "อัปเดตลำดับสิทธิ์" เพื่อดูรายชื่อก่อนยืนยัน', "amber");
+  } else {
+    toast(`${mainMsg} — แต่อัปเดตลำดับสิทธิ์ไม่สำเร็จ`, "green");
+    toast('กด "อัปเดตลำดับสิทธิ์" อีกครั้งด้วยตัวเอง', "amber");
+  }
+}
+
+async function adminRebuildHierarchy() {
+  const ok = await _confirmDialog(
+    "ระบบจะคำนวณใหม่ว่า Manager/Supervisor ดูทีม SL ไหนได้ แล้วเขียน access_hierarchy.json\n"
+    + "ควรทำหลังเพิ่มหรือแก้ผู้ใช้",
+    { title: "อัปเดตลำดับสิทธิ์จากรายชื่อผู้ใช้ปัจจุบัน", okLabel: "อัปเดต", cancelLabel: "ยกเลิก" }
+  );
+  if (!ok) return;
+
+  const post = async (confirmShrink) => {
+    const res = await fetchWithTimeout(
+      `${API_BASE_URL}/admin/access-hierarchy/rebuild`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm_shrink: !!confirmShrink }),
+      },
+      60000
+    );
+    return { res, j: await res.json().catch(() => ({})) };
+  };
+
+  try {
+    let { res, j } = await post(false);
+    // server กันไว้เมื่อผลลัพธ์จะตัดทีมของผู้จัดการ — ต้องให้คนเห็นก่อนตัดสินใจ
+    if (!res.ok && j?.detail?.code === "hierarchy_rebuild_shrinks_teams") {
+      if (!await _confirmHierarchyShrink(j.detail)) return;
+      ({ res, j } = await post(true));
+    }
+    if (!res.ok) throw new Error(_userFacingError(_formatApiErrorDetail(j), "อัปเดตไม่สำเร็จ"));
     toast(`อัปเดตลำดับสิทธิ์แล้ว — ผจก. ${j.manager_count} คน · ซุป ${j.supervisor_count} ทีม`, "green");
     await adminLoadRows();
   } catch (e) {
-    toast(e.message, "red");
+    toast(_userFacingError(e), "red");
   }
 }
 
@@ -11596,7 +12806,7 @@ function _renderAdminSkuCatalogBody(rows) {
     body.innerHTML = `<tr><td colspan="6" class="admin-empty">ไม่พบรายการที่ตรงกับคำค้น</td></tr>`;
     return;
   }
-  const canEdit = !!S.isAdmin;
+  const canEdit = _canManageLinks();
   body.innerHTML = rows.map((r) => {
     const sku = String(r.sku || "").trim();
     const canon = String(r.canonical_sku || sku).trim();
@@ -11695,7 +12905,7 @@ async function adminLoadSkuLinks() {
 }
 
 async function adminSkuLinkSaveInline(canon) {
-  if (!S.isAdmin) return;
+  if (!_canManageLinks()) return;
   const sku = String(canon || "").trim();
   if (!sku) return;
   const input = document.getElementById(`adminSkuAlias-${sku}`);
@@ -11727,7 +12937,7 @@ async function adminSkuLinkSaveInline(canon) {
 }
 
 async function adminSkuLinkClearInline(canon) {
-  if (!S.isAdmin) return;
+  if (!_canManageLinks()) return;
   const sku = String(canon || "").trim();
   if (!sku || !confirm(`ลบการผูกรหัส ${sku}?`)) return;
   try {
@@ -11818,7 +13028,7 @@ async function adminLoadSkuCatalog() {
 
 function adminInitSlLinksPanel() {
   const addBtn = document.getElementById("adminSlLinkAddBtn");
-  if (addBtn) addBtn.style.display = S.isAdmin ? "" : "none";
+  if (addBtn) addBtn.style.display = _canManageLinks() ? "" : "none";
   adminLoadSlLinks();
 }
 
@@ -11858,7 +13068,7 @@ function adminRenderSlLinks() {
     body.innerHTML = `<tr><td colspan="4" class="admin-empty">ยังไม่มีกลุ่มผูกรหัส SL</td></tr>`;
     return;
   }
-  const canEdit = !!S.isAdmin;
+  const canEdit = _canManageLinks();
   body.innerHTML = _adminSlLinkRows.map((r) => {
     const oldSl = r.old_sl || r.canonical_sl;
     const newSls = (r.new_sls || []).join(", ");
@@ -11908,7 +13118,7 @@ function adminSlLinkEdit(oldSl) {
 }
 
 async function adminSlLinkSave() {
-  if (!S.isAdmin) return;
+  if (!_canManageLinks()) return;
   const oldSl = (document.getElementById("adminSlLinkOld")?.value || "").trim().toUpperCase();
   const newSls = String(document.getElementById("adminSlLinkNew")?.value || "")
     .split(/[,;\s]+/)
@@ -11942,7 +13152,7 @@ async function adminSlLinkSave() {
 }
 
 async function adminSlLinkDelete(oldSl) {
-  if (!S.isAdmin) return;
+  if (!_canManageLinks()) return;
   if (!confirm(`ลบกลุ่มผูกรหัส SL ${oldSl}?`)) return;
   try {
     await _adminJsonFetch("/admin/sl-links", { method: "DELETE", body: { old_sl: oldSl } });
@@ -12395,12 +13605,38 @@ function _adminShowError(msg) {
   el.textContent = msg;
 }
 
+let _adminAddModalUnbind = null;
+/** ที่อยู่เดิมของฟอร์มในหน้า — ต้องคืนกลับให้ตรงที่เมื่อปิด */
+let _adminAddHome = null;
+
 function adminShowAddForm() {
   adminCancelInlineEdit();
   const p = document.getElementById("adminAddPanel");
   if (p) {
+    /* ต้อง "ย้าย" ฟอร์มออกมาไว้ใน backdrop ที่ระดับ body ไม่ใช่แค่ตั้ง z-index
+       เพราะฟอร์มอยู่ใน #adminView ซึ่งสร้าง stacking context ของตัวเอง
+       z-index ของลูกจึงสู้ backdrop ที่อยู่นอก context ไม่ได้ ผลคือฉากเบลอ
+       ทับฟอร์มจนพิมพ์อะไรไม่ได้ (เจอตอนผู้ใช้ลองจริง)
+       การย้าย DOM ไม่ทำให้ id/ค่าที่กรอก/onclick หาย จึงปลอดภัยกว่าการไล่แก้ z-index */
+    let backdrop = document.getElementById("adminAddBackdrop");
+    if (!backdrop) {
+      backdrop = document.createElement("div");
+      backdrop.id = "adminAddBackdrop";
+      backdrop.className = "admin-add-backdrop";
+      backdrop.addEventListener("click", (e) => {
+        if (e.target === backdrop) adminHideAddForm();
+      });
+      document.body.appendChild(backdrop);
+    }
+    if (!_adminAddHome) {
+      _adminAddHome = { parent: p.parentNode, next: p.nextSibling };
+    }
+    backdrop.appendChild(p);
     p.style.display = "block";
-    p.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    p.classList.add("is-modal");
+    p.setAttribute("role", "dialog");
+    p.setAttribute("aria-modal", "true");
+    _adminAddModalUnbind = bindModalBehaviour(p, adminHideAddForm);
   }
   adminSyncManagerLevelField();
   _adminBindVisiblePreviewListeners();
@@ -12409,7 +13645,20 @@ function adminShowAddForm() {
 
 function adminHideAddForm() {
   const p = document.getElementById("adminAddPanel");
-  if (p) p.style.display = "none";
+  if (p) {
+    p.style.display = "none";
+    p.classList.remove("is-modal");
+    p.removeAttribute("role");
+    p.removeAttribute("aria-modal");
+    if (_adminAddHome?.parent) {
+      _adminAddHome.parent.insertBefore(p, _adminAddHome.next || null);
+    }
+  }
+  document.getElementById("adminAddBackdrop")?.remove();
+  if (_adminAddModalUnbind) {
+    _adminAddModalUnbind();
+    _adminAddModalUnbind = null;
+  }
 }
 
 function adminStartInlineEdit(row) {
@@ -12419,6 +13668,16 @@ function adminStartInlineEdit(row) {
   _adminInlineEdit = {
     origEmail: (row.email || "").trim().toLowerCase(),
     origUserpl: (row.userpl || "").trim().toUpperCase(),
+    // เก็บค่าเดิมของฟิลด์ที่กำหนดลำดับชั้นไว้เทียบตอนบันทึก — จะได้รู้ว่า
+    // ต้องคำนวณ access_hierarchy ใหม่ไหม ไม่ใช่คำนวณทุกครั้งที่แก้หมายเหตุ
+    orig: {
+      userpl: row.userpl || "",
+      login_kind: resolved.login_kind || "standard",
+      manager_level: resolved.manager_level || "",
+      acc_division: row.acc_division || "",
+      acc_region: row.acc_region || "",
+      acc_unit: row.acc_unit || "",
+    },
     draft: {
       email: row.email || "",
       userpl: row.userpl || "",
@@ -12584,9 +13843,18 @@ async function adminSaveInlineEdit() {
     }
     const viewEmail = _adminInlineEdit.origEmail;
     const newEmail = draft.email;
+    const orig = _adminInlineEdit.orig || {};
     _adminInlineEdit = null;
     _adminShowError("");
+    // คำนวณลำดับสิทธิ์ใหม่เฉพาะตอนที่ค่าที่ "กำหนดลำดับชั้น" เปลี่ยนจริง
+    // (แก้หมายเหตุหรือสลับสิทธิ์ส่ง ไม่ต้องไปเขียนไฟล์ลำดับชั้นใหม่)
+    const HIER_FIELDS = ["userpl", "login_kind", "manager_level", "acc_division", "acc_region", "acc_unit"];
+    const hierChanged = HIER_FIELDS.some(
+      (k) => String(orig[k] ?? "") !== String(draft[k] ?? "")
+    );
+    const rebuilt = hierChanged ? await _autoRebuildHierarchy() : null;
     await adminLoadRows();
+    if (rebuilt) _toastWithAutoRebuild(`บันทึก ${newEmail} แล้ว`, rebuilt);
     if (S.viewAsEmail && S.viewAsEmail === viewEmail) {
       S.viewAsEmail = newEmail;
       updateViewAsBanner();
@@ -12623,6 +13891,7 @@ async function adminLoadRows() {
     adminPopulateTableFilters(S.adminRows);
     adminUpdateSortUI();
     adminFilterRows();
+    adminRenderRolesPanel();
     requestAnimationFrame(() => {
       const wrap = document.querySelector(".admin-table-wrap");
       if (wrap) wrap.scrollTop = 0;
@@ -12633,6 +13902,62 @@ async function adminLoadRows() {
   } finally {
     if (loading) loading.style.display = "none";
   }
+}
+
+/* ── ผู้ใช้ที่ข้อมูลไม่ครบ ─────────────────────────────────────────────────
+   ไม่ได้บล็อกการล็อกอิน — คนกลุ่มนี้เข้าใช้งานได้ตามปกติ เพียงแต่ระบบคำนวณ
+   "ดูทีมไหนได้" จากข้อมูลที่มี ถ้าไม่ครบก็อาจเห็นแค่ทีมตัวเอง
+
+   ทำไมต้องมีรายการนี้: ผู้จัดการที่ไม่มี Division/ภาค พอกดปุ่มอัปเดตลำดับสิทธิ์
+   ทีมใต้สังกัดจะหายจาก 12 เหลือ 1 เพราะระบบคำนวณกลับไม่ได้ (เจอของจริงมาแล้ว)
+   ตามเก็บให้ครบตั้งแต่ต้นจึงกันปัญหานั้นได้                                */
+function _adminIncompleteReasons(r) {
+  const out = [];
+  const lk = String(r.login_kind || "standard").trim();
+  const div = String(r.acc_division || "").trim();
+  const region = String(r.acc_region || "").trim();
+  const level = String(r.manager_level || "").trim();
+
+  // บัญชีผู้ดูแลอย่างเดียว — ตั้งใจไม่มีตำแหน่ง/รหัส SL ไม่ใช่ข้อมูลตกหล่น
+  if (String(r.system_role || "").trim() && !String(r.userpl || "").trim()) return out;
+
+  if (lk === "standard" || !lk) {
+    out.push("ยังไม่ระบุตำแหน่ง (Supervisor / Manager)");
+    return out;   // ยังไม่รู้ตำแหน่ง ก็ยังไม่รู้ว่าต้องมีอะไรอีก
+  }
+  if (lk === "marketing") return out;
+
+  if (!div) out.push("ไม่มี Division");
+  if (lk === "manager_acc") {
+    if (!level) out.push("ไม่ได้ระบุระดับ Manager (ภาค/Division)");
+    else if (level === "regional" && !region) out.push("Manager ระดับภาค แต่ไม่มีภาค");
+  } else if (lk === "supervisor_acc" && !region) {
+    out.push("ไม่มีภาค");
+  }
+  return out;
+}
+
+function _adminIncompleteRows(rows) {
+  return (rows || []).filter((r) => _adminIncompleteReasons(r).length > 0);
+}
+
+let _adminShowIncompleteOnly = false;
+
+function adminToggleIncompleteFilter() {
+  _adminShowIncompleteOnly = !_adminShowIncompleteOnly;
+  adminFilterRows();
+}
+
+function adminSyncIncompleteBell() {
+  const bell = document.getElementById("adminIncompleteBell");
+  const countEl = document.getElementById("adminIncompleteCount");
+  if (!bell) return;
+  const n = _adminIncompleteRows(S.adminRows).length;
+  bell.style.display = n ? "inline-flex" : "none";
+  bell.classList.toggle("admin-bell--on", _adminShowIncompleteOnly);
+  bell.setAttribute("aria-pressed", _adminShowIncompleteOnly ? "true" : "false");
+  if (countEl) countEl.textContent = String(n);
+  if (!n) _adminShowIncompleteOnly = false;
 }
 
 function adminFilterRows() {
@@ -12676,6 +14001,9 @@ function adminFilterRows() {
   } else if (tsFilter === "no") {
     filtered = filtered.filter((r) => !r.can_import_targetsun);
   }
+  if (_adminShowIncompleteOnly) {
+    filtered = filtered.filter((r) => _adminIncompleteReasons(r).length > 0);
+  }
 
   if (_adminInlineEdit) {
     const ek = _adminRowKey(_adminInlineEdit.origEmail, _adminInlineEdit.origUserpl);
@@ -12688,6 +14016,7 @@ function adminFilterRows() {
   _adminVisibleRows = filtered;
   adminRenderTable(adminSortRows(filtered));
   adminSyncFilterVisuals();
+  adminSyncIncompleteBell();
 }
 
 function adminPopulateTableFilters(rows) {
@@ -12712,6 +14041,310 @@ function adminPopulateTableFilters(rows) {
   }
 }
 
+/** ป้ายบอกว่าแถวนี้ข้อมูลไม่ครบตรงไหน — ให้แก้ได้เลยโดยไม่ต้องเดา */
+function _adminIncompleteBadgeHtml(r) {
+  const reasons = _adminIncompleteReasons(r);
+  if (!reasons.length) return "";
+  return `<div class="admin-incomplete" title="${escapeHtml(reasons.join(" · "))}">`
+    + `<span class="admin-incomplete__dot" aria-hidden="true"></span>`
+    + `<span>${escapeHtml(reasons.join(" · "))}</span></div>`;
+}
+
+/**
+ * ช่องตั้งสิทธิ์ระบบ (dev / แอดมินภาค) — เห็นเฉพาะ dev
+ *
+ * แยกจากคอลัมน์ "ตำแหน่ง" โดยตั้งใจ: ตำแหน่งคือบทบาทในงานขาย (Supervisor/Manager)
+ * ส่วนอันนี้คือสิทธิ์ในการดูแลระบบ คนละเรื่องกัน และ dev เท่านั้นที่ตั้งได้
+ * (backend ก็กันไว้อีกชั้น — role ไม่อยู่ในฟิลด์ที่แก้ผ่านฟอร์มปกติ)
+ */
+/* ป้ายบอกสิทธิ์ดูแลระบบในตารางผู้ใช้ — "อ่านอย่างเดียว" โดยตั้งใจ
+   เคยทำเป็น dropdown ทุกแถว แต่ 95 แถว = 95 ช่องเลือก ตารางรกจนอ่านไม่ออก
+   การตั้งสิทธิ์ย้ายไปหน้า "ผู้ดูแลระบบ" ที่มีคนไม่กี่คนและมีที่ให้อธิบายพอ */
+function _adminSystemRoleControlHtml(r) {
+  const cur = String(r.system_role || "").toLowerCase();
+  if (!cur) return "";
+  const scope = String(r.admin_scope || "").toLowerCase() || ADMIN_SCOPE_DEFAULT;
+  const label = cur === "dev" ? "Dev" : "แอดมิน";
+  const tip =
+    cur === "dev"
+      ? "Dev — ดูแลได้ทั้งระบบ (แก้ที่หน้า ผู้ดูแลระบบ)"
+      : `แอดมิน · ขอบเขต: ${_adminScopeLabel(scope)} (แก้ที่หน้า ผู้ดูแลระบบ)`;
+  return `<span class="admin-sysrole-chip admin-sysrole-chip--${cur}" title="${escapeHtml(tip)}">${escapeHtml(label)}</span>`;
+}
+
+function _adminScopeLabel(scope) {
+  const key = String(scope || "").toLowerCase() || ADMIN_SCOPE_DEFAULT;
+  const hit =
+    ADMIN_SCOPE_OPTS.find(([v]) => v === key) ||
+    ADMIN_SCOPE_OPTS.find(([v]) => v === ADMIN_SCOPE_DEFAULT);
+  return hit ? hit[1] : key;
+}
+
+/* ── หน้า "ผู้ดูแลระบบ" — ที่เดียวที่ตั้งสิทธิ์ dev/แอดมิน ────────────────
+   ใช้ข้อมูลชุดเดียวกับตารางผู้ใช้ (S.adminRows) ไม่มี endpoint เพิ่ม
+   แสดงเฉพาะคนที่มีสิทธิ์อยู่จริง — ปกติไม่กี่คน จึงมีที่ให้ปุ่มใหญ่และคำอธิบายครบ */
+function adminInitRolesPanel() {
+  if (!S.adminRows.length) {
+    adminLoadRows();
+    return;
+  }
+  adminRenderRolesPanel();
+}
+
+function _adminRolesRows() {
+  const seen = new Set();
+  return (S.adminRows || [])
+    .filter((r) => {
+      const role = String(r.system_role || "").toLowerCase();
+      if (!role || seen.has(r.email)) return false;   // คนเดียวอาจมีหลายแถว — โชว์ครั้งเดียว
+      seen.add(r.email);
+      return true;
+    })
+    .sort((a, b) => {
+      const ra = String(a.system_role) === "dev" ? 0 : 1;
+      const rb = String(b.system_role) === "dev" ? 0 : 1;
+      return ra - rb || String(a.email).localeCompare(String(b.email));
+    });
+}
+
+function adminRenderRolesPanel() {
+  const body = document.getElementById("adminRolesBody");
+  if (!body) return;
+  const rows = _adminRolesRows();
+  const empty = document.getElementById("adminRolesEmpty");
+  if (empty) empty.style.display = rows.length ? "none" : "";
+  body.innerHTML = "";
+  rows.forEach((r) => {
+    const isDev = String(r.system_role).toLowerCase() === "dev";
+    const scope = String(r.admin_scope || "").toLowerCase() || ADMIN_SCOPE_DEFAULT;
+    // ขอบเขตที่ไม่ใช่ "ทุกคนในระบบ" ต้องรู้ดิวิชัน/ภาคของคนนี้ ไม่งั้นขอบเขตว่าง
+    const scopeNeedsPlace = !isDev && scope !== "all";
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td class="roles-td-who">
+        <div class="roles-email">${escapeHtml(r.email)}</div>
+        <div class="roles-sub">${escapeHtml(r.userpl || "")}${
+          r.acc_region || r.acc_division
+            ? `${r.userpl ? " · " : ""}${escapeHtml([r.acc_division, r.acc_region].filter(Boolean).join(" / "))}`
+            : scopeNeedsPlace
+              ? `${r.userpl ? " · " : ""}<span class="roles-warn">ยังไม่ระบุภาค/Division — ขอบเขตนี้จึงยังใช้ไม่ได้</span>`
+              : ""
+        }</div>
+      </td>
+      <td class="roles-td-job">${
+        String(r.userpl || "").trim()
+          ? escapeHtml(_adminRoleLabel(r))
+          : '<span class="roles-onlyadmin">แอดมินอย่างเดียว</span><div class="roles-sub">ไม่มีตำแหน่งงาน · ไม่เห็นข้อมูลทีม</div>'
+      }</td>
+      <td class="roles-td-role">
+        <select class="roles-select roles-select--role" aria-label="สิทธิ์ดูแลระบบของ ${escapeHtml(r.email)}">
+          <option value="admin" ${isDev ? "" : "selected"}>แอดมิน</option>
+          <option value="dev" ${isDev ? "selected" : ""}>Dev (ทั้งระบบ)</option>
+        </select>
+      </td>
+      <td class="roles-td-scope">${
+        isDev
+          ? '<span class="roles-scope-na">ทั้งระบบ — ไม่มีขอบเขตให้จำกัด</span>'
+          : `<select class="roles-select roles-select--scope" aria-label="ขอบเขตของ ${escapeHtml(r.email)}">
+              ${ADMIN_SCOPE_OPTS.map(
+                ([v, l]) => `<option value="${v}" ${v === scope ? "selected" : ""}>${escapeHtml(l)}</option>`
+              ).join("")}
+            </select>
+            <div class="roles-scope-hint">${escapeHtml(ADMIN_SCOPE_DETAIL[scope] || "")}</div>`
+      }</td>
+      <td class="roles-td-act">
+        <button type="button" class="admin-action admin-action--del roles-revoke">ถอดสิทธิ์</button>
+      </td>`;
+    tr.querySelector(".roles-select--role")?.addEventListener("change", (e) => {
+      adminSetSystemRole(r.email, e.target.value, tr.querySelector(".roles-select--scope")?.value || "");
+    });
+    tr.querySelector(".roles-select--scope")?.addEventListener("change", (e) => {
+      adminSetSystemRole(r.email, "admin", e.target.value);
+    });
+    tr.querySelector(".roles-revoke")?.addEventListener("click", () => {
+      adminSetSystemRole(r.email, "", "");
+    });
+    body.appendChild(tr);
+  });
+}
+
+async function adminRolesShowAdd() {
+  const candidates = (S.adminRows || [])
+    .filter((r) => !String(r.system_role || "").trim())
+    .map((r) => r.email);
+  const uniq = [...new Set(candidates)].sort();
+  const regions = [...new Set(
+    (S.adminRows || []).map((r) => String(r.acc_region || "").trim()).filter(Boolean)
+  )].sort();
+  const html = `
+    <div class="roles-add">
+      <label class="roles-add__field">
+        <span>อีเมล</span>
+        <input type="email" id="rolesAddEmail" class="field-input" list="rolesAddList"
+               placeholder="เลือกคนที่มีอยู่ หรือพิมพ์อีเมลใหม่" autocomplete="off" />
+        <datalist id="rolesAddList">${uniq
+          .map((e) => `<option value="${escapeHtml(e)}"></option>`)
+          .join("")}</datalist>
+        <span class="roles-add__hint" id="rolesAddEmailHint">
+          พิมพ์อีเมลที่ยังไม่มีในระบบได้ — จะถูกสร้างเป็น<strong>บัญชีแอดมินอย่างเดียว</strong>
+          (ไม่มีตำแหน่งงาน ไม่มีรหัส SL จึงไม่เห็นข้อมูลทีมบนแดชบอร์ด)
+        </span>
+      </label>
+      <label class="roles-add__field">
+        <span>สิทธิ์</span>
+        <select id="rolesAddRole" class="field-input">
+          <option value="admin" selected>แอดมิน — จัดการผู้ใช้ตามขอบเขต</option>
+          <option value="dev">Dev — ทำได้ทุกอย่างทั้งระบบ</option>
+        </select>
+      </label>
+      <label class="roles-add__field" id="rolesAddScopeWrap">
+        <span>ขอบเขต — แก้ผู้ใช้คนไหนได้บ้าง</span>
+        <select id="rolesAddScope" class="field-input">
+          ${ADMIN_SCOPE_OPTS.map(
+            ([v, l]) =>
+              `<option value="${v}" ${v === ADMIN_SCOPE_DEFAULT ? "selected" : ""}>${escapeHtml(l)}</option>`
+          ).join("")}
+        </select>
+        <span class="roles-add__hint" id="rolesAddScopeHint">${escapeHtml(
+          ADMIN_SCOPE_DETAIL[ADMIN_SCOPE_DEFAULT] || ""
+        )}</span>
+      </label>
+      <div class="roles-add__place" id="rolesAddPlaceWrap">
+        <label class="roles-add__field">
+          <span>Division</span>
+          <select id="rolesAddDivision" class="field-input">
+            ${ADMIN_DIVISION_OPTS.map(
+              (v) => `<option value="${v}">${v || "— ยังไม่ระบุ"}</option>`
+            ).join("")}
+          </select>
+        </label>
+        <label class="roles-add__field" id="rolesAddRegionWrap">
+          <span>ภาค</span>
+          <input type="text" id="rolesAddRegion" class="field-input" list="rolesAddRegionList"
+                 placeholder="เช่น อีสาน" autocomplete="off" />
+          <datalist id="rolesAddRegionList">${regions
+            .map((v) => `<option value="${escapeHtml(v)}"></option>`)
+            .join("")}</datalist>
+        </label>
+        <p class="roles-add__hint roles-add__place-note">
+          ขอบเขตนี้คิดจาก Division/ภาค ของบัญชีนี้เอง — ถ้าเป็นคนที่มีตำแหน่งอยู่แล้ว
+          ระบบจะใช้ค่าเดิมของเขา ไม่ต้องกรอกซ้ำ
+        </p>
+      </div>
+    </div>`;
+  // ใช้ _showInfoModal ตรง ๆ เพราะต้องอ่านค่าจากช่องกรอก "ก่อน" modal ถูกถอดออก
+  const picked = await new Promise((resolve) => {
+    let done = false;
+    _showInfoModal({
+      title: "เพิ่มผู้ดูแลระบบ",
+      bodyHtml: html,
+      primaryLabel: "ให้สิทธิ์",
+      onPrimary: () => {
+        done = true;
+        resolve({
+          email: String(document.getElementById("rolesAddEmail")?.value || "").trim(),
+          role: String(document.getElementById("rolesAddRole")?.value || "admin"),
+          scope: String(document.getElementById("rolesAddScope")?.value || ADMIN_SCOPE_DEFAULT),
+          division: String(document.getElementById("rolesAddDivision")?.value || ""),
+          region: String(document.getElementById("rolesAddRegion")?.value || "").trim(),
+        });
+      },
+      secondaryLabel: "ยกเลิก",
+      onSecondary: () => { if (!done) { done = true; resolve(null); } },
+    });
+    const roleSel = document.getElementById("rolesAddRole");
+    const scopeWrap = document.getElementById("rolesAddScopeWrap");
+    const scopeSel = document.getElementById("rolesAddScope");
+    const hint = document.getElementById("rolesAddScopeHint");
+    const placeWrap = document.getElementById("rolesAddPlaceWrap");
+    const regionWrap = document.getElementById("rolesAddRegionWrap");
+    // Division/ภาค จำเป็นเฉพาะขอบเขตที่คิดจากสองค่านี้ — "ทุกคนในระบบ" กับ Dev ไม่ต้องใช้
+    const syncPlace = () => {
+      const isDev = roleSel?.value === "dev";
+      const sc = scopeSel?.value || ADMIN_SCOPE_DEFAULT;
+      if (scopeWrap) scopeWrap.style.display = isDev ? "none" : "";
+      if (placeWrap) placeWrap.style.display = !isDev && sc !== "all" ? "" : "none";
+      if (regionWrap) regionWrap.style.display = sc === "division_region" ? "" : "none";
+    };
+    roleSel?.addEventListener("change", syncPlace);
+    scopeSel?.addEventListener("change", () => {
+      if (hint) hint.textContent = ADMIN_SCOPE_DETAIL[scopeSel.value] || "";
+      syncPlace();
+    });
+    syncPlace();
+    document.getElementById("rolesAddEmail")?.focus();
+  });
+  if (!picked) return;
+  const { email, role, scope, division, region } = picked;
+  if (!email || !email.includes("@")) {
+    toast("ยังไม่ได้ระบุอีเมลให้ถูกต้อง", "amber");
+    return;
+  }
+  const isNew = !(S.adminRows || []).some((r) => r.email === email);
+  if (isNew && role === "admin" && scope !== "all" && !division) {
+    toast("ขอบเขตนี้ต้องระบุ Division ของบัญชีแอดมินด้วย", "amber");
+    return;
+  }
+  adminSetSystemRole(email, role, role === "admin" ? scope : "", {
+    division, region, isNew,
+  });
+}
+
+async function adminSetSystemRole(email, role, adminScope, opts = {}) {
+  const label = role === "dev" ? "Dev (ทั้งระบบ)" : role === "admin" ? "แอดมิน" : "ผู้ใช้ทั่วไป";
+  const scope = role === "admin" ? (adminScope || ADMIN_SCOPE_DEFAULT) : "";
+  const scopeLine = scope
+    ? `\nขอบเขต: ${_adminScopeLabel(scope)}\n` + (ADMIN_SCOPE_DETAIL[scope] || "")
+    : "";
+  const place = [opts.division, opts.region].filter(Boolean).join(" / ");
+  const newLine = opts.isNew
+    ? `\nอีเมลนี้ยังไม่มีในระบบ — จะสร้างเป็นบัญชีแอดมินอย่างเดียว ไม่มีตำแหน่งงานและไม่มีรหัส SL`
+      + (place ? ` (สังกัด ${place})` : "")
+    : "";
+  const ok = await _confirmDialog(
+    `ตั้งสิทธิ์ดูแลระบบของ ${email} เป็น "${label}"\n`
+    + (role === "dev"
+        ? "Dev เห็นและทำได้ทุกอย่างทั้งระบบ รวมการตั้งค่าปลายทางที่ส่งข้อมูลจริง"
+        : role === "admin"
+          ? "แอดมินจัดการผู้ใช้/ผูกรหัส/ดูผลกระจายได้ แต่แตะการตั้งค่าระบบไม่ได้" + scopeLine
+          : "ถอดสิทธิ์ดูแลระบบทั้งหมดของบัญชีนี้"
+            + "\n(ถ้าเป็นบัญชีแอดมินอย่างเดียว แถวนี้จะถูกลบออกไปด้วย เพราะไม่เหลือเหตุผลให้มีอยู่)")
+    + newLine,
+    { title: "เปลี่ยนสิทธิ์ดูแลระบบ", okLabel: "ยืนยัน", cancelLabel: "ยกเลิก" }
+  );
+  if (!ok) { adminLoadRows(); return; }
+  try {
+    const res = await fetchWithTimeout(
+      `${API_BASE_URL}/admin/user-access/role`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email,
+          role,
+          admin_scope: scope,
+          acc_division: opts.division || "",
+          acc_region: opts.region || "",
+        }),
+      },
+      30000
+    );
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(_userFacingError(_formatApiErrorDetail(j), "ตั้งสิทธิ์ไม่สำเร็จ"));
+    const what = j.created
+      ? `สร้างบัญชีแอดมินอย่างเดียว ${email} แล้ว`
+      : j.rows_removed
+        ? `ถอดสิทธิ์และลบบัญชีแอดมิน ${email} แล้ว`
+        : `ตั้งสิทธิ์ ${email} เป็น ${label} แล้ว (${j.rows_updated} แถว)`;
+    toast(what, "green");
+    await adminLoadRows();
+    if (_adminActiveTab === "roles") adminRenderRolesPanel();
+  } catch (e) {
+    toast(_userFacingError(e), "red");
+    adminLoadRows();
+  }
+}
+
 function _adminRenderTableRowView(tr, r) {
   const role = _adminRoleLabel(r);
   const unitRaw = (r.acc_unit || "").trim();
@@ -12727,10 +14360,14 @@ function _adminRenderTableRowView(tr, r) {
   tr.innerHTML = `
     <td class="admin-td-email" title="${escapeHtml(r.full_name || "")}">
       <div class="admin-email-primary">${escapeHtml(r.email)}</div>
+      ${_adminIncompleteBadgeHtml(r)}
       ${_adminRenderVisibleChipsHtml(visFmt)}
     </td>
     <td><code class="admin-code">${escapeHtml(r.userpl)}</code></td>
-    <td class="admin-td-role" title="${escapeHtml(roleTip)}"><span class="admin-role admin-role--${_adminRoleCssClass(r)}">${escapeHtml(role)}</span></td>
+    <td class="admin-td-role" title="${escapeHtml(roleTip)}">
+      <span class="admin-role admin-role--${_adminRoleCssClass(r)}">${escapeHtml(role)}</span>
+      ${_adminSystemRoleControlHtml(r)}
+    </td>
     <td class="admin-td-division">${escapeHtml(r.acc_division || "—")}</td>
     <td class="admin-td-region">${escapeHtml(r.acc_region || "—")}</td>
     <td class="admin-td-unit">${unit}</td>
@@ -12743,10 +14380,23 @@ function _adminRenderTableRowView(tr, r) {
     <td class="admin-td-actions">
       <div class="admin-action-group">
         <button type="button" class="admin-action admin-action--edit">แก้ไข</button>
-        <button type="button" class="admin-action admin-action--view">ดูแบบนี้</button>
+        ${
+          // "ดูแบบนี้" = สวมสิทธิ์เข้าไปเห็นข้อมูลของคนอื่น — สงวนไว้ให้ dev เท่านั้น
+          // แอดมินภาคจัดการรายชื่อ/แก้ไข/ลบได้ แต่ไม่ควรเข้าไปดูข้อมูลขายของทีมใคร
+          // (backend ตอบ 403 อยู่แล้ว — ตรงนี้คือไม่โชว์ปุ่มที่กดไปก็ไม่ได้)
+          S.isAdmin
+            ? '<button type="button" class="admin-action admin-action--view">ดูแบบนี้</button>'
+            : ""
+        }
         <button type="button" class="admin-action admin-action--del admin-btn-del">ลบ</button>
       </div>
     </td>`;
+  tr.querySelector(".admin-system-role")?.addEventListener("change", (e) => {
+    adminSetSystemRole(r.email, e.target.value, tr.querySelector(".admin-system-scope")?.value || "");
+  });
+  tr.querySelector(".admin-system-scope")?.addEventListener("change", (e) => {
+    adminSetSystemRole(r.email, "admin", e.target.value);
+  });
   tr.querySelector(".admin-ts-check")?.addEventListener("change", (e) => {
     adminToggleTargetSun(r.email, e.target.checked);
   });
@@ -12925,7 +14575,10 @@ async function adminSubmitAdd() {
     const ml = document.getElementById("adminAddManagerLevel");
     if (ml) ml.value = "";
     adminSyncManagerLevelField();
+    // ผู้ใช้ใหม่ยังไม่มีใน access_hierarchy.json จนกว่าจะคำนวณใหม่ — ทำให้เลย
+    const rebuilt = await _autoRebuildHierarchy();
     await adminLoadRows();
+    _toastWithAutoRebuild(`เพิ่ม ${email} แล้ว`, rebuilt);
   } catch (e) {
     _adminShowError(e?.message || String(e));
   }
@@ -12947,7 +14600,10 @@ async function adminDeleteRow(email, userpl) {
       body: JSON.stringify({ email, userpl }),
     }, 15000);
     if (!res.ok) throw new Error("ลบไม่สำเร็จ");
+    // คนที่ถูกลบยังค้างอยู่ใน access_hierarchy.json จนกว่าจะคำนวณใหม่
+    const rebuilt = await _autoRebuildHierarchy();
     await adminLoadRows();
+    _toastWithAutoRebuild(`ลบ ${email} แล้ว`, rebuilt);
   } catch (e) {
     _adminShowError(e?.message || String(e));
   }

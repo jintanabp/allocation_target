@@ -100,11 +100,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
+
+    # กันเทสต์ยิงเน็ตขึ้นระบบจริง — ต้องติดตั้งก่อนโหลดเทสต์
+    # (unittest discover โหลดไฟล์ในโฟลเดอร์ tests แบบ top-level จึงไม่ผ่าน tests/__init__.py)
+    from tests import _netguard
+
+    _netguard.install()
+
     suite = build_suite(args.module)
     protected_before = _snapshot_protected()
-    result = unittest.TextTestRunner(verbosity=2 if args.verbose else 1).run(suite)
-
-    dirty = _restore_protected(protected_before)
+    try:
+        result = unittest.TextTestRunner(verbosity=2 if args.verbose else 1).run(suite)
+    finally:
+        # ต้องกู้คืนแม้ถูก Ctrl+C หรือเทสต์เรียก SystemExit ไม่งั้น config ค้างสภาพที่ถูกแก้
+        dirty = _restore_protected(protected_before)
     if dirty:
         print(
             "\n"

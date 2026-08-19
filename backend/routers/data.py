@@ -23,8 +23,48 @@ from ..services.employees import (
 )
 from ..services.access_control import resolve_summary_supervisor_codes
 from ..services.manager_views import resolve_aggregate_supervisor_codes
+from ..services.usage_log_store import read_logs
 
 router = APIRouter(tags=["data"])
+
+
+@router.get("/data/send-history")
+def get_send_history(
+    user: dict = Depends(require_authenticated_user),
+    sup_id: str = Query(..., min_length=1),
+    target_month: int | None = Query(None, ge=1, le=12),
+    target_year: int | None = Query(None, ge=2020, le=2100),
+    limit: int = Query(20, ge=1, le=100),
+) -> dict[str, Any]:
+    """
+    ประวัติการส่งเข้า Target Sun ของทีมนี้
+
+    เดิมผลการส่งอยู่ในข้อความแจ้งเตือนที่หายไปใน 5 วินาที ไม่มีที่ให้เปิดดูย้อนหลังเลย
+    ทั้งที่ server บันทึกไว้ครบใน usage log อยู่แล้ว — ตรงนี้แค่เปิดให้อ่าน
+    """
+    ensure_supervisor_allowed(user, sup_id)
+    items = read_logs(
+        limit=limit,
+        target_year=target_year,
+        target_month=target_month,
+        scan_all=(target_month is None or target_year is None),
+        action="send_targetsun",
+        sup_id=sup_id,
+    )
+    return {
+        "items": [
+            {
+                "ts": it.get("ts"),
+                "level": it.get("level"),
+                "email": it.get("email"),
+                "message": it.get("message"),
+                "detail": it.get("detail"),
+            }
+            for it in items
+        ],
+        "count": len(items),
+        "sup_id": str(sup_id or "").strip().upper(),
+    }
 
 
 @router.get("/data/employees")

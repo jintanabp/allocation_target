@@ -64,7 +64,11 @@ def canonicalize_user_access_row(row: dict[str, Any]) -> dict[str, Any]:
     work = _clean_row_sentinels(dict(row))
     em = normalized_email(work.get("email"))
     upl = normalize_userpl(work.get("userpl"))
-    if not em or "@" not in em or not upl:
+    if not em or "@" not in em:
+        raise ValueError("email/userpl ไม่ถูกต้อง")
+    # ปกติต้องมีรหัส SL — ยกเว้นบัญชี "แอดมินอย่างเดียว" ที่ไม่มีตำแหน่งงาน
+    # จึงไม่มีรหัสขาย มีไว้ดูแลระบบเท่านั้น (แถวยังมีความหมายเพราะมี role)
+    if not upl and not str(work.get("role") or "").strip():
         raise ValueError("email/userpl ไม่ถูกต้อง")
     work["email"] = em
     work["userpl"] = upl
@@ -109,7 +113,7 @@ def canonicalize_user_access_row(row: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "email": em,
-        "userpl": upl,
+        "userpl": upl or NONE_SENTINEL,
         "can_import_targetsun": bool(work.get("can_import_targetsun")),
         "note": str(work.get("note") or "").strip(),
         "full_name": _opt_canonical_str(work, "full_name"),
@@ -126,6 +130,11 @@ def canonicalize_user_access_row(row: dict[str, Any]) -> dict[str, Any]:
         "acc_unit": unit_out,
         "acc_position": _opt_canonical_str(work, "acc_position"),
         "acc_scope": scope,
+        # role ระบบ (dev / admin รายภาค) — ไม่มี = ผู้ใช้ทั่วไป
+        # ต้องคงไว้ตอน canonicalize ไม่งั้นการเขียนไฟล์ครั้งถัดไปจะลบสิทธิ์ทิ้งเงียบ ๆ
+        "role": _opt_canonical_str(work, "role"),
+        # ขอบเขตของ role admin — แก้ผู้ใช้คนไหนได้บ้าง (all/division/division_region)
+        "admin_scope": _opt_canonical_str(work, "admin_scope"),
         "visible_supervisor_codes": vis_out,
     }
 
@@ -218,7 +227,10 @@ def _normalize_row(row: dict[str, Any]) -> dict[str, Any] | None:
     row = _clean_row_sentinels(row)
     em = normalized_email(row.get("email") or row.get("EMAIL"))
     upl = normalize_userpl(row.get("userpl") if row.get("userpl") is not None else row.get("USERPL"))
-    if not em or "@" not in em or not upl:
+    if not em or "@" not in em:
+        return None
+    # แถวไม่มีรหัส SL ทิ้งเหมือนเดิม เว้นแต่เป็นบัญชีแอดมินอย่างเดียว (มี role)
+    if not upl and not str(row.get("role") or "").strip():
         return None
     note = str(row.get("note") or "").strip()
     ts = row.get("can_import_targetsun")
@@ -243,6 +255,8 @@ def _normalize_row(row: dict[str, Any]) -> dict[str, Any] | None:
         "acc_unit",
         "acc_position",
         "acc_scope",
+        "role",
+        "admin_scope",
     ):
         val = row.get(key)
         if val is not None and str(val).strip():

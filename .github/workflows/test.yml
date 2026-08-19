@@ -18,8 +18,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
+      # ต้องผ่าน run_tests.py ไม่ใช่ unittest ตรง ๆ — ตัวนี้ติดตั้งกันชนสองอย่างให้ก่อนรัน
+      #   1. กันเทสต์เขียนทับไฟล์ config จริง (เคยเจอ app_runtime.json เปลี่ยนเองกลางรัน)
+      #   2. กันเทสต์ยิงเน็ตขึ้นระบบจริงของบริษัท
       - name: Run unit tests
-        run: python -m unittest discover -s tests -p "test_*.py" -v
+        run: python run_tests.py -v
 
   # frontend/app.js ไม่มี test ใด ๆ — อย่างน้อยต้องกัน ReferenceError ที่ `node --check` จับไม่ได้
   # (เคยหลุด: ลบ `const readOnly = ...` แต่ลืม `if (!readOnly)` → ผลกระจายไม่ขึ้นทั้งหน้า)

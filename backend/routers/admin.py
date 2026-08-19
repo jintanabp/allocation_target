@@ -1,4 +1,15 @@
-"""Admin API — จัดการ user_access.json (เฉพาะ ALLOCATION_ADMIN_EMAILS)"""
+"""
+Admin API — จัดการ user_access.json และการตั้งค่าระบบ
+
+สองระดับสิทธิ์:
+  - **dev** (`require_admin_user`) — ทำได้ทุกอย่างทั้งระบบ มาจาก ALLOCATION_ADMIN_EMAILS
+    หรือแถวที่ตั้ง role=dev
+  - **แอดมินรายภาค** (`require_admin_scoped`) — จัดการผู้ใช้/ผูกรหัส/ดูผลกระจาย
+    เฉพาะภาคของตัวเอง แตะการตั้งค่าระบบไม่ได้
+
+route ที่มีผลทั้งระบบต้องใช้ require_admin_user เสมอ ส่วน route ที่ให้แอดมินภาคใช้ได้
+ต้องกรอง/ตรวจขอบเขตในตัว handler ด้วย — ผ่านด่านอย่างเดียวไม่พอ
+"""
 
 from __future__ import annotations
 
@@ -10,12 +21,27 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from ..deps import require_admin_or_marketing_team, require_admin_user, require_authenticated_user
+from ..deps import (
+    ensure_row_in_admin_scope,
+    ensure_sup_in_admin_scope,
+    require_admin_or_marketing_team,
+    require_admin_scoped,
+    require_admin_user,
+    require_authenticated_user,
+)
 from ..services.access_control import (
+    ADMIN_SCOPE_LABELS,
+    ASSIGNABLE_ADMIN_SCOPES,
+    ASSIGNABLE_ROLES,
+    DEFAULT_ADMIN_SCOPE,
+    ROLE_DEV,
+    ROLE_REGION_ADMIN,
     enrich_user_access_rows,
     invalidate_user_access_cache,
+    row_is_in_admin_scope,
     visible_supervisors_for_row_dict,
 )
+from ..services.usage_log_store import log_from_user
 from ..services.user_access_store import (
     apply_inferred_access_fields,
     delete_row,
@@ -122,6 +148,34 @@ def _patch_row_meta(row: dict[str, Any], body: UserAccessUpdateBody) -> None:
             row.pop(key, None)
 
 
+def _scope_rows(admin: dict, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """dev เห็นทุกแถว แอดมินรายภาคเห็นเฉพาะภาคตัวเอง"""
+    if admin.get("auth_disabled") or admin.get("role") == ROLE_DEV:
+        return rows
+    scope = admin.get("admin_scope") or {}
+    return [r for r in rows if row_is_in_admin_scope(r, scope)]
+
+
+def _audit_admin(admin: dict, action: str, message: str, detail: str = "", level: str = "info") -> None:
+    """
+    บันทึกทุกการแก้ไขฝั่งแอดมิน
+
+    เดิมมีแค่การเปิดสิทธิ์ส่งแบบยกชุดที่ถูก log ทำให้ไม่มีหลักฐานว่าใครแก้สิทธิ์ใคร
+    พอมีสองระดับสิทธิ์ยิ่งต้องตามรอยได้
+    """
+    try:
+        log_from_user(
+            admin,
+            level=level,
+            sup_id="",
+            action=action,
+            message=message,
+            detail=f"[{admin.get('role') or '-'}] {detail}",
+        )
+    except Exception:  # log ต้องไม่ทำให้งานหลักพัง
+        pass
+
+
 class UserAccessDeleteBody(BaseModel):
     email: str
     userpl: str
@@ -133,9 +187,16 @@ class TargetSunEmailBody(BaseModel):
 
 
 @router.get("/user-access")
-def list_user_access(_admin: dict = Depends(require_admin_user)) -> dict[str, Any]:
-    rows = enrich_user_access_rows()
-    return {"rows": rows, "count": len(rows)}
+def list_user_access(admin: dict = Depends(require_admin_scoped)) -> dict[str, Any]:
+    rows = _scope_rows(admin, enrich_user_access_rows())
+    scope = admin.get("admin_scope") or {}
+    return {
+        "rows": rows,
+        "count": len(rows),
+        "role": admin.get("role"),
+        "scope_regions": sorted(scope.get("regions") or []),
+        "scope_divisions": sorted(scope.get("divisions") or []),
+    }
 
 
 @router.get("/user-access/preview-visible")
@@ -146,7 +207,7 @@ def preview_user_visible(
     acc_division: str = Query(""),
     acc_unit: str = Query(""),
     manager_level: str = Query(""),
-    _admin: dict = Depends(require_admin_user),
+    _admin: dict = Depends(require_admin_scoped),
 ) -> dict[str, Any]:
     """Preview รหัส SL ที่ดูได้ — ใช้ในฟอร์มแอดมิน"""
     row = {
@@ -165,7 +226,7 @@ def preview_user_visible(
 @router.post("/user-access")
 def create_user_access(
     body: UserAccessBody,
-    _admin: dict = Depends(require_admin_user),
+    admin: dict = Depends(require_admin_scoped),
 ) -> dict[str, Any]:
     em = normalized_email(body.email)
     upl = normalize_userpl(body.userpl)
@@ -181,8 +242,14 @@ def create_user_access(
         "note": str(body.note or "").strip(),
     }
     _patch_row_meta(new_row, body)
+    # แอดมินภาคสร้างคนเข้าภาคอื่นไม่ได้ — ตรวจ "ค่าที่จะบันทึก" ไม่ใช่แค่ตัวผู้เรียก
+    ensure_row_in_admin_scope(admin, new_row)
     write_rows(rows + [new_row])
     invalidate_user_access_cache()
+    _audit_admin(
+        admin, "admin_user_create", f"เพิ่มผู้ใช้ {em}",
+        f"USERPL={upl} ภาค={new_row.get('acc_region') or '-'} div={new_row.get('acc_division') or '-'}",
+    )
     enriched = enrich_user_access_rows()
     row = next((r for r in enriched if r["email"] == em and r["userpl"] == upl), None)
     return {"ok": True, "row": row}
@@ -191,7 +258,7 @@ def create_user_access(
 @router.put("/user-access")
 def update_user_access(
     body: UserAccessUpdateBody,
-    _admin: dict = Depends(require_admin_user),
+    admin: dict = Depends(require_admin_scoped),
 ) -> dict[str, Any]:
     em = normalized_email(body.email)
     upl = normalize_userpl(body.userpl)
@@ -199,6 +266,7 @@ def update_user_access(
     existing = next((r for r in rows if r["email"] == em and r["userpl"] == upl), None)
     if not existing:
         raise HTTPException(status_code=404, detail="ไม่พบแถว")
+    ensure_row_in_admin_scope(admin, existing)
 
     new_em = normalized_email(body.new_email) if body.new_email else em
     new_upl = normalize_userpl(body.new_userpl) if body.new_userpl else upl
@@ -221,6 +289,8 @@ def update_user_access(
     if body.note is not None:
         updated_row["note"] = str(body.note).strip()
     _patch_row_meta(updated_row, body)
+    # ตรวจปลายทางด้วย ไม่งั้นย้ายคนออกนอกภาคตัวเองได้
+    ensure_row_in_admin_scope(admin, updated_row)
 
     out = [
         updated_row if r["email"] == em and r["userpl"] == upl else r
@@ -228,6 +298,10 @@ def update_user_access(
     ]
     write_rows(out)
     invalidate_user_access_cache()
+    _audit_admin(
+        admin, "admin_user_update", f"แก้ผู้ใช้ {em}",
+        f"USERPL={upl}→{new_upl} ภาค={existing.get('acc_region') or '-'}→{updated_row.get('acc_region') or '-'}",
+    )
     enriched = enrich_user_access_rows()
     row = next((r for r in enriched if r["email"] == new_em and r["userpl"] == new_upl), None)
     return {"ok": True, "row": row}
@@ -236,30 +310,170 @@ def update_user_access(
 @router.delete("/user-access")
 def remove_user_access(
     body: UserAccessDeleteBody,
-    _admin: dict = Depends(require_admin_user),
+    admin: dict = Depends(require_admin_scoped),
 ) -> dict[str, Any]:
     em = normalized_email(body.email)
     upl = normalize_userpl(body.userpl)
+    rows = read_rows()
+    existing = next((r for r in rows if r["email"] == em and r["userpl"] == upl), None)
+    if not existing:
+        raise HTTPException(status_code=404, detail="ไม่พบแถว")
+    ensure_row_in_admin_scope(admin, existing)
     try:
-        delete_row(read_rows(), em, upl)
+        delete_row(rows, em, upl)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     invalidate_user_access_cache()
+    _audit_admin(
+        admin, "admin_user_delete", f"ลบผู้ใช้ {em}",
+        f"USERPL={upl} ภาค={existing.get('acc_region') or '-'}", level="warn",
+    )
     return {"ok": True}
 
 
 @router.put("/user-access/targetsun")
 def set_targetsun_for_email(
     body: TargetSunEmailBody,
-    _admin: dict = Depends(require_admin_user),
+    admin: dict = Depends(require_admin_scoped),
 ) -> dict[str, Any]:
     em = normalized_email(body.email)
+    # อีเมลหนึ่งมีได้หลายแถว — ทุกแถวต้องอยู่ในภาคที่ดูแล ไม่งั้นเปิดสิทธิ์ข้ามภาคได้
+    target_rows = [r for r in read_rows() if normalized_email(r.get("email")) == em]
+    if not target_rows:
+        raise HTTPException(status_code=404, detail="ไม่พบอีเมลนี้")
+    for r in target_rows:
+        ensure_row_in_admin_scope(admin, r)
     try:
         set_email_targetsun_flag(em, body.enabled)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     invalidate_user_access_cache()
+    _audit_admin(
+        admin, "admin_targetsun_toggle",
+        f"{'เปิด' if body.enabled else 'ปิด'}สิทธิ์ส่ง Target Sun ให้ {em}",
+        f"{len(target_rows)} แถว", level="warn",
+    )
     return {"ok": True, "email": em, "can_import_targetsun": body.enabled}
+
+
+class UserRoleBody(BaseModel):
+    """
+    ตั้ง role ระบบให้ผู้ใช้ — dev เท่านั้นที่ทำได้
+
+    admin_scope ใช้เฉพาะกับ role=admin ว่าดูแลผู้ใช้ได้กว้างแค่ไหน
+    (all / division / division_region) — role อื่นไม่ต้องส่งมา
+
+    acc_division/acc_region ใช้ตอนสร้าง "บัญชีแอดมินอย่างเดียว" (อีเมลที่ยังไม่มี
+    ในระบบ) เพราะขอบเขตแบบ division/division_region คิดจากสองค่านี้ของแถวตัวเอง
+    """
+
+    email: str
+    role: str = ""
+    admin_scope: str = ""
+    acc_division: str = ""
+    acc_region: str = ""
+
+
+@router.put("/user-access/role")
+def set_user_role(
+    body: UserRoleBody,
+    admin: dict = Depends(require_admin_user),
+) -> dict[str, Any]:
+    """
+    ตั้ง/ถอด role (dev | admin) — **dev เท่านั้น** และไม่อยู่ใน _META_PATCH_KEYS
+    โดยตั้งใจ เพื่อไม่ให้แอดมินรายภาคเลื่อนขั้นตัวเองผ่าน PUT /user-access ปกติ
+    """
+    em = normalized_email(body.email)
+    role = str(body.role or "").strip().lower()
+    if role and role not in ASSIGNABLE_ROLES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"role ต้องเป็น {' หรือ '.join(ASSIGNABLE_ROLES)} หรือค่าว่างเพื่อถอดสิทธิ์",
+        )
+    scope = str(body.admin_scope or "").strip().lower()
+    if scope and scope not in ASSIGNABLE_ADMIN_SCOPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"ขอบเขตต้องเป็น {' หรือ '.join(ASSIGNABLE_ADMIN_SCOPES)}",
+        )
+    if role != ROLE_REGION_ADMIN:
+        # role อื่นไม่มีขอบเขต — ล้างทิ้งเสมอ กันค่าค้างที่จะกลับมามีผลถ้าถูกตั้งเป็น admin อีก
+        scope = ""
+    elif not scope:
+        scope = DEFAULT_ADMIN_SCOPE
+
+    div = str(body.acc_division or "").strip()
+    region = str(body.acc_region or "").strip()
+
+    rows = read_rows()
+    touched = 0
+    dropped = 0
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        if normalized_email(r.get("email")) == em:
+            r = dict(r)
+            if role:
+                r["role"] = role
+            else:
+                r.pop("role", None)
+            if scope:
+                r["admin_scope"] = scope
+            else:
+                r.pop("admin_scope", None)
+            # เติมภาค/ดิวิชันได้เฉพาะแถวที่ไม่มีตำแหน่งงาน (บัญชีแอดมินอย่างเดียว)
+            # แถวของ Supervisor/Manager ต้องแก้ที่หน้าผู้ใช้ กันเขียนทับภาคจริงของเขา
+            if str(r.get("login_kind") or "standard").strip() == "standard":
+                if div:
+                    r["acc_division"] = div
+                if region:
+                    r["acc_region"] = region
+            touched += 1
+            # ถอดสิทธิ์จากบัญชีที่ไม่มีรหัส SL = ไม่เหลือเหตุผลให้มีแถวนี้อยู่
+            # ลบทิ้งให้ชัด ๆ ดีกว่าปล่อยให้หายเงียบตอนอ่านไฟล์รอบหน้า
+            if not role and not str(r.get("userpl") or "").strip():
+                dropped += 1
+                continue
+        out.append(r)
+
+    created = False
+    if not touched:
+        if not role:
+            raise HTTPException(status_code=404, detail="ไม่พบอีเมลนี้")
+        # อีเมลใหม่ = สร้างบัญชี "แอดมินอย่างเดียว" ไม่มีตำแหน่งงาน ไม่มีรหัส SL
+        # จึงไม่เห็นข้อมูลทีมใด ๆ บนแดชบอร์ด — มีไว้ดูแลระบบเท่านั้น
+        new_row: dict[str, Any] = {
+            "email": em,
+            "userpl": "",
+            "can_import_targetsun": False,
+            "note": "บัญชีผู้ดูแลระบบ (ไม่มีตำแหน่งงาน)",
+            "login_kind": "standard",
+            "role": role,
+        }
+        if scope:
+            new_row["admin_scope"] = scope
+        if div:
+            new_row["acc_division"] = div
+        if region:
+            new_row["acc_region"] = region
+        out.append(new_row)
+        touched = 1
+        created = True
+
+    write_rows(out)
+    invalidate_user_access_cache()
+    scope_note = f" (ขอบเขต: {ADMIN_SCOPE_LABELS.get(scope, scope)})" if scope else ""
+    what = "สร้างบัญชีแอดมินอย่างเดียว" if created else "ตั้ง role ของ"
+    _audit_admin(
+        admin, "admin_role_set",
+        f"{what} {em} เป็น '{role or 'ผู้ใช้ทั่วไป'}'{scope_note}",
+        f"{touched} แถว" + (f" · ลบแถวแอดมินอย่างเดียว {dropped} แถว" if dropped else ""),
+        level="warn",
+    )
+    return {
+        "ok": True, "email": em, "role": role,
+        "admin_scope": scope, "rows_updated": touched,
+        "created": created, "rows_removed": dropped,
+    }
 
 
 class TargetSunBulkBody(BaseModel):
@@ -310,8 +524,14 @@ def set_targetsun_bulk(
 
 
 @router.get("/supervisor-codes")
-def admin_supervisor_codes(_user: dict = Depends(require_admin_or_marketing_team)) -> dict[str, Any]:
+def admin_supervisor_codes(user: dict = Depends(require_admin_or_marketing_team)) -> dict[str, Any]:
     codes = list_supervisor_codes()
+    if user.get("role") == ROLE_REGION_ADMIN:
+        allowed = {
+            str(c).strip().upper()
+            for c in ((user.get("admin_scope") or {}).get("sl_codes") or set())
+        }
+        codes = [c for c in codes if str(c.get("code") if isinstance(c, dict) else c).strip().upper() in allowed]
     return {"supervisors": codes, "count": len(codes)}
 
 
@@ -321,8 +541,11 @@ def admin_supervisor_team(
     year: int = Query(..., ge=2000, le=2100),
     month: int = Query(..., ge=1, le=12),
     force_refresh: int = Query(0, ge=0, le=1),
-    _user: dict = Depends(require_admin_or_marketing_team),
+    user: dict = Depends(require_admin_or_marketing_team),
 ) -> dict[str, Any]:
+    # เดิมรับ super_code อะไรก็ได้ — แอดมินรายภาคต้องดูได้เฉพาะทีมในภาคตัวเอง
+    if user.get("role") == ROLE_REGION_ADMIN:
+        ensure_sup_in_admin_scope(user, super_code)
     return load_supervisor_team(
         super_code,
         target_year=year,
@@ -370,10 +593,12 @@ def list_sku_links(_user: dict = Depends(require_admin_or_marketing_team)) -> di
     return {"links": rows, "count": len(rows)}
 
 
+# ผูกรหัสสินค้าเป็นข้อมูลกลางของทั้งระบบ ไม่มีมิติภาคให้แบ่ง — เปิดให้แอดมินรายภาค
+# จัดการได้ตามที่ตกลง แต่ต้อง log ทุกครั้งเพราะกระทบทุกทีม
 @router.post("/sku-links")
 def create_sku_link(
     body: SkuLinkBody,
-    admin: dict = Depends(require_admin_user),
+    admin: dict = Depends(require_admin_scoped),
 ) -> dict[str, Any]:
     canon = normalize_sku(body.canonical_sku)
     if not canon:
@@ -391,13 +616,14 @@ def create_sku_link(
         updated_by=email,
     )
     row = find_link(canon, saved)
+    _audit_admin(admin, "admin_sku_link_create", f"ผูกรหัสสินค้า {canon}", f"alias={len(body.alias_skus or [])}")
     return {"ok": True, "row": _sku_link_row_for_api(row or {})}
 
 
 @router.put("/sku-links")
 def update_sku_link(
     body: SkuLinkUpdateBody,
-    admin: dict = Depends(require_admin_user),
+    admin: dict = Depends(require_admin_scoped),
 ) -> dict[str, Any]:
     canon = normalize_sku(body.canonical_sku)
     if not canon:
@@ -424,19 +650,21 @@ def update_sku_link(
             out.append(dict(row))
     saved = write_links(out)
     row = find_link(new_canon, saved)
+    _audit_admin(admin, "admin_sku_link_update", f"แก้ผูกรหัสสินค้า {canon}→{new_canon}")
     return {"ok": True, "row": _sku_link_row_for_api(row or {})}
 
 
 @router.delete("/sku-links")
 def remove_sku_link(
     body: SkuLinkDeleteBody,
-    _admin: dict = Depends(require_admin_user),
+    admin: dict = Depends(require_admin_scoped),
 ) -> dict[str, Any]:
     canon = normalize_sku(body.canonical_sku)
     try:
         delete_link(read_links(), canon)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+    _audit_admin(admin, "admin_sku_link_delete", f"ลบผูกรหัสสินค้า {canon}", level="warn")
     return {"ok": True}
 
 
@@ -561,14 +789,27 @@ def list_sl_links(_user: dict = Depends(require_admin_or_marketing_team)) -> dic
     return {"links": rows, "count": len(rows)}
 
 
+def _ensure_sl_link_in_scope(admin: dict, old: str, new_sls: list[str]) -> None:
+    """
+    ผูกรหัสมีผลกับสิทธิ์การมองเห็น — แอดมินรายภาคต้องแตะได้เฉพาะรหัสในภาคตัวเอง
+    ต้องตรวจ **ทุกรหัสในกลุ่ม** ไม่ใช่แค่รหัสหลัก ไม่งั้นดึงทีมของภาคอื่นเข้ามาผูกได้
+    """
+    if admin.get("auth_disabled") or admin.get("role") == ROLE_DEV:
+        return
+    for code in [old, *(new_sls or [])]:
+        if str(code or "").strip():
+            ensure_sup_in_admin_scope(admin, code)
+
+
 @router.post("/sl-links")
 def create_sl_link(
     body: SlLinkBody,
-    admin: dict = Depends(require_admin_user),
+    admin: dict = Depends(require_admin_scoped),
 ) -> dict[str, Any]:
     old, new_sls = _sl_body_old_new(body)
     if not old:
         raise HTTPException(status_code=400, detail="รหัสเก่า (old_sl) ว่าง")
+    _ensure_sl_link_in_scope(admin, old, new_sls)
     links = read_sl_links()
     if find_sl_link(old, links):
         raise HTTPException(status_code=409, detail="มีกลุ่มผูกรหัสนี้อยู่แล้ว")
@@ -581,23 +822,27 @@ def create_sl_link(
         updated_by=email,
     )
     row = find_sl_link(old, saved)
+    _audit_admin(admin, "admin_sl_link_create", f"ผูกรหัส SL {old}", f"→ {', '.join(new_sls) or '-'}")
     return {"ok": True, "row": _sl_link_row_for_api(row or {})}
 
 
 @router.put("/sl-links")
 def update_sl_link(
     body: SlLinkUpdateBody,
-    admin: dict = Depends(require_admin_user),
+    admin: dict = Depends(require_admin_scoped),
 ) -> dict[str, Any]:
     old, new_sls = _sl_body_old_new(body)
     if not old:
         raise HTTPException(status_code=400, detail="รหัสเก่า (old_sl) ว่าง")
+    _ensure_sl_link_in_scope(admin, old, new_sls)
     links = read_sl_links()
     if not find_sl_link(old, links):
         raise HTTPException(status_code=404, detail="ไม่พบกลุ่มผูกรหัส")
     new_old = normalize_sl(body.new_old_sl) if body.new_old_sl else old
     if new_old != old and find_sl_link(new_old, links):
         raise HTTPException(status_code=409, detail="รหัสเก่าใหม่ซ้ำกับกลุ่มอื่น")
+    if new_old != old:
+        _ensure_sl_link_in_scope(admin, new_old, [])
     email = str(admin.get("email") or admin.get("preferred_username") or "").strip()
     out: list[dict[str, Any]] = []
     for row in links:
@@ -616,19 +861,24 @@ def update_sl_link(
             out.append(dict(row))
     saved = write_sl_links(out)
     row = find_sl_link(new_old, saved)
+    _audit_admin(admin, "admin_sl_link_update", f"แก้ผูกรหัส SL {old}→{new_old}", f"→ {', '.join(new_sls) or '-'}")
     return {"ok": True, "row": _sl_link_row_for_api(row or {})}
 
 
 @router.delete("/sl-links")
 def remove_sl_link(
     body: SlLinkDeleteBody,
-    _admin: dict = Depends(require_admin_user),
+    admin: dict = Depends(require_admin_scoped),
 ) -> dict[str, Any]:
     old = normalize_sl(body.old_sl or body.canonical_sl)
+    existing = find_sl_link(old, read_sl_links())
+    if existing:
+        _ensure_sl_link_in_scope(admin, old, list(existing.get("new_sls") or []))
     try:
         delete_sl_link(read_sl_links(), old)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+    _audit_admin(admin, "admin_sl_link_delete", f"ลบผูกรหัส SL {old}", level="warn")
     return {"ok": True}
 
 
@@ -720,7 +970,9 @@ def sku_link_catalog(
             hint = f"ไม่พบเป้าในงวด {month:02d}/{year} (แหล่ง {src_label}) — รอ HQ อัปเดตเป้า"
         else:
             sku_list = df_tgt["sku"].astype(str).str.strip().tolist()
-            df_info = fabric.get_product_info(sku_list=sku_list)
+            df_info = fabric.get_product_info(
+                sku_list=sku_list, target_year=year, target_month=month
+            )
             price_map: dict[str, float] = {}
             try:
                 df_price = fabric.get_latest_price_per_box_by_sku(month, year, sku_list)
@@ -803,15 +1055,21 @@ class UsageLogBody(BaseModel):
 
 @router.get("/allocations")
 def admin_list_allocations(
-    _admin: dict = Depends(require_admin_user),
+    admin: dict = Depends(require_admin_scoped),
     target_month: int | None = Query(None, ge=1, le=12),
     target_year: int | None = Query(None, ge=2020, le=2100),
 ):
-    """รายการ snapshot ผลกระจายทั้งหมด"""
+    """รายการ snapshot ผลกระจาย — แอดมินรายภาคเห็นเฉพาะทีมในภาคตัวเอง"""
     items = list_all_snapshots(
         month=target_month,
         year=target_year,
     )
+    if admin.get("role") != ROLE_DEV and not admin.get("auth_disabled"):
+        codes = {
+            str(c).strip().upper()
+            for c in ((admin.get("admin_scope") or {}).get("sl_codes") or set())
+        }
+        items = [it for it in items if str(it.get("sup_id") or "").strip().upper() in codes]
     return {"items": items, "count": len(items)}
 
 
@@ -830,13 +1088,14 @@ def admin_delete_allocation(
 
 @router.get("/allocations/export")
 def admin_export_allocation(
-    _admin: dict = Depends(require_admin_user),
+    admin: dict = Depends(require_admin_scoped),
     sup_id: str = Query(..., min_length=1),
     target_month: int = Query(..., ge=1, le=12),
     target_year: int = Query(..., ge=2020, le=2100),
 ):
     """ดาวน์โหลด snapshot JSON สำหรับสำรอง"""
     sid = sup_id.strip().upper()
+    ensure_sup_in_admin_scope(admin, sid)
     snap = read_snapshot(sid, target_month, target_year)
     if not snap:
         raise HTTPException(status_code=404, detail="ไม่พบผลกระจาย")
@@ -858,27 +1117,96 @@ def admin_export_user_access(_admin: dict = Depends(require_admin_user)):
     )
 
 
+def _shrinking_manager_teams(before: dict[str, Any], after: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    ผู้จัดการที่ทีมใต้สังกัดจะ "หดลง" ถ้าเขียนผลลัพธ์ใหม่ทับของเดิม
+
+    เจอของจริง: กดปุ่มนี้ครั้งเดียว ผู้จัดการ 8 คนเหลือทีมจาก 12 → 1 เพราะแถวของเขา
+    ใน user_access.json ไม่มี acc_division/acc_region ระบบจึงคำนวณทีมกลับไม่ได้
+    ข้อมูลชุดเดิมมาจาก roster Excel ซึ่ง rebuild ในแอปสร้างขึ้นมาใหม่ไม่ได้
+    """
+    bo = (before or {}).get("by_manager") or {}
+    bn = (after or {}).get("by_manager") or {}
+    out: list[dict[str, Any]] = []
+    for mgr, team in bo.items():
+        was, now = len(team or []), len(bn.get(mgr) or [])
+        if now < was:
+            out.append({"manager_code": mgr, "before": was, "after": now})
+    out.sort(key=lambda x: (x["after"] - x["before"], x["manager_code"]))
+    return out
+
+
+class RebuildHierarchyBody(BaseModel):
+    """ยืนยันว่ารับทราบว่าจะมีผู้จัดการที่ทีมใต้สังกัดหดลง"""
+
+    confirm_shrink: bool = False
+
+
 @router.post("/access-hierarchy/rebuild")
-def admin_rebuild_access_hierarchy(_admin: dict = Depends(require_admin_user)) -> dict[str, Any]:
-    """Rebuild access_hierarchy.json จาก user_access.json (เทียบเท่า scripts/access/rebuild_access_hierarchy.py)"""
+def admin_rebuild_access_hierarchy(
+    body: RebuildHierarchyBody | None = None,
+    admin: dict = Depends(require_admin_user),
+) -> dict[str, Any]:
+    """
+    Rebuild access_hierarchy.json จาก user_access.json
+    (เทียบเท่า scripts/access/rebuild_access_hierarchy.py)
+
+    บล็อกไว้ถ้าผลลัพธ์จะทำให้ผู้จัดการคนไหนเห็นทีมน้อยลง — เพราะนั่นคือการตัดสิทธิ์
+    คนที่ยังทำงานอยู่ โดยที่หน้าจอเดิมไม่ได้บอกอะไรเลย ต้องไปเติม acc_division/
+    acc_region ให้ครบก่อน หรือ import จาก roster Excel ใหม่
+    """
     from ..services.access_hierarchy import (
         build_hierarchy_payload,
         enrich_rows_with_visibility,
+        load_hierarchy_payload,
         persist_hierarchy,
     )
     from ..services.user_access_store import write_rows
 
     rows = read_user_access_rows()
     enriched = enrich_rows_with_visibility(rows)
-    write_rows(enriched)
     payload = build_hierarchy_payload(enriched)
+
+    try:
+        current = load_hierarchy_payload()
+    except Exception:  # อ่านของเดิมไม่ได้ = เทียบไม่ได้ ปล่อยให้เขียนได้ตามปกติ
+        current = {}
+    shrink = _shrinking_manager_teams(current, payload)
+    if shrink and not (body and body.confirm_shrink):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "hierarchy_rebuild_shrinks_teams",
+                "message": (
+                    f"ยังไม่ได้อัปเดต — จะทำให้ผู้จัดการ {len(shrink)} คนเห็นทีมใต้สังกัดน้อยลง"
+                ),
+                "hint_th": (
+                    "มักเกิดเมื่อแถวของผู้จัดการไม่มี Division/ภาค ระบบจึงคำนวณทีมกลับไม่ได้ "
+                    "ให้เติมข้อมูลให้ครบก่อน หรือนำเข้าจากไฟล์ roster ใหม่ "
+                    "ถ้ายืนยันว่าตั้งใจ ให้ส่ง confirm_shrink"
+                ),
+                "shrinking": shrink[:20],
+                "shrinking_count": len(shrink),
+                "confirm_field": "confirm_shrink",
+            },
+        )
+
+    write_rows(enriched)
     path = persist_hierarchy(payload)
     invalidate_user_access_cache()
+    _audit_admin(
+        admin, "admin_hierarchy_rebuild", "อัปเดตลำดับสิทธิ์",
+        f"ผู้จัดการ {len(payload.get('manager_codes') or [])} · "
+        f"ซุป {len(payload.get('supervisors') or [])}"
+        + (f" · ยืนยันทีมหดลง {len(shrink)} คน" if shrink else ""),
+        level="warn" if shrink else "info",
+    )
     return {
         "ok": True,
         "path": path,
         "manager_count": len(payload.get("manager_codes") or []),
         "supervisor_count": len(payload.get("supervisors") or []),
+        "shrinking_count": len(shrink),
     }
 
 
@@ -929,7 +1257,7 @@ def admin_deep_health(
 
 @router.get("/usage-logs")
 def admin_get_usage_logs(
-    _admin: dict = Depends(require_admin_user),
+    admin: dict = Depends(require_admin_scoped),
     date: str | None = Query(None, description="YYYY-MM-DD (ถ้าไม่ส่งงวด)"),
     target_month: int | None = Query(None, ge=1, le=12),
     target_year: int | None = Query(None, ge=2020, le=2100),
@@ -937,17 +1265,30 @@ def admin_get_usage_logs(
     limit: int = Query(500, ge=1, le=2000),
 ):
     scan_all = target_month is None and target_year is None and date is None
-    return {
-        "items": read_logs(
-            date=date,
-            level=level,
-            limit=limit,
-            target_year=target_year,
-            target_month=target_month,
-            scan_all=scan_all,
-        ),
-        "scan_all": scan_all,
-    }
+    items = read_logs(
+        date=date,
+        level=level,
+        limit=limit,
+        target_year=target_year,
+        target_month=target_month,
+        scan_all=scan_all,
+    )
+    if admin.get("role") == ROLE_REGION_ADMIN:
+        # เห็นเฉพาะเหตุการณ์ของทีมในภาค หรือของผู้ใช้ในภาคตัวเอง
+        scope = admin.get("admin_scope") or {}
+        codes = {str(c).strip().upper() for c in (scope.get("sl_codes") or set())}
+        emails = {
+            normalized_email(r.get("email"))
+            for r in read_rows()
+            if row_is_in_admin_scope(r, scope)
+        }
+        items = [
+            it
+            for it in items
+            if str(it.get("sup_id") or "").strip().upper() in codes
+            or normalized_email(it.get("email")) in emails
+        ]
+    return {"items": items, "scan_all": scan_all}
 
 
 # หมายเหตุ: เดิมมี DELETE /usage-logs/{entry_id} และ POST /usage-logs/acknowledge สำหรับ

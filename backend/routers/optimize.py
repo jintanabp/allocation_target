@@ -11,7 +11,7 @@ router = APIRouter(tags=["optimize"])
 def run_optimization(
     req: OptimizeRequest,
     user: dict = Depends(require_authenticated_user),
-    sup_id: str = Query("SL330"),
+    sup_id: str = Query(..., min_length=1),
     target_month: int = Query(..., ge=1, le=12),
     target_year: int = Query(..., ge=2020, le=2100),
 ):

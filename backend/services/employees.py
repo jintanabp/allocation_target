@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from ..core.allocation_checks import detect_new_product_skus
 from ..core.atomic_io import atomic_write_csv
 from ..core.constants import PRICE_FALLBACK
+from . import demo_data
 from ..core.paths import (
     emp_cache_path,
     hist_cache_path,
@@ -284,6 +285,13 @@ def load_employees_payload(
 
     refresh=True หรือ regen_target=True → ข้าม JSON cache แล้วยิง DAX ใหม่
     """
+    # ทีมสาธิต — ข้อมูลสมมติล้วน ไม่แตะ Fabric/Target Sun และไม่แคช
+    # ต้องอยู่บนสุดก่อนทุกอย่าง เพราะไม่มีทั้ง cache และแหล่งข้อมูลจริงให้ดึง
+    if demo_data.is_demo_supervisor(sup_id):
+        # เขียน cache ชุดเดียวกับ Step 1 จริง — ขั้นกระจายหีบและดาวน์โหลด Excel
+        # อ่านเป้า/ประวัติจากไฟล์เหล่านี้ ไม่ได้อ่านจาก payload ที่ส่งกลับไป
+        demo_data.write_demo_caches(sup_id, target_month, target_year)
+        return demo_data.build_employees_payload(sup_id, target_month, target_year)
     # ต้องเช็ค target_csv_ready ด้วย: ถ้า cache hit จะ return ก่อนถึงจุดที่เขียนไฟล์เป้าราย sup
     # ทีมที่มี cache ค้างจะไม่มีวันสร้างไฟล์ แล้วตกไปใช้ไฟล์ global ของทีมอื่นตลอดไป
     # ยกเว้นโหมด legacy (dev) ที่ไม่เคยเขียนไฟล์ราย sup อยู่แล้ว — ไม่งั้น cache จะใช้ไม่ได้เลย
@@ -557,7 +565,13 @@ def load_employees_payload(
                 df_sku_base = cached_product[cached_product["sku"].astype(str).isin(sku_union)].copy()
             else:
                 try:
-                    df_fresh = fabric.get_product_info(sku_list=sku_union)
+                    # ต้องส่งงวดเป้าไปด้วย — ราคาในตารางมีช่วงวันที่ ถ้าไม่ส่งจะได้
+                    # ราคา ณ วันนี้ ซึ่งเป็นราคาเก่าเมื่อทำเป้าของเดือนหน้าล่วงหน้า
+                    df_fresh = fabric.get_product_info(
+                        sku_list=sku_union,
+                        target_year=target_year,
+                        target_month=target_month,
+                    )
                     if df_fresh is not None and not df_fresh.empty:
                         if cached_product is not None and not cached_product.empty:
                             merged = pd.concat([cached_product, df_fresh]).drop_duplicates(

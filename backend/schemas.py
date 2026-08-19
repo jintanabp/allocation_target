@@ -44,6 +44,14 @@ class OptimizeRequest(BaseModel):
     brand_strategy_map: dict[str, str] = Field(default_factory=dict)
     bui_deductions: dict[str, float] = Field(default_factory=dict)
     neg_growth_reason: str | None = None
+    """
+    ทีมอื่นในหน่วย+ภาคเดียวกันที่พนักงานใน yellowTargets มาจาก
+
+    ใช้ตอน "กระจายรวมทั้งหน่วย": บางงวดเป้าเข้ามาใต้ซุปคนเดียว แต่ต้องเกลี่ยให้พนักงาน
+    ทุกทีมในหน่วยนั้น พนักงานทีมอื่นจึงต้องอ่านประวัติขายจาก cache ของทีมตัวเอง
+    ไม่งั้นจะถูกมองว่า "ไม่มีประวัติ" แล้วได้หีบน้อยผิดปกติ
+    """
+    peer_sup_ids: list[str] = Field(default_factory=list)
 
     @field_validator("strategy", mode="before")
     @classmethod
@@ -101,6 +109,12 @@ class LakehouseUploadRow(BaseModel):
     provincecode: str | None = None
 
 
+class VerifySendBatchRequest(BaseModel):
+    """ตรวจยอดรวมของไฟล์ที่เตรียมไว้ทั้งชุดก่อนกดส่งจริง"""
+
+    tokens: list[str] = Field(default_factory=list)
+
+
 class LakehouseUploadRequest(BaseModel):
     sup_id: str
     target_month: int = Field(ge=1, le=12)
@@ -126,3 +140,33 @@ class LakehouseUploadRequest(BaseModel):
     ปัญหา master data จะถูกกดข้ามไปโดยไม่ได้อ่าน
     """
     confirm_manual_topup: bool = False
+    """
+    ผู้ใช้ยืนยันส่งทั้งที่ระบบ "ไม่มีไฟล์เป้าให้ตรวจ" (เช่นไฟล์เป้าถูกล้างตามอายุ cache
+    แล้วเปิด snapshot เก่ามาส่ง) — ปกติต้องกลับไปโหลดขั้นที่ 1 ใหม่ก่อน
+
+    **คนละ flag กับอีกสองตัวโดยตั้งใจ** — สองตัวบนแปลว่า "ตรวจแล้วไม่ตรง แต่ตั้งใจ"
+    ตัวนี้แปลว่า "ตรวจไม่ได้เลย" ซึ่งเป็นความเสี่ยงคนละแบบ ถ้าใช้ flag ร่วมกัน
+    การกดยืนยันเรื่องหนึ่งจะปลดล็อกอีกเรื่องที่ผู้ใช้ไม่เคยเห็น
+    """
+    confirm_unverifiable_target: bool = False
+    """
+    SKU ที่ต้องไม่ส่งสำหรับทีมนี้ แม้ทีมนี้จะส่งได้ครบ
+
+    ใช้ตอนส่งรวมภาค: ถ้าทีมหนึ่งส่ง SKU นั้นไม่ได้ (ไม่มีแถวใน Target Sun) แต่ทีมอื่นส่งได้
+    การส่งเฉพาะบางทีมจะทำให้เป้าของ SKU นั้นทั้งภาคครึ่ง ๆ กลาง ๆ เพราะหีบถูกเกลี่ย
+    ข้ามทีมมาแล้ว — ด่าน verify-send-batch จึงสั่งให้ตัดชุดเดียวกันทุกทีม
+    """
+    exclude_skus: list[str] = Field(default_factory=list)
+    """
+    ผู้ใช้รับทราบว่าเป้าใน Target Sun เปลี่ยนไปหลังจากโหลดข้อมูลขั้นที่ 1 แล้วยังจะส่ง
+    ตามแผนเดิม — คนละเรื่องกับ flag อื่น ตัวนี้แปลว่า "ข้อมูลอ้างอิงเก่าไปแล้ว"
+    """
+    confirm_stale_target: bool = False
+    """
+    ยอมให้สร้าง "แถวเป้าใหม่" ใน Target Sun สำหรับคู่พนักงาน×สินค้าที่ยังไม่เคยมี
+    โดยเติมเขต/พื้นที่จากแถวอื่นของพนักงานคนเดียวกัน
+
+    จำเป็นสำหรับการกระจายรวมทั้งหน่วยในภาค (คนทีมอื่นยังไม่เคยมีเป้าสินค้านั้น)
+    ค่าเริ่มต้นปิดไว้ เพราะการสร้างแถวใหม่คือการแตะ master data ไม่ใช่แค่ทับตัวเลข
+    """
+    allow_new_targetsun_rows: bool = False

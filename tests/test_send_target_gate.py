@@ -131,9 +131,47 @@ class TestSendTargetGate(unittest.TestCase):
         os.environ["ALLOC_ALLOW_MISMATCH"] = "1"
         lh._assert_send_matches_sup_targets(self._df(7), "SLTEST", 8, 2026)
 
-    def test_missing_target_file_does_not_block(self):
-        """อ่านเป้าไม่ได้ = ตรวจไม่ได้ ต้องไม่ไปขวางการส่ง"""
-        lh._assert_send_matches_sup_targets(self._df(7), "SLNOFILE", 8, 2026)
+    def test_missing_target_file_blocks_with_confirmable_409(self):
+        """
+        เปลี่ยนพฤติกรรมโดยตั้งใจ (เดิม: ไม่มีไฟล์เป้า = ปล่อยผ่านเงียบ ๆ)
+
+        ของเดิมทำให้ประตูที่แข็งแรงที่สุดปิดตัวเองในสถานการณ์ที่ควรทำงานที่สุด
+        คือไฟล์เป้าถูกล้างตามอายุ cache แล้วผู้ใช้เปิด snapshot เก่ามาส่ง
+        """
+        with self.assertRaises(HTTPException) as ctx:
+            lh._assert_send_matches_sup_targets(self._df(7), "SLNOFILE", 8, 2026)
+        self.assertEqual(ctx.exception.status_code, 409)
+        d = ctx.exception.detail
+        self.assertEqual(d["code"], "send_target_unverifiable")
+        self.assertEqual(d["confirm_field"], "confirm_unverifiable_target")
+
+    def test_missing_target_file_is_confirmable(self):
+        lh._assert_send_matches_sup_targets(
+            self._df(7), "SLNOFILE", 8, 2026, unverifiable_confirmed=True
+        )
+
+    def test_unverifiable_is_not_unlocked_by_the_other_flags(self):
+        """สาม flag ต้องแยกกัน — ยืนยันเรื่องหนึ่งห้ามปลดล็อกอีกเรื่องที่ผู้ใช้ไม่เคยเห็น"""
+        with self.assertRaises(HTTPException) as ctx:
+            lh._assert_send_matches_sup_targets(
+                self._df(7), "SLNOFILE", 8, 2026, confirmed=True
+            )
+        self.assertEqual(ctx.exception.detail["code"], "send_target_unverifiable")
+
+    def test_global_legacy_target_file_is_not_used_as_a_substitute(self):
+        """
+        ไฟล์เป้า global เดิมไม่มี sup_id ในชื่อ ทีมที่โหลดทีหลังเขียนทับของทีมก่อน
+        ถ้าประตูตกไปอ่านไฟล์นั้น = เทียบ payload ทีมนี้กับเป้าของอีกทีม
+        """
+        pd.DataFrame([
+            {"sku": "A", "supervisor_target_boxes": 7, "price_per_box": 100.0},
+        ]).to_csv("data/target_boxes.csv", index=False)
+        with self.assertRaises(HTTPException) as ctx:
+            lh._assert_send_matches_sup_targets(self._df(7), "SLNOFILE", 8, 2026)
+        self.assertEqual(
+            ctx.exception.detail["code"], "send_target_unverifiable",
+            "ต้องไม่เอาไฟล์ global มาตรวจแทน แม้ตัวเลขจะบังเอิญตรงก็ตาม",
+        )
 
     def test_sku_without_target_is_ignored(self):
         df = pd.DataFrame([{"emp_id": "E1", "sku": "ZZZ", "allocated_boxes": 3}])
@@ -248,6 +286,26 @@ class TestManualTopupConfirmIsSeparate(unittest.TestCase):
         self.assertIn("confirm_manual_topup", f)
         self.assertIs(f["confirm_manual_topup"].default, False)
         self.assertIs(f["confirm_target_mismatch"].default, False)
+
+    def test_unverifiable_flag_is_a_third_separate_flag(self):
+        """
+        "ตรวจแล้วไม่ตรงแต่ตั้งใจ" กับ "ตรวจไม่ได้เลย" เป็นความเสี่ยงคนละแบบ
+        ต้องกดยืนยันแยกกัน ไม่งั้นการกดเรื่องหนึ่งจะปลดอีกเรื่องที่ไม่เคยเห็น
+        """
+        from backend.schemas import LakehouseUploadRequest
+
+        f = LakehouseUploadRequest.model_fields
+        self.assertIn("confirm_unverifiable_target", f)
+        self.assertIs(f["confirm_unverifiable_target"].default, False)
+
+    def test_unverifiable_gate_does_not_accept_the_other_flags(self):
+        src = inspect.getsource(lh._assert_send_matches_sup_targets)
+        gate = src.split("send_target_unverifiable")[0]
+        gate = gate[gate.index("if targets is None"):]
+        code = "\n".join(ln.split("#")[0] for ln in gate.splitlines())
+        self.assertIn("unverifiable_confirmed", code)
+        self.assertNotIn("confirm_target_mismatch", code)
+        self.assertNotIn("confirm_manual_topup", code)
 
     def test_mismatch_confirm_does_not_bypass_shortfall_gate(self):
         src = inspect.getsource(lh._build_tga_upload_dataframe)

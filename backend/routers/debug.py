@@ -14,7 +14,7 @@ router = APIRouter(tags=["debug"])
 @router.get("/debug/fabric")
 def debug_fabric(
     user: dict = Depends(require_authenticated_user),
-    sup_id: str = Query("SL330"),
+    sup_id: str = Query(..., min_length=1),
 ):
     """
     ดึงข้อมูล debug จาก Fabric:

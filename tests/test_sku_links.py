@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 import unittest
 
@@ -20,6 +21,7 @@ class TestSkuLinks(unittest.TestCase):
 
     def tearDown(self) -> None:
         os.environ.pop("SKU_LINKS_JSON_PATH", None)
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def _write(self, links: list[dict]) -> None:
         with open(self._path, "w", encoding="utf-8") as f:

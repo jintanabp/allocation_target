@@ -104,7 +104,7 @@
 
 | # | ขั้นตอน | ผล | หมายเหตุ |
 |---|---------|-----|----------|
-| 9.1 | `python -m unittest discover -s tests` | | |
+| 9.1 | `python run_tests.py` (ห้ามใช้ `unittest` ตรง ๆ — จะข้ามกันชน config/เน็ต) | | |
 | 9.2 | `python scripts/dev/smoke_deploy.py --base-url <URL>` | | |
 | 9.3 | `python -m pytest tests/test_or_engine_invariants.py -q` — กฎคงที่ของการกระจายหีบ (ดู `docs/ALLOCATION_INVARIANTS.md`) | | |
 | 9.4 | ถ้าแก้โค้ดใน `OR_engine.py`: `python scripts/golden_allocation.py compare` — หีบทุกใบที่ขยับต้องอธิบายได้ | | |

@@ -71,7 +71,214 @@ def parse_allocation_admin_emails() -> set[str]:
 
 
 def is_allocation_admin_email(email: str | None) -> bool:
-    return normalized_email(email) in parse_allocation_admin_emails()
+    """
+    "dev" — เห็นและทำได้ทุกอย่างทั้งระบบ
+
+    มาได้สองทาง: อีเมลใน ALLOCATION_ADMIN_EMAILS (bootstrap แก้จากในแอปไม่ได้
+    กันล็อกตัวเองออก) หรือแถวใน user_access.json ที่ตั้ง role=dev
+    """
+    ne = normalized_email(email)
+    if not ne:
+        return False
+    if ne in parse_allocation_admin_emails():
+        return True
+    return _role_from_rows(ne) == ROLE_DEV
+
+
+# ── role ที่เก็บใน user_access.json ────────────────────────────────────────
+# dev   = ทำได้ทุกอย่างทั้งระบบ (เดิมคือ "แอดมิน")
+# admin = ผู้ดูแลรายภาค — จัดการผู้ใช้/ผูกรหัส/ดูผลกระจายเฉพาะภาคของตัวเอง
+#         แต่แตะการตั้งค่าระบบ (แหล่งข้อมูล/endpoint/cache) ไม่ได้
+ROLE_DEV = "dev"
+ROLE_REGION_ADMIN = "admin"
+ASSIGNABLE_ROLES = (ROLE_DEV, ROLE_REGION_ADMIN)
+
+# ── ขอบเขตของแอดมิน — "แก้ผู้ใช้คนไหนได้บ้าง" (field `admin_scope` ในไฟล์) ──
+# ตั้งตอน dev มอบสิทธิ์ ไล่จากกว้างไปแคบ:
+#   all             = ทุกคนในระบบ (รวมคนที่ยังไม่มีภาค/ดิวิชัน — ใช้เก็บงานข้อมูลไม่ครบ)
+#   division        = ทุกคนในดิวิชันเดียวกับตัวเอง ทุกภาค
+#   division_region = ดิวิชัน + ภาคเดียวกับตัวเองเท่านั้น
+# ไม่ระบุ = division_region (แคบสุด) — ของเดิมที่ตั้งไว้ก่อนมีตัวเลือกนี้จึงไม่ถูกขยายสิทธิ์เอง
+ADMIN_SCOPE_ALL = "all"
+ADMIN_SCOPE_DIVISION = "division"
+ADMIN_SCOPE_DIVISION_REGION = "division_region"
+ASSIGNABLE_ADMIN_SCOPES = (
+    ADMIN_SCOPE_ALL,
+    ADMIN_SCOPE_DIVISION,
+    ADMIN_SCOPE_DIVISION_REGION,
+)
+DEFAULT_ADMIN_SCOPE = ADMIN_SCOPE_DIVISION_REGION
+ADMIN_SCOPE_LABELS = {
+    ADMIN_SCOPE_ALL: "ทุกคนในระบบ",
+    ADMIN_SCOPE_DIVISION: "ทั้งดิวิชันของตัวเอง",
+    ADMIN_SCOPE_DIVISION_REGION: "ดิวิชัน + ภาคของตัวเอง",
+}
+
+
+def _role_from_rows(email: str) -> str:
+    """role ที่แรงที่สุดของอีเมลนี้จาก user_access.json ('' = ผู้ใช้ทั่วไป)"""
+    ne = normalized_email(email)
+    if not ne:
+        return ""
+    try:
+        roles = {
+            str(r.get("role") or "").strip().lower()
+            for r in read_rows()
+            if normalized_email(r.get("email")) == ne
+        }
+    except Exception:
+        return ""
+    if ROLE_DEV in roles:
+        return ROLE_DEV
+    if ROLE_REGION_ADMIN in roles:
+        return ROLE_REGION_ADMIN
+    return ""
+
+
+def is_region_admin_email(email: str | None) -> bool:
+    """แอดมินรายภาค — ไม่ใช่ dev (dev ตรวจด้วย is_allocation_admin_email)"""
+    ne = normalized_email(email)
+    if not ne or ne in parse_allocation_admin_emails():
+        return False
+    return _role_from_rows(ne) == ROLE_REGION_ADMIN
+
+
+def role_for_email(email: str | None) -> str:
+    """role สำหรับส่งให้หน้าเว็บใช้ตัดสินใจว่าจะโชว์แท็บไหน"""
+    if is_allocation_admin_email(email):
+        return ROLE_DEV
+    if is_region_admin_email(email):
+        return ROLE_REGION_ADMIN
+    if is_marketing_email(email):
+        return "marketing"
+    return "user"
+
+
+def admin_scope_breadth_for_email(email: str | None) -> str:
+    """
+    ระดับขอบเขตที่ dev ตั้งไว้ให้แอดมินคนนี้ (field `admin_scope`)
+
+    คนหนึ่งอาจมีหลายแถว — ยึด "กว้างที่สุดที่ระบุไว้" เพราะเป็นค่าที่ dev
+    ตั้งด้วยมือโดยเจตนา; ไม่ระบุเลย = แคบสุดตาม DEFAULT_ADMIN_SCOPE
+    """
+    ne = normalized_email(email)
+    if not ne:
+        return DEFAULT_ADMIN_SCOPE
+    try:
+        declared = {
+            str(r.get("admin_scope") or "").strip().lower()
+            for r in read_rows()
+            if normalized_email(r.get("email")) == ne
+        }
+    except Exception:
+        return DEFAULT_ADMIN_SCOPE
+    for level in ASSIGNABLE_ADMIN_SCOPES:  # เรียงกว้าง → แคบไว้แล้ว
+        if level in declared:
+            return level
+    return DEFAULT_ADMIN_SCOPE
+
+
+def admin_scope_for_email(email: str | None) -> dict[str, Any]:
+    """
+    ขอบเขตของแอดมิน — ระดับที่ dev ตั้งไว้ + ภาค/ดิวิชันจากแถวของตัวเอง
+    แล้วขยายเป็นรหัส SL ที่ดูแลได้
+
+    คืน sl_codes เป็น "เซ็ตจริงเสมอ" ไม่ใช่ None เพราะ None คือ sentinel ของ
+    "ไม่จำกัด" ที่ ensure_supervisor_allowed ใช้ — แอดมินต้องไม่ได้สิทธิ์นั้น
+    ต่อให้ขอบเขตเป็น all ก็ยังเป็นเซ็ตของ SL ที่มีอยู่จริงในไฟล์
+    ข้อมูลตัวเองไม่ครบพอสำหรับระดับที่ตั้งไว้ = ขอบเขตว่าง (fail closed)
+    """
+    ne = normalized_email(email)
+    out: dict[str, Any] = {
+        "email": ne,
+        "breadth": DEFAULT_ADMIN_SCOPE,
+        "regions": set(),
+        "divisions": set(),
+        "sl_codes": set(),
+    }
+    if not ne:
+        return out
+
+    rows = read_rows()
+    breadth = admin_scope_breadth_for_email(ne)
+    out["breadth"] = breadth
+
+    own = [r for r in rows if normalized_email(r.get("email")) == ne]
+    regions = {str(r.get("acc_region") or "").strip() for r in own}
+    regions.discard("")
+    divisions = {str(r.get("acc_division") or "").strip() for r in own}
+    divisions.discard("")
+    out["regions"] = regions
+    out["divisions"] = divisions
+
+    codes = {str(r.get("userpl") or "").strip().upper() for r in own}
+    codes.discard("")
+    # ระดับที่แคบกว่า "ทั้งระบบ" ต้องมีข้อมูลของตัวเองครบพอถึงจะขยายขอบเขตได้
+    if breadth == ADMIN_SCOPE_DIVISION_REGION and not regions:
+        out["sl_codes"] = codes
+        return out
+    if breadth == ADMIN_SCOPE_DIVISION and not divisions:
+        out["sl_codes"] = codes
+        return out
+
+    for r in rows:
+        if str(r.get("login_kind") or "").strip() != "supervisor_acc":
+            continue
+        if not _row_matches_breadth(r, breadth, regions, divisions):
+            continue
+        upl = str(r.get("userpl") or "").strip().upper()
+        if upl:
+            codes.add(upl)
+    out["sl_codes"] = codes
+    return out
+
+
+def _row_matches_breadth(
+    row: dict[str, Any], breadth: str, regions: set[str], divisions: set[str]
+) -> bool:
+    """แถวนี้เข้าเกณฑ์ของขอบเขตระดับนั้นไหม (ใช้ร่วมกันทั้งตอนขยาย SL และตอนตรวจสิทธิ์)"""
+    if breadth == ADMIN_SCOPE_ALL:
+        return True
+    if not divisions:
+        return False
+    if str(row.get("acc_division") or "").strip() not in divisions:
+        return False
+    if breadth == ADMIN_SCOPE_DIVISION:
+        return True
+    # division_region — ต้องอยู่ภาคเดียวกันด้วย
+    if not regions:
+        return False
+    return str(row.get("acc_region") or "").strip() in regions
+
+
+def admin_scope_is_usable(scope: dict[str, Any]) -> bool:
+    """
+    ขอบเขตนี้ครอบคลุมอะไรได้จริงไหม — ใช้ตัดสินว่าจะปล่อยเข้าหน้าแอดมินไหม
+
+    ระดับ all ใช้ได้เสมอแม้แถวตัวเองจะไม่มีภาค/ดิวิชัน (นั่นคือเหตุผลที่มีระดับนี้)
+    ระดับอื่นต้องมีค่าที่ใช้เทียบ ไม่งั้นเท่ากับ "ไม่มีใครให้ดูแล" → ปิดไว้ก่อน
+    """
+    breadth = str(scope.get("breadth") or DEFAULT_ADMIN_SCOPE)
+    if breadth == ADMIN_SCOPE_ALL:
+        return True
+    if breadth == ADMIN_SCOPE_DIVISION:
+        return bool(scope.get("divisions"))
+    return bool(scope.get("regions"))
+
+
+def row_is_in_admin_scope(row: dict[str, Any], scope: dict[str, Any]) -> bool:
+    """
+    แถวผู้ใช้แถวนี้อยู่ในขอบเขตที่แอดมินคนนี้ดูแลไหม
+
+    ขอบเขต all เท่านั้นที่ครอบคลุมคนที่ยัง "ไม่มีภาค/ไม่มีดิวิชัน" ได้ —
+    ระดับอื่นต้องเทียบค่าให้ตรง แถวข้อมูลไม่ครบจึงตกนอกขอบเขตเสมอ (fail closed)
+    """
+    return _row_matches_breadth(
+        row,
+        str(scope.get("breadth") or DEFAULT_ADMIN_SCOPE),
+        scope.get("regions") or set(),
+        scope.get("divisions") or set(),
+    )
 
 
 def is_marketing_email(email: str | None) -> bool:
@@ -357,7 +564,9 @@ def build_user_access_context(email: str, *, allow_admin_bypass: bool = True) ->
 
     allowed = compute_allowed_supervisor_codes(ne, acc_rows, mdata)
 
-    if not allowed:
+    if not allowed and not _role_from_rows(ne):
+        # บัญชี "แอดมินอย่างเดียว" ไม่มีรหัสขายโดยตั้งใจ — ต้องล็อกอินเข้าหน้าแอดมินได้
+        # แต่ยังได้เซ็ตว่าง (ไม่ใช่ None) จึงมองไม่เห็นข้อมูลทีมใดเลย
         raise PermissionError(
             "บัญชีนี้ไม่มีรหัส Supervisor/Manager ที่ใช้งานได้ — "
             "ตรวจสอบ USERPL ใน user_access.json ให้ตรงกับรหัสในระบบ"
@@ -412,7 +621,12 @@ def enrich_user_access_rows(rows: list[dict[str, Any]] | None = None) -> list[di
                 "acc_scope": str(r.get("acc_scope") or ""),
                 "login_kind": str(r.get("login_kind") or "standard"),
                 "manager_level": str(r.get("manager_level") or ""),
+                # role = ป้ายแสดงตำแหน่ง (supervisor/manager/...) คนละเรื่องกับสิทธิ์ระบบ
+                # system_role = สิทธิ์จริง (dev / admin รายภาค) ที่เก็บในไฟล์
                 "role": role,
+                "system_role": str(r.get("role") or ""),
+                # ขอบเขตที่ตั้งไว้ให้ role admin (ว่าง = ยังไม่เคยตั้ง = ค่าแคบสุด)
+                "admin_scope": str(r.get("admin_scope") or ""),
                 "visible_supervisors": visible,
             }
         )

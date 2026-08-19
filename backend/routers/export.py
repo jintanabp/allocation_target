@@ -11,7 +11,7 @@ router = APIRouter(tags=["export"])
 def export_excel(
     req: ExportRequest,
     user: dict = Depends(require_authenticated_user),
-    sup_id: str = Query("SL330"),
+    sup_id: str = Query(..., min_length=1),
     # optional: tab เก่าที่ยังไม่ส่งงวดมา จะตกไปใช้ไฟล์เป้า global เดิม (พฤติกรรมเดิม ไม่พัง)
     target_month: int | None = Query(None, ge=1, le=12),
     target_year: int | None = Query(None, ge=2020, le=2100),
@@ -25,7 +25,7 @@ def export_excel(
 @router.get("/download/excel")
 def download_excel(
     user: dict = Depends(require_authenticated_user),
-    sup_id: str = Query("SL330"),
+    sup_id: str = Query(..., min_length=1),
     brand: str = Query("ALL"),
 ):
     ensure_supervisor_allowed(user, sup_id)

@@ -96,9 +96,22 @@ def _write_json_cache(path: str, payload: dict[str, Any]) -> None:
             raise
 
 
+def product_price_asof(year: int, month: int) -> str:
+    """วันที่ที่ราคาในแคชก้อนนี้ถูกคิด — วันที่ 1 ของงวดเป้า"""
+    return f"{int(year):04d}-{int(month):02d}-01"
+
+
 def read_product_info_df(year: int, month: int) -> pd.DataFrame | None:
     doc = _read_meta(_product_path(year, month))
     if not doc:
+        return None
+    # แคชที่เขียนไว้ก่อนแก้บั๊กราคา (ไม่มี price_asof) ถือราคา ณ "วันที่ดึง"
+    # ซึ่งเป็นราคาเก่าเมื่อทำเป้าล่วงหน้า — ต้องทิ้งแล้วดึงใหม่ ไม่ใช่รอ TTL หมดอายุ
+    if str(doc.get("price_asof") or "") != product_price_asof(year, month):
+        logger.info(
+            "ทิ้งแคชสินค้า %d-%02d: ราคาคิดจากวันที่ไม่ตรงงวด (%r)",
+            year, month, doc.get("price_asof"),
+        )
         return None
     rows = doc.get("rows")
     if not isinstance(rows, list):
@@ -112,7 +125,14 @@ def write_product_info_df(year: int, month: int, df: pd.DataFrame) -> None:
     if not _cache_enabled() or df is None:
         return
     rows = df.to_dict(orient="records")
-    _write_json_cache(_product_path(year, month), {"rows": rows, "row_count": len(rows)})
+    _write_json_cache(
+        _product_path(year, month),
+        {
+            "rows": rows,
+            "row_count": len(rows),
+            "price_asof": product_price_asof(year, month),
+        },
+    )
 
 
 def read_price_map(year: int, month: int) -> dict[str, float] | None:
