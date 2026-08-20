@@ -247,6 +247,8 @@ def put_allocation_snapshot(
             action="save_allocation",
             message="บันทึกผลกระจายไม่ได้ — ไม่มีสิทธิ์",
             detail=str(e.detail),
+            target_month=body.target_month,
+            target_year=body.target_year,
         )
         raise
     email = str(user.get("email") or user.get("view_as_email") or "").strip()
@@ -264,10 +266,13 @@ def put_allocation_snapshot(
             action="save_allocation_no_precondition",
             message="บันทึกทับโดยไม่ส่ง version (client เก่า)",
             detail=f"{body.target_year}-{body.target_month:02d}",
+            target_month=body.target_month,
+            target_year=body.target_year,
         )
 
+    prev = read_snapshot(sid, body.target_month, body.target_year)
     try:
-        return write_snapshot(payload, expected_version=expected_version)
+        saved = write_snapshot(payload, expected_version=expected_version)
     except SnapshotConflict as e:
         log_from_user(
             user,
@@ -276,6 +281,8 @@ def put_allocation_snapshot(
             action="save_allocation_conflict",
             message="บันทึกไม่ได้ — มีคนอื่นบันทึกทับไปแล้ว",
             detail=f"version บนเซิร์ฟเวอร์={e.current.get('version')}",
+            target_month=body.target_month,
+            target_year=body.target_year,
         )
         raise HTTPException(
             status_code=409,
@@ -305,8 +312,48 @@ def put_allocation_snapshot(
             action="save_allocation",
             message="บันทึกผลกระจายไม่สำเร็จ",
             detail=str(e),
+            target_month=body.target_month,
+            target_year=body.target_year,
         )
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+    # เดิม log เฉพาะตอน "ล้มเหลว" — จึงไม่มีทางรู้เลยว่าใครทับผลกระจายของใครเมื่อไหร่
+    # ซึ่งเป็นคำถามแรกที่ถูกถามทุกครั้งที่ตัวเลขเปลี่ยนโดยไม่มีใครยอมรับ
+    _rows = len(payload.get("allocations") or [])
+    _boxes = _sum_boxes(payload.get("allocations"))
+    log_from_user(
+        user,
+        sup_id=sid,
+        action="save_allocation_ok",
+        message=f"บันทึกผลกระจาย {_rows} แถว ({_boxes} หีบ)",
+        detail=(
+            f"version {(prev or {}).get('version', '—')} → {saved.get('version')}"
+            + (f" · ทับของ {prev.get('updated_by')}" if prev and prev.get("updated_by") else "")
+        ),
+        target_month=body.target_month,
+        target_year=body.target_year,
+        context={
+            "rows": _rows,
+            "boxes": _boxes,
+            "version_before": (prev or {}).get("version"),
+            "version_after": saved.get("version"),
+            "boxes_before": _sum_boxes((prev or {}).get("allocations")),
+            "updated_by_before": (prev or {}).get("updated_by"),
+            "strategy": payload.get("strategy"),
+        },
+    )
+    return saved
+
+
+def _sum_boxes(allocations) -> int:
+    """ยอดหีบรวมของ snapshot — ตัวเลขเดียวที่บอกได้เร็วที่สุดว่า 'หายไปเท่าไร'"""
+    total = 0
+    for a in allocations or []:
+        try:
+            total += int(round(float((a or {}).get("allocated_boxes") or 0)))
+        except (TypeError, ValueError):
+            continue
+    return total
 
 
 @router.delete("/data/allocations")
@@ -317,10 +364,35 @@ def delete_allocation_snapshot(
     target_year: int = Query(..., ge=2020, le=2100),
 ):
     """ลบ snapshot — supervisor ทีมตัวเอง / manager ที่มีสิทธิ"""
+    from ..services.usage_log_store import log_from_user
+
     sid = sup_id.strip().upper()
     ensure_allocation_write_allowed(user, sid)
+    # อ่านของเดิมก่อนลบ — ลบแล้วไม่มีอะไรเหลือให้บอกว่าเมื่อกี้มีอะไรอยู่
+    prev = read_snapshot(sid, target_month, target_year)
     if not delete_snapshot(sid, target_month, target_year):
         raise HTTPException(status_code=404, detail="ไม่พบผลกระจายที่จะลบ")
+    log_from_user(
+        user,
+        level="warn",
+        sup_id=sid,
+        action="delete_allocation",
+        message=f"ลบผลกระจาย {sid} งวด {target_month:02d}/{target_year}",
+        detail=(
+            f"ของเดิม {len((prev or {}).get('allocations') or [])} แถว "
+            f"({_sum_boxes((prev or {}).get('allocations'))} หีบ) "
+            f"บันทึกโดย {(prev or {}).get('updated_by') or '—'}"
+        ),
+        target_month=target_month,
+        target_year=target_year,
+        context={
+            "rows_deleted": len((prev or {}).get("allocations") or []),
+            "boxes_deleted": _sum_boxes((prev or {}).get("allocations")),
+            "version_deleted": (prev or {}).get("version"),
+            "updated_by": (prev or {}).get("updated_by"),
+            "updated_at": (prev or {}).get("updated_at"),
+        },
+    )
     return {"status": "ok", "sup_id": sid}
 
 

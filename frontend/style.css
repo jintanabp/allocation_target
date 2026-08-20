@@ -8857,6 +8857,15 @@ tr.emp-row--no-target .emp-tag {
   line-height: 1.5;
 }
 
+/* งวดเป้าที่เหตุการณ์พูดถึง — คนละเรื่องกับ "เวลาที่เกิดเหตุ" ในคอลัมน์แรก */
+#adminView .admin-table--log .log-period {
+  margin-top: 2px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-3);
+  font-family: inherit;
+}
+
 @media (max-width: 1200px) {
   #adminView .admin-table--log .log-col-user { width: 10rem; }
   #adminView .admin-table--log .log-col-action { width: 11rem; }

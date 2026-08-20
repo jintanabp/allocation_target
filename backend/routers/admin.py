@@ -169,21 +169,39 @@ def _scope_rows(admin: dict, rows: list[dict[str, Any]]) -> list[dict[str, Any]]
     return [r for r in rows if row_is_in_admin_scope(r, scope)]
 
 
-def _audit_admin(admin: dict, action: str, message: str, detail: str = "", level: str = "info") -> None:
+def _audit_admin(
+    admin: dict,
+    action: str,
+    message: str,
+    detail: str = "",
+    level: str = "info",
+    *,
+    sup_id: str = "",
+    target_month: int | None = None,
+    target_year: int | None = None,
+    context: dict[str, Any] | None = None,
+) -> None:
     """
     บันทึกทุกการแก้ไขฝั่งแอดมิน
 
     เดิมมีแค่การเปิดสิทธิ์ส่งแบบยกชุดที่ถูก log ทำให้ไม่มีหลักฐานว่าใครแก้สิทธิ์ใคร
     พอมีสองระดับสิทธิ์ยิ่งต้องตามรอยได้
+
+    `sup_id` เคยถูกบังคับเป็นค่าว่างเสมอ ผลคือผู้ดูแลที่มีขอบเขตจะ **มองไม่เห็น audit
+    ของตัวเอง** เพราะตัวกรองขอบเขตคัดแถวที่ไม่มีทีมออก — ตอนนี้ผู้เรียกที่รู้ว่าทำกับ
+    ทีมไหนต้องส่งมา
     """
     try:
         log_from_user(
             admin,
             level=level,
-            sup_id="",
+            sup_id=sup_id,
             action=action,
             message=message,
             detail=f"[{admin.get('role') or '-'}] {detail}",
+            target_month=target_month,
+            target_year=target_year,
+            context=context,
         )
     except Exception:  # log ต้องไม่ทำให้งานหลักพัง
         pass
@@ -1168,14 +1186,40 @@ def admin_list_allocations(
 
 @router.delete("/allocations")
 def admin_delete_allocation(
-    _admin: dict = Depends(require_admin_user),
+    admin: dict = Depends(require_admin_user),
     sup_id: str = Query(..., min_length=1),
     target_month: int = Query(..., ge=1, le=12),
     target_year: int = Query(..., ge=2020, le=2100),
 ):
+    """ลบ snapshot ผลกระจาย — ลบแล้วหายถาวร จึงต้องมีร่องรอยว่าเมื่อกี้มีอะไรอยู่"""
     sid = sup_id.strip().upper()
+    prev = read_snapshot(sid, target_month, target_year)
     if not delete_snapshot(sid, target_month, target_year):
         raise HTTPException(status_code=404, detail="ไม่พบผลกระจายที่จะลบ")
+    rows = (prev or {}).get("allocations") or []
+    boxes = 0
+    for a in rows:
+        try:
+            boxes += int(round(float((a or {}).get("allocated_boxes") or 0)))
+        except (TypeError, ValueError):
+            continue
+    _audit_admin(
+        admin,
+        "admin_delete_allocation",
+        f"ลบผลกระจาย {sid} งวด {target_month:02d}/{target_year}",
+        f"ของเดิม {len(rows)} แถว ({boxes} หีบ) บันทึกโดย {(prev or {}).get('updated_by') or '—'}",
+        level="warn",
+        sup_id=sid,
+        target_month=target_month,
+        target_year=target_year,
+        context={
+            "rows_deleted": len(rows),
+            "boxes_deleted": boxes,
+            "version_deleted": (prev or {}).get("version"),
+            "updated_by": (prev or {}).get("updated_by"),
+            "updated_at": (prev or {}).get("updated_at"),
+        },
+    )
     return {"status": "ok", "sup_id": sid}
 
 
@@ -1248,6 +1292,8 @@ def admin_set_no_target_employees(
                 + (" · " if added and removed else "")
                 + (f"ปลด: {', '.join(removed)}" if removed else "")
             ),
+            sup_id=sup,
+            context={"before": before, "after": after, "added": added, "removed": removed},
         )
     return {
         "ok": True,
@@ -1331,6 +1377,15 @@ def admin_restore_target_baseline(
         f"กู้คืนเป้าตั้งต้น {sid} งวด {target_month:02d}/{target_year}",
         f"SKU {result['skus']} รายการ ({result['total_boxes']} หีบ) · พนักงาน {result['employees']} คน",
         level="warn",
+        sup_id=sid,
+        target_month=target_month,
+        target_year=target_year,
+        context={
+            "skus": result["skus"],
+            "employees": result["employees"],
+            "total_boxes": result["total_boxes"],
+            "captured_at": result.get("captured_at"),
+        },
     )
     return {"ok": True, **result}
 
@@ -1621,6 +1676,11 @@ def _filter_usage_items_for_admin(admin: dict, items: list[dict]) -> list[dict]:
         for r in read_rows()
         if row_is_in_admin_scope(r, scope)
     }
+    # ตัวเองต้องเห็นสิ่งที่ตัวเองทำเสมอ ไม่ว่าขอบเขตจะเป็นอะไร — การกระทำระดับระบบ
+    # (แก้สิทธิ์ ผูกรหัส) ไม่ผูกกับทีมใดทีมหนึ่ง ถ้าคัดออกด้วยขอบเขต ผู้ดูแลจะกดบันทึก
+    # แล้วมองไม่เห็นร่องรอยของตัวเอง แล้วเข้าใจว่าระบบไม่ได้เก็บ
+    emails.add(normalized_email(admin.get("email")))
+    emails.discard("")
     return [
         it
         for it in items
@@ -1658,15 +1718,29 @@ def admin_export_usage_logs_xlsx(
             it["detail_str"] = _json.dumps(d, ensure_ascii=False)
         else:
             it["detail_str"] = str(d or "")
+        # งวดเป้าที่เหตุการณ์พูดถึง — คนละเรื่องกับ "เวลาที่เกิดเหตุ" ในคอลัมน์แรก
+        it["period"] = (
+            f"{int(it.get('target_month')):02d}/{it.get('target_year')}"
+            if it.get("target_month") and it.get("target_year")
+            else ""
+        )
+        ctx = it.get("context")
+        it["context_str"] = (
+            _json.dumps(ctx, ensure_ascii=False) if isinstance(ctx, (dict, list)) else ""
+        )
     cols = [
         ("ts_th", "เวลา (ไทย)"),
         ("level", "ระดับ"),
         ("email", "ผู้ใช้"),
         ("role", "บทบาท"),
         ("sup_id", "ทีม (SL)"),
+        ("period", "งวดเป้า"),
         ("action", "การกระทำ"),
         ("message", "ข้อความ"),
         ("detail_str", "รายละเอียด"),
+        ("context_str", "ค่าที่บันทึกไว้"),
+        ("request_id", "request_id"),
+        ("entry_id", "entry_id"),
     ]
     m_part = f"{target_month:02d}" if target_month else "all"
     y_part = str(target_year) if target_year else "all"

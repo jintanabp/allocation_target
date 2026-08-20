@@ -56,7 +56,19 @@ def append_log(
     message: str = "",
     detail: str = "",
     request_id: str | None = None,
+    target_month: int | None = None,
+    target_year: int | None = None,
+    context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """
+    เขียนหนึ่งบรรทัดลง usage_YYYY-MM-DD.jsonl
+
+    `target_month`/`target_year` = **งวดเป้าที่เหตุการณ์นี้พูดถึง** ไม่ใช่วันที่เกิดเหตุ
+    (เดิมไม่มีเลย เวลาเป้างวดหนึ่งเพี้ยนจึงตามรอยไม่ได้ว่าใครแตะงวดไหน)
+
+    `context` = ค่าก่อน/หลังแบบมีโครงสร้าง ไว้เทียบด้วยเครื่องได้ ต่างจาก `detail`
+    ที่เป็นข้อความสำหรับคนอ่าน — เก็บทั้งคู่เพราะใช้คนละงาน
+    """
     row: dict[str, Any] = {
         "ts": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "level": str(level or "info").strip().lower(),
@@ -68,6 +80,17 @@ def append_log(
         "detail": str(detail or "").strip(),
         "request_id": request_id or str(uuid.uuid4())[:12],
     }
+    if target_month is not None:
+        row["target_month"] = int(target_month)
+    if target_year is not None:
+        row["target_year"] = int(target_year)
+    if context:
+        # ต้อง serialize ได้เสมอ ไม่งั้นทั้งบรรทัดหายไปตอน json.dumps ล้ม
+        try:
+            json.dumps(context, ensure_ascii=False)
+            row["context"] = context
+        except (TypeError, ValueError):
+            row["context"] = {"_unserializable": str(context)[:500]}
     row["entry_id"] = entry_id(row)
     os.makedirs(logs_dir(), exist_ok=True)
     path = _log_path_for_date(_today_str())
@@ -98,6 +121,9 @@ def log_from_user(
     action: str = "",
     message: str = "",
     detail: str = "",
+    target_month: int | None = None,
+    target_year: int | None = None,
+    context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     email = str((user or {}).get("email") or (user or {}).get("view_as_email") or "").strip()
     return append_log(
@@ -108,6 +134,9 @@ def log_from_user(
         action=action,
         message=message,
         detail=detail,
+        target_month=target_month,
+        target_year=target_year,
+        context=context,
     )
 
 
@@ -118,15 +147,28 @@ def _list_log_paths(
     target_month: int | None = None,
     scan_all: bool = False,
 ) -> list[str]:
-    if target_year is not None and target_month is not None:
-        import calendar
-
-        y, m = int(target_year), int(target_month)
-        last = calendar.monthrange(y, m)[1]
-        return [
-            _log_path_for_date(f"{y}-{m:02d}-{day:02d}")
-            for day in range(1, last + 1)
-        ]
+    # ปี/เดือน (อย่างใดอย่างหนึ่งหรือทั้งคู่) — คัดจากชื่อไฟล์ที่มีอยู่จริง
+    # ระบุปีหรือเดือนอย่างเดียว — เดิมตกมาบรรทัดสุดท้ายแล้วคืน "เฉพาะวันนี้" เงียบ ๆ
+    # แอดมินเห็นว่างเปล่าแล้วเข้าใจว่าไม่มีเหตุการณ์ ทั้งที่มีอยู่เต็มไปหมด
+    if target_year is not None or target_month is not None:
+        d = logs_dir()
+        if not os.path.isdir(d):
+            return []
+        paths = []
+        for fn in os.listdir(d):
+            if not (fn.startswith("usage_") and fn.endswith(".jsonl")):
+                continue
+            stamp = fn[len("usage_"):-len(".jsonl")]        # YYYY-MM-DD
+            parts = stamp.split("-")
+            if len(parts) != 3:
+                continue
+            if target_year is not None and parts[0] != f"{int(target_year)}":
+                continue
+            if target_month is not None and parts[1] != f"{int(target_month):02d}":
+                continue
+            paths.append(os.path.join(d, fn))
+        paths.sort(reverse=True)
+        return paths
     if scan_all or (date is None and target_year is None and target_month is None):
         d = logs_dir()
         if not os.path.isdir(d):

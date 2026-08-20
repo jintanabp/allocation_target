@@ -13156,6 +13156,30 @@ function adminInitUsageLogsPanel() {
   adminLoadUsageLogs();
 }
 
+/**
+ * เวลาใน log เป็น UTC — ต้องแปลงเป็นเวลาไทยก่อนแสดง
+ *
+ * เดิมหน้าจอตัด "T" กับ "Z" ทิ้งแล้วโชว์ตัวเลข UTC ตรง ๆ ขณะที่ไฟล์ Excel แปลงเป็น
+ * Asia/Bangkok ให้ คนที่เทียบสองที่จึงเห็นเวลาต่างกัน 7 ชั่วโมงโดยไม่รู้ตัว
+ * ตอนไล่ว่า "ใครแก้ตอนกี่โมง" นั่นคือคนละคำตอบกันเลย
+ */
+function _fmtLogTimeBangkok(ts) {
+  const raw = String(ts || "").trim();
+  if (!raw) return "—";
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) return raw.replace("T", " ").replace("Z", "");
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Bangkok",
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+      hour12: false,
+    }).format(d).replace(",", "");
+  } catch (_) {
+    return raw.replace("T", " ").replace("Z", "");
+  }
+}
+
 async function adminLoadUsageLogs() {
   const tbody = document.getElementById("adminUsageLogsTable");
   const countEl = document.getElementById("adminUsageLogCount");
@@ -13180,12 +13204,17 @@ async function adminLoadUsageLogs() {
       return;
     }
     tbody.innerHTML = items.map((r) => {
-      const ts = escapeHtml(String(r.ts || "").replace("T", " ").replace("Z", ""));
+      const ts = escapeHtml(_fmtLogTimeBangkok(r.ts));
       const lvl = String(r.level || "").toLowerCase();
       const lvlClass = lvl === "error" ? "admin-log-level--error" : (lvl === "warn" ? "admin-log-level--warn" : "admin-log-level--info");
-      const detail = r.detail ? escapeHtml(String(r.detail)) : "";
+      // ทุกอย่างที่ต้องใช้ตอนสืบย้อนหลังอยู่ในกล่องเดียว — เดิม role/request_id/ค่าก่อน-หลัง
+      // มีอยู่ในข้อมูลแต่ไม่โผล่ที่ไหนเลย ต้องเปิดไฟล์ Excel ถึงจะเห็น
+      const detail = escapeHtml(_adminLogDetailText(r));
       const detailBtn = detail
         ? `<button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminShowUsageDetail(this)" data-detail="${detail.replace(/"/g, "&quot;")}">รายละเอียด</button>`
+        : "";
+      const period = (r.target_year && r.target_month)
+        ? `<div class="log-period">งวด ${String(r.target_month).padStart(2, "0")}/${r.target_year}</div>`
         : "";
       // ไม่มีปุ่ม「รับทราบ」แล้ว — log เป็นบันทึกการใช้งานถาวร ไม่ต้องให้แอดมินมาเคลียร์
       return `<tr>
@@ -13193,7 +13222,7 @@ async function adminLoadUsageLogs() {
         <td><span class="admin-log-level ${lvlClass}">${escapeHtml(lvl || "—")}</span></td>
         <td>${escapeHtml(String(r.email || "—"))}</td>
         <td>${escapeHtml(String(r.sup_id || "—"))}</td>
-        <td class="log-action">${escapeHtml(String(r.action || "—"))}</td>
+        <td class="log-action">${escapeHtml(String(r.action || "—"))}${period}</td>
         <td class="log-msg">${escapeHtml(String(r.message || "—"))}</td>
         <td class="admin-td-actions">${detailBtn}</td>
       </tr>`;
@@ -13202,6 +13231,32 @@ async function adminLoadUsageLogs() {
     if (countEl) countEl.textContent = "";
     tbody.innerHTML = `<tr><td colspan="7" class="admin-empty">${escapeHtml(e.message)}</td></tr>`;
   }
+}
+
+/** รวมทุกอย่างที่ช่วยสืบย้อนหลังไว้ในกล่องรายละเอียดกล่องเดียว */
+function _adminLogDetailText(r) {
+  const lines = [];
+  if (r.detail) lines.push(String(r.detail));
+  const meta = [];
+  if (r.role) meta.push(`บทบาท: ${r.role}`);
+  if (r.target_year && r.target_month) {
+    meta.push(`งวดเป้า: ${String(r.target_month).padStart(2, "0")}/${r.target_year}`);
+  }
+  if (r.ts) meta.push(`เวลาไทย: ${_fmtLogTimeBangkok(r.ts)}  (UTC ${String(r.ts).replace("T", " ").replace("Z", "")})`);
+  if (r.request_id) meta.push(`request_id: ${r.request_id}`);
+  if (r.entry_id) meta.push(`entry_id: ${r.entry_id}`);
+  if (meta.length) {
+    if (lines.length) lines.push("");
+    lines.push(...meta);
+  }
+  if (r.context && typeof r.context === "object") {
+    lines.push("");
+    lines.push("ค่าที่บันทึกไว้:");
+    for (const [k, v] of Object.entries(r.context)) {
+      lines.push(`  ${k}: ${Array.isArray(v) ? (v.length ? v.join(", ") : "—") : (v === null || v === undefined ? "—" : v)}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 function adminShowUsageDetail(btn) {
