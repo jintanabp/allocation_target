@@ -16,7 +16,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=2026081911" />
+  <link rel="stylesheet" href="style.css?v=2026082001" />
 </head>
 
 <body>
@@ -1349,6 +1349,12 @@
               <p class="admin-card__hint">ข้อความ error/warn จากผู้ใช้และระบบ — แสดงทั้งหมดล่าสุดก่อน</p>
             </div>
             <div class="admin-period-bar">
+              <label class="admin-period-bar__field">เดือน
+                <select id="adminUsageLogMonth" class="admin-select admin-select--sm"></select>
+              </label>
+              <label class="admin-period-bar__field">ปี
+                <input type="number" id="adminUsageLogYear" class="field-input field-input--sm admin-period-input" min="2020" max="2100" placeholder="ทุกปี" />
+              </label>
               <label class="admin-period-bar__field">ระดับ
                 <select id="adminUsageLogLevel" class="admin-select admin-select--sm" onchange="adminLoadUsageLogs()">
                   <option value="">ทุกระดับ</option>
@@ -1360,6 +1366,10 @@
               <button type="button" class="admin-btn-refresh admin-btn-refresh--sm" onclick="adminLoadUsageLogs()" title="โหลดรายการล่าสุด">
                 <span class="admin-btn-refresh__icon" aria-hidden="true">↻</span>
                 <span>โหลดใหม่</span>
+              </button>
+              <button type="button" class="admin-btn-refresh admin-btn-refresh--sm" onclick="adminDownloadUsageLogsXlsx()" title="ดาวน์โหลดรายการตามตัวกรองเป็นไฟล์ Excel">
+                <span class="admin-btn-refresh__icon" aria-hidden="true">📥</span>
+                <span>Excel</span>
               </button>
               <span id="adminUsageLogCount" class="admin-period-bar__meta" aria-live="polite"></span>
             </div>
@@ -1383,22 +1393,42 @@
               <h2 class="admin-card__title">ผลการกระจาย (server)</h2>
               <p class="admin-card__hint">snapshot ทุกงวด — กดหัวคอลัมน์เพื่อเรียงลำดับ</p>
             </div>
-            <span id="adminAllocCount" class="admin-period-bar__meta" aria-live="polite"></span>
+            <div class="admin-period-bar">
+              <label class="admin-period-bar__field">เดือน
+                <select id="adminAllocMonth" class="admin-select admin-select--sm"></select>
+              </label>
+              <label class="admin-period-bar__field">ปี
+                <input type="number" id="adminAllocYear" class="field-input field-input--sm admin-period-input" min="2020" max="2100" placeholder="ทุกปี" />
+              </label>
+              <button type="button" class="admin-btn-refresh admin-btn-refresh--sm" onclick="adminLoadAllocations()" title="โหลดรายการล่าสุด">
+                <span class="admin-btn-refresh__icon" aria-hidden="true">↻</span>
+                <span>โหลดใหม่</span>
+              </button>
+              <button type="button" class="admin-btn-refresh admin-btn-refresh--sm" onclick="adminDownloadAllocationsXlsx()" title="ดาวน์โหลดตารางตามตัวกรองเป็นไฟล์ Excel สำหรับรายงาน">
+                <span class="admin-btn-refresh__icon" aria-hidden="true">📥</span>
+                <span>Excel</span>
+              </button>
+              <span id="adminAllocCount" class="admin-period-bar__meta" aria-live="polite"></span>
+            </div>
           </div>
           <div class="admin-data-actions" style="margin:0 0 12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
-            <input type="search" id="adminAllocSearch" class="field-input field-input--sm" placeholder="ค้นหา SL…" style="min-width:9rem;" oninput="adminFilterAllocations()" />
+            <input type="search" id="adminAllocSearch" class="field-input field-input--sm" placeholder="ค้นหา SL / ชื่อ / ภาค…" style="min-width:12rem;" oninput="adminFilterAllocations()" />
           </div>
           <div class="admin-table-wrap admin-table-wrap--scroll admin-table-wrap--panel">
             <table class="admin-table admin-table--compact admin-table--zebra admin-table--alloc">
               <thead><tr>
                 <th class="th-sortable" data-sort="sup" onclick="adminToggleAllocSort('sup')">SL</th>
+                <th class="th-sortable" data-sort="name" onclick="adminToggleAllocSort('name')">ชื่อ Supervisor</th>
+                <th>Div</th>
+                <th class="th-sortable" data-sort="region" onclick="adminToggleAllocSort('region')">ภาค</th>
+                <th>หน่วย</th>
                 <th class="th-sortable" data-sort="period" onclick="adminToggleAllocSort('period')">งวด</th>
                 <th class="th-sortable" data-sort="status" onclick="adminToggleAllocSort('status')">สถานะ</th>
                 <th class="th-sortable th-sort--active th-sort--desc" data-sort="updated" onclick="adminToggleAllocSort('updated')">อัปเดต</th>
                 <th>โดย</th>
                 <th>จัดการ</th>
               </tr></thead>
-              <tbody id="adminAllocTable"><tr><td colspan="6" class="admin-empty">กำลังโหลด…</td></tr></tbody>
+              <tbody id="adminAllocTable"><tr><td colspan="10" class="admin-empty">กำลังโหลด…</td></tr></tbody>
             </table>
           </div>
         </section>
@@ -1448,8 +1478,8 @@
   <script src="vendor/msal-browser.min.js"></script>
   <!-- ตรรกะล้วน (ตัวแปลงเลข/คณิตการเกลี่ย) — ต้องมาก่อน app.js
        ไฟล์นี้มีเทสจริงด้วย node --test tests/logic.test.js -->
-  <script src="logic.js?v=2026081911"></script>
-  <script src="app.js?v=2026081911"></script>
+  <script src="logic.js?v=2026082001"></script>
+  <script src="app.js?v=2026082001"></script>
 </body>
 
 </html>

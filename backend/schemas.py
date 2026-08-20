@@ -63,6 +63,14 @@ class OptimizeRequest(BaseModel):
     ซึ่งไม่แตะตัวเลขเป้า ส่วนตัวนี้เปลี่ยนเป้าที่ทั้งระบบยึด — ต้องตรวจสิทธิ์ทีละรหัส
     """
     target_sup_ids: list[str] = Field(default_factory=list)
+    """
+    กระจายเฉพาะ SKU ในรายการนี้ (ว่าง = ทุก SKU ที่มีเป้า — พฤติกรรมเดิม)
+
+    ใช้กับปุ่ม "กระจายเฉพาะสินค้าที่เป้าเพิ่ม/เปลี่ยน": ฝั่งเว็บส่งเฉพาะ SKU ที่เป้า
+    เพิ่งเปลี่ยนมา แล้ว merge ผลกลับเข้าตารางเดิม — SKU อื่นในตารางไม่ถูกแตะ
+    ประตู I1 ยังบังคับให้ทุก SKU ที่กระจายรอบนี้ตรงเป้าเป๊ะเหมือนเดิม
+    """
+    only_skus: list[str] = Field(default_factory=list)
 
     @field_validator("strategy", mode="before")
     @classmethod
@@ -133,6 +141,14 @@ class LakehouseUploadRequest(BaseModel):
     allocations: list[LakehouseUploadRow] = Field(default_factory=list)
     upload_user_code: str | None = None
     brand_filter: str = "ALL"
+    """
+    ส่งเฉพาะ SKU ในรายการนี้ (ว่าง = ทุก SKU ตาม brand_filter ปกติ)
+
+    ใช้ตอน "ส่งเฉพาะผลกระจายใหม่" หลังกระจายเพิ่มเฉพาะสินค้าที่เป้าเพิ่งเปลี่ยน —
+    SKU นอกรายการไม่ถูกแตะใน Target Sun (ของเดิมคงอยู่) พฤติกรรมประตูตรวจเหมือน
+    การส่งเฉพาะแบรนด์: S1 ตรวจความเท่าเป้าเฉพาะ SKU ที่อยู่ใน payload
+    """
+    sku_filter: list[str] = Field(default_factory=list)
     """จาก POST /lakehouse/prepare-targetsun — ส่ง import โดยไม่สร้าง Excel ซ้ำ"""
     prepare_token: str | None = None
     """

@@ -17,7 +17,7 @@ import logging
 import time
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -1053,13 +1053,37 @@ class UsageLogBody(BaseModel):
     sup_id: str = ""
 
 
-@router.get("/allocations")
-def admin_list_allocations(
-    admin: dict = Depends(require_admin_scoped),
-    target_month: int | None = Query(None, ge=1, le=12),
-    target_year: int | None = Query(None, ge=2020, le=2100),
-):
-    """รายการ snapshot ผลกระจาย — แอดมินรายภาคเห็นเฉพาะทีมในภาคตัวเอง"""
+def _supervisor_meta_index() -> dict[str, dict[str, str]]:
+    """SL → {full_name, acc_division, acc_region, acc_unit} จาก user_access.json
+
+    แถว supervisor_acc มาก่อน (ข้อมูลสังกัดครบกว่า) — แถวอื่นเติมเฉพาะรหัสที่ยังไม่มี
+    """
+    from ..services.user_access_store import real_userpl
+
+    index: dict[str, dict[str, str]] = {}
+    rows = sorted(
+        read_rows(),
+        key=lambda r: 0 if str(r.get("login_kind") or "") == "supervisor_acc" else 1,
+    )
+    for r in rows:
+        code = real_userpl(r.get("userpl"))
+        if not code or code in index:
+            continue
+        index[code] = {
+            "full_name": str(r.get("full_name") or "").strip(),
+            "acc_division": str(r.get("acc_division") or "").strip(),
+            "acc_region": str(r.get("acc_region") or "").strip(),
+            "acc_unit": str(r.get("acc_unit") or "").strip(),
+        }
+    return index
+
+
+def _scoped_allocation_items(
+    admin: dict,
+    target_month: int | None,
+    target_year: int | None,
+) -> list[dict]:
+    """snapshot ผลกระจาย กรองตามขอบเขตแอดมิน + เติมชื่อ/สังกัดของแต่ละ SL"""
     items = list_all_snapshots(
         month=target_month,
         year=target_year,
@@ -1070,6 +1094,24 @@ def admin_list_allocations(
             for c in ((admin.get("admin_scope") or {}).get("sl_codes") or set())
         }
         items = [it for it in items if str(it.get("sup_id") or "").strip().upper() in codes]
+    meta = _supervisor_meta_index()
+    for it in items:
+        m = meta.get(str(it.get("sup_id") or "").strip().upper()) or {}
+        it["full_name"] = m.get("full_name", "")
+        it["acc_division"] = m.get("acc_division", "")
+        it["acc_region"] = m.get("acc_region", "")
+        it["acc_unit"] = m.get("acc_unit", "")
+    return items
+
+
+@router.get("/allocations")
+def admin_list_allocations(
+    admin: dict = Depends(require_admin_scoped),
+    target_month: int | None = Query(None, ge=1, le=12),
+    target_year: int | None = Query(None, ge=2020, le=2100),
+):
+    """รายการ snapshot ผลกระจาย — แอดมินรายภาคเห็นเฉพาะทีมในภาคตัวเอง"""
+    items = _scoped_allocation_items(admin, target_month, target_year)
     return {"items": items, "count": len(items)}
 
 
@@ -1104,6 +1146,90 @@ def admin_export_allocation(
         content=snap,
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
+
+
+_ALLOC_STATUS_TH = {
+    "optimized": "กระจายแล้ว",
+    "draft": "แบบร่าง",
+    "sent_targetsun": "ส่ง Target Sun แล้ว",
+}
+
+
+def _fmt_ts_th(ts: Any) -> str:
+    """ISO timestamp → เวลาไทยอ่านง่าย (คืนค่าดิบถ้า parse ไม่ได้)"""
+    s = str(ts or "").strip()
+    if not s:
+        return ""
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(ZoneInfo("Asia/Bangkok"))
+        return dt.strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return s
+
+
+def _xlsx_response(rows: list[dict], columns: list[tuple[str, str]], basename: str) -> Response:
+    """สร้าง .xlsx จาก rows ตามลำดับ columns (key, หัวตาราง) — ตอบกลับเป็นไฟล์แนบ"""
+    import io
+
+    import pandas as pd
+
+    data = {header: [row.get(key, "") for row in rows] for key, header in columns}
+    df = pd.DataFrame(data)
+    buf = io.BytesIO()
+    try:
+        with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+            df.to_excel(writer, sheet_name="report", index=False)
+    except ImportError:
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+            df.to_excel(writer, sheet_name="report", index=False)
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{basename}.xlsx"',
+            "X-Export-Rows": str(len(rows)),
+        },
+    )
+
+
+@router.get("/allocations/export-xlsx")
+def admin_export_allocations_xlsx(
+    admin: dict = Depends(require_admin_scoped),
+    target_month: int | None = Query(None, ge=1, le=12),
+    target_year: int | None = Query(None, ge=2020, le=2100),
+):
+    """ตารางผลการกระจาย (ตามขอบเขต + filter งวด) เป็น Excel สำหรับรายงานการใช้งาน"""
+    items = _scoped_allocation_items(admin, target_month, target_year)
+    for it in items:
+        it["period"] = f"{int(it.get('target_month') or 0):02d}/{it.get('target_year') or ''}"
+        it["status_th"] = _ALLOC_STATUS_TH.get(
+            str(it.get("status") or "").lower(), str(it.get("status") or "")
+        )
+        it["updated_at_th"] = _fmt_ts_th(it.get("updated_at"))
+        it["sent_at_th"] = _fmt_ts_th(it.get("target_sun_sent_at"))
+    cols = [
+        ("sup_id", "รหัส SL"),
+        ("full_name", "ชื่อ Supervisor"),
+        ("acc_division", "Division"),
+        ("acc_region", "ภาค"),
+        ("acc_unit", "หน่วย"),
+        ("period", "งวด"),
+        ("status_th", "สถานะ"),
+        ("allocation_rows", "จำนวนแถวผลกระจาย"),
+        ("strategy", "วิธีกระจาย"),
+        ("updated_at_th", "อัปเดตล่าสุด"),
+        ("updated_by", "อัปเดตโดย"),
+        ("sent_at_th", "ส่ง Target Sun เมื่อ"),
+    ]
+    m_part = f"{target_month:02d}" if target_month else "all"
+    y_part = str(target_year) if target_year else "all"
+    return _xlsx_response(items, cols, f"allocation_report_{y_part}_{m_part}")
 
 
 @router.get("/user-access/export")
@@ -1273,22 +1399,72 @@ def admin_get_usage_logs(
         target_month=target_month,
         scan_all=scan_all,
     )
-    if admin.get("role") == ROLE_REGION_ADMIN:
-        # เห็นเฉพาะเหตุการณ์ของทีมในภาค หรือของผู้ใช้ในภาคตัวเอง
-        scope = admin.get("admin_scope") or {}
-        codes = {str(c).strip().upper() for c in (scope.get("sl_codes") or set())}
-        emails = {
-            normalized_email(r.get("email"))
-            for r in read_rows()
-            if row_is_in_admin_scope(r, scope)
-        }
-        items = [
-            it
-            for it in items
-            if str(it.get("sup_id") or "").strip().upper() in codes
-            or normalized_email(it.get("email")) in emails
-        ]
+    items = _filter_usage_items_for_admin(admin, items)
     return {"items": items, "scan_all": scan_all}
+
+
+def _filter_usage_items_for_admin(admin: dict, items: list[dict]) -> list[dict]:
+    """แอดมินรายภาคเห็นเฉพาะเหตุการณ์ของทีมในภาค หรือของผู้ใช้ในภาคตัวเอง"""
+    if admin.get("role") != ROLE_REGION_ADMIN:
+        return items
+    scope = admin.get("admin_scope") or {}
+    codes = {str(c).strip().upper() for c in (scope.get("sl_codes") or set())}
+    emails = {
+        normalized_email(r.get("email"))
+        for r in read_rows()
+        if row_is_in_admin_scope(r, scope)
+    }
+    return [
+        it
+        for it in items
+        if str(it.get("sup_id") or "").strip().upper() in codes
+        or normalized_email(it.get("email")) in emails
+    ]
+
+
+@router.get("/usage-logs/export-xlsx")
+def admin_export_usage_logs_xlsx(
+    admin: dict = Depends(require_admin_scoped),
+    date: str | None = Query(None, description="YYYY-MM-DD (ถ้าไม่ส่งงวด)"),
+    target_month: int | None = Query(None, ge=1, le=12),
+    target_year: int | None = Query(None, ge=2020, le=2100),
+    level: str | None = Query(None),
+    limit: int = Query(5000, ge=1, le=20000),
+):
+    """บันทึกการใช้งานเป็น Excel สำหรับรายงานผู้บริหาร — ขอบเขต/ตัวกรองชุดเดียวกับหน้าจอ"""
+    import json as _json
+
+    scan_all = target_month is None and target_year is None and date is None
+    items = read_logs(
+        date=date,
+        level=level,
+        limit=limit,
+        target_year=target_year,
+        target_month=target_month,
+        scan_all=scan_all,
+    )
+    items = _filter_usage_items_for_admin(admin, items)
+    for it in items:
+        it["ts_th"] = _fmt_ts_th(it.get("ts"))
+        d = it.get("detail")
+        if isinstance(d, (dict, list)):
+            it["detail_str"] = _json.dumps(d, ensure_ascii=False)
+        else:
+            it["detail_str"] = str(d or "")
+    cols = [
+        ("ts_th", "เวลา (ไทย)"),
+        ("level", "ระดับ"),
+        ("email", "ผู้ใช้"),
+        ("role", "บทบาท"),
+        ("sup_id", "ทีม (SL)"),
+        ("action", "การกระทำ"),
+        ("message", "ข้อความ"),
+        ("detail_str", "รายละเอียด"),
+    ]
+    m_part = f"{target_month:02d}" if target_month else "all"
+    y_part = str(target_year) if target_year else "all"
+    base = f"usage_logs_{date}" if date else f"usage_logs_{y_part}_{m_part}"
+    return _xlsx_response(items, cols, base)
 
 
 # หมายเหตุ: เดิมมี DELETE /usage-logs/{entry_id} และ POST /usage-logs/acknowledge สำหรับ

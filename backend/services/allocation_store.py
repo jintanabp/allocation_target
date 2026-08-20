@@ -252,7 +252,10 @@ def list_all_snapshots(
             y_i, m_i = int(y_s), int(m_s)
         except ValueError:
             continue
-        if month is not None and year is not None and (m_i != int(month) or y_i != int(year)):
+        # filter เดือน/ปี แยกอิสระ — ส่งมาตัวเดียวก็กรองตัวนั้น
+        if month is not None and m_i != int(month):
+            continue
+        if year is not None and y_i != int(year):
             continue
         snap = read_snapshot(sid, m_i, y_i)
         if not snap or not _snapshot_has_work(snap):

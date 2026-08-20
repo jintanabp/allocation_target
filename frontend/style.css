@@ -6820,6 +6820,188 @@ code {
 }
 
 /* ══════════════════════════════════════════════
+   การ์ดแจ้งเตือน "เป้า Target Sun เปลี่ยน" (โฉมใหม่)
+   อยู่ในกล่อง .fabric-change-inline เดิม — ตำแหน่ง/flow ไม่เปลี่ยน
+══════════════════════════════════════════════ */
+:root {
+  --fresh-bg: rgba(79, 70, 229, 0.07);
+  --fresh-brd: rgba(79, 70, 229, 0.35);
+}
+
+:root[data-theme="dark"] {
+  --fresh-bg: rgba(129, 140, 248, 0.12);
+  --fresh-brd: rgba(129, 140, 248, 0.45);
+}
+
+.tchange-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tchange-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.tchange-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: var(--surface-a65);
+  border: 1px solid var(--amber-brd);
+  font-size: 16px;
+}
+
+.tchange-head-text {
+  min-width: 0;
+}
+
+.tchange-title {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--amber);
+  line-height: 1.4;
+}
+
+.tchange-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.55;
+}
+
+.tchange-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tchange-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border: 1px solid var(--border-md);
+  background: var(--surface-a65);
+  color: var(--text-2);
+}
+
+.tchange-chip--new { color: var(--green); border-color: var(--green-brd); background: var(--green-bg); }
+.tchange-chip--box { color: var(--amber); border-color: var(--amber-brd); background: var(--amber-bg); }
+.tchange-chip--price { color: var(--accent); border-color: var(--accent-brd); background: var(--accent-bg); }
+.tchange-chip--removed { color: var(--red); border-color: var(--red-brd); background: var(--red-bg); }
+
+.tchange-brand {
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+.tchange-details summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 12.5px;
+}
+
+.tchange-details ul {
+  margin: 8px 0 0;
+  padding-left: 1.2em;
+  line-height: 1.7;
+  font-size: 12.5px;
+  max-height: min(300px, 45vh);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.tchange-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 2px;
+}
+
+/* ปุ่มเด่นของการ์ด: กระจายเฉพาะสินค้าที่เป้าเพิ่ม */
+.btn-realloc--partial {
+  background: var(--accent);
+}
+
+.btn-realloc--partial:hover {
+  background: var(--accent-hover);
+}
+
+.btn-realloc--partial:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+/* เมื่อมีปุ่ม partial เป็นตัวเด่น ปุ่มกระจายทั้งหมดถอยเป็นแบบขอบ */
+.btn-realloc--ghost {
+  background: var(--white);
+  color: var(--amber);
+  border: 1px solid var(--amber-brd);
+}
+
+.btn-realloc--ghost:hover {
+  background: var(--amber-bg);
+}
+
+/* ══════════════════════════════════════════════
+   เน้นคอลัมน์ที่เพิ่งกระจายใหม่ (กระจายเฉพาะสินค้าที่เป้าเพิ่ม)
+══════════════════════════════════════════════ */
+.badge-fresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  color: var(--accent);
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-brd);
+  white-space: nowrap;
+}
+
+th.sku-th--fresh {
+  background: var(--fresh-bg);
+  box-shadow: inset 0 3px 0 0 var(--fresh-brd);
+}
+
+td.result-cell--fresh {
+  background: var(--fresh-bg);
+}
+
+/* ตัวเลือก "ส่งเฉพาะผลกระจายใหม่" — อยู่บนสุดของ modal ตอนมีการกระจายบางสินค้าใหม่
+   จึงเน้นกรอบให้เห็นว่าเป็นการตัดสินใจแรกก่อนส่ง */
+.lakehouse-scope-pick {
+  border: 1px solid var(--accent-brd);
+  background: var(--accent-bg);
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+}
+
+.lakehouse-scope-pick .lakehouse-brand-pick__title {
+  color: var(--accent);
+}
+
+.lakehouse-scope-list {
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+/* ══════════════════════════════════════════════
    RESPONSIVE
 ══════════════════════════════════════════════ */
 @media (max-width: 768px) {

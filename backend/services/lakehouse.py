@@ -1710,6 +1710,30 @@ def _build_tga_upload_dataframe(
                 },
             )
 
+    # ส่งเฉพาะ SKU ที่เลือก (เช่น "ส่งเฉพาะผลกระจายใหม่") — กลไกเดียวกับส่งเฉพาะแบรนด์:
+    # SKU นอกรายการไม่ถูกแตะใน Target Sun และประตู S1 ตรวจเฉพาะ SKU ใน payload
+    sku_filter = [
+        str(s).strip() for s in (getattr(req, "sku_filter", None) or []) if str(s).strip()
+    ]
+    if sku_filter:
+        df = df[df["sku"].isin(set(sku_filter))].copy()
+        if df.empty:
+            raise HTTPException(
+                404,
+                detail={
+                    "message": "ไม่พบข้อมูลของสินค้าที่เลือกส่ง",
+                    "hint_th": "ตรวจว่าสินค้าที่เลือกยังอยู่ในผลกระจายหีบ — หรือส่งทุกสินค้าแทน",
+                },
+            )
+        if int(df["allocated_boxes"].sum()) == 0:
+            raise HTTPException(
+                400,
+                detail={
+                    "message": "สินค้าที่เลือกส่งเป็นหีบ 0 ทั้งหมด — Target Sun จะทับเป้าเดิมเป็น 0",
+                    "hint_th": "ตรวจผลกระจายของสินค้าที่เลือกก่อนส่ง",
+                },
+            )
+
     df = _normalize_allocation_payload(df)
     payload_by_sku = _boxes_by_sku(df)
     if enforce_targets:
@@ -1719,8 +1743,8 @@ def _build_tga_upload_dataframe(
             int(req.target_month),
             int(req.target_year),
             confirmed=bool(getattr(req, "confirm_target_mismatch", False)),
-            # ส่งทุกแบรนด์เท่านั้นที่ payload ควรครอบคลุมทุก SKU ที่มีเป้า
-            check_missing_skus=(brand_filter or "ALL").upper() == "ALL",
+            # ส่งทุกแบรนด์ครบทุกสินค้าเท่านั้นที่ payload ควรครอบคลุมทุก SKU ที่มีเป้า
+            check_missing_skus=(brand_filter or "ALL").upper() == "ALL" and not sku_filter,
             unverifiable_confirmed=bool(getattr(req, "confirm_unverifiable_target", False)),
         )
     zero_pairs_full = _zero_sum_emp_sku_pairs(df)

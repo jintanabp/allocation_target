@@ -444,6 +444,21 @@ def run_optimization_service(
             ),
         )
 
+    # กระจายเฉพาะบางสินค้า (ปุ่ม "กระจายเฉพาะสินค้าที่เป้าเพิ่ม") — SKU อื่นไม่ถูกแตะ
+    # I1 ยังบังคับเต็มบนเซ็ตที่เลือก: ทุก SKU ที่กระจายรอบนี้ต้องตรงเป้าเป๊ะ
+    only_skus = [str(s).strip() for s in (req.only_skus or []) if str(s).strip()]
+    if only_skus:
+        df_sku = df_sku[df_sku["sku"].isin(set(only_skus))].copy()
+        if df_sku.empty:
+            raise HTTPException(
+                400,
+                detail=(
+                    "ไม่พบสินค้าที่เลือกกระจายในเป้าหีบงวดนี้ — "
+                    "กรุณาโหลดข้อมูลขั้นที่ 1 ใหม่แล้วลองอีกครั้ง"
+                ),
+            )
+        logger.info("optimize: กระจายเฉพาะ %d SKU ที่เลือก", len(df_sku))
+
     df_all_targets = pd.DataFrame([t.model_dump() for t in req.yellowTargets])
     if df_all_targets.empty:
         raise HTTPException(400, detail="ไม่มีเป้าเหลือง (yellowTargets) — โหลดข้อมูล Dashboard ก่อน")

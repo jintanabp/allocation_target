@@ -538,15 +538,16 @@ async function initEntraAuth() {
 
   if (!AUTH_CONFIG.authRequired) {
     S.canImportTargetSun = true;
-    if (hintEl) {
-      if (AUTH_CONFIG._fetchError) {
+    if (AUTH_CONFIG._fetchError) {
+      if (hintEl) {
         hintEl.textContent = AUTH_CONFIG._fetchTimedOut
           ? `เชื่อมต่อ server ช้า/ไม่ตอบ (${API_BASE_URL}/auth/config) — ตรวจว่า server รันอยู่แล้วรีเฟรช`
           : `เชื่อมต่อ ${API_BASE_URL}/auth/config ไม่ได้ — ตรวจว่าเปิด URL นี้ผ่าน server เดียวกัน (ไม่ใช้ไฟล์เปล่า) และรีเฟรช`;
-      } else {
-        hintEl.textContent =
-          "ล็อกอิน Microsoft ปิดอยู่ — ใส่ AZURE_AUTH_CLIENT_ID + FABRIC_TENANT_ID ใน config/.env แล้วรีสตาร์ท server · ในโหมดนี้รายชื่อ Supervisor/Manager แสดงทั้งระบบ (ไม่กรองตาม user_access.json)";
       }
+    } else if (block) {
+      // โหมดปิด auth ทำงานได้ปกติ — ซ่อนกล่องคำอธิบายเทคนิคทั้งใบ ผู้ใช้เห็นแล้วงงเปล่า ๆ
+      // (รายละเอียดวิธีเปิด auth อยู่ใน config/README.md สำหรับคนดูแลระบบ)
+      block.style.display = "none";
     }
     if (msBtn) msBtn.style.display = "none";
     if (formBlock) formBlock.classList.remove("login-form-disabled");
@@ -799,6 +800,8 @@ let S = {
   /** ขอบเขตการกระจายในโหมดรวมภาค: "team" (แยกทีม) | "unit" (รวมเป้าทั้งภาค)
       ตั้งใหม่ทุกครั้งที่โหลดข้อมูล — ไม่จำข้ามงวด */
   allocScope: "team",
+  /** SKU ที่เพิ่งถูก "กระจายเฉพาะสินค้าที่เป้าเพิ่ม" — ใช้เน้นคอลัมน์ + ตัวเลือกส่งเฉพาะชุดใหม่ */
+  recentReallocSkus: [],
   /** จำนวนทีม/ผู้จัดการที่บัญชีนี้เลือกได้ในหน้าล็อกอิน (-1 = ยังไม่รู้)
       0 = ไม่มีอะไรให้เลือก → ถ้าเป็นแอดมินต้องพาเข้าหน้าแอดมินแทนที่จะค้างหน้าล็อกอิน */
   loginPickCount: -1,
@@ -3128,6 +3131,23 @@ async function loadManagers(force = false) {
       const list = _managersListFromApiData(data);
       S.loginPickCount = list.length;
 
+      // dev ไม่มีฟอร์มเลือกทีม/งวดอยู่แล้ว (applyAdminLoginLayout ซ่อนให้) —
+      // ไม่ต้องให้กดปุ่ม "เข้าสู่ระบบแอดมิน" ซ้ำอีกชั้น พาเข้าหน้าแอดมินเลย
+      if (S.isAdmin && !S.viewAsEmail) {
+        if (list.length > 0) {
+          populateLoginSupervisorSelect(list, "", data.default_login_pick || "");
+        }
+        if (retryBtn) retryBtn.style.display = "none";
+        _disableLoginScrollLock();
+        const loginEl = document.getElementById("loginView");
+        const dashEl = document.getElementById("dashboardView");
+        if (loginEl) loginEl.style.display = "none";
+        if (dashEl) dashEl.style.display = "none";
+        document.body.classList.remove("is-login");
+        openAdminView();
+        return;
+      }
+
       if (list.length > 0) {
         populateLoginSupervisorSelect(list, "", data.default_login_pick || "");
         if (retryBtn) retryBtn.style.display = "none";
@@ -5214,6 +5234,17 @@ async function runOptimization() {
     document.getElementById("brandStrategyPanel")?.scrollIntoView({ behavior: "smooth", block: "center" });
     return;
   }
+  // เป้าเปลี่ยนหลังกระจายรอบก่อน → เด้ง modal ให้เห็น + เลือกวิธีกระจายตรงนั้นเลย
+  // (แบนเนอร์อาจถูกมองข้าม — จุดนี้ผู้ใช้ทุกคนต้องผ่านตอนกดคำนวณ)
+  if (!S.compositeAllocView && !_isAllocReadOnlyView() && (S.allocations || []).length) {
+    const pick = await _confirmTargetChangedBeforeRun();
+    if (pick === "cancel") return;
+    if (pick === "partial") {
+      await runReAllocationOnlyChanged();
+      return;
+    }
+    // "full" / "none" → กระจายใหม่ทั้งหมดตาม flow เดิมด้านล่าง
+  }
   if (_regionalAggregateWritable()) {
     // ขอบเขต + คำเตือน "ทับผลเดิม" อยู่ในใบเดียวกัน — ผู้ใช้เห็นก่อนเริ่มคำนวณเสมอ
     const ok = await openAllocScopeModal({ run: true });
@@ -5430,7 +5461,12 @@ function _mergeLockedEditsIntoAllocs(allocs, lockedEdits) {
   return allocs;
 }
 
-async function _doOptimize(lockedEdits = []) {
+async function _doOptimize(lockedEdits = [], opts = {}) {
+  // opts.onlySkus: กระจายเฉพาะ SKU ในลิสต์ (ปุ่ม "กระจายเฉพาะสินค้าที่เป้าเพิ่ม")
+  const onlySkus = Array.isArray(opts.onlySkus)
+    ? opts.onlySkus.map((s) => String(s || "").trim()).filter(Boolean)
+    : [];
+  if (!onlySkus.length) S.recentReallocSkus = [];
   const btn = qs("#runBtn");
   btn.disabled = true;
   btn.textContent = "กำลังคำนวณ…";
@@ -5474,6 +5510,7 @@ async function _doOptimize(lockedEdits = []) {
       revenue_tolerance_baht: _revenueTolerancePayload(),
       tiered_allocation: true,
       tier_pct: 0.80,
+      only_skus: onlySkus,
     };
 
     let allocs = [];
@@ -5801,14 +5838,20 @@ function renderResult(allocs) {
   let headerHtml = "";
   const showNames = !!S.showSkuProductNames;
   const smWhRowspan = showNames ? ' rowspan="2"' : "";
+  // คอลัมน์ที่เพิ่งกระจายใหม่จากปุ่ม "กระจายเฉพาะสินค้าที่เป้าเพิ่ม" — เน้นให้เห็นชัด
+  const _freshSkuSet = new Set(
+    (S.recentReallocSkus || []).map((x) => String(x || "").trim()).filter(Boolean)
+  );
   headerHtml += `<tr><th class="result-sticky-left result-sticky-left--sm"${smWhRowspan}>S/M</th><th class="result-sticky-left result-sticky-left--wh"${smWhRowspan}>W/H</th>`;
   skus.forEach(s => {
     const info = _skuInfoByCode.get(s) || {};
     const price = _skuPriceMap[s] ?? 0;
     const newBadge = _skuNewBadgeHtml(s);
     const tierBadge = _skuTierBadgeHtml(s);
-    headerHtml += `<th class="r sku-th">` +
-      `<div class="sku-th-code">${s} ${newBadge}${tierBadge}</div>` +
+    const fresh = _freshSkuSet.has(String(s).trim());
+    const freshBadge = fresh ? `<span class="badge-fresh" title="เพิ่งกระจายใหม่จากเป้าที่เพิ่ม/เปลี่ยน">เพิ่งกระจาย</span>` : "";
+    headerHtml += `<th class="r sku-th${fresh ? " sku-th--fresh" : ""}">` +
+      `<div class="sku-th-code">${s} ${newBadge}${tierBadge}${freshBadge}</div>` +
       `<div class="sku-th-brand">${escH(info.brand_name_thai || info.brand_name_english || "")}</div>` +
       `<div class="sku-th-price">${fmt(price)} <span class="muted">บาท/หีบ</span></div>` +
       `</th>`;
@@ -5946,7 +5989,7 @@ function renderResult(allocs) {
             onclick="revertResultCell('${escH(empId)}','${escH(s)}','${escH(whKey)}')">↺</button>`
         : "";
 
-      rowHtml += `<td class="r result-cell" style="vertical-align:top;">
+      rowHtml += `<td class="r result-cell${_freshSkuSet.has(String(s).trim()) ? " result-cell--fresh" : ""}" style="vertical-align:top;">
         <div class="result-box-wrap">
           <div class="result-box-num ${colorClass}" contenteditable="${resultReadOnly ? "false" : "true"}"
             data-emp="${escH(empId)}" data-wh="${escH(whKey)}" data-sku="${escH(s)}" onblur="onResultEdit(this)"
@@ -7339,6 +7382,8 @@ function showLakehouseUploadModal() {
         </div>
       </div>
 
+      ${_lakehouseSendScopeSectionHtml()}
+
       <div class="lakehouse-summary" aria-label="สรุปก่อนส่ง">
         <div class="lakehouse-stat">
           <span class="lakehouse-stat__label">Supervisor</span>
@@ -7643,17 +7688,25 @@ function _lakehouseMatrixFilterSup(supId) {
 }
 
 /** SKU สำหรับส่งออก — ถ้าเลือกแบรนด์ ใช้ทุก SKU ของแบรนด์นั้น (ไม่จำกัดแค่เป้าซุป > 0) */
-function _lakehouseSkusForExport(brand = null) {
+function _lakehouseSkusForExport(brand = null, skuFilter = null) {
   const b = String(brand || "ALL").trim();
+  let out;
   if (b && b.toUpperCase() !== "ALL") {
     const brandSkus = _lakehouseBrandSkus(b);
-    if (brandSkus && brandSkus.size > 0) return [...brandSkus].sort();
+    out = brandSkus && brandSkus.size > 0 ? [...brandSkus].sort() : _lakehouseTargetSkus();
+  } else {
+    out = _lakehouseTargetSkus();
   }
-  return _lakehouseTargetSkus();
+  // ส่งเฉพาะผลกระจายใหม่ — SKU นอกรายการไม่ประกอบเข้า payload เลย (ไม่ถูกทับใน Target Sun)
+  if (Array.isArray(skuFilter) && skuFilter.length) {
+    const keep = new Set(skuFilter.map((s) => String(s).trim()));
+    out = out.filter((s) => keep.has(String(s).trim()));
+  }
+  return out;
 }
 
 /** ส่งเฉพาะ SKU ที่มีเป้า TGA — ครบทุกคู่ emp×sku รวมหีบ 0 เพื่อทับเป้าเดิมใน DB */
-function _lakehouseAllocationsFromStep3(filterSupId = null, brand = null) {
+function _lakehouseAllocationsFromStep3(filterSupId = null, brand = null, skuFilter = null) {
   const filterSup = filterSupId ? String(filterSupId).trim().toUpperCase() : "";
   const byKey = new Map();
   for (const a of S.allocations || []) {
@@ -7674,7 +7727,7 @@ function _lakehouseAllocationsFromStep3(filterSupId = null, brand = null) {
         return sc === filterSup;
       })
     : empRows;
-  const scopedSkus = _lakehouseSkusForExport(brand);
+  const scopedSkus = _lakehouseSkusForExport(brand, skuFilter);
   const out = [];
   /* กันปล่อยแถวเดิมซ้ำ — _lakehouseMergeIntoMap ผูก entry เดียวไว้สองคีย์
      (emp|wh::sku และ emp::sku) พนักงานที่แยกคลัง ถ้าคลังใดหาไม่เจอ จะตกไปได้
@@ -7721,6 +7774,51 @@ function _selectedLakehouseBrand() {
   return picked ? String(picked.value || "ALL").trim() : "ALL";
 }
 
+/* ── ส่งเฉพาะผลกระจายใหม่ (หลังกด "กระจายเฉพาะสินค้าที่เป้าเพิ่ม") ──────────
+   ตัวเลือกโผล่ใน modal ส่งเฉพาะเมื่อมี S.recentReallocSkus — ค่าเริ่มต้นส่งทั้งหมดเสมอ */
+
+function _lakehouseSendScopeSectionHtml() {
+  const fresh = (S.recentReallocSkus || []).map((s) => String(s).trim()).filter(Boolean);
+  if (!fresh.length) return "";
+  const listShort = fresh.slice(0, 8).map(escH).join(" · ") + (fresh.length > 8 ? " …" : "");
+  return `
+      <div class="lakehouse-brand-pick lakehouse-scope-pick">
+        <div class="lakehouse-brand-pick__title">ขอบเขตการส่ง</div>
+        <div class="export-opts">
+          <label class="export-opt">
+            <input type="radio" name="lakehouseSendScope" value="all" checked onchange="_onLakehouseSendScopeChange()">
+            <span>📦 ส่งทุกสินค้าตามแบรนด์ที่เลือก (แบบเดิม)</span>
+          </label>
+          <label class="export-opt">
+            <input type="radio" name="lakehouseSendScope" value="fresh" onchange="_onLakehouseSendScopeChange()">
+            <span>⚡ ส่งเฉพาะผลกระจายใหม่ (${fresh.length} SKU ที่เพิ่งกระจาย)</span>
+          </label>
+        </div>
+        <p class="lakehouse-brand-warn">ส่งเฉพาะผลกระจายใหม่ = SKU อื่นใน Target Sun <strong>ไม่ถูกทับ</strong> (คงเป้าเดิม)<br>
+        <span class="lakehouse-scope-list">สินค้าที่จะส่ง: ${listShort}</span></p>
+      </div>`;
+}
+
+/** เลือกส่งเฉพาะผลกระจายใหม่ → ตัวเลือกแบรนด์ถูกล็อกเป็น "ทุกแบรนด์" (ขอบเขตชนกัน) */
+function _onLakehouseSendScopeChange() {
+  const freshMode = _selectedLakehouseSendScope() === "fresh";
+  document.querySelectorAll('input[name="lakehouseBrand"]').forEach((el) => {
+    if (freshMode && String(el.value).toUpperCase() === "ALL") el.checked = true;
+    el.disabled = freshMode;
+  });
+}
+
+function _selectedLakehouseSendScope() {
+  const picked = document.querySelector('input[name="lakehouseSendScope"]:checked');
+  return picked && picked.value === "fresh" ? "fresh" : "all";
+}
+
+/** รายการ SKU สำหรับ sku_filter — ว่าง = ส่งทั้งหมดตามปกติ */
+function _lakehouseFreshSkuFilter() {
+  if (_selectedLakehouseSendScope() !== "fresh") return [];
+  return (S.recentReallocSkus || []).map((s) => String(s).trim()).filter(Boolean);
+}
+
 /** SKU ที่อยู่ในแบรนด์ที่เลือก (null = ทุกแบรนด์) */
 function _lakehouseBrandSkus(brand) {
   const b = String(brand || "ALL").trim();
@@ -7748,13 +7846,16 @@ function _lakehouseBrandSkus(brand) {
 function _lakehouseExportPayload(supId = null, brand = null, opts = {}) {
   const sid = supId || S.supId;
   const brandFilter = brand != null ? brand : _selectedLakehouseBrand();
+  // "ส่งเฉพาะผลกระจายใหม่" — อ่านจากตัวเลือกใน modal ตอนประกอบ payload เท่านั้น
+  const skuFilter = Array.isArray(opts.skuFilter) ? opts.skuFilter : _lakehouseFreshSkuFilter();
   return {
     sup_id: sid,
     target_month: S.targetMonth,
     target_year: S.targetYear,
     upload_user_code: _lakehouseUserCode(),
     brand_filter: brandFilter,
-    allocations: _lakehouseAllocationsFromStep3(_lakehouseMatrixFilterSup(sid), brandFilter),
+    sku_filter: skuFilter,
+    allocations: _lakehouseAllocationsFromStep3(_lakehouseMatrixFilterSup(sid), brandFilter, skuFilter),
     // ผู้ใช้ตรวจรายการที่ไม่ตรงเป้าทีมแล้วกดยืนยัน (ดู _confirmTargetMismatchBeforeSend)
     // ถ้าไม่ได้ยืนยัน server จะตอบ 409 พร้อมรายการ SKU ที่ไม่ตรง
     confirm_target_mismatch: !!opts.confirmTargetMismatch,
@@ -8542,7 +8643,9 @@ function _supSkuTargetMap(supId) {
 function _supTargetMismatches(supIds, brand) {
   const out = [];
   for (const sid of supIds || []) {
-    const rows = _lakehouseAllocationsFromStep3(_lakehouseMatrixFilterSup(sid), brand);
+    const rows = _lakehouseAllocationsFromStep3(
+      _lakehouseMatrixFilterSup(sid), brand, _lakehouseFreshSkuFilter()
+    );
     if (!rows.length) continue;
     const targets = _supSkuTargetMap(sid);
     const got = {};
@@ -10704,7 +10807,11 @@ function _distributeIntEven(total, n) {
   return out;
 }
 
-/** เทียบ snapshot กับ S ปัจจุบัน — คืนรายการข้อความ HTML */
+/**
+ * เทียบ snapshot กับ S ปัจจุบัน — คืนรายการ {kind, sku, html}
+ * kind: new_sku | box_change | price_change | sku_removed | emp_target
+ * (new_sku + box_change = สินค้าที่ "กระจายเฉพาะที่เป้าเปลี่ยน" ได้)
+ */
 function _buildSnapshotChangeList(snap) {
   if (!snap) return [];
   const changes = [];
@@ -10712,32 +10819,176 @@ function _buildSnapshotChangeList(snap) {
   S.skus.forEach(s => {
     const old = snap.skus?.find(x => x.sku === s.sku);
     if (!old) {
-      changes.push(`🆕 SKU ใหม่: <strong>${esc(s.sku)}</strong>`);
+      changes.push({
+        kind: "new_sku",
+        sku: s.sku,
+        html: `🆕 สินค้าใหม่: <strong>${esc(s.sku)}</strong>${_skuBrandSuffixHtml(s.sku)}`,
+      });
     } else {
       const boxDiff = (Number(s.supervisor_target_boxes) || 0) - (old.supervisor_target_boxes || 0);
       const priceDiff = (Number(s.price_per_box) || 0) - (old.price_per_box || 0);
       if (boxDiff !== 0) {
         const label = boxDiff > 0 ? `เพิ่ม +${boxDiff}` : `ลด ${Math.abs(boxDiff)}`;
-        changes.push(`📦 <strong>${esc(s.sku)}</strong>: เป้าหีบทีม ${label} หีบ`);
+        changes.push({
+          kind: "box_change",
+          sku: s.sku,
+          html: `📦 <strong>${esc(s.sku)}</strong>${_skuBrandSuffixHtml(s.sku)}: เป้าหีบทีม ${label} หีบ`,
+        });
       }
       if (Math.abs(priceDiff) > 0.01) {
-        changes.push(`💰 <strong>${esc(s.sku)}</strong>: ราคา/หีบเปลี่ยน ${priceDiff > 0 ? "+" : ""}${baht(priceDiff)} บาท`);
+        changes.push({
+          kind: "price_change",
+          sku: s.sku,
+          html: `💰 <strong>${esc(s.sku)}</strong>: ราคา/หีบเปลี่ยน ${priceDiff > 0 ? "+" : ""}${baht(priceDiff)} บาท`,
+        });
       }
     }
   });
   snap.skus?.forEach(old => {
     if (!S.skus.find(s => s.sku === old.sku)) {
-      changes.push(`❌ SKU หายไป: <strong>${esc(old.sku)}</strong>`);
+      changes.push({
+        kind: "sku_removed",
+        sku: old.sku,
+        html: `❌ SKU หายไป: <strong>${esc(old.sku)}</strong>`,
+      });
     }
   });
   S.employees.forEach(e => {
     const oldE = snap.targets?.find(x => x.emp_id === e.emp_id);
     if (oldE && Math.abs((Number(e.target_sun) || 0) - oldE.target_sun) > 100) {
       const diff = (Number(e.target_sun) || 0) - oldE.target_sun;
-      changes.push(`👤 <strong>${esc(e.emp_id)}</strong>: เป้าเงินเริ่มต้นเปลี่ยน ${diff > 0 ? "+" : ""}${baht(diff)} บาท`);
+      changes.push({
+        kind: "emp_target",
+        sku: "",
+        html: `👤 <strong>${esc(e.emp_id)}</strong>: เป้าเงินเริ่มต้นเปลี่ยน ${diff > 0 ? "+" : ""}${baht(diff)} บาท`,
+      });
     }
   });
   return changes;
+}
+
+/** " · แบรนด์ X" ต่อท้ายรหัสสินค้าในแบนเนอร์ — ผู้ใช้ถามหาแบรนด์เป็นหลัก */
+function _skuBrandSuffixHtml(sku) {
+  const info = (S.skus || []).find((x) => x.sku === sku) || {};
+  const b = info.brand_name_thai || info.brand_name_english || "";
+  return b ? ` <span class="tchange-brand">· ${_snapshotEsc(b)}</span>` : "";
+}
+
+/** SKU ที่ "กระจายเฉพาะที่เป้าเปลี่ยน" ได้ (สินค้าใหม่ + เป้าหีบเปลี่ยน) จากรายการ diff */
+function _changedTargetSkus(changes) {
+  const out = [];
+  const seen = new Set();
+  (changes || []).forEach((c) => {
+    if ((c.kind === "new_sku" || c.kind === "box_change") && c.sku && !seen.has(c.sku)) {
+      seen.add(c.sku);
+      out.push(c.sku);
+    }
+  });
+  return out;
+}
+
+/** อ่าน snapshot ปัจจุบันจาก localStorage แล้วคืนรายการ SKU ที่เป้าเพิ่ม/เปลี่ยน */
+function _snapshotChangedSkuList() {
+  try {
+    const raw = localStorage.getItem(`Snap_${S.supId}_${S.targetMonth}_${S.targetYear}`);
+    if (!raw) return [];
+    return _changedTargetSkus(_buildSnapshotChangeList(JSON.parse(raw)));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * เป้าเปลี่ยนหลังกระจายรอบก่อน → modal ตอนกดคำนวณ ให้เห็นรายการ + เลือกวิธีตรงนั้น
+ *
+ * คืน "none" (ไม่มีอะไรเปลี่ยน — ไปต่อเงียบ ๆ) | "partial" | "full" | "cancel"
+ * ใช้การ์ดเรดิโอชุดเดียวกับ modal ขอบเขตการกระจาย (scope-opt) ให้หน้าตาคุ้นเคย
+ */
+async function _confirmTargetChangedBeforeRun() {
+  let changes = [];
+  try {
+    const raw = localStorage.getItem(`Snap_${S.supId}_${S.targetMonth}_${S.targetYear}`);
+    if (raw) changes = _buildSnapshotChangeList(JSON.parse(raw));
+  } catch {
+    changes = [];
+  }
+  if (!changes.length) return "none";
+
+  const changedSkus = _changedTargetSkus(changes);
+  const opt = (value, title, desc, checked) => `
+    <label class="scope-opt${checked ? " scope-opt--on" : ""}">
+      <input type="radio" name="targetChangedRun" value="${value}"${checked ? " checked" : ""} />
+      <span class="scope-opt__body">
+        <span class="scope-opt__title">${escH(title)}</span>
+        <span class="scope-opt__desc">${desc}</span>
+      </span>
+    </label>`;
+
+  let optsHtml = "";
+  if (changedSkus.length) {
+    optsHtml =
+      opt(
+        "partial",
+        `⚡ กระจายเฉพาะสินค้าที่เป้าเพิ่ม/เปลี่ยน (${changedSkus.length} SKU)`,
+        "กระจายใหม่แค่สินค้าที่เป้าเพิ่งเปลี่ยน — <strong>สินค้าอื่นในตารางไม่ถูกแตะ</strong> <em>(แนะนำ)</em>",
+        true,
+      ) +
+      opt(
+        "full",
+        "🔄 กระจายใหม่ทั้งหมด",
+        "กระจายทุกสินค้าตามเป้าล่าสุด (ช่องที่ล็อก/แก้มือไว้ยังคงเดิม)",
+        false,
+      );
+  } else {
+    optsHtml = opt(
+      "full",
+      "🔄 กระจายใหม่ทั้งหมดตามข้อมูลล่าสุด",
+      "การเปลี่ยนแปลงไม่ใช่เป้าหีบราย SKU (เช่น ราคา/เป้าเงิน) — กระจายใหม่ทั้งชุด",
+      true,
+    );
+  }
+
+  const bodyHtml =
+    `<div class="tchange-chips" style="margin-bottom:10px;">${_changeChipsHtml(changes)}</div>` +
+    `<details class="tchange-details"${changes.length <= 6 ? " open" : ""} style="margin-bottom:12px;">` +
+    `<summary>รายละเอียดทั้ง ${changes.length} รายการ</summary>` +
+    `<ul>${changes.map((c) => `<li>${c.html}</li>`).join("")}</ul></details>` +
+    `<div class="scope-modal__opts">${optsHtml}</div>`;
+
+  return new Promise((resolve) => {
+    _showInfoModal({
+      title: `เป้า Target Sun เปลี่ยน ${changes.length} รายการ — เลือกวิธีกระจาย`,
+      bodyHtml,
+      primaryLabel: "เริ่มกระจายหีบ",
+      secondaryLabel: "ยกเลิก",
+      onPrimary: () => {
+        const picked = document.querySelector('input[name="targetChangedRun"]:checked');
+        resolve(picked && picked.value === "partial" ? "partial" : "full");
+      },
+      onSecondary: () => resolve("cancel"),
+    });
+    document.querySelectorAll('#infoModal input[name="targetChangedRun"]').forEach((el) => {
+      el.addEventListener("change", () => {
+        document.querySelectorAll("#infoModal .scope-opt").forEach((card) => {
+          card.classList.toggle("scope-opt--on", !!card.querySelector("input")?.checked);
+        });
+      });
+    });
+  });
+}
+
+/** สรุปหัวแบนเนอร์เป็น chip นับตามชนิดการเปลี่ยนแปลง */
+function _changeChipsHtml(changes) {
+  const counts = { new_sku: 0, box_change: 0, price_change: 0, sku_removed: 0, emp_target: 0 };
+  (changes || []).forEach((c) => { if (c.kind in counts) counts[c.kind]++; });
+  const chip = (n, cls, label) => (n > 0 ? `<span class="tchange-chip ${cls}">${label} ${n}</span>` : "");
+  return [
+    chip(counts.new_sku, "tchange-chip--new", "🆕 สินค้าใหม่"),
+    chip(counts.box_change, "tchange-chip--box", "📦 เป้าหีบเปลี่ยน"),
+    chip(counts.price_change, "tchange-chip--price", "💰 ราคาเปลี่ยน"),
+    chip(counts.sku_removed, "tchange-chip--removed", "❌ SKU หายไป"),
+    chip(counts.emp_target, "tchange-chip--emp", "👤 เป้าเงินพนักงาน"),
+  ].filter(Boolean).join("");
 }
 
 function _clearFabricStep3Notices() {
@@ -10754,20 +11005,58 @@ function _clearStep3TargetChangeCompactNote() {
   }
 }
 
+/** โครงการ์ดแจ้งเตือนเป้าเปลี่ยน (ใช้ร่วมทั้งแบนเนอร์บน + โน้ตเหนือตาราง) */
+function _targetChangeCardHtml({ title, subtitle, changes, actionsHtml }) {
+  const n = changes.length;
+  return `
+    <div class="tchange-card">
+      <div class="tchange-head">
+        <span class="tchange-icon" aria-hidden="true">📡</span>
+        <div class="tchange-head-text">
+          <div class="tchange-title">${title}</div>
+          <div class="tchange-sub">${subtitle}</div>
+        </div>
+      </div>
+      <div class="tchange-chips">${_changeChipsHtml(changes)}</div>
+      <details class="tchange-details"${n <= 6 ? " open" : ""}>
+        <summary>รายละเอียดทั้ง ${n} รายการ</summary>
+        <ul>${changes.map(c => `<li>${c.html}</li>`).join("")}</ul>
+      </details>
+      <div class="tchange-actions">${actionsHtml}</div>
+    </div>`;
+}
+
 function _renderFabricStep3Notices(changes, source = "fabric") {
   if (!changes || changes.length === 0) {
     _clearFabricStep3Notices();
     return;
   }
   const srcLabel = source === "targetsun" ? "Target Sun" : "ระบบหลัก";
-  const inner = `
-    <div class="fabric-change-title">📡 เป้าจาก${srcLabel}เปลี่ยนเมื่อเทียบกับครั้งล่าสุดที่บันทึกไว้</div>
-    <ul>${changes.map(c => `<li>${c}</li>`).join("")}</ul>
-    <div style="font-size:12px;color:var(--text-2);margin-top:8px;">เป้าใน Step 1–2 อัปเดตแล้ว — กด「เริ่มคำนวณ」หรือ「คำนวณใหม่」เพื่อกระจายตามเป้าล่าสุด</div>` +
-    `<div style="margin-top:10px;"><button type="button" class="btn-banner-close" onclick="dismissDashboardNotice('changeBanner')">ปิดแจ้งเตือน</button></div>`;
+  // มีผลกระจายอยู่แล้ว (และแก้ได้) → เสนอปุ่มกระจายเฉพาะสินค้าที่เป้าเปลี่ยนด้วย
+  const canRealloc =
+    (S.allocations || []).length > 0 && !S.compositeAllocView && !_isAllocReadOnlyView();
+  const changedSkus = canRealloc ? _changedTargetSkus(changes) : [];
+  const partialBtn = changedSkus.length
+    ? `<button type="button" class="btn-realloc btn-realloc--partial" onclick="runReAllocationOnlyChanged()">` +
+      `⚡ กระจายเฉพาะสินค้าที่เป้าเพิ่ม/เปลี่ยน (${changedSkus.length} SKU)</button>`
+    : "";
+  const fullBtn = canRealloc
+    ? `<button type="button" class="btn-realloc${changedSkus.length ? " btn-realloc--ghost" : ""}" onclick="runReAllocationKeepEdits()">🔄 กระจายใหม่ทั้งหมด (คงตัวเลขที่แก้เอง)</button>`
+    : "";
+  const actionsHtml =
+    partialBtn + fullBtn +
+    `<button type="button" class="btn-banner-close" onclick="dismissDashboardNotice('changeBanner')">ปิดแจ้งเตือน</button>`;
+  const subtitle = canRealloc
+    ? "เป้าใน Step 1–2 อัปเดตแล้ว — เลือกกระจายเฉพาะสินค้าที่เป้าเปลี่ยน (สินค้าอื่นไม่ถูกแตะ) หรือกระจายใหม่ทั้งหมด"
+    : "เป้าใน Step 1–2 อัปเดตแล้ว — กด「เริ่มคำนวณ」เพื่อกระจายตามเป้าล่าสุด";
   const top = document.getElementById("fabricChangeStep3Notice");
   if (top) {
-    top.innerHTML = inner;
+    top.innerHTML = _targetChangeCardHtml({
+      title: `เป้าจาก ${srcLabel} มีการเปลี่ยนแปลง`,
+      subtitle,
+      changes,
+      actionsHtml,
+    });
     top.style.display = "block";
   }
 }
@@ -10776,21 +11065,26 @@ function _renderStep3TargetChangeCompactNote(changes, timeStr) {
   const note = document.getElementById("step3ResultTargetNote");
   if (!note || !changes?.length) return;
   if (S.compositeAllocView || _isAllocReadOnlyView()) return;
-  const n = changes.length;
+  const changedSkus = _changedTargetSkus(changes);
   note.dataset.targetChangeNote = "1";
-  note.innerHTML =
-    `<div class="fabric-change-title">เป้า Target Sun เปลี่ยน ${n} รายการ (เทียบกับตอนบันทึกล่าสุด ${escH(timeStr)})</div>` +
-    `<div style="font-size:12px;color:var(--text-2);margin-top:6px;line-height:1.55;">` +
-    `ตารางด้านล่างยังเป็นผลกระจายเดิม — กด「คำนวณใหม่」หากต้องการกระจายตามเป้าล่าสุด` +
-    `</div>` +
-    `<details style="margin-top:8px;font-size:12px;color:var(--text-2);">` +
-    `<summary style="cursor:pointer;color:var(--accent);font-weight:600;">ดูรายละเอียด ${n} รายการ</summary>` +
-    `<ul style="margin:8px 0 0;padding-left:1.2em;line-height:1.6;">${changes.map(c => `<li>${c}</li>`).join("")}</ul>` +
-  `</details>` +
-    `<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">` +
-    `<button type="button" class="btn-realloc" onclick="runReAllocationKeepEdits()">🔄 กระจายหีบใหม่ (คงตัวเลขที่แก้เอง)</button>` +
-    `<button type="button" class="btn-banner-close" onclick="dismissDashboardNotice('changeBanner')">ปิดแจ้งเตือน</button>` +
-    `</div>`;
+  const partialBtn = changedSkus.length
+    ? `<button type="button" class="btn-realloc btn-realloc--partial" onclick="runReAllocationOnlyChanged()">` +
+      `⚡ กระจายเฉพาะสินค้าที่เป้าเพิ่ม/เปลี่ยน (${changedSkus.length} SKU)</button>`
+    : "";
+  const actionsHtml =
+    partialBtn +
+    `<button type="button" class="btn-realloc${changedSkus.length ? " btn-realloc--ghost" : ""}" onclick="runReAllocationKeepEdits()">🔄 กระจายใหม่ทั้งหมด (คงตัวเลขที่แก้เอง)</button>` +
+    `<button type="button" class="btn-banner-close" onclick="dismissDashboardNotice('changeBanner')">ปิดแจ้งเตือน</button>`;
+  note.innerHTML = _targetChangeCardHtml({
+    title: `เป้า Target Sun เปลี่ยน ${changes.length} รายการ`,
+    subtitle:
+      `เทียบกับตอนบันทึกล่าสุด ${escH(timeStr)} — ตารางด้านล่างยังเป็นผลกระจายเดิม` +
+      (changedSkus.length
+        ? ` · กด「⚡ กระจายเฉพาะ…」เพื่อกระจายใหม่แค่สินค้าที่เป้าเปลี่ยน สินค้าอื่นไม่ถูกแตะ`
+        : ""),
+    changes,
+    actionsHtml,
+  });
   note.style.display = "block";
 }
 
@@ -10929,6 +11223,9 @@ function checkSnapshotChanges() {
   document.getElementById("changeBanner")?.remove();
 
   if (hasAlloc) {
+    // โชว์ทั้งสองจุด: การ์ดบนสุดของขั้น 3 (เหนือปุ่มคำนวณ — คนไม่เลื่อนลงก็เห็น)
+    // และโน้ตเหนือตารางผล (บริบทติดตาราง) — ปิดแจ้งเตือนทีเดียวหายทั้งคู่
+    _renderFabricStep3Notices(changes, "targetsun");
     _renderStep3TargetChangeCompactNote(changes, timeStr);
     return;
   }
@@ -10993,6 +11290,74 @@ async function runReAllocationKeepEdits() {
   } else {
     saveDraft(true);
   }
+}
+
+/**
+ * กระจายใหม่ "เฉพาะ" สินค้าที่เป้าเพิ่ง เพิ่ม/เปลี่ยน (จากแบนเนอร์แจ้งเตือน)
+ *
+ * SKU อื่นในตารางไม่ถูกแตะเลย — server กระจายเฉพาะ only_skus แล้วฝั่งนี้ merge
+ * ผลกลับเข้าตารางเดิม จากนั้นเน้นคอลัมน์ที่เพิ่งกระจาย (S.recentReallocSkus)
+ * และตอนส่ง Target Sun จะมีตัวเลือก "ส่งเฉพาะผลกระจายใหม่"
+ */
+async function runReAllocationOnlyChanged() {
+  if (S.compositeAllocView || _isAllocReadOnlyView()) return;
+  const changed = _snapshotChangedSkuList();
+  if (!changed.length) {
+    toast("ไม่พบสินค้าที่เป้าเพิ่งเปลี่ยน — ใช้「กระจายใหม่ทั้งหมด」แทนได้", "amber");
+    return;
+  }
+  const btn = document.querySelector(".btn-realloc--partial");
+  if (btn) { btn.disabled = true; btn.textContent = "⏳ กำลังกระจาย…"; }
+
+  qs("#progList").scrollIntoView({ behavior: "smooth", block: "start" });
+
+  const changedSet = new Set(changed.map((s) => String(s).trim()));
+  const lockedEdits = _collectLockedEdits()
+    .filter((le) => changedSet.has(String(le.sku || "").trim()));
+  const prevNewSkus = Array.isArray(S.newProductSkus) ? [...S.newProductSkus] : [];
+
+  const part = await _doOptimize(lockedEdits, { onlySkus: changed });
+  if (!part || !part.length) {
+    if (btn && document.body.contains(btn)) {
+      btn.disabled = false;
+      btn.textContent = `⚡ กระจายเฉพาะสินค้าที่เป้าเพิ่ม/เปลี่ยน (${changed.length} SKU)`;
+    }
+    return;
+  }
+
+  // meta สินค้าใหม่จากรอบ partial รู้จักแค่ subset — union กลับกันป้าย "ใหม่" ของตัวอื่นหาย
+  S.newProductSkus = [...new Set([...prevNewSkus, ...(S.newProductSkus || [])])];
+
+  // merge: SKU ที่กระจายรอบนี้ใช้แถวใหม่ทั้งชุด · SKU อื่นคงเดิมทุกประการ (รวมสถานะล็อก)
+  const keep = (S.allocations || []).filter((a) => !changedSet.has(String(a.sku || "").trim()));
+  const merged = [...keep, ...part];
+  S.allocations = merged;
+  S.recentReallocSkus = [...changedSet];
+
+  qs("#runEmoji").textContent = "✅";
+  qs("#runTitle").textContent = "กระจายเฉพาะสินค้าที่เป้าเปลี่ยนสำเร็จ";
+  qs("#runSub").textContent = `กระจายใหม่ ${changedSet.size} SKU — สินค้าอื่นในตารางไม่ถูกแตะ`;
+  qs("#runBtn").textContent = "คำนวณใหม่";
+  qs("#runBtn").disabled = false;
+  buildBrandTabs(merged);
+  qs("#resultBlock").style.display = "block";
+
+  try {
+    autoRebalance(true, { skipRender: true });
+  } catch (e) {
+    console.error("autoRebalance:", e);
+  }
+  await wait(200);
+  renderResult(S.allocations);
+  requestAnimationFrame(() => adjustResultStickyGap());
+  qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
+  toast(`✅ กระจายใหม่เฉพาะ ${changedSet.size} สินค้า — ตารางเน้นคอลัมน์ที่เพิ่งกระจายไว้ให้`, "green");
+  saveDraft(true);
+  // พาไปดูคอลัมน์แรกที่เพิ่งกระจาย
+  const first = changed[0];
+  setTimeout(() => {
+    try { jumpToResultCell(first); } catch (e) { console.warn("jump fresh sku:", e); }
+  }, 650);
 }
 /* ════════════════════════════════════════════════════════════════════════════
    USER MANUAL MODAL — คู่มือการใช้งานทีละขั้นตอน
@@ -12277,6 +12642,41 @@ function _adminFillMonthSelect(el) {
   }
 }
 
+/** เหมือน _adminFillMonthSelect แต่มีตัวเลือก "ทุกเดือน" (ค่า "") นำหน้า */
+function _adminFillMonthSelectAll(el) {
+  if (!el || el.options.length) return;
+  const all = document.createElement("option");
+  all.value = "";
+  all.textContent = "ทุกเดือน";
+  el.appendChild(all);
+  for (let i = 1; i <= 12; i++) {
+    const opt = document.createElement("option");
+    opt.value = String(i);
+    opt.textContent = String(i).padStart(2, "0");
+    el.appendChild(opt);
+  }
+}
+
+/**
+ * ตัวกรองงวดของ panel แอดมิน → query params (target_month/target_year)
+ * เลือกเดือนแต่ไม่ใส่ปี = เติมปีของงวดปัจจุบันให้ · ปีนอกช่วง (พิมพ์ค้างครึ่งทาง) = ยังไม่ส่ง
+ */
+function _adminPeriodFilterQuery(monthId, yearId) {
+  const q = new URLSearchParams();
+  const mEl = document.getElementById(monthId);
+  const yEl = document.getElementById(yearId);
+  const m = mEl && mEl.value ? Number(mEl.value) : null;
+  let y = yEl && yEl.value ? Number(yEl.value) : null;
+  if (y && (y < 2020 || y > 2100)) y = null;
+  if (m && !y) {
+    y = _effectiveTargetPeriod().year;
+    if (yEl) yEl.value = String(y);
+  }
+  if (m) q.set("target_month", String(m));
+  if (y) q.set("target_year", String(y));
+  return q;
+}
+
 function _adminBindPeriodReload(ids, fn) {
   (ids || []).forEach((id) => {
     const el = document.getElementById(id);
@@ -12505,6 +12905,8 @@ async function adminInvalidateCache(layer) {
 }
 
 function adminInitUsageLogsPanel() {
+  _adminFillMonthSelectAll(document.getElementById("adminUsageLogMonth"));
+  _adminBindPeriodReload(["adminUsageLogMonth", "adminUsageLogYear"], adminLoadUsageLogs);
   adminLoadUsageLogs();
 }
 
@@ -12516,7 +12918,8 @@ async function adminLoadUsageLogs() {
   tbody.innerHTML = `<tr><td colspan="7" class="admin-empty">กำลังโหลด…</td></tr>`;
   if (countEl) countEl.textContent = "";
   try {
-    const q = new URLSearchParams({ limit: "500" });
+    const q = _adminPeriodFilterQuery("adminUsageLogMonth", "adminUsageLogYear");
+    q.set("limit", "500");
     if (level) q.set("level", level);
     const res = await fetchWithTimeout(`${API_BASE_URL}/admin/usage-logs?${q}`, {}, 20000);
     const data = await res.json().catch(() => ({}));
@@ -12565,7 +12968,27 @@ function adminShowUsageDetail(btn) {
   });
 }
 
+/** ดาวน์โหลดบันทึกการใช้งานตามตัวกรองปัจจุบันเป็น Excel (สำหรับรายงานผู้บริหาร) */
+async function adminDownloadUsageLogsXlsx() {
+  try {
+    const q = _adminPeriodFilterQuery("adminUsageLogMonth", "adminUsageLogYear");
+    const level = document.getElementById("adminUsageLogLevel")?.value || "";
+    if (level) q.set("level", level);
+    const res = await fetchWithTimeout(`${API_BASE_URL}/admin/usage-logs/export-xlsx?${q}`, {}, 60000);
+    if (!res.ok) throw new Error("ดาวน์โหลดไม่สำเร็จ");
+    const blob = await res.blob();
+    const cd = res.headers.get("Content-Disposition") || "";
+    const m = cd.match(/filename="?([^";]+)"?/i);
+    dl(blob, (m && m[1]) || "usage_logs.xlsx");
+    toast("ดาวน์โหลดบันทึกการใช้งาน (Excel) แล้ว", "green");
+  } catch (e) {
+    toast(e.message, "red");
+  }
+}
+
 function adminInitAllocationsPanel() {
+  _adminFillMonthSelectAll(document.getElementById("adminAllocMonth"));
+  _adminBindPeriodReload(["adminAllocMonth", "adminAllocYear"], adminLoadAllocations);
   adminLoadAllocations();
 }
 
@@ -12581,7 +13004,7 @@ function _adminAllocUpdatedTs(it) {
 }
 
 function adminToggleAllocSort(key) {
-  const allowed = new Set(["sup", "period", "status", "updated"]);
+  const allowed = new Set(["sup", "name", "region", "period", "status", "updated"]);
   if (!allowed.has(key)) return;
   if (_adminAllocSortKey === key) _adminAllocSortDir *= -1;
   else {
@@ -12607,6 +13030,12 @@ function _compareAdminAllocItems(a, b) {
   switch (_adminAllocSortKey) {
     case "sup":
       return String(a.sup_id || "").localeCompare(String(b.sup_id || "")) * dir;
+    case "name":
+      return (String(a.full_name || "").localeCompare(String(b.full_name || ""), "th")
+        || String(a.sup_id || "").localeCompare(String(b.sup_id || ""))) * dir;
+    case "region":
+      return (String(a.acc_region || "").localeCompare(String(b.acc_region || ""), "th")
+        || String(a.sup_id || "").localeCompare(String(b.sup_id || ""))) * dir;
     case "period":
       return ((a.target_year - b.target_year) || (a.target_month - b.target_month)
         || String(a.sup_id || "").localeCompare(String(b.sup_id || ""))) * dir;
@@ -12629,7 +13058,12 @@ function adminRenderAllocationsTable() {
   if (!tbody) return;
   let items = [..._adminAllocItems];
   const q = (document.getElementById("adminAllocSearch")?.value || "").trim().toUpperCase();
-  if (q) items = items.filter((it) => String(it.sup_id || "").toUpperCase().includes(q));
+  if (q) {
+    items = items.filter((it) =>
+      `${it.sup_id || ""} ${it.full_name || ""} ${it.acc_region || ""} ${it.acc_division || ""} ${it.acc_unit || ""}`
+        .toUpperCase()
+        .includes(q));
+  }
   items.sort(_compareAdminAllocItems);
   _updateAdminAllocSortHeaders();
   if (countEl) {
@@ -12641,7 +13075,7 @@ function adminRenderAllocationsTable() {
       : "ยังไม่มี snapshot ในระบบ";
   }
   if (!items.length) {
-    tbody.innerHTML = `<tr><td colspan="6" class="admin-empty">${_adminAllocItems.length ? "ไม่พบรายการตามตัวกรอง" : "ยังไม่มี snapshot ในระบบ"}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="admin-empty">${_adminAllocItems.length ? "ไม่พบรายการตามตัวกรอง" : "ยังไม่มี snapshot ในระบบ"}</td></tr>`;
     return;
   }
   tbody.innerHTML = items.map((it) => {
@@ -12651,12 +13085,20 @@ function adminRenderAllocationsTable() {
     const st = escapeHtml(_allocationStatusLabel(it.status));
     const when = escapeHtml(_formatAllocUpdatedAt(it.updated_at));
     const who = escapeHtml(String(it.updated_by || "—"));
+    const name = escapeHtml(String(it.full_name || "—"));
+    const divi = escapeHtml(String(it.acc_division || "—"));
+    const region = escapeHtml(String(it.acc_region || "—"));
+    const unit = escapeHtml(String(it.acc_unit || "—"));
     const m = Number(it.target_month);
     const y = Number(it.target_year);
     const period = `${String(m).padStart(2, "0")}/${y}`;
     const sidRaw = String(it.sup_id || "").replace(/'/g, "\\'");
     return `<tr>
       <td><code>${sid}</code></td>
+      <td>${name}</td>
+      <td>${divi}</td>
+      <td>${region}</td>
+      <td>${unit}</td>
       <td>${period}</td>
       <td class="${stCls}">${st}</td>
       <td>${when}</td>
@@ -12674,17 +13116,35 @@ async function adminLoadAllocations() {
   const tbody = document.getElementById("adminAllocTable");
   const countEl = document.getElementById("adminAllocCount");
   if (!tbody) return;
-  tbody.innerHTML = `<tr><td colspan="6" class="admin-empty">กำลังโหลด…</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="10" class="admin-empty">กำลังโหลด…</td></tr>`;
   if (countEl) countEl.textContent = "";
   try {
-    const res = await fetchWithTimeout(`${API_BASE_URL}/admin/allocations`, {}, 20000);
+    const q = _adminPeriodFilterQuery("adminAllocMonth", "adminAllocYear");
+    const qs = q.toString();
+    const res = await fetchWithTimeout(`${API_BASE_URL}/admin/allocations${qs ? `?${qs}` : ""}`, {}, 20000);
     const data = await res.json().catch(() => ({}));
     _adminAllocItems = Array.isArray(data.items) ? data.items : [];
     adminRenderAllocationsTable();
   } catch (e) {
     _adminAllocItems = [];
     if (countEl) countEl.textContent = "";
-    tbody.innerHTML = `<tr><td colspan="6" class="admin-empty">${escapeHtml(e.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="admin-empty">${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+/** ดาวน์โหลดตารางผลการกระจายตามตัวกรองปัจจุบันเป็น Excel (สำหรับรายงานผู้บริหาร) */
+async function adminDownloadAllocationsXlsx() {
+  try {
+    const q = _adminPeriodFilterQuery("adminAllocMonth", "adminAllocYear");
+    const res = await fetchWithTimeout(`${API_BASE_URL}/admin/allocations/export-xlsx?${q}`, {}, 60000);
+    if (!res.ok) throw new Error("ดาวน์โหลดไม่สำเร็จ");
+    const blob = await res.blob();
+    const cd = res.headers.get("Content-Disposition") || "";
+    const m = cd.match(/filename="?([^";]+)"?/i);
+    dl(blob, (m && m[1]) || "allocation_report.xlsx");
+    toast("ดาวน์โหลดรายงานผลการกระจาย (Excel) แล้ว", "green");
+  } catch (e) {
+    toast(e.message, "red");
   }
 }
 
