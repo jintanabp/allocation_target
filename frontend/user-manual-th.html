@@ -4,6 +4,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>คู่มือการใช้งาน Target Allocation</title>
+  <!-- ตั้งธีมก่อนหน้าจอถูกวาดครั้งแรก · คีย์เดียวกับปุ่มสลับโหมดในแอป
+       หน้านี้ไม่มีปุ่มสลับของตัวเอง ตั้งใจให้ตามที่ผู้ใช้เลือกไว้ในแอปเท่านั้น -->
+  <script>
+    (function () {
+      try {
+        if (localStorage.getItem("AllocTheme_v1") === "dark") {
+          document.documentElement.setAttribute("data-theme", "dark");
+          return;
+        }
+      } catch (e) { /* โหมดส่วนตัว/บล็อก storage — ใช้ค่าเริ่มต้น */ }
+      document.documentElement.setAttribute("data-theme", "light");
+    })();
+  </script>
   <style>
 @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap');
 :root {
@@ -13,10 +26,61 @@
   --muted: #475569;
   --accent: #4f46e5;
   --accent-bg: #eef2ff;
+  --accent-brd: #c7d2fe;
+  --accent-strong: #312e81;
   --border: #e2e8f0;
   --warn-bg: #fffbeb;
   --warn-brd: #fcd34d;
+  --warn-text: #78350f;
+  --sub: #f1f5f9;
+  --zebra: #fafafa;
+  --pre-bg: #0f172a;
+  --pre-fg: #e2e8f0;
+  --bar-bg: #1e1b4b;
+  --bar-fg: #e0e7ff;
+  --bar-strong: #ffffff;
+  --bar-tip: #c7d2fe;
+  --bar-btn-bg: #ffffff;
+  --bar-btn-fg: #312e81;
+  --bar-btn-bg-hover: #eef2ff;
+  --bar-code-bg: #312e81;
 }
+
+/* โหมดมืด — ชุดเดียวกับในแอป (frontend/style.css) เพื่อให้สองหน้าดูเป็นระบบเดียวกัน
+   ค่าที่มาจากปุ่มสลับในแอป เก็บใน localStorage คีย์ AllocTheme_v1 เหมือนกัน
+   แถบ .print-bar ยังเป็นพื้นเข้มทั้งสองโหมด ตัวหนังสือจึงคงเป็นสีสว่างตามเดิม */
+:root[data-theme="dark"] {
+  --bg: #0B1220;
+  --paper: #131C2E;
+  --text: #E6EDF7;
+  --muted: #B3C0D4;
+  --accent: #93A5FF;
+  --accent-bg: #1B2340;
+  --accent-brd: #37436F;
+  --accent-strong: #C6D0FF;
+  --border: #26324A;
+  --warn-bg: #2A2110;
+  --warn-brd: #7A5A18;
+  --warn-text: #FDE68A;
+  --sub: #162034;
+  --zebra: #101A2C;
+  --pre-bg: #060B14;
+  --pre-fg: #C9D6E6;
+  --bar-bg: #1A1636;
+  --bar-fg: #CBD5F5;
+  --bar-strong: #FFFFFF;
+  /* แถบพิมพ์เป็นพื้นเข้มทั้งสองโหมด สีในแถบจึงคงเดิม ห้ามพลิกตามโหมด
+     (เคยพลาด: ให้ตัวหนังสือใช้ --accent-brd แล้วโหมดมืดกลายเป็นเข้มบนเข้ม) */
+  --bar-tip: #c7d2fe;
+  --bar-btn-bg: #ffffff;
+  --bar-btn-fg: #312e81;
+  --bar-btn-bg-hover: #eef2ff;
+  --bar-code-bg: #312e81;
+  color-scheme: dark;
+}
+
+/* ภาพหน้าจอในคู่มือถ่ายมาจากโหมดสว่าง — ลดความจ้าลงหน่อยไม่ให้แสบตา */
+:root[data-theme="dark"] figure.shot img { filter: brightness(.9) contrast(1.02); }
 * { box-sizing: border-box; }
 body {
   margin: 0;
@@ -86,7 +150,7 @@ figure.shot {
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: hidden;
-  background: #f8fafc;
+  background: var(--bg);
   box-shadow: 0 6px 24px rgba(15,23,42,.08);
 }
 figure.shot--lead {
@@ -102,7 +166,7 @@ figure.shot figcaption {
   font-size: 12px;
   color: var(--muted);
   border-top: 1px solid var(--border);
-  background: #fffbeb;
+  background: var(--warn-bg);
   line-height: 1.45;
 }
 .chapter {
@@ -114,9 +178,9 @@ figure.shot figcaption {
   padding: 12px 16px;
   font-size: 19px;
   line-height: 1.35;
-  color: #312e81;
-  background: linear-gradient(180deg, #eef2ff 0%, #f8fafc 100%);
-  border: 1px solid #c7d2fe;
+  color: var(--accent-strong);
+  background: linear-gradient(180deg, var(--accent-bg) 0%, var(--bg) 100%);
+  border: 1px solid var(--accent-brd);
   border-radius: 10px;
 }
 .chapter > h3 + p,
@@ -129,9 +193,9 @@ figure.shot figcaption {
   font-size: 19px;
   line-height: 1.35;
   font-weight: 700;
-  color: #312e81;
-  background: linear-gradient(180deg, #eef2ff 0%, #f8fafc 100%);
-  border: 1px solid #c7d2fe;
+  color: var(--accent-strong);
+  background: linear-gradient(180deg, var(--accent-bg) 0%, var(--bg) 100%);
+  border: 1px solid var(--accent-brd);
   border-radius: 10px;
 }
 .chapter-section-head + p,
@@ -142,7 +206,7 @@ h4 {
   margin: 18px 0 8px;
   font-size: 15px;
   font-weight: 700;
-  color: #334155;
+  color: var(--muted);
 }
 .print-bar {
   grid-column: 1 / -1;
@@ -151,19 +215,26 @@ h4 {
   flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
-  background: #1e1b4b;
-  color: #e0e7ff;
+  background: var(--bar-bg);
+  color: var(--bar-fg);
   padding: 12px 16px;
   border-radius: 10px;
   font-size: 13px;
 }
 .print-bar__text { flex: 1 1 280px; line-height: 1.55; }
-.print-bar__text strong { color: #fff; }
+.print-bar__text strong { color: var(--bar-strong); }
 .print-bar__tip {
   display: block;
   margin-top: 4px;
   font-size: 12px;
-  color: #c7d2fe;
+  color: var(--bar-tip);
+}
+/* ชิปคำสั่งในแถบ — เดิมเขียนสีพื้นไว้ใน HTML จึงคุมสีตัวหนังสือไม่ได้เลย */
+.print-bar__code {
+  background: var(--bar-code-bg);
+  color: var(--bar-strong);
+  padding: 1px 6px;
+  border-radius: 4px;
 }
 .print-bar__actions {
   display: flex;
@@ -172,8 +243,8 @@ h4 {
   align-items: center;
 }
 .print-bar button {
-  background: #fff;
-  color: #312e81;
+  background: var(--bar-btn-bg);
+  color: var(--bar-btn-fg);
   border: none;
   border-radius: 8px;
   padding: 8px 14px;
@@ -182,19 +253,19 @@ h4 {
   cursor: pointer;
   white-space: nowrap;
 }
-.print-bar button:hover { background: #eef2ff; }
+.print-bar button:hover { background: var(--bar-btn-bg-hover); }
 h2 {
   margin: 32px 0 12px;
   padding-top: 8px;
   font-size: 22px;
-  color: #1e293b;
+  color: var(--text);
   border-top: 1px solid var(--border);
 }
 h2:first-of-type { border-top: none; margin-top: 0; }
 h3 {
   margin: 20px 0 8px;
   font-size: 17px;
-  color: #334155;
+  color: var(--muted);
 }
 .chapter h4 + p,
 .chapter h4 + ul,
@@ -207,17 +278,17 @@ article a { color: var(--accent); word-break: break-all; }
 article a:hover { text-decoration: underline; }
 ul, ol { margin: 0 0 14px; padding-left: 22px; }
 li { margin-bottom: 6px; }
-strong { color: #1e293b; }
+strong { color: var(--text); }
 code {
   font-family: Consolas, monospace;
   font-size: 13px;
-  background: #f1f5f9;
+  background: var(--sub);
   padding: 1px 6px;
   border-radius: 4px;
 }
 pre {
-  background: #0f172a;
-  color: #e2e8f0;
+  background: var(--pre-bg);
+  color: var(--pre-fg);
   padding: 14px 16px;
   border-radius: 8px;
   overflow-x: auto;
@@ -230,7 +301,7 @@ blockquote.note {
   background: var(--warn-bg);
   border-left: 4px solid var(--warn-brd);
   border-radius: 0 8px 8px 0;
-  color: #78350f;
+  color: var(--warn-text);
 }
 .table-wrap { overflow-x: auto; margin: 0 0 14px; }
 table {
@@ -244,12 +315,12 @@ th, td {
   text-align: left;
   vertical-align: top;
 }
-th { background: #f1f5f9; font-weight: 700; }
-tr:nth-child(even) td { background: #fafafa; }
+th { background: var(--sub); font-weight: 700; }
+tr:nth-child(even) td { background: var(--zebra); }
 p.lead-block {
   margin: 0 0 10px;
   padding: 10px 12px;
-  background: #f8fafc;
+  background: var(--bg);
   border-radius: 8px;
   border: 1px solid var(--border);
   font-size: 14px;
@@ -262,7 +333,7 @@ p.lead-block {
   padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: #fafafa;
+  background: var(--zebra);
 }
 .faq-q { margin: 0 0 6px; font-weight: 700; color: var(--accent); }
 .faq-a { margin: 0; color: var(--muted); }
@@ -279,6 +350,28 @@ hr { display: none; }
   article { padding: 22px 18px 28px; }
 }
 @media print {
+  /* กลับไปใช้ชุดสว่างตอนพิมพ์เสมอ — ไม่งั้นคนที่เปิดในโหมดมืดจะได้ PDF พื้นดำ
+     และหมึกจะหมดเครื่องพิมพ์ ค่าทั้งหมดตรงกับ :root ด้านบนทุกตัว */
+  :root, :root[data-theme="dark"] {
+    --bg: #f8fafc;
+    --paper: #ffffff;
+    --text: #0f172a;
+    --muted: #475569;
+    --accent: #4f46e5;
+    --accent-bg: #eef2ff;
+    --accent-brd: #c7d2fe;
+    --accent-strong: #312e81;
+    --border: #e2e8f0;
+    --warn-bg: #fffbeb;
+    --warn-brd: #fcd34d;
+    --warn-text: #78350f;
+    --sub: #f1f5f9;
+    --zebra: #fafafa;
+    --pre-bg: #0f172a;
+    --pre-fg: #e2e8f0;
+    color-scheme: light;
+  }
+  :root[data-theme="dark"] figure.shot img { filter: none; }
   @page {
     size: A4 portrait;
     margin: 14mm 12mm 16mm 12mm;
@@ -396,7 +489,7 @@ hr { display: none; }
     <div class="print-bar">
       <div class="print-bar__text">
         <strong>📖 คู่มือ Target Allocation</strong>
-        <span class="print-bar__tip">บันทึก PDF แบบ<strong>ไม่มีวันที่/ชื่อไฟล์</strong>ด้านบนล่าง: รัน <code style="background:#312e81;padding:1px 6px;border-radius:4px;">python docs/build-manual-html.py --pdf</code> · หรือ Ctrl+P แล้ว<strong> ปิด Headers and footers</strong> (Edge: ตั้งค่าเพิ่มเติม → หัวกระดาษและท้ายกระดาษ)</span>
+        <span class="print-bar__tip">บันทึก PDF แบบ<strong>ไม่มีวันที่/ชื่อไฟล์</strong>ด้านบนล่าง: รัน <code class="print-bar__code">python docs/build-manual-html.py --pdf</code> · หรือ Ctrl+P แล้ว<strong> ปิด Headers and footers</strong> (Edge: ตั้งค่าเพิ่มเติม → หัวกระดาษและท้ายกระดาษ)</span>
       </div>
       <div class="print-bar__actions">
         <button type="button" onclick="window.print()">🖨️ พิมพ์ / บันทึก PDF</button>

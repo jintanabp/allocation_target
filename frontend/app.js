@@ -7518,7 +7518,7 @@ function _confirmPreviewSendToTargetSun() {
     const mismatch = !_previewAllocSkuTotalsAllMatch();
     const bodyHtml = mismatch
       ? `<p style="margin:0 0 10px;line-height:1.6;">ส่ง<strong>ค่าที่แก้มือ</strong>โดยไม่ผ่านปุ่ม「เริ่มคำนวณ」</p>
-         <p style="margin:0;line-height:1.6;color:#b45309;">บาง SKU ในแถวล่างยังมี ⚠️ (รวมหีบไม่ตรงเป้า) — ตรวจให้แน่ใจก่อนส่ง</p>`
+         <p style="margin:0;line-height:1.6;color:var(--amber-strong);">บาง SKU ในแถวล่างยังมี ⚠️ (รวมหีบไม่ตรงเป้า) — ตรวจให้แน่ใจก่อนส่ง</p>`
       : `<p style="margin:0;line-height:1.6;">ส่งตามตารางปัจจุบัน (เป้า/แก้มือจาก Target Sun) โดยไม่ผ่านการกระจายหีบอัตโนมัติ</p>`;
     _showInfoModal({
       title: "ส่งเข้า Target Sun (แก้มือ)",
@@ -15941,7 +15941,7 @@ async function adminBulkTargetSun(enabled) {
         + `</p>`
         + `<ul style="margin:0 0 8px 18px;padding:0;line-height:1.6;font-size:13px;max-height:200px;overflow:auto;">${sample}${more}</ul>`
         + (enabled
-            ? `<p style="margin:0;font-size:12px;color:#c2410c;line-height:1.5;">`
+            ? `<p style="margin:0;font-size:12px;color:var(--amber-strong);line-height:1.5;">`
               + `⚠️ คนเหล่านี้จะส่งข้อมูลจริงเข้า Target Sun ได้ทันที</p>`
             : ""),
       primaryLabel: enabled ? "เปิดให้ทั้งหมด" : "ปิดทั้งหมด",

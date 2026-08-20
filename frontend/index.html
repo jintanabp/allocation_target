@@ -16,7 +16,23 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=2026082020" />
+  <link rel="stylesheet" href="style.css?v=2026082021" />
+  <!-- ตั้งธีมก่อนหน้าจอถูกวาดครั้งแรก — ห้ามย้ายไปไว้ท้ายไฟล์
+       เดิม initTheme() ทำงานตอน DOMContentLoaded ซึ่งเกิดหลังเบราว์เซอร์วาดจอไปแล้ว
+       คนที่เลือกโหมดมืดจึงเห็นจอขาววาบทุกครั้งที่เปิด/รีเฟรช (ยิ่ง app.js ใหญ่ยิ่งนาน)
+       สคริปต์นี้ต้องเป็น inline ใน <head> เท่านั้น ไฟล์แยกจะช้าเกินไป
+       ค่า key ต้องตรงกับ THEME_KEY ใน app.js -->
+  <script>
+    (function () {
+      try {
+        if (localStorage.getItem("AllocTheme_v1") === "dark") {
+          document.documentElement.setAttribute("data-theme", "dark");
+          return;
+        }
+      } catch (e) { /* โหมดส่วนตัว/บล็อก storage — ใช้ค่าเริ่มต้น */ }
+      document.documentElement.setAttribute("data-theme", "light");
+    })();
+  </script>
 </head>
 
 <body>
@@ -1499,8 +1515,8 @@
   <script src="vendor/msal-browser.min.js"></script>
   <!-- ตรรกะล้วน (ตัวแปลงเลข/คณิตการเกลี่ย) — ต้องมาก่อน app.js
        ไฟล์นี้มีเทสจริงด้วย node --test tests/logic.test.js -->
-  <script src="logic.js?v=2026082020"></script>
-  <script src="app.js?v=2026082020"></script>
+  <script src="logic.js?v=2026082021"></script>
+  <script src="app.js?v=2026082021"></script>
 </body>
 
 </html>

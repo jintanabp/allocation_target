@@ -79,6 +79,40 @@
   --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 4px rgba(15, 23, 42, 0.04);
   --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08), 0 1px 3px rgba(15, 23, 42, 0.04);
   --shadow-lg: 0 10px 30px rgba(15, 23, 42, 0.10), 0 2px 8px rgba(15, 23, 42, 0.06);
+
+  /* ── ชื่อ token ที่โค้ดเก่าเรียกใช้มานาน แต่ไม่เคยมีใครนิยาม ────────────
+     ผลคือ var(--bg-card) คืนค่าว่าง พื้นการ์ดเลยหายไปเฉย ๆ (ทั้งสองโหมด)
+     ส่วนตัวที่มี fallback เป็นสีตายตัวก็ค้างสว่างในโหมดมืด
+     ตั้งเป็น alias ของ token จริง — โหมดมืดเปลี่ยนตัวจริงแล้วตัวนี้ตามเอง */
+  --bg-card: var(--white);
+  --bg-sub: var(--surface-2);
+  --bg-subtle: var(--surface-2);
+  --border-sm: var(--border);
+  --text-muted: var(--text-3);
+  --radius-md: var(--r-md);
+
+  /* ป้าย "เชื่อมรหัสแล้ว" ใช้ตระกูลฟ้าที่ไม่มีในชุดเดิม */
+  --blue: #2563EB;
+  --blue-bg: #EFF6FF;
+  --blue-brd: #BFDBFE;
+
+  /* ป้ายบทบาทสองสีที่เคยเขียนตายตัว (ซุป+ผจก. = ชมพู · ผจก.บัญชี = ม่วง) */
+  --pink: #BE185D;
+  --violet: #7E22CE;
+  --violet-bg: #F3E8FF;
+
+  /* เฉดเข้มสุดของเหลือง/เขียว — ใช้เป็น "ตัวอักษรบนพื้นอ่อน"
+     โหมดมืดต้องกลับด้านเป็นเฉดสว่างสุด เหมือนที่ --accent-strong ทำ */
+  --amber-strong: #7C4A00;
+  --green-strong: #0B3D2A;
+
+  /* พื้นโค้ด/ไฮไลต์ที่เคยเขียน rgba(0,0,0,.04) — บนพื้นมืดคือมองไม่เห็นเลย */
+  --code-bg: rgba(15, 23, 42, 0.05);
+  /* ช่องหีบที่ถูกแก้ด้วยมือ — ตัวหนังสือใช้ --text-1 พื้นจึงต้องกลับด้านตามโหมด
+     ไม่งั้นโหมดมืดได้ตัวอักษรขาวบนพื้นเหลืองอ่อน อ่านไม่ออก */
+  --edit-hl-bg: #FFF9C4;
+  /* แถบวิ่งตอนโหลด (skeleton) */
+  --skeleton-hl: #E8EAED;
 }
 
 /* ══════════════════════════════════════════════
@@ -130,6 +164,27 @@
   --amber-bg: #2A2110;
   --amber-brd: #7A5A18;
 
+  --blue: #7DB3FF;
+  --blue-bg: #12203A;
+  --blue-brd: #2C4674;
+
+  --pink: #F9A8D4;
+  --violet: #D8B4FE;
+  --violet-bg: #291B3D;
+
+  --amber-strong: #FDE68A;
+  --green-strong: #86EFAC;
+
+  --code-bg: rgba(226, 232, 240, 0.10);
+  --edit-hl-bg: #4A3B0E;
+  --skeleton-hl: #1E2940;
+
+  /* เงาสีกรมบนพื้นมืดแทบไม่เหลืออะไร การ์ดเลยจมหายไปกับพื้นหลัง
+     (คอมเมนต์ข้างล่างเคยสัญญาไว้ แต่ค่าจริงไม่เคยถูกเปลี่ยน) */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45), 0 1px 4px rgba(0, 0, 0, 0.30);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.50), 0 1px 3px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.62), 0 2px 8px rgba(0, 0, 0, 0.42);
+
   color-scheme: dark;
 }
 
@@ -138,9 +193,9 @@
   background: var(--bg-main);
 }
 
-:root[data-theme="dark"] img,
-:root[data-theme="dark"] .manual-shot img {
-  /* ภาพหน้าจอในคู่มือถ่ายจากโหมดสว่าง — ลดความจ้าลงหน่อยไม่ให้แสบตา */
+:root[data-theme="dark"] img {
+  /* ภาพบิตแมปถ่ายจากโหมดสว่าง — ลดความจ้าลงหน่อยไม่ให้แสบตา
+     (.manual-shot ถูกถอดออก: ไม่มีคลาสนี้เหลืออยู่ในแอปแล้ว) */
   filter: brightness(.92) contrast(1.02);
 }
 
@@ -2791,14 +2846,14 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
 }
 .admin-role--supervisor { background: var(--accent-bg); color: var(--accent); }
 .admin-role--manager { background: var(--accent-bg); color: var(--accent-strong); }
-.admin-role--both { background: var(--accent-bg); color: #be185d; }
+.admin-role--both { background: var(--accent-bg); color: var(--pink); }
 .admin-role--regional_manager { background: var(--amber-bg); color: var(--amber); }
 .admin-role--district_manager { background: var(--amber-bg); color: var(--amber); }
 .admin-role--supervisor_acc { background: var(--accent-bg); color: var(--accent-strong); }
-.admin-role--manager_acc { background: #f3e8ff; color: #7e22ce; }
+.admin-role--manager_acc { background: var(--violet-bg); color: var(--violet); }
 .admin-role--marketing { background: var(--amber-bg); color: var(--amber); }
 .admin-role--unknown { background: var(--bg-main); color: var(--text-3); }
-.admin-role--acc_only { background: var(--surface-2); color: var(--text-3-decor); }
+.admin-role--acc_only { background: var(--surface-2); color: var(--text-3); }
 
 @media (max-width: 768px) {
   .admin-view {
@@ -3304,7 +3359,7 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
   font-weight: 500;
 }
 .sup-subtotal-src {
-  color: #a16207;
+  color: var(--amber-strong);
   font-weight: 600;
 }
 
@@ -3405,7 +3460,7 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
   font-size: 9px;
   padding: 1px 4px;
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--code-bg);
 }
 
 .alloc-summary-wrap {
@@ -3447,7 +3502,7 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
 .alloc-summary-table td {
   padding: 4px 8px;
   text-align: left;
-  border-bottom: 1px solid var(--border-sm, #e8ecf0);
+  border-bottom: 1px solid var(--border-sm);
 }
 
 .alloc-summary-table th {
@@ -3517,7 +3572,7 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
   position: absolute;
   inset: 0;
   border-radius: var(--r-md, 8px);
-  background: linear-gradient(90deg, var(--bg-subtle, var(--surface-2)) 25%, #e8eaed 50%, var(--bg-subtle, var(--surface-2)) 75%);
+  background: linear-gradient(90deg, var(--bg-subtle) 25%, var(--skeleton-hl) 50%, var(--bg-subtle) 75%);
   background-size: 200% 100%;
   animation: step1-skel 1.2s ease-in-out infinite;
 }
@@ -5184,9 +5239,9 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.2px;
-  color: #0b3d2a;
-  background: rgba(34, 197, 94, 0.16);
-  border: 1px solid rgba(34, 197, 94, 0.35);
+  color: var(--green-strong);
+  background: color-mix(in srgb, var(--green) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--green) 35%, transparent);
 }
 
 .sku-th-brand {
@@ -5247,7 +5302,7 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
   display: inline-block;
   min-width: 2.5em;
   padding: 4px 8px;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   cursor: pointer;
   border-radius: 4px;
   user-select: none;
@@ -5265,9 +5320,9 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
   padding: 1px 5px;
   border-radius: 4px;
   margin-left: 2px;
-  background: var(--blue-bg, #e8f0fe);
-  color: var(--blue, #1a5fb4);
-  border: 1px solid var(--blue-brd, #b8d4f0);
+  background: var(--blue-bg);
+  color: var(--blue);
+  border: 1px solid var(--blue-brd);
   vertical-align: middle;
 }
 
@@ -5726,8 +5781,8 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
 
 /* ไฮไลต์ช่องที่โดนแก้ด้วยมือ */
 .result-box-num.is-edited {
-  background-color: #FFF9C4 !important;
-  /* สีเหลืองอ่อน */
+  background-color: var(--edit-hl-bg) !important;
+  /* เหลืองอ่อนในโหมดสว่าง · เหลืองเข้มในโหมดมืด (ตัวหนังสือใช้ --text-1) */
   color: var(--text-1) !important;
   border: 1.5px solid var(--amber) !important;
   font-weight: 800;
@@ -6515,7 +6570,7 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
 
 .lakehouse-tech__body code {
   font-size: 11px;
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--code-bg);
   padding: 1px 5px;
   border-radius: 4px;
 }
@@ -6816,10 +6871,10 @@ code {
 
 .change-banner-note {
   font-size: 12px;
-  color: var(--amber);
+  color: var(--amber-strong);
   margin-bottom: 12px;
   padding: 6px 10px;
-  background: rgba(194, 65, 12, .07);
+  background: color-mix(in srgb, var(--amber) 8%, transparent);
   border-radius: 4px;
   display: inline-block;
 }
@@ -6833,7 +6888,7 @@ code {
 .btn-realloc {
   padding: 7px 14px;
   background: var(--amber);
-  color: white;
+  color: var(--white);
   border: none;
   border-radius: var(--r-sm);
   font-size: 13px;
@@ -6849,7 +6904,7 @@ code {
 
 .btn-banner-close {
   padding: 7px 14px;
-  background: white;
+  background: var(--white);
   color: var(--amber);
   border: 1px solid var(--amber-brd);
   border-radius: var(--r-sm);
@@ -7211,7 +7266,9 @@ td.result-cell--fresh {
   border-radius: 10px;
   border: 1px solid var(--border-md);
   background: #2f2f2f;
-  color: var(--white);
+  /* พื้นปุ่มไม่เปลี่ยนตามโหมด ตัวหนังสือจึงต้องเป็นขาวจริงทั้งสองโหมด —
+     var(--white) ในโหมดมืดคือสีพื้นการ์ด ไม่ใช่สีขาว (ดูหมายเหตุที่ token) */
+  color: #FFFFFF;
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
@@ -7226,7 +7283,7 @@ td.result-cell--fresh {
   margin: 0;
   padding: 6px 10px;
   font-size: 12px;
-  color: var(--green, #0a7);
+  color: var(--green-strong);
   font-weight: 600;
   background: var(--green-bg);
   border: 1px solid var(--green-brd);
@@ -7508,6 +7565,39 @@ body.is-admin-login-only #msLogoutBtn {
   height: auto;
   max-height: 200px;
 }
+/* รูปประกอบในคู่มือเป็น SVG ที่เขียนสีไว้ในแอตทริบิวต์ (var() ใช้ในแอตทริบิวต์ไม่ได้)
+   โหมดมืดจึงทับด้วย CSS ซึ่งชนะแอตทริบิวต์เสมอ — ไม่งั้นได้การ์ดขาวจ้า 9 ใบคาหน้าจอมืด
+   ค่าที่ไล่ทับคือค่า token ของโหมดสว่างทั้งหมด จับคู่กลับเป็น token ตรงตัว */
+:root[data-theme="dark"] .manual-step__art [fill="#FFFFFF"] { fill: var(--white); }
+:root[data-theme="dark"] .manual-step__art [fill="#F8FAFC"],
+:root[data-theme="dark"] .manual-step__art [fill="#F8FAFF"] { fill: var(--surface-2); }
+:root[data-theme="dark"] .manual-step__art [fill="#0F172A"] { fill: var(--text-1); }
+:root[data-theme="dark"] .manual-step__art [fill="#475569"] { fill: var(--text-2); }
+:root[data-theme="dark"] .manual-step__art [fill="#94A3B8"] { fill: var(--text-3); }
+:root[data-theme="dark"] .manual-step__art [fill="#CBD5E1"] { fill: var(--border-md); }
+:root[data-theme="dark"] .manual-step__art [fill="#EEF2FF"] { fill: var(--accent-bg); }
+:root[data-theme="dark"] .manual-step__art [fill="#4F46E5"] { fill: var(--accent); }
+:root[data-theme="dark"] .manual-step__art [fill="#4338CA"] { fill: var(--accent-hover); }
+:root[data-theme="dark"] .manual-step__art [fill="#ECFDF5"] { fill: var(--green-bg); }
+:root[data-theme="dark"] .manual-step__art [fill="#059669"] { fill: var(--green); }
+:root[data-theme="dark"] .manual-step__art [fill="#FFFBEB"],
+:root[data-theme="dark"] .manual-step__art [fill="#FEF7E6"] { fill: var(--amber-bg); }
+:root[data-theme="dark"] .manual-step__art [fill="#D97706"],
+:root[data-theme="dark"] .manual-step__art [fill="#F59E0B"] { fill: var(--amber); }
+:root[data-theme="dark"] .manual-step__art [fill="#B45309"],
+:root[data-theme="dark"] .manual-step__art [fill="#92400E"],
+:root[data-theme="dark"] .manual-step__art [fill="#7C4A00"],
+:root[data-theme="dark"] .manual-step__art [fill="#6B4500"] { fill: var(--amber-strong); }
+:root[data-theme="dark"] .manual-step__art [fill="#FEE2E2"] { fill: var(--red-bg); }
+:root[data-theme="dark"] .manual-step__art [fill="#B91C1C"] { fill: var(--red); }
+:root[data-theme="dark"] .manual-step__art [stroke="#E2E8F0"] { stroke: var(--border); }
+:root[data-theme="dark"] .manual-step__art [stroke="#CBD5E1"] { stroke: var(--border-md); }
+:root[data-theme="dark"] .manual-step__art [stroke="#C7D2FE"] { stroke: var(--accent-brd); }
+:root[data-theme="dark"] .manual-step__art [stroke="#FCD34D"],
+:root[data-theme="dark"] .manual-step__art [stroke="#F5C977"] { stroke: var(--amber-brd); }
+:root[data-theme="dark"] .manual-step__art [stroke="#6EE7B7"] { stroke: var(--green-brd); }
+:root[data-theme="dark"] .manual-step__art [stroke="#FCA5A5"] { stroke: var(--red-brd); }
+
 .manual-step__num {
   display: inline-flex;
   align-items: center;
@@ -7830,19 +7920,19 @@ body.is-admin-login-only #msLogoutBtn {
   padding-bottom: 8px;
 }
 .tiered-how__item--flex {
-  background: linear-gradient(90deg, rgba(245, 243, 255, 0.6) 0%, transparent 100%);
+  background: linear-gradient(90deg, var(--accent-bg) 0%, transparent 100%);
   margin: 0 -16px;
   padding-left: 16px;
   padding-right: 16px;
 }
 .tiered-how__item--strict {
-  background: linear-gradient(90deg, rgba(248, 250, 252, 0.8) 0%, transparent 100%);
+  background: linear-gradient(90deg, var(--surface-2) 0%, transparent 100%);
   margin: 0 -16px;
   padding-left: 16px;
   padding-right: 16px;
 }
 .tiered-how__item--new {
-  background: linear-gradient(90deg, rgba(240, 253, 244, 0.7) 0%, transparent 100%);
+  background: linear-gradient(90deg, var(--green-bg) 0%, transparent 100%);
   margin: 0 -16px;
   padding-left: 16px;
   padding-right: 16px;
@@ -8141,7 +8231,7 @@ body.is-admin-login-only #msLogoutBtn {
 .neg-growth-card {
   margin-top: 14px;
   scroll-margin-top: 80px;
-  background: #FEF7E6;
+  background: var(--amber-bg);
   border: 1px solid var(--amber-brd);
   border-left: 4px solid var(--amber);
   border-radius: 10px;
@@ -8157,7 +8247,7 @@ body.is-admin-login-only #msLogoutBtn {
 .neg-growth-card__title {
   font-size: 15px;
   font-weight: 700;
-  color: #7C4A00;
+  color: var(--amber-strong);
 }
 .neg-growth-card__desc {
   font-size: 13px;
@@ -8169,7 +8259,7 @@ body.is-admin-login-only #msLogoutBtn {
   display: block;
   font-size: 13px;
   font-weight: 600;
-  color: #4B3200;
+  color: var(--amber-strong);
   margin-bottom: 6px;
 }
 .neg-growth-card__textarea {
@@ -8199,8 +8289,8 @@ body.is-admin-login-only #msLogoutBtn {
   gap: 12px;
   padding: 14px 16px;
   border-radius: 10px;
-  border: 2px solid #E67E22;
-  background: #FFF8EB;
+  border: 2px solid var(--amber);
+  background: var(--amber-bg);
   box-shadow: 0 2px 8px rgba(180, 83, 9, 0.12);
 }
 .neg-growth-card__unlock--pending {
@@ -8247,12 +8337,12 @@ body.is-admin-login-only #msLogoutBtn {
   font-variant-numeric: tabular-nums;
   padding: 4px 10px;
   border-radius: 6px;
-  background: rgba(217, 119, 6, 0.15);
-  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 15%, transparent);
+  color: var(--amber-strong);
 }
 .neg-growth-card__unlock--ok .neg-growth-card__unlock-count {
-  background: rgba(22, 163, 74, 0.15);
-  color: var(--green);
+  background: color-mix(in srgb, var(--green) 15%, transparent);
+  color: var(--green-strong);
 }
 .neg-growth-card__hint {
   font-size: 12px;
@@ -8294,7 +8384,7 @@ body.is-admin-login-only #msLogoutBtn {
 
 .brand-strategy-panel {
   margin-top: 14px;
-  background: linear-gradient(135deg, var(--accent-bg) 0%, #FDFBF7 100%);
+  background: linear-gradient(135deg, var(--accent-bg) 0%, var(--white) 100%);
   border: 1px solid var(--accent-brd);
   border-radius: 12px;
   padding: 16px 18px;
@@ -8402,13 +8492,13 @@ body.is-admin-login-only #msLogoutBtn {
   background: var(--accent-bg); border-radius: 6px; padding: 2px 8px;
 }
 .emp-wh-group-meta { margin-left: 8px; font-size: 11px; color: var(--text-3); }
-.emp-wh-child td { background: #fcfdff; }
+.emp-wh-child td { background: var(--surface-2); }
 #empTableBody .emp-wh-row.emp-wh-child .emp-wh-badge { display: none; }
 .emp-wh-row.emp-wh-child td { border-top: 1px dashed var(--border); }
 .emp-wh-row.emp-row--view-only { opacity: 0.92; }
 .emp-wh-row.emp-row--view-only td { background: var(--bg-main, var(--surface-2)); }
 .emp-view-only-note {
-  color: var(--amber, var(--amber));
+  color: var(--amber-strong);
   font-size: 11px;
   margin-top: 2px;
   line-height: 1.4;
