@@ -16,7 +16,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=2026082006" />
+  <link rel="stylesheet" href="style.css?v=2026082014" />
 </head>
 
 <body>
@@ -1384,8 +1384,16 @@
             <p>บันทึกถาวร ไม่มีการลบ — ใช้ตรวจย้อนหลังว่าใคร/ทีมไหนทำอะไรเมื่อไหร่ เช่น <strong>send_targetsun</strong> = กดส่งเข้า Target Sun (กรอง「การกระทำ」ได้ที่ช่องระดับ + ค้นในหน้า)</p>
           </div>
           <div id="adminUsageLogsBody" class="admin-table-wrap admin-table-wrap--scroll admin-table-wrap--panel">
-            <table class="admin-table admin-table--compact admin-table--zebra">
-              <thead><tr><th>เวลา</th><th>ระดับ</th><th>ผู้ใช้</th><th>ทีม (SL)</th><th>การกระทำ</th><th>ข้อความ</th><th></th></tr></thead>
+            <table class="admin-table admin-table--compact admin-table--zebra admin-table--log">
+              <thead><tr>
+                <th class="log-col-time">เวลา</th>
+                <th class="log-col-level">ระดับ</th>
+                <th class="log-col-user">ผู้ใช้</th>
+                <th class="log-col-sup">ทีม</th>
+                <th class="log-col-action">การกระทำ</th>
+                <th class="log-col-msg">ข้อความ</th>
+                <th class="log-col-act"></th>
+              </tr></thead>
               <tbody id="adminUsageLogsTable"><tr><td colspan="7" class="admin-empty">กำลังโหลด…</td></tr></tbody>
             </table>
           </div>
@@ -1423,18 +1431,14 @@
           <div class="admin-table-wrap admin-table-wrap--scroll admin-table-wrap--panel">
             <table class="admin-table admin-table--compact admin-table--zebra admin-table--alloc">
               <thead><tr>
-                <th class="th-sortable" data-sort="sup" onclick="adminToggleAllocSort('sup')">SL</th>
-                <th class="th-sortable" data-sort="name" onclick="adminToggleAllocSort('name')">ชื่อ Supervisor</th>
-                <th>Div</th>
-                <th class="th-sortable" data-sort="region" onclick="adminToggleAllocSort('region')">ภาค</th>
-                <th>หน่วย</th>
-                <th class="th-sortable" data-sort="period" onclick="adminToggleAllocSort('period')">งวด</th>
-                <th class="th-sortable" data-sort="status" onclick="adminToggleAllocSort('status')">สถานะ</th>
-                <th class="th-sortable th-sort--active th-sort--desc" data-sort="updated" onclick="adminToggleAllocSort('updated')">อัปเดต</th>
-                <th>โดย</th>
-                <th>จัดการ</th>
+                <th class="th-sortable alloc-col-who" data-sort="sup" onclick="adminToggleAllocSort('sup')">Supervisor</th>
+                <th class="th-sortable alloc-col-place" data-sort="region" onclick="adminToggleAllocSort('region')">Div / ภาค / หน่วย</th>
+                <th class="th-sortable alloc-col-period" data-sort="period" onclick="adminToggleAllocSort('period')">งวด</th>
+                <th class="th-sortable alloc-col-status" data-sort="status" onclick="adminToggleAllocSort('status')">สถานะ</th>
+                <th class="th-sortable th-sort--active th-sort--desc alloc-col-updated" data-sort="updated" onclick="adminToggleAllocSort('updated')">อัปเดตล่าสุด</th>
+                <th class="alloc-col-act">จัดการ</th>
               </tr></thead>
-              <tbody id="adminAllocTable"><tr><td colspan="10" class="admin-empty">กำลังโหลด…</td></tr></tbody>
+              <tbody id="adminAllocTable"><tr><td colspan="6" class="admin-empty">กำลังโหลด…</td></tr></tbody>
             </table>
           </div>
         </section>
@@ -1484,8 +1488,8 @@
   <script src="vendor/msal-browser.min.js"></script>
   <!-- ตรรกะล้วน (ตัวแปลงเลข/คณิตการเกลี่ย) — ต้องมาก่อน app.js
        ไฟล์นี้มีเทสจริงด้วย node --test tests/logic.test.js -->
-  <script src="logic.js?v=2026082006"></script>
-  <script src="app.js?v=2026082006"></script>
+  <script src="logic.js?v=2026082014"></script>
+  <script src="app.js?v=2026082014"></script>
 </body>
 
 </html>

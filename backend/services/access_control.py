@@ -199,6 +199,11 @@ def admin_scope_breadth_for_email(email: str | None) -> str:
     ne = normalized_email(email)
     if not ne:
         return DEFAULT_ADMIN_SCOPE
+    # หัวหน้าแอดมินดูแลทั้งระบบเสมอ — เห็นทุก SL เหมือน dev ต่างกันที่แตะการตั้งค่าระบบ
+    # และเข้าหน้ากระจายหีบแทนคนอื่นไม่ได้ · บังคับตรงนี้ด้วยเพื่อให้แถวเก่าที่เคยตั้ง
+    # ขอบเขตแคบไว้กลับมาใช้ได้เอง ไม่ต้องไล่แก้ข้อมูลทีละแถว
+    if _role_from_rows(ne) == ROLE_HEAD_ADMIN:
+        return ADMIN_SCOPE_ALL
     try:
         declared = {
             str(r.get("admin_scope") or "").strip().lower()

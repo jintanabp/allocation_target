@@ -21,8 +21,10 @@ from ..OR_engine import (
 )
 from ..core.allocation_checks import (
     detect_new_product_skus,
+    missing_employee_alloc_keys,
     skus_zero_team_hist_window,
     validate_allocation_vs_targets,
+    zero_fill_missing_employees,
 )
 from ..core.constants import VALID_STRATEGIES
 from ..core.tga_period import enforce_tga_selection_matches_effective_window
@@ -48,6 +50,7 @@ from ..schemas import OptimizeRequest
 from ..fabric_dax_connector import FabricDAXConnector
 from .sku_link_store import collapse_hist_to_canonical
 from .wh_split import (
+    _norm_wh,
     alloc_key,
     prepare_optimize_targets,
     restore_allocation_emp_ids,
@@ -71,6 +74,29 @@ def _allow_allocation_mismatch() -> bool:
         "true",
         "yes",
     )
+
+
+def _requested_alloc_keys(df_all_targets) -> list[dict]:
+    """
+    รายชื่อ (emp_id, warehouse_code, yellow_target) ที่ผู้เรียกขอมา — ก่อนกรองเป้าเงิน
+
+    ใช้เป็นฐานของด่าน I8 ("ส่งเข้ามากี่คน ต้องได้กลับครบเท่านั้น") จึงต้องอ่านจาก frame
+    ที่ยังไม่ถูกกรอง เพราะคนที่หายไปคือคนที่ถูกกรองออกนั่นเอง
+    """
+    has_wh = "warehouse_code" in df_all_targets.columns
+    out: list[dict] = []
+    for _, r in df_all_targets.iterrows():
+        emp = str(r.get("emp_id") or "").strip()
+        if not emp:
+            continue
+        out.append(
+            {
+                "emp_id": emp,
+                "warehouse_code": _norm_wh(r.get("warehouse_code")) if has_wh else "",
+                "yellow_target": float(r.get("yellow_target") or 0.0),
+            }
+        )
+    return out
 
 
 def _lock_or_emp_id(emp_id: str, warehouse_code: str | None) -> str:
@@ -465,6 +491,9 @@ def run_optimization_service(
     df_all_targets["yellow_target"] = pd.to_numeric(
         df_all_targets["yellow_target"], errors="coerce"
     ).fillna(0.0)
+    # บันทึก "ใครถูกขอมาบ้าง" ก่อนกรองเป้าเงิน — ด่าน I8 ท้ายฟังก์ชันใช้ชุดนี้เทียบ
+    # ต้องเก็บจาก frame ที่ยังไม่กรอง ไม่งั้นคนที่ถูกกรองออกจะไม่มีวันถูกตรวจ = ด่านหลอก
+    requested_alloc_keys = _requested_alloc_keys(df_all_targets)
     df_emp_targets = df_all_targets[df_all_targets["yellow_target"] > 0].copy()
     if df_emp_targets.empty:
         raise HTTPException(
@@ -895,6 +924,30 @@ def run_optimization_service(
             df_final[c] = df_final[c].fillna("" if "name" in c else 0)
 
     df_final = restore_allocation_emp_ids(df_final, reverse_map)
+
+    # ── I8: พนักงานที่ส่งเข้ามาต้องมีแถวกลับออกไปเสมอ (หีบ 0 ได้) ──────────
+    #
+    # "ไม่มีแถว" กับ "มีแถวแต่เป็น 0" ต่างกันมากสำหรับทุกอย่างปลายน้ำ: ตารางขั้นที่ 3
+    # สร้างแถวจากผลลัพธ์ ถ้าไม่มีแถวก็ไม่มีคนคนนั้นบนจอ แล้วตัวเกลี่ยอัตโนมัติจะมองว่า
+    # ยอดขาดและยกหีบไปให้เพื่อนทันที โดยที่ยอดต่อ SKU ยังตรงเป้า ด่าน I1 จึงมองไม่เห็น
+    #
+    # ต้องอยู่ "หลัง" restore_allocation_emp_ids (คีย์เป็น emp+คลังแล้ว) และ "ก่อน" ด่าน I1
+    # เพื่อให้ I1 ตรวจกับ frame เดียวกับที่เขียนไฟล์/สร้าง Excel/ตอบกลับจริง
+    # การเติมมีแต่แถวหีบ 0 จึงเปลี่ยนผลรวมต่อ SKU ไม่ได้เลย (มีเทสพิสูจน์)
+    emp_missing = missing_employee_alloc_keys(df_final, requested_alloc_keys)
+    if emp_missing:
+        lost_with_money = [m for m in emp_missing if m["yellow_target"] > 0]
+        if lost_with_money:
+            # เป้าเงิน > 0 แต่ไม่มีแถว = ท่อแปลงข้อมูลพัง ไม่ใช่การตัดสินใจของผู้ใช้
+            logger.error(
+                "I8: พนักงานหายจากผลกระจาย %d ราย (มีเป้าเงิน) — เติมแถว 0 ให้แล้ว: %s",
+                len(lost_with_money),
+                [f"{m['emp_id']}|{m['warehouse_code']}" for m in lost_with_money[:10]],
+            )
+        else:
+            # เป้าเงิน 0 = ไม่เข้าเครื่องคำนวณตามกติกา แต่ยังต้องมีแถวไว้ให้เห็นบนจอ
+            logger.info("I8: เติมแถวหีบ 0 ให้พนักงานเป้าเงิน 0 จำนวน %d ราย", len(emp_missing))
+        df_final = zero_fill_missing_employees(df_final, emp_missing)
 
     # ── ประตูสุดท้าย: ผลรวมหีบต่อ SKU ต้องตรงเป้า (I1) ──────────────────
     # ต้องตรวจ "ก่อน" เขียนไฟล์และสร้าง Excel

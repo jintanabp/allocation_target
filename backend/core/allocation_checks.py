@@ -104,3 +104,111 @@ def validate_allocation_vs_targets(df_alloc: pd.DataFrame, df_sku: pd.DataFrame)
             )
     return out
 
+
+# ── I8: พนักงานที่ส่งเข้ามาต้องมีแถวกลับออกไปเสมอ (หีบ 0 ได้) ────────────────
+#
+# validate_allocation_vs_targets ข้างบนรวมยอด "ต่อ SKU อย่างเดียว" ไม่มีแกนพนักงาน
+# ถ้าพนักงานคนหนึ่งหายไปจากผลลัพธ์ หีบของเขาจะถูกเกลี่ยไปคนอื่นแล้วยอดต่อ SKU ยังตรงเป้า
+# → ด่าน I1 ผ่านฉลุยทั้งที่หีบไปตกผิดคน (พิสูจน์แล้วใน tests/test_employee_conservation.py)
+#
+# "ไม่มีแถว" กับ "มีแถวแต่เป็น 0" ต่างกันมากสำหรับทุกอย่างที่อยู่ปลายน้ำ:
+# ตารางขั้นที่ 3 สร้างแถวจากผลลัพธ์ ถ้าไม่มีแถวก็ไม่มีคนคนนั้นบนจอ และตัวเกลี่ยอัตโนมัติ
+# จะมองว่ายอดขาดแล้วยกหีบไปให้เพื่อนทันที
+
+
+def _alloc_pair_key(emp_id: object, warehouse_code: object) -> tuple[str, str]:
+    return (str(emp_id or "").strip(), str(warehouse_code or "").strip())
+
+
+def missing_employee_alloc_keys(
+    df_alloc: pd.DataFrame,
+    requested: list[dict],
+) -> list[dict]:
+    """
+    คู่ (emp_id, warehouse_code) ที่ขอมาแต่ไม่มีในผลลัพธ์
+
+    requested = [{"emp_id", "warehouse_code", "yellow_target"}] จาก yellowTargets **ก่อนกรอง**
+    คืนรายการเดิมเฉพาะตัวที่หาย พร้อม yellow_target ไว้ให้ผู้เรียกตัดสินความรุนแรง
+    (เป้าเงิน 0 = หายอย่างถูกต้องตามกติกา · เป้าเงิน > 0 = ท่อแปลงข้อมูลพัง)
+    """
+    if not requested:
+        return []
+    have: set[tuple[str, str]] = set()
+    if df_alloc is not None and not df_alloc.empty:
+        whs = df_alloc["warehouse_code"] if "warehouse_code" in df_alloc.columns else ""
+        if isinstance(whs, str):
+            whs = [whs] * len(df_alloc)
+        for emp, wh in zip(df_alloc["emp_id"], whs):
+            have.add(_alloc_pair_key(emp, wh))
+
+    out: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for item in requested:
+        key = _alloc_pair_key(item.get("emp_id"), item.get("warehouse_code"))
+        if not key[0] or key in seen:
+            continue
+        seen.add(key)
+        if key not in have:
+            out.append(
+                {
+                    "emp_id": key[0],
+                    "warehouse_code": key[1],
+                    "yellow_target": float(item.get("yellow_target") or 0.0),
+                }
+            )
+    return out
+
+
+def zero_fill_missing_employees(
+    df_alloc: pd.DataFrame,
+    missing: list[dict],
+) -> pd.DataFrame:
+    """
+    เติมแถวหีบ 0 ให้พนักงานที่หายไป — ครบทุก SKU ที่มีในผลลัพธ์อยู่แล้ว
+
+    เติมเฉพาะแถวที่หีบเป็น 0 จึงเปลี่ยนผลรวมต่อ SKU ไม่ได้เลย → I1 ยังจริงโดยโครงสร้าง
+    (มีเทสพิสูจน์ว่า validate_allocation_vs_targets ให้ผลเท่าเดิมก่อน/หลังเติม)
+
+    เมตาราย SKU (ราคา/ชื่อแบรนด์) ก๊อปจากแถวจริงของ SKU นั้น ไม่งั้นแท็บแบรนด์
+    ในหน้าเว็บจะมีช่องว่างโผล่มาจากแถวที่เติม
+    """
+    if not missing or df_alloc is None or df_alloc.empty:
+        return df_alloc
+
+    skus = df_alloc["sku"].astype(str).str.strip().unique().tolist()
+    if not skus:
+        return df_alloc
+
+    # เมตาราย SKU: เอาแถวแรกของแต่ละ SKU เป็นต้นแบบ
+    meta_cols = [
+        c for c in df_alloc.columns
+        if c not in ("emp_id", "warehouse_code", "sku", "allocated_boxes")
+    ]
+    meta_by_sku = (
+        df_alloc.drop_duplicates(subset=["sku"], keep="first").set_index("sku")
+        if meta_cols
+        else None
+    )
+
+    new_rows: list[dict] = []
+    for item in missing:
+        for sku in skus:
+            row: dict = {
+                "emp_id": item["emp_id"],
+                "warehouse_code": item.get("warehouse_code", ""),
+                "sku": sku,
+                "allocated_boxes": 0,
+            }
+            for col in meta_cols:
+                val = None
+                if meta_by_sku is not None and sku in meta_by_sku.index:
+                    val = meta_by_sku.at[sku, col]
+                if pd.isna(val) if val is not None and not isinstance(val, str) else val is None:
+                    val = 0 if pd.api.types.is_numeric_dtype(df_alloc[col]) else ""
+                row[col] = val
+            new_rows.append(row)
+
+    if not new_rows:
+        return df_alloc
+    return pd.concat([df_alloc, pd.DataFrame(new_rows)], ignore_index=True)
+

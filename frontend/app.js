@@ -2491,8 +2491,10 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
       throw new Error("ยังไม่มี Microsoft access token — กรุณากด “ล็อกอินด้วย Microsoft” อีกครั้ง");
     }
     if (tok) opts.headers.Authorization = `Bearer ${tok}`;
-    const isAdminApi = /\/admin\//.test(url);
-    if (!isAdminApi && S.viewAsEmail) {
+    // ส่งไปทุก route รวม /admin/* — ไม่งั้นโหมด "ดูแบบนี้" จะจำลองแค่หน้าตา
+    // แต่ข้อมูลที่โหลดมายังเป็นของ dev จริง ๆ (เคยเป็นแบบนั้นและทำให้ทดสอบสิทธิ์ไม่ได้เลย)
+    // ฝั่ง server กันไว้แล้ว: ใช้ได้เฉพาะคนกดที่เป็น dev · จอ dev-only ตอบ 403 ระหว่างจำลอง
+    if (S.viewAsEmail) {
       opts.headers["X-View-As-Email"] = S.viewAsEmail;
     }
     if (ctrl) opts.signal = ctrl.signal;
@@ -3897,8 +3899,67 @@ function _isAllocEligible(e) {
   return true;
 }
 
+/**
+ * ซ่อมคีย์คลังของแถวผลกระจายก่อนกรอง — ต้นเหตุที่ทำให้ "พนักงานหายทั้งคน"
+ *
+ * บางเส้นทาง (โหลดแบบร่าง / เกลี่ยเป้าที่เพิ่มเข้ามา) สร้างแถวด้วย emp_id เปล่า ๆ
+ * ไม่มี warehouse_code ทั้งที่พนักงานคนนั้นถูกแยกตามคลัง คีย์จึงเป็น "C442" ขณะที่
+ * รายชื่อพนักงานที่ใช้ได้เป็น "C442|R408" → แถวถูกกรองทิ้ง แล้วตัวเกลี่ยอัตโนมัติ
+ * ยกหีบไปให้เพื่อนร่วมทีมทันที โดยที่ยอดต่อ SKU ยังตรงเป้า จึงไม่มีด่านไหนเห็น
+ *
+ * เลือก "ซ่อมคีย์" แทน "ผ่อนด่าน" เพราะ onResultEdit จับคู่เซลล์ด้วย
+ * (emp_id, sku, warehouse_code) เป๊ะทั้งสามค่า และ _lakehouseAllocationsFromStep3
+ * ประกอบไฟล์ส่ง Target Sun จากแถวเดียวกันนี้ — ปล่อยคีย์ผิดไว้ = ส่งคลังผิดขึ้นระบบจริง
+ */
+function _repairAllocWarehouse(a, rowsInBatch) {
+  if (!a) return a;
+  if (String(a.warehouse_code || "").trim()) return a;   // มีคลังอยู่แล้ว ไม่ต้องแตะ
+  const emp = String(a.emp_id || "").trim();
+  if (!emp) return a;
+
+  const splitRows = (S.employees || []).filter(
+    e => String(e.emp_id || "").trim() === emp && e.wh_split === true
+  );
+  if (!splitRows.length) return a;   // พนักงานคลังเดียว — คีย์เปล่าถูกต้องอยู่แล้ว
+
+  const eligible = splitRows.filter(_isAllocEligible);
+  // มีคลังที่ใช้ได้มากกว่าหนึ่ง = เดาไม่ได้ว่าหีบก้อนนี้เป็นของคลังไหน
+  // เดาผิดแล้วส่งขึ้น Target Sun กู้ไม่ได้ — ปล่อยให้ด่าน I8 ฝั่ง server ฟ้องดีกว่า
+  if (eligible.length !== 1) {
+    console.warn("[alloc] ซ่อมคลังไม่ได้ — พนักงานมีคลังที่ใช้ได้", eligible.length, "คลัง:", emp);
+    return a;
+  }
+
+  const wh = String(eligible[0].warehouse_code || "").trim();
+  if (!wh) return a;
+  // กันแถวซ้อน: ถ้ามีแถวของ emp+sku นี้ที่ถือคลังอยู่แล้ว การเติมจะทำให้สองแถวชนคีย์เดียวกัน
+  // (ตารางจะเก็บแค่แถวหลัง แต่ยอดรวมนับสองรอบ → ตัวเกลี่ยจะดึงหีบคืนจากคนอื่น)
+  const sku = String(a.sku || "").trim();
+  const clash = (rowsInBatch || []).some(
+    r => r !== a
+      && String(r.emp_id || "").trim() === emp
+      && String(r.sku || "").trim() === sku
+      && String(r.warehouse_code || "").trim() === wh
+  );
+  if (clash) return a;
+
+  a.warehouse_code = wh;
+  return a;
+}
+
 function _filterAllocationsEligibleOnly(allocs) {
-  return (allocs || []).filter(_allocRowIsEligible);
+  const rows = allocs || [];
+  // ซ่อมคีย์ "ก่อน" กรองเสมอ — แก้ในที่ (แถวเดียวกันนี้ถูก autoRebalance แก้ต่อ
+  // และ _collectLockedEdits อ่านอยู่ ถ้าสร้าง object ใหม่จะหลุดการอ้างอิงกัน)
+  rows.forEach(a => _repairAllocWarehouse(a, rows));
+  const kept = rows.filter(_allocRowIsEligible);
+  if (kept.length < rows.length) {
+    const lost = [...new Set(
+      rows.filter(a => !kept.includes(a)).map(a => String(a.emp_id || "").trim())
+    )].filter(Boolean);
+    if (lost.length) console.warn("[alloc] ตัดแถวผลกระจายของพนักงาน:", lost.join(", "));
+  }
+  return kept;
 }
 
 /** จับคู่แถวผลกระจายหีบกับพนักงานที่มีเป้า — รองรับ WH split (C348|R337) */
@@ -3917,7 +3978,10 @@ function _allocRowIsEligible(a) {
     if (whRow && _isAllocEligible(whRow)) return true;
     return (S.employees || []).some(e => String(e.emp_id).trim() === emp && _isAllocEligible(e));
   }
-  return eligibleKeys.has(emp);
+  // ไม่มีคลังในแถว: ต้องผ่อนเท่ากับสาขาที่มีคลังข้างบน ไม่งั้นแถวของพนักงานที่ถูกแยกคลัง
+  // (คีย์เป็น "EMP|WH") จะไม่มีวันตรงกับคีย์ "EMP" แล้วถูกทิ้งทั้งที่เจ้าตัวมีสิทธิ์อยู่
+  if (eligibleKeys.has(emp)) return true;
+  return (S.employees || []).some(e => String(e.emp_id).trim() === emp && _isAllocEligible(e));
 }
 
 function _sanitizeYellowForEligibleOnly() {
@@ -4639,8 +4703,11 @@ function renderStep1() {
   const viewOnlyBanner = qs("#empStep1ViewOnlyNotice");
   if (viewOnlyBanner) {
     if (viewOnlyN > 0) {
+      // ต่อท้ายชื่อคลังเมื่อแถวเป็นพนักงานที่แยกคลัง — ไม่งั้นแบนเนอร์จะบอกว่า
+      // "C442 ไม่นำไปกระจายเป้า" ทั้งที่คลัง R408 ของเขาถูกกระจายอยู่ตามปกติ
       const names = _viewOnlyEmployees()
-        .map(e => `${e.emp_id}${e.emp_name ? ` (${e.emp_name})` : ""}`)
+        .map(e => `${e.emp_id}${e.emp_name ? ` (${e.emp_name})` : ""}`
+          + (e.wh_split && e.warehouse_code ? ` · คลัง ${e.warehouse_code}` : ""))
         .join(", ");
       viewOnlyBanner.style.display = "";
       viewOnlyBanner.textContent =
@@ -10156,14 +10223,46 @@ async function loadLiveTargetsFromTargetSun() {
     S.skus.sort((a, b) => String(a.sku).localeCompare(String(b.sku)));
     _bumpSkusVersion(); // ราคา/รายการ SKU อาจเปลี่ยน — ล้างแคช price map
 
+    /* เป้าสดจาก Target Sun มา "หนึ่งแถวต่อพนักงาน ไม่มีคลัง" แต่ในหน้าเว็บพนักงานที่
+       ขายสองคลังถูกแยกเป็นสองแถว ถ้าเขียนเป้ารวมทับลงทุกแถว เป้าจะถูกนับซ้ำทั้งชุด
+       (ยอดรวมเป้าเงินพองเป็นสองเท่า) แล้วผู้ใช้จะไปแก้ด้วยการล้างแถวหนึ่งเป็น 0
+       ซึ่งทำให้แถวนั้นหลุดจากการกระจายทั้งที่ควรได้หีบ — จึงต้องแบ่งตามสัดส่วนเดิม */
+    const rowsByEmp = new Map();
     for (const emp of S.employees || []) {
       const eid = String(emp.emp_id || "").trim();
+      if (!eid) continue;
+      if (!rowsByEmp.has(eid)) rowsByEmp.set(eid, []);
+      rowsByEmp.get(eid).push(emp);
+    }
+    for (const [eid, rows] of rowsByEmp) {
       const fresh = empById.get(eid);
-      if (fresh) {
-        emp.target_sun = Number(fresh.target_sun) || 0;
-        emp.has_tga_rows = fresh.has_tga_rows === true;
-        _enrichEmployeeAllocFlags(emp);
+      if (!fresh) continue;
+      const total = Number(fresh.target_sun) || 0;
+      const hasTga = fresh.has_tga_rows === true;
+      if (rows.length === 1) {
+        rows[0].target_sun = total;
+      } else {
+        // แบ่งตามสัดส่วน target_sun เดิมของแต่ละคลัง (แถวที่เป็น 0 อยู่แล้วยังคง 0
+        // ซึ่งถูกต้อง — คลังที่ไม่มีเป้า TGA ไม่ควรได้เป้าเงินโผล่มาเอง)
+        const prev = rows.map(r => Math.max(0, Number(r.target_sun) || 0));
+        const prevSum = prev.reduce((a, b) => a + b, 0);
+        let handed = 0;
+        rows.forEach((r, i) => {
+          if (i === rows.length - 1) {
+            r.target_sun = Math.max(0, Math.round((total - handed) * 100) / 100);
+          } else {
+            const part = prevSum > 0
+              ? Math.round(total * prev[i] / prevSum * 100) / 100
+              : Math.round(total / rows.length * 100) / 100;
+            r.target_sun = part;
+            handed += part;
+          }
+        });
       }
+      rows.forEach(r => {
+        r.has_tga_rows = hasTga;
+        _enrichEmployeeAllocFlags(r);
+      });
     }
 
     _syncStateAfterLiveTargets();
@@ -11153,14 +11252,17 @@ function mergeDraftIncreasedOfficialTargets() {
         text: `📦 ${sku}: เป้าทีมเพิ่ม +${delta} หีบ — เกลี่ยเพิ่มให้ ${unlocked.length} ช่องที่ไม่ได้ล็อก`,
       });
     } else {
-      const empsWithRow = new Set(rows.map(a => a.emp_id));
-      const others = _allocEligibleEmployees().filter(e => !empsWithRow.has(e.emp_id));
+      // คีย์ด้วย emp+คลัง ไม่ใช่ emp เปล่า — พนักงานที่แยกคลังมีได้หลายแถวต่อ SKU
+      // และแถวที่สร้างใหม่ต้องพกคลังไปด้วย ไม่งั้นจะกลายเป็นแถวคีย์กำพร้าที่ถูกกรองทิ้ง
+      const empsWithRow = new Set(rows.map(a => _allocResultKey(a)));
+      const others = _allocEligibleEmployees().filter(e => !empsWithRow.has(_allocKey(e)));
       if (others.length > 0) {
         const portions = _distributeIntEven(delta, others.length);
         const skuInfo = S.skus.find(x => x.sku === sku) || {};
         others.forEach((e, i) => {
           S.allocations.push({
             emp_id: e.emp_id,
+            warehouse_code: e.wh_split ? String(e.warehouse_code || "").trim() : "",
             sku,
             allocated_boxes: portions[i],
             is_edited: false,
@@ -12995,8 +13097,8 @@ async function adminLoadUsageLogs() {
         <td><span class="admin-log-level ${lvlClass}">${escapeHtml(lvl || "—")}</span></td>
         <td>${escapeHtml(String(r.email || "—"))}</td>
         <td>${escapeHtml(String(r.sup_id || "—"))}</td>
-        <td>${escapeHtml(String(r.action || "—"))}</td>
-        <td>${escapeHtml(String(r.message || "—"))}</td>
+        <td class="log-action">${escapeHtml(String(r.action || "—"))}</td>
+        <td class="log-msg">${escapeHtml(String(r.message || "—"))}</td>
         <td class="admin-td-actions">${detailBtn}</td>
       </tr>`;
     }).join("");
@@ -13123,7 +13225,7 @@ function adminRenderAllocationsTable() {
       : "ยังไม่มี snapshot ในระบบ";
   }
   if (!items.length) {
-    tbody.innerHTML = `<tr><td colspan="10" class="admin-empty">${_adminAllocItems.length ? "ไม่พบรายการตามตัวกรอง" : "ยังไม่มี snapshot ในระบบ"}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" class="admin-empty">${_adminAllocItems.length ? "ไม่พบรายการตามตัวกรอง" : "ยังไม่มี snapshot ในระบบ"}</td></tr>`;
     return;
   }
   tbody.innerHTML = items.map((it) => {
@@ -13141,20 +13243,29 @@ function adminRenderAllocationsTable() {
     const y = Number(it.target_year);
     const period = `${String(m).padStart(2, "0")}/${y}`;
     const sidRaw = String(it.sup_id || "").replace(/'/g, "\\'");
+    // รวม SL+ชื่อ ไว้ช่องเดียว และ Div/ภาค/หน่วย ไว้อีกช่อง — จาก 10 คอลัมน์เหลือ 6
+    // ตารางจึงไม่ต้องเลื่อนแนวนอน และปุ่มจัดการไม่ถูกดันตกออกไปนอกจอ
+    const place = [divi, region, unit].filter((v) => v && v !== "—");
     return `<tr>
-      <td><code>${sid}</code></td>
-      <td>${name}</td>
-      <td>${divi}</td>
-      <td>${region}</td>
-      <td>${unit}</td>
-      <td>${period}</td>
-      <td class="${stCls}">${st}</td>
-      <td>${when}</td>
-      <td>${who}</td>
-      <td class="admin-td-actions">
-        <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminViewAllocationSnapshot('${sidRaw}', ${m}, ${y})">ดู</button>
-        <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminDownloadAllocation('${sidRaw}', ${m}, ${y})">สำรอง</button>
-        <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminDeleteAllocation('${sidRaw}', ${m}, ${y})">ลบ</button>
+      <td class="alloc-col-who">
+        <div class="alloc-who"><code>${sid}</code></div>
+        ${it.full_name ? `<div class="alloc-sub">${name}</div>` : ""}
+      </td>
+      <td class="alloc-col-place">${
+        place.length
+          ? `<div class="alloc-place">${place.map((v) => `<span class="alloc-chip">${v}</span>`).join("")}</div>`
+          : '<span class="alloc-sub">—</span>'
+      }</td>
+      <td class="alloc-col-period mono">${period}</td>
+      <td class="alloc-col-status ${stCls}">${st}</td>
+      <td class="alloc-col-updated">
+        <div>${when}</div>
+        ${it.updated_by ? `<div class="alloc-sub">${who}</div>` : ""}
+      </td>
+      <td class="alloc-col-act admin-td-actions">
+        <button type="button" class="admin-action" onclick="adminViewAllocationSnapshot('${sidRaw}', ${m}, ${y})">ดู</button>
+        <button type="button" class="admin-action" onclick="adminDownloadAllocation('${sidRaw}', ${m}, ${y})">สำรอง</button>
+        <button type="button" class="admin-action admin-action--del" onclick="adminDeleteAllocation('${sidRaw}', ${m}, ${y})">ลบ</button>
       </td>
     </tr>`;
   }).join("");
@@ -13164,7 +13275,7 @@ async function adminLoadAllocations() {
   const tbody = document.getElementById("adminAllocTable");
   const countEl = document.getElementById("adminAllocCount");
   if (!tbody) return;
-  tbody.innerHTML = `<tr><td colspan="10" class="admin-empty">กำลังโหลด…</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="6" class="admin-empty">กำลังโหลด…</td></tr>`;
   if (countEl) countEl.textContent = "";
   try {
     const q = _adminPeriodFilterQuery("adminAllocMonth", "adminAllocYear");
@@ -13176,7 +13287,7 @@ async function adminLoadAllocations() {
   } catch (e) {
     _adminAllocItems = [];
     if (countEl) countEl.textContent = "";
-    tbody.innerHTML = `<tr><td colspan="10" class="admin-empty">${escapeHtml(e.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" class="admin-empty">${escapeHtml(e.message)}</td></tr>`;
   }
 }
 
@@ -14823,6 +14934,8 @@ const ADMIN_SYSROLE_OPTS = [
 ];
 
 /** คำอธิบายเต็มในฟอร์มเพิ่มผู้ดูแล */
+const ADMIN_SYSROLE_NO_SCOPE = new Set(["dev", "head_admin"]);
+
 const ADMIN_SYSROLE_DETAIL = {
   admin: "แอดมิน — จัดการผู้ใช้/ผูกรหัส/ผลการดำเนินงาน ตามขอบเขต",
   head_admin: "หัวหน้าแอดมิน — เหมือนแอดมิน + เพิ่ม/ถอดสิทธิ์แอดมินคนอื่นได้",
@@ -14863,9 +14976,11 @@ function adminRenderRolesPanel() {
   rows.forEach((r) => {
     const cur = String(r.system_role || "").toLowerCase();
     const isDev = cur === "dev";
+    // หัวหน้าแอดมินดูแลทั้งระบบเสมอ จึงไม่มีขอบเขตให้เลือกเหมือน dev
+    const noScope = isDev || cur === "head_admin";
     const scope = String(r.admin_scope || "").toLowerCase() || ADMIN_SCOPE_DEFAULT;
     // ขอบเขตที่ไม่ใช่ "ทุกคนในระบบ" ต้องรู้ดิวิชัน/ภาคของคนนี้ ไม่งั้นขอบเขตว่าง
-    const scopeNeedsPlace = !isDev && scope !== "all";
+    const scopeNeedsPlace = !noScope && scope !== "all";
     // หัวหน้าแอดมินแก้ได้เฉพาะแถวระดับ "แอดมิน" และไม่ใช่แถวของตัวเอง
     // (backend กันซ้ำด้วย ensure_can_assign_role — ตรงนี้แค่ไม่ให้กดแล้วเจอ 403)
     const canEditThisRow = _adminCanEditRoleRow(r);
@@ -14898,7 +15013,7 @@ function adminRenderRolesPanel() {
         }
       </td>
       <td class="roles-td-scope">${
-        isDev
+        noScope
           ? '<span class="roles-scope-na">ทั้งระบบ — ไม่มีขอบเขตให้จำกัด</span>'
           : `<select class="roles-select roles-select--scope" aria-label="ขอบเขตของ ${escapeHtml(r.email)}"${canEditThisRow ? "" : " disabled"}>
               ${ADMIN_SCOPE_OPTS.map(
@@ -15016,13 +15131,14 @@ async function adminRolesShowAdd() {
     const hint = document.getElementById("rolesAddScopeHint");
     const placeWrap = document.getElementById("rolesAddPlaceWrap");
     const regionWrap = document.getElementById("rolesAddRegionWrap");
-    // Division/ภาค จำเป็นเฉพาะขอบเขตที่คิดจากสองค่านี้ — "ทุกคนในระบบ" กับ Dev ไม่ต้องใช้
+    // Division/ภาค จำเป็นเฉพาะขอบเขตที่คิดจากสองค่านี้ —
+    // "ทุกคนในระบบ" / Dev / หัวหน้าแอดมิน ดูแลทั้งระบบอยู่แล้วจึงไม่ต้องใช้
     const syncPlace = () => {
-      const isDev = roleSel?.value === "dev";
+      const noScope = ADMIN_SYSROLE_NO_SCOPE.has(roleSel?.value || "");
       const sc = scopeSel?.value || ADMIN_SCOPE_DEFAULT;
-      if (scopeWrap) scopeWrap.style.display = isDev ? "none" : "";
-      if (placeWrap) placeWrap.style.display = !isDev && sc !== "all" ? "" : "none";
-      if (regionWrap) regionWrap.style.display = sc === "division_region" ? "" : "none";
+      if (scopeWrap) scopeWrap.style.display = noScope ? "none" : "";
+      if (placeWrap) placeWrap.style.display = !noScope && sc !== "all" ? "" : "none";
+      if (regionWrap) regionWrap.style.display = !noScope && sc === "division_region" ? "" : "none";
     };
     roleSel?.addEventListener("change", syncPlace);
     scopeSel?.addEventListener("change", () => {

@@ -8745,3 +8745,228 @@ body.is-admin-login-only #msLogoutBtn {
   background: var(--accent-bg);
   color: var(--accent);
 }
+
+/* ══════════════════════════════════════════════
+   ตารางบันทึกการใช้งาน — ให้พื้นที่กับ "การกระทำ" และ "ข้อความ"
+
+   เดิมทุกคอลัมน์กว้างตามเนื้อหา คอลัมน์ "ระดับ" ที่มีแค่ป้ายสั้น ๆ จึงกินที่เท่ากับ
+   คอลัมน์ข้อความที่ยาวที่สุด ทำให้ข้อความถูกบีบจนอ่านยาก
+══════════════════════════════════════════════ */
+#adminView .admin-table--log {
+  table-layout: fixed;
+  width: 100%;
+}
+
+#adminView .admin-table--log th,
+#adminView .admin-table--log td {
+  overflow-wrap: anywhere;
+}
+
+#adminView .admin-table--log .log-col-time { width: 9.5rem; }
+#adminView .admin-table--log .log-col-level { width: 4.5rem; }
+#adminView .admin-table--log .log-col-user { width: 13rem; }
+#adminView .admin-table--log .log-col-sup { width: 4.5rem; }
+#adminView .admin-table--log .log-col-action { width: 15rem; }
+#adminView .admin-table--log .log-col-msg { width: auto; }   /* ที่เหลือทั้งหมด */
+#adminView .admin-table--log .log-col-act { width: 6.5rem; }
+
+/* ป้ายระดับอยู่กลางคอลัมน์แคบ ๆ ให้ดูเป็นระเบียบ */
+#adminView .admin-table--log td:nth-child(2) { text-align: center; }
+
+/* รหัสการกระทำเป็นตัวระบุเชิงเทคนิค — ใช้ฟอนต์ mono ให้กวาดตาหาได้เร็ว */
+#adminView .admin-table--log .log-action {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+#adminView .admin-table--log .log-msg {
+  line-height: 1.5;
+}
+
+@media (max-width: 1200px) {
+  #adminView .admin-table--log .log-col-user { width: 10rem; }
+  #adminView .admin-table--log .log-col-action { width: 11rem; }
+}
+
+/* ══════════════════════════════════════════════
+   ตารางผลการกระจาย — รวมข้อมูลที่เกี่ยวกันไว้ช่องเดียว
+
+   เดิม 10 คอลัมน์ (SL / ชื่อ / Div / ภาค / หน่วย / งวด / สถานะ / อัปเดต / โดย / จัดการ)
+   ทำให้ตารางกว้างเกินจอ ปุ่มจัดการถูกดันตกออกไปด้านขวา ต้องเลื่อนหาทุกครั้ง
+   → ยุบเหลือ 6: Supervisor (SL+ชื่อ) · สังกัด (Div/ภาค/หน่วย) · งวด · สถานะ · อัปเดต (เวลา+ผู้ทำ) · จัดการ
+══════════════════════════════════════════════ */
+#adminView .admin-table--alloc {
+  /* เต็มความกว้างพื้นที่ แต่แบ่งสัดส่วนคอลัมน์เอง
+     (ถ้าปล่อยให้เบราว์เซอร์แบ่งเอง ช่องชื่อจะดูดที่ว่างทั้งหมดจนเหลือ 900px
+      ส่วนช่องปุ่มถูกบีบจนปุ่มซ้อนกันสามบรรทัด) */
+  table-layout: fixed;
+  width: 100%;
+}
+
+#adminView .admin-table--alloc th,
+#adminView .admin-table--alloc td {
+  vertical-align: middle;
+}
+
+#adminView .admin-table--alloc .alloc-col-who { width: 27%; }
+#adminView .admin-table--alloc .alloc-col-place { width: 23%; }
+#adminView .admin-table--alloc .alloc-col-period { width: 8%; }
+#adminView .admin-table--alloc .alloc-col-status { width: 13%; }
+#adminView .admin-table--alloc .alloc-col-updated { width: 17%; }
+#adminView .admin-table--alloc .alloc-col-act { width: 12%; }
+
+/* ช่องที่เนื้อหาสั้นและคาดเดาได้ — ไม่ให้ตัดบรรทัด แถวจะได้สูงเท่ากันทั้งตาราง */
+#adminView .admin-table--alloc .alloc-col-period,
+#adminView .admin-table--alloc .alloc-col-status,
+#adminView .admin-table--alloc .alloc-col-act {
+  white-space: nowrap;
+}
+
+#adminView .admin-table--alloc .alloc-col-who,
+#adminView .admin-table--alloc .alloc-col-place,
+#adminView .admin-table--alloc .alloc-col-updated {
+  overflow-wrap: anywhere;
+}
+
+#adminView .admin-table--alloc .alloc-who code {
+  font-weight: 700;
+}
+
+/* บรรทัดรองใต้ค่าหลัก (ชื่อคน / อีเมลผู้แก้) */
+#adminView .admin-table--alloc .alloc-sub {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-3);
+  line-height: 1.45;
+}
+
+#adminView .admin-table--alloc .alloc-place {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+#adminView .admin-table--alloc .alloc-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+#adminView .admin-table--alloc td.alloc-col-act {
+  text-align: right;
+}
+
+/* จอแคบ: ชื่อกับสังกัดยาวกว่าช่องอื่น ให้ลดลงก่อน */
+@media (max-width: 1200px) {
+  #adminView .admin-table--alloc .alloc-col-who { width: 24%; }
+  #adminView .admin-table--alloc .alloc-col-place { width: 20%; }
+  #adminView .admin-table--alloc .alloc-col-act { width: 15%; }
+}
+
+/* ══════════════════════════════════════════════
+   หน้า setting — ระบบตัวอักษรชุดเดียวทั้งหน้า
+
+   ปัญหาเดิม: หน้านี้สะสมขนาดตัวอักษรไว้ 12 ขนาด (9 / 10 / 10.5 / 11 / 11.5 / 12 /
+   12.5 / 13 / 14 / 15 / 16 / 17px) เพราะแต่ละส่วนถูกเขียนคนละครั้ง ผลคือหัวตาราง
+   เล็กกว่าเนื้อ ปุ่มข้าง ๆ กันคนละขนาด ช่องกรอกใหญ่กว่าปุ่มที่อยู่ติดกัน
+
+   แก้ที่ "ระดับ" ไม่ใช่รายชิ้น: เหลือ 4 ขนาดที่มีหน้าที่ชัดเจน แล้วบังคับให้ทุกชิ้น
+   ในหน้านี้อ้างค่าเดียวกัน — จำกัดขอบเขตด้วย #adminView จึงไม่กระทบหน้าอื่น
+══════════════════════════════════════════════ */
+#adminView {
+  --afs-xs: 11px;    /* ป้าย/บรรทัดรอง/หัวตาราง */
+  --afs-sm: 12px;    /* เนื้อหาหลัก: เซลล์ตาราง ปุ่ม ช่องกรอก */
+  --afs-md: 13px;    /* หัวการ์ด */
+  --afs-lg: 16px;    /* ชื่อหน้า */
+}
+
+#adminView,
+#adminView input,
+#adminView select,
+#adminView textarea,
+#adminView button,
+#adminView a {
+  font-size: var(--afs-sm);
+}
+
+/* ── ตาราง ─────────────────────────────────── */
+#adminView .admin-table th {
+  font-size: var(--afs-xs);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+#adminView .admin-table td {
+  font-size: var(--afs-sm);
+}
+
+/* ── ป้าย/บรรทัดรอง — เล็กกว่าเนื้อหาหนึ่งขั้นเท่านั้น ── */
+#adminView .alloc-sub,
+#adminView .alloc-chip,
+#adminView .roles-sub,
+#adminView .roles-scope-hint,
+#adminView .roles-add__hint,
+#adminView .admin-cell-note,
+#adminView .admin-nav-group__label,
+#adminView .admin-ro-badge,
+#adminView .admin-sysrole-chip,
+#adminView .admin-period-bar__field,
+#adminView .admin-period-bar__meta,
+#adminView .admin-view__breadcrumb,
+#adminView .admin-card__hint,
+#adminView .admin-log-level,
+#adminView .admin-bell__count,
+#adminView .emp-view-only-note {
+  font-size: var(--afs-xs);
+}
+
+/* ── ปุ่มทุกชนิดในหน้านี้ขนาดเดียวกัน ─────────── */
+#adminView .admin-btn-primary,
+#adminView .admin-btn-ghost,
+#adminView .admin-btn-back,
+#adminView .admin-btn-refresh,
+#adminView .admin-btn-ack,
+#adminView .admin-bell,
+#adminView .admin-action,
+#adminView .admin-ts-bulk-btn,
+#adminView .roles-select,
+#adminView .admin-select,
+#adminView .field-input {
+  font-size: var(--afs-sm);
+}
+
+/* ไอคอนในปุ่มต้องไม่ใหญ่กว่าตัวอักษรจนดันความสูง */
+#adminView .admin-btn-back__icon,
+#adminView .admin-btn-refresh__icon {
+  font-size: var(--afs-md);
+}
+
+/* ── หัวเรื่อง ─────────────────────────────── */
+#adminView .admin-card__title { font-size: var(--afs-md); }
+#adminView .admin-view__title { font-size: var(--afs-lg); }
+
+/* ── น้ำหนักตัวอักษร: เนื้อหาปกติอ่านสบาย ไม่หนาแข่งกับหัวข้อ ── */
+#adminView .admin-table td { font-weight: 500; }
+#adminView .admin-table td code,
+#adminView .alloc-who code { font-weight: 700; }
+
+/* ช่อง "จัดการ" ต้องเป็นเซลล์ตารางจริง ไม่ใช่ flex container
+   (.admin-td-actions ตั้ง display:flex ไว้ ซึ่งทำให้เซลล์หลุดจากการคิดความกว้าง
+    ของตาราง แล้วยุบจนปุ่มถูกตัดเหลือตัวอักษรเดียวเรียงลงมา) */
+#adminView .admin-table--alloc td.alloc-col-act {
+  display: table-cell;
+  white-space: nowrap;
+  text-align: right;
+}
+
+#adminView .admin-table--alloc td.alloc-col-act .admin-action {
+  display: inline-flex;
+  width: auto;
+  white-space: nowrap;
+}

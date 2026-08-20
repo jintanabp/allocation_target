@@ -27,8 +27,35 @@ def parse_alloc_key(key: str) -> tuple[str, str]:
     return raw, ""
 
 
+# ค่าที่แปลว่า "ไม่มีคลัง" หลังผ่านทางเดินของ pandas/CSV
+#
+# ต้องกันสองชั้น: `pd.isna` จับ NaN/NaT/pd.NA ที่ยังอยู่ในหน่วยความจำ ส่วนรายชื่อข้างล่าง
+# จับค่าที่วิ่งผ่านไฟล์ CSV มาแล้ว (tga_lines_*.csv อ่านกลับโดยไม่ได้ pin dtype ของคอลัมน์นี้
+# NaN จึงกลายเป็นสตริง "nan" ซึ่ง truthy — เช็ค `val or ""` เดิมจึงไม่จับ)
+_BLANK_WH_LITERALS = frozenset({"nan", "none", "nat", "<na>", "null"})
+
+
 def _norm_wh(val: Any) -> str:
-    return str(val or "").strip()
+    """
+    คืนรหัสคลังที่ใช้ได้จริง — ค่าว่าง/NaN/"nan" คืน "" เสมอ
+
+    เดิมใช้ `str(val or "").strip()` ซึ่งพลาดสองทาง: `pd.NA` ทำให้ `or` โยน TypeError
+    และ NaN ที่ผ่าน CSV มาเป็นสตริง "nan" กลายเป็น "รหัสคลัง" จริง ๆ ผลคือพนักงาน
+    คลังเดียวถูกแตกเป็น wh_split ปลอม เป้าเงินส่วนหนึ่งถูกโยนไปคลังที่ไม่มีอยู่จริง
+    แถวปลอมนั้นผ่านด่าน eligible ได้หีบจริง แล้วไหลไปถึงไฟล์ที่ส่งเข้า Target Sun
+    """
+    if val is None:
+        return ""
+    try:
+        if pd.isna(val):
+            return ""
+    except (TypeError, ValueError):
+        # ไม่ใช่ scalar ที่ pandas ตรวจได้ (เช่น list) — ปล่อยให้ str() จัดการต่อ
+        pass
+    s = str(val).strip()
+    if s.lower() in _BLANK_WH_LITERALS:
+        return ""
+    return s
 
 
 def warehouses_per_emp_from_tga(df_tga: pd.DataFrame | None) -> dict[str, list[str]]:
@@ -58,7 +85,11 @@ def tga_value_by_emp_wh(
     d = df_tga.copy()
     d["emp_id"] = d["emp_id"].astype(str).str.strip()
     d["sku"] = d["sku"].astype(str).str.strip()
-    d["warehouse_code"] = d.get("warehouse_code", "").map(_norm_wh)
+    # ไม่มีคอลัมน์คลัง = ทุกแถวไม่มีคลัง — เดิม d.get(...) คืนสตริง "" แล้ว "".map() โยน
+    # AttributeError (แบบเดียวกับที่ prepare_optimize_targets กันไว้แล้ว)
+    if "warehouse_code" not in d.columns:
+        d["warehouse_code"] = ""
+    d["warehouse_code"] = d["warehouse_code"].map(_norm_wh)
     d["qty"] = pd.to_numeric(d.get("qty", 0), errors="coerce").fillna(0.0)
     d["price"] = d["sku"].map(lambda s: float(price_by_sku.get(str(s).strip(), 0.0)))
     d["line_value"] = d["qty"] * d["price"]
@@ -112,7 +143,7 @@ def expand_employee_rows(
         unique_whs = sorted(set(whs), key=lambda x: (x == "", x))
         if len(unique_whs) < 2:
             nr = dict(row)
-            nr["warehouse_code"] = str(nr.get("warehouse_code") or (unique_whs[0] if unique_whs else "")).strip()
+            nr["warehouse_code"] = _norm_wh(nr.get("warehouse_code")) or (unique_whs[0] if unique_whs else "")
             nr["wh_split"] = False
             nr["alloc_key"] = alloc_key(emp, nr.get("warehouse_code"), wh_split=False)
             out.append(nr)
@@ -158,12 +189,14 @@ def prepare_optimize_targets(df_targets: pd.DataFrame) -> tuple[pd.DataFrame, di
     df = df_targets.copy()
     if "warehouse_code" not in df.columns:
         df["warehouse_code"] = ""
-    df["warehouse_code"] = df["warehouse_code"].fillna("").astype(str).str.strip()
+    # ใช้ตัว normalize ตัวเดียวกับที่อื่น — ไม่งั้น "nan" ที่หลุดมาจะกลายเป็นคลังจริง
+    # แล้ว or_emp_id เพี้ยนเป็น "EMP|nan" ซึ่งจับคู่กลับกับแถวพนักงานไม่ได้
+    df["warehouse_code"] = df["warehouse_code"].map(_norm_wh)
     reverse: dict[str, tuple[str, str]] = {}
     or_ids: list[str] = []
     for _, r in df.iterrows():
         emp = str(r.get("emp_id") or "").strip()
-        wh = str(r.get("warehouse_code") or "").strip()
+        wh = _norm_wh(r.get("warehouse_code"))
         wh_split = bool(wh)
         key = alloc_key(emp, wh, wh_split=wh_split)
         or_ids.append(key)

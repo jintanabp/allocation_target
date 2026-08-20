@@ -32,6 +32,7 @@ from ..deps import (
     require_role_manager,
 )
 from ..services.access_control import (
+    ADMIN_SCOPE_ALL,
     ADMIN_SCOPE_LABELS,
     ASSIGNABLE_ADMIN_SCOPES,
     ASSIGNABLE_ROLES,
@@ -408,6 +409,9 @@ def set_user_role(
     if role not in ADMIN_ROLES:
         # dev ไม่มีขอบเขต — ล้างทิ้งเสมอ กันค่าค้างที่จะกลับมามีผลถ้าถูกตั้งเป็นผู้ดูแลอีก
         scope = ""
+    elif role == ROLE_HEAD_ADMIN:
+        # หัวหน้าแอดมินดูแลทั้งระบบเสมอ — ไม่มีขอบเขตให้จำกัด (ต่างจาก dev ที่ตรงอื่น)
+        scope = ADMIN_SCOPE_ALL
     elif not scope:
         scope = DEFAULT_ADMIN_SCOPE
 
@@ -424,6 +428,26 @@ def set_user_role(
 
     div = str(body.acc_division or "").strip()
     region = str(body.acc_region or "").strip()
+
+    # ขอบเขตที่แคบกว่า "ทุกคนในระบบ" ต้องรู้ภาค/ดิวิชันของเจ้าตัว ไม่งั้นได้ขอบเขตว่าง
+    # = ผู้ดูแลที่เข้าหน้าแอดมินแล้วเจอ 403 ทุก API ดูเหมือน "ไม่มีสิทธิ์อะไรเลย"
+    # เคยเกิดจริงกับบัญชีผู้ดูแลที่ไม่มีตำแหน่งงาน (ไม่มีภาค/ดิวิชันให้อ้างอิง)
+    # บล็อกตั้งแต่ตอนบันทึกดีกว่าปล่อยให้ไปตายตอนเจ้าตัวล็อกอิน
+    if role in ADMIN_ROLES and scope != ADMIN_SCOPE_ALL:
+        existing = [r for r in read_rows() if normalized_email(r.get("email")) == em]
+        has_place = bool(div or region) or any(
+            str(r.get("acc_region") or "").strip() or str(r.get("acc_division") or "").strip()
+            for r in existing
+        )
+        if not has_place:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"บัญชีนี้ยังไม่มีภาค/Division จึงใช้ขอบเขต "
+                    f"'{ADMIN_SCOPE_LABELS.get(scope, scope)}' ไม่ได้ (จะกลายเป็นผู้ดูแลที่ทำอะไรไม่ได้เลย) "
+                    "— เลือกขอบเขต 'ทุกคนในระบบ' หรือระบุภาค/Division ให้บัญชีนี้ก่อน"
+                ),
+            )
 
     rows = read_rows()
     touched = 0
