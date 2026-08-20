@@ -186,6 +186,117 @@ class TestHistoryPooledAcrossTeams(unittest.TestCase):
         self.assertTrue(self._read(["SLNOPE"], ["E1"]).empty)
 
 
+class TestSummedRegionalTarget(unittest.TestCase):
+    """
+    รวมเป้าทั้งภาค: เป้าต่อ SKU = ผลบวกของทุกทีม
+
+    เดิมโหมดนี้ใช้ "เป้าของทีมเดียว" คู่กับพนักงานทั้งภาค — เป้าเงินกับเป้าหีบ
+    คนละสเกลกันคนละเท่าตัว ผลกระจายจึงเบี้ยวโดยที่ประตู I1 ยังบอกว่าตรงเป้า
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._cwd = os.getcwd()
+        os.chdir(self._tmp.name)
+        os.makedirs("data", exist_ok=True)
+
+    def tearDown(self):
+        os.chdir(self._cwd)
+        self._tmp.cleanup()
+
+    @staticmethod
+    def _write(sid, rows):
+        pd.DataFrame(rows).to_csv(f"data/target_boxes_{sid}_2026_08.csv", index=False)
+
+    def _sum(self, ids):
+        from backend.core.targets import load_summed_target_boxes
+
+        return load_summed_target_boxes(ids, 8, 2026)
+
+    def test_boxes_are_added_across_teams(self):
+        self._write("SLA", [{"sku": "A", "supervisor_target_boxes": 10, "price_per_box": 5.0}])
+        self._write("SLB", [{"sku": "A", "supervisor_target_boxes": 7, "price_per_box": 5.0}])
+        df, missing = self._sum(["SLA", "SLB"])
+        self.assertEqual(missing, [])
+        self.assertEqual(int(df.loc[df["sku"] == "A", "supervisor_target_boxes"].iloc[0]), 17)
+
+    def test_sku_only_one_team_has_still_shows_up(self):
+        self._write("SLA", [{"sku": "A", "supervisor_target_boxes": 10}])
+        self._write("SLB", [{"sku": "B", "supervisor_target_boxes": 4}])
+        df, _ = self._sum(["SLA", "SLB"])
+        self.assertEqual(sorted(df["sku"].tolist()), ["A", "B"])
+
+    def test_missing_team_file_is_reported_not_guessed(self):
+        """ทีมที่ยังไม่มีไฟล์เป้า = เป้าหายไปเงียบ ๆ — ผู้เรียกต้องได้รู้เพื่อปฏิเสธ"""
+        self._write("SLA", [{"sku": "A", "supervisor_target_boxes": 10}])
+        df, missing = self._sum(["SLA", "SLB"])
+        self.assertEqual(missing, ["SLB"])
+        self.assertEqual(int(df["supervisor_target_boxes"].sum()), 10)
+
+    def test_never_falls_back_to_the_global_file(self):
+        """
+        ถ้าตกไปอ่าน data/target_boxes.csv ทุกทีม ผลรวมจะเป็นเป้าเดิม x จำนวนทีม
+        แล้ว I1 จะบังคับให้กระจายหีบเกินจริงออกไปทั้งภาค
+        """
+        pd.DataFrame([{"sku": "A", "supervisor_target_boxes": 99}]).to_csv(
+            "data/target_boxes.csv", index=False
+        )
+        df, missing = self._sum(["SLA", "SLB"])
+        self.assertIsNone(df)
+        self.assertEqual(missing, ["SLA", "SLB"])
+
+    def test_duplicate_sku_inside_one_team_is_collapsed_first(self):
+        """ข้อมูลเสียของทีมเดียวต้องไม่บวกเข้าเป้าของทั้งภาค (I6)"""
+        self._write("SLA", [
+            {"sku": "A", "supervisor_target_boxes": 10},
+            {"sku": "A", "supervisor_target_boxes": 3},
+        ])
+        self._write("SLB", [{"sku": "A", "supervisor_target_boxes": 5}])
+        df, _ = self._sum(["SLA", "SLB"])
+        self.assertEqual(int(df["supervisor_target_boxes"].sum()), 8, "3 (แถวหลัง) + 5")
+
+    def test_same_team_listed_twice_is_not_counted_twice(self):
+        self._write("SLA", [{"sku": "A", "supervisor_target_boxes": 10}])
+        df, _ = self._sum(["SLA", "sla", " SLA "])
+        self.assertEqual(int(df["supervisor_target_boxes"].sum()), 10)
+
+    def test_metadata_comes_from_the_first_team_that_has_it(self):
+        self._write("SLA", [{"sku": "A", "supervisor_target_boxes": 1, "price_per_box": 0}])
+        self._write("SLB", [{"sku": "A", "supervisor_target_boxes": 1, "price_per_box": 12.5}])
+        df, _ = self._sum(["SLA", "SLB"])
+        self.assertAlmostEqual(float(df["price_per_box"].iloc[0]), 12.5)
+
+
+class TestResolveTargetSupIds(unittest.TestCase):
+    def test_own_team_always_first_even_if_not_sent(self):
+        self.assertEqual(opt._resolve_target_sup_ids("SLA", ["SLB"]), ["SLA", "SLB"])
+
+    def test_duplicates_and_case_are_normalised(self):
+        self.assertEqual(
+            opt._resolve_target_sup_ids("sla", ["SLB", " slb ", "SLA"]), ["SLA", "SLB"]
+        )
+
+    def test_empty_means_single_team_mode(self):
+        self.assertEqual(opt._resolve_target_sup_ids("SLA", []), ["SLA"])
+
+
+class TestTargetSupIdsPermission(unittest.TestCase):
+    """เป้าของทีมอื่นเป็นฐานคำนวณ — ต้องตรวจสิทธิ์ทุกรหัส ไม่ใช่แค่รหัสที่ยิง request"""
+
+    def test_router_checks_every_target_sup_id(self):
+        import inspect
+
+        from backend.routers import optimize as router
+
+        src = inspect.getsource(router.run_optimization)
+        self.assertIn("for peer in req.target_sup_ids", src)
+        self.assertIn("ensure_supervisor_allowed(user, pid)", src)
+
+    def test_schema_defaults_to_single_team(self):
+        req = OptimizeRequest(yellowTargets=[{"emp_id": "E1", "yellow_target": 1.0}])
+        self.assertEqual(req.target_sup_ids, [])
+
+
 class TestPeerSupIdsWiring(unittest.TestCase):
     def test_schema_defaults_to_own_team_only(self):
         req = OptimizeRequest(yellowTargets=[{"emp_id": "E1", "yellow_target": 1.0}])

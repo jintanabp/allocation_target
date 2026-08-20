@@ -13,3 +13,10 @@ __pycache__/
 # Generated manual assets (source: docs/images/, build: docs/build-manual-html.py)
 frontend/manual-images/
 docs/user-manual-th.pdf
+
+# ปลายทางที่จะส่ง Target Sun (test/uat/prod) — ตั้งจากหน้าแอดมิน ไม่ควรอยู่ใน git
+# ถ้ายัง track อยู่ บรรทัดนี้ไม่มีผล ต้องรันครั้งเดียว:
+#   git rm --cached config/app_runtime.json
+# แล้วหลัง deploy ครั้งแรกให้เข้าหน้าแอดมิน > แหล่งข้อมูล ตั้ง preset ใหม่ 1 ครั้ง
+# (ดู docs/DEPLOY_QA_CHECKLIST.md) ต้นแบบอยู่ที่ config/app_runtime.example.json
+config/app_runtime.json

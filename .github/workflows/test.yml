@@ -24,8 +24,9 @@ jobs:
       - name: Run unit tests
         run: python run_tests.py -v
 
-  # frontend/app.js ไม่มี test ใด ๆ — อย่างน้อยต้องกัน ReferenceError ที่ `node --check` จับไม่ได้
+  # app.js เป็นไฟล์ UI ล้วน รันในเทสไม่ได้ — กันได้แค่ syntax + ReferenceError
   # (เคยหลุด: ลบ `const readOnly = ...` แต่ลืม `if (!readOnly)` → ผลกระจายไม่ขึ้นทั้งหน้า)
+  # ส่วนตรรกะที่ "คำนวณผิดแล้วเงียบ" ถูกแยกไป frontend/logic.js ซึ่งมีเทสจริง
   frontend:
     runs-on: ubuntu-latest
     steps:
@@ -34,8 +35,13 @@ jobs:
         with:
           node-version: "20"
       - name: Syntax check
-        run: node --check frontend/app.js
+        run: |
+          node --check frontend/logic.js
+          node --check frontend/app.js
+      - name: เทสตรรกะหน้าเว็บ (ตัวแปลงเลข + คณิตการเกลี่ยหีบ)
+        run: node --test tests/logic.test.js
       - name: ตรวจตัวแปรที่ใช้แต่ไม่เคยประกาศ
         run: |
           npm install --no-save --no-audit --no-fund acorn
+          node scripts/dev/check_js_undef.js frontend/logic.js
           node scripts/dev/check_js_undef.js frontend/app.js

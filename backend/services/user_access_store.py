@@ -39,6 +39,21 @@ MANAGER_LEVELS = frozenset({"regional", "division"})
 NONE_SENTINEL = "none"
 
 
+def real_userpl(value: Any) -> str:
+    """
+    รหัส USERPL ที่ใช้งานได้จริง — คืน "" ให้แถวที่ไม่มีรหัส
+
+    บัญชี "แอดมินอย่างเดียว" เก็บ userpl เป็น sentinel "none" ในไฟล์ (ทุกฟิลด์ต้องมีค่า)
+    ถ้าอ่านดิบ ๆ แล้ว .upper() จะได้รหัสทีมปลอมชื่อ "NONE" ที่ไหลเข้าไปทั้งใน
+    allowed_supervisor_codes และรายชื่อทีมในหน้าล็อกอิน — ผลคือแอดมินล็อกอินมาแล้ว
+    เจอตัวเลือกทีมที่โหลดไม่ได้ ส่วนคนอื่นก็เห็น "NONE" โผล่ในลำดับชั้น
+    """
+    s = str(value or "").strip()
+    if not s or s.lower() == NONE_SENTINEL:
+        return ""
+    return s.upper()
+
+
 def _clean_none_sentinel(value: Any) -> Any:
     if isinstance(value, str) and value.strip().lower() == NONE_SENTINEL:
         return ""
@@ -82,7 +97,12 @@ def canonicalize_user_access_row(row: dict[str, Any]) -> dict[str, Any]:
         ml_out = ml
 
     unit_raw = str(work.get("acc_unit") or "").strip().lower()
-    if lk == "supervisor_acc" and unit_raw in ("van", "credit"):
+    # ผู้จัดการ "รายภาค" ระบุหน่วยได้ (credit/van) เพื่อจำกัดให้ดูเฉพาะหน่วยตัวเอง
+    # เหมือนซุป — ผู้จัดการระดับดิวิชันไม่ให้ระบุ เพราะขอบเขตคือทั้งดิวิชันอยู่แล้ว
+    _unit_allowed = lk == "supervisor_acc" or (
+        lk == "manager_acc" and ml_out == "regional"
+    )
+    if _unit_allowed and unit_raw in ("van", "credit"):
         unit_out = unit_raw
     else:
         unit_out = NONE_SENTINEL

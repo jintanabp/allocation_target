@@ -794,8 +794,14 @@ let S = {
   _step2Dirty: false,
   /** มุมมองตารางผล (เรียงแถว/โหมดค้นหา) — คงไว้ข้าม re-render ที่เกิดทุกครั้งที่แก้ตัวเลข */
   resultView: { rowSort: "default", searchFilterOnly: false, offTargetOnly: false },
-  /** ทีมเจ้าของเป้าเมื่อกระจายรวมทั้งหน่วย (null = กระจายแบบแยกทีมตามปกติ) */
+  /** ทีมที่ยิง /optimize ตอนกระจายรวมเป้าทั้งภาค (null = กระจายแบบแยกทีมตามปกติ) */
   unitWideOwnerSup: null,
+  /** ขอบเขตการกระจายในโหมดรวมภาค: "team" (แยกทีม) | "unit" (รวมเป้าทั้งภาค)
+      ตั้งใหม่ทุกครั้งที่โหลดข้อมูล — ไม่จำข้ามงวด */
+  allocScope: "team",
+  /** จำนวนทีม/ผู้จัดการที่บัญชีนี้เลือกได้ในหน้าล็อกอิน (-1 = ยังไม่รู้)
+      0 = ไม่มีอะไรให้เลือก → ถ้าเป็นแอดมินต้องพาเข้าหน้าแอดมินแทนที่จะค้างหน้าล็อกอิน */
+  loginPickCount: -1,
   /** dev — ทำได้ทุกอย่างทั้งระบบ (ALLOCATION_ADMIN_EMAILS หรือ role=dev) */
   isAdmin: false,
   /** role จริงจาก server: dev | admin | marketing | user */
@@ -1196,36 +1202,6 @@ async function _getAllocSummaryItems() {
   } catch {
     return [];
   }
-}
-
-function _confirmRegionalReallocateIfNeeded() {
-  return new Promise((resolve) => {
-    _getAllocSummaryItems().then((items) => {
-      const pending = (items || []).filter((it) => {
-        if (!it?.has_snapshot) return false;
-        const st = String(it.status || "").toLowerCase();
-        return st === "optimized" || st === "draft";
-      });
-      if (!pending.length) {
-        resolve(true);
-        return;
-      }
-      const listHtml = pending
-        .map((it) => `<li><code>${escapeHtml(String(it.sup_id || ""))}</code> — ${_allocationStatusLabel(it.status)}</li>`)
-        .join("");
-      _showInfoModal({
-        title: "กระจายทั้งภาคใหม่?",
-        bodyHtml:
-          `<p style="margin:0 0 10px;line-height:1.55;">มีทีมที่กระจายหีบแล้วแต่<strong>ยังไม่ได้ส่งเข้า Target Sun</strong> — หากกดต่อ ระบบจะคำนวณใหม่ทุกทีมในภาค (ทับผลเดิม)</p>` +
-          `<ul style="margin:0 0 8px 18px;padding:0;line-height:1.6;">${listHtml}</ul>` +
-          `<p style="margin:0;font-size:12px;color:var(--text-3);">ทีมที่ส่ง Target Sun แล้วจะใช้เป้าจาก Target Sun เป็นฐานใหม่</p>`,
-        primaryLabel: "กระจายใหม่ทั้งภาค",
-        secondaryLabel: "ยกเลิก",
-        onPrimary: () => resolve(true),
-        onSecondary: () => resolve(false),
-      });
-    }).catch(() => resolve(true));
-  });
 }
 
 function _setStep1Skeleton(on) {
@@ -2929,6 +2905,19 @@ function syncLoginFormReady() {
   btn.title = !msOk ? "กรุณาล็อกอินด้วย Microsoft ก่อน" : "";
 }
 
+/**
+ * บัญชี "แอดมินอย่างเดียว" — มีสิทธิ์ดูแลระบบแต่ไม่มีทีมให้เลือกสักรายการ
+ *
+ * แอดมินรายภาคส่วนใหญ่เป็นซุป/ผู้จัดการที่มีสิทธิ์แอดมินซ้อนอยู่ (มีทีมให้เลือก)
+ * แต่บางบัญชีตั้งไว้เพื่อดูแลระบบล้วน ๆ — เดิมคนกลุ่มนี้ล็อกอินแล้วเจอฟอร์มเปล่า
+ * พร้อมข้อความ "โหลดรายการไม่สำเร็จ" ทั้งที่ระบบทำงานปกติ แล้วเข้าต่อไม่ได้เลย
+ */
+function _isAdminOnlyAccount() {
+  if (S.viewAsEmail) return false;
+  if (!(S.isAdmin || S.isRegionAdmin)) return false;
+  return S.loginPickCount === 0;
+}
+
 function applyAdminLoginLayout() {
   const formBlock = document.getElementById("loginFormBlock");
   const loginBtn = document.getElementById("loginBtn");
@@ -2936,7 +2925,11 @@ function applyAdminLoginLayout() {
   const adminWait = document.getElementById("adminLoginWait");
   const msBtn = document.getElementById("msLoginBtn");
   const onLogin = document.getElementById("loginView")?.style.display !== "none";
-  const adminMode = !!(S.isAdmin && !S.viewAsEmail && entraMsalReady() && onLogin);
+  // dev = ไม่มีตำแหน่งอยู่แล้ว · แอดมินรายภาคเข้าเงื่อนไขนี้เฉพาะเมื่อไม่มีทีมให้เลือก
+  // (ถ้ามีทีม เขาคือซุป/ผู้จัดการที่มีสิทธิ์แอดมินซ้อน — ต้องได้ฟอร์มล็อกอินตามปกติ)
+  const adminMode = !!(
+    (S.isAdmin || _isAdminOnlyAccount()) && !S.viewAsEmail && entraMsalReady() && onLogin
+  );
   const checkingAdmin = !!(entraMsalReady() && onLogin && _managersListLoading && !S.viewAsEmail);
 
   document.body.classList.toggle("is-admin-login-only", adminMode);
@@ -3133,13 +3126,34 @@ async function loadManagers(force = false) {
         }
       }
       const list = _managersListFromApiData(data);
+      S.loginPickCount = list.length;
 
       if (list.length > 0) {
         populateLoginSupervisorSelect(list, "", data.default_login_pick || "");
         if (retryBtn) retryBtn.style.display = "none";
         return;
       }
+
+      // ไม่มีทีมให้เลือก + มีสิทธิ์แอดมิน = บัญชีดูแลระบบอย่างเดียว
+      // อย่าโชว์ "โหลดรายการไม่สำเร็จ" เพราะไม่ได้ล้มเหลว — พาเข้าหน้าแอดมินเลย
+      if (_isAdminOnlyAccount()) {
+        populateLoginSupervisorSelect(
+          [],
+          "บัญชีนี้เป็นผู้ดูแลระบบอย่างเดียว — ไม่มีทีมให้เลือก",
+        );
+        updateAdminNavVisibility();
+        if (retryBtn) retryBtn.style.display = "none";
+        _disableLoginScrollLock();
+        const loginEl = document.getElementById("loginView");
+        const dashEl = document.getElementById("dashboardView");
+        if (loginEl) loginEl.style.display = "none";
+        if (dashEl) dashEl.style.display = "none";
+        document.body.classList.remove("is-login");
+        openAdminView();
+        return;
+      }
     }
+    S.loginPickCount = 0;
     populateLoginSupervisorSelect([], "ดึงรายการ Supervisor / Manager ไม่สำเร็จ — ลองกดรีเฟรช");
     if (retryBtn) retryBtn.style.display = "inline-flex";
   } catch (err) {
@@ -3954,6 +3968,9 @@ function applyDataPayload(data) {
   });
 
   S.aggregateMode = !!data.aggregate_mode;
+  // ขอบเขตการกระจายไม่จำข้ามงวด/ข้ามการโหลด — เริ่มที่แบบเดิมเสมอ
+  S.allocScope = "team";
+  S.unitWideOwnerSup = null;
   S.aggregateSupIds = Array.isArray(data.aggregate_sup_ids)
     ? data.aggregate_sup_ids.map((c) => String(c).trim().toUpperCase()).filter(Boolean)
     : [];
@@ -5198,7 +5215,8 @@ async function runOptimization() {
     return;
   }
   if (_regionalAggregateWritable()) {
-    const ok = await _confirmRegionalReallocateIfNeeded();
+    // ขอบเขต + คำเตือน "ทับผลเดิม" อยู่ในใบเดียวกัน — ผู้ใช้เห็นก่อนเริ่มคำนวณเสมอ
+    const ok = await openAllocScopeModal({ run: true });
     if (!ok) return;
   }
 
@@ -5461,26 +5479,29 @@ async function _doOptimize(lockedEdits = []) {
     let allocs = [];
 
     if (_regionalAggregateWritable() && _selectedAllocScope() === "unit") {
-      /* กระจายรวมทั้งหน่วย — เรียก optimize ครั้งเดียวด้วยพนักงานทุกทีมที่แสดงอยู่
-         ใช้เป้าของทีมที่ผู้ใช้ระบุว่าเป็นเจ้าของเป้า และบอก server ว่าให้ไปอ่าน
-         ประวัติขายจาก cache ของทีมอื่นด้วย ไม่งั้นคนทีมอื่นจะถูกมองว่าไม่มีประวัติ */
+      /* รวมเป้าทั้งภาค — เรียก optimize ครั้งเดียวด้วยพนักงานทุกทีมที่แสดงอยู่
+         target_sup_ids บอก server ให้บวกเป้าหีบของทุกทีมเป็นก้อนเดียว
+         (เดิมใช้เป้าของทีมเดียวคู่กับพนักงานทั้งภาค — เป้าเงินกับเป้าหีบคนละสเกล)
+         peer_sup_ids บอกให้ไปอ่านประวัติขายจาก cache ของทุกทีมด้วย
+         ไม่งั้นคนทีมอื่นจะถูกมองว่าไม่มีประวัติแล้วได้น้ำหนักขั้นต่ำ */
       const grouped = _employeesGroupedBySupervisor();
-      const supOrder = _aggregateSupervisorOrder().filter((sid) => grouped.has(sid));
+      const supOrder = _allocScopeSupOrder();
       if (!supOrder.length) {
         throw new Error("ไม่พบพนักงานใต้ Supervisor ในโหมดรวมภาค");
       }
-      const owner = _allocScopeOwnerSup(supOrder);
+      const owner = _unitWideApiSup(supOrder);
       const allEmps = supOrder.flatMap((sid) => grouped.get(sid) || []);
       const yellowTargets = allEmps.map((e) => _yellowTargetPayloadRow(e)).filter(Boolean);
       if (!yellowTargets.length) {
-        throw new Error("ไม่มีพนักงานที่มีเป้าเงินสำหรับกระจายรวมทั้งหน่วย");
+        throw new Error("ไม่มีพนักงานที่มีเป้าเงินสำหรับกระจายรวมทั้งภาค");
       }
       qs("#runSub").textContent =
-        `กำลังกระจายรวมทั้งหน่วย (${supOrder.length} ทีม · เป้าของ ${owner})…`;
+        `กำลังกระจายรวมเป้าทั้งภาค (${supOrder.length} ทีม · ${allEmps.length} คน)…`;
       const json = await _callOptimizeApi(owner, {
         ...basePayload,
         yellowTargets,
         peer_sup_ids: supOrder,
+        target_sup_ids: supOrder,
         locked_edits: _lockedEditsForEmployees(lockedEdits, allEmps),
       });
       _applyOptimizeMetaFromSups({ [owner]: json });
@@ -6557,14 +6578,62 @@ function revertResultCell(empId, sku, wh) {
     return;
   }
   _pushUndoState(`revert:${empId}:${sku}`);
+  // ล็อกเฉย ๆ (ไม่เคยเปลี่ยนเลข) → ↺ คือ "ปลดล็อก" ไม่ใช่ "คืนค่า" — บอกให้ตรงกับที่เกิดขึ้น
+  const wasLockOnly = (Number(alloc._engine_boxes) || 0) === (Number(alloc.allocated_boxes) || 0);
   alloc.allocated_boxes = Number(alloc._engine_boxes) || 0;
   alloc.is_edited = false;
   delete alloc._engine_boxes;
   S._hasUnsaved = true;
-  // เกลี่ยใหม่ให้ยอดต่อ SKU กลับมาตรงเป้า เหมือนตอนแก้ช่องปกติ (มันเรียก render ให้เอง)
-  autoRebalance(true);
+  // เกลี่ยใหม่ให้ยอดต่อ SKU กลับมาตรงเป้า เหมือนตอนแก้ช่องปกติ
+  // ใช้ fast path เดียวกัน (skipRender + sync) — เดิม render ทั้งตาราง
+  // ทำให้ตารางใหญ่หน่วงและเลื่อนกลับไปบนสุดทุกครั้งที่กด ↺
+  autoRebalance(true, { skipRender: true });
+  _syncResultTableAfterRebalance();
   saveDraft(true);
-  toast(`คืนค่าเดิมของ ${empId} · ${sku} แล้ว`, "green");
+  toast(
+    wasLockOnly
+      ? `ปลดล็อก ${empId} · ${sku} แล้ว — ระบบเกลี่ยช่องนี้ได้อีกครั้ง`
+      : `คืนค่าเดิมของ ${empId} · ${sku} แล้ว`,
+    "green",
+  );
+}
+
+/**
+ * ปุ่มคืนค่า (↺) ของช่องเดียว — โผล่/หายตามสถานะล็อกโดยไม่ต้อง render ทั้งตาราง
+ *
+ * renderResult วาดปุ่มนี้ให้เฉพาะตอนสร้างตารางใหม่ ถ้าไม่ซิงก์ตรงนี้ด้วย
+ * ช่องที่เพิ่งล็อกจะไม่มีทางปลดล็อกจนกว่าจะกดคำนวณใหม่
+ */
+function _syncCellRevertButton(el, alloc) {
+  const wrap = el?.closest(".result-box-wrap");
+  if (!wrap) return;
+  const has = wrap.querySelector(".cell-revert");
+  const want = !!alloc?.is_edited && !(_isAllocReadOnlyView() || _aggregateBlocksWrite());
+  if (want && !has) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "cell-revert";
+    btn.title = "คืนค่าที่ระบบกระจายให้ช่องนี้ (ปลดล็อก)";
+    btn.textContent = "↺";
+    btn.addEventListener("click", () => revertResultCell(
+      String(el.dataset.emp || ""),
+      String(el.dataset.sku || ""),
+      String(el.dataset.wh || ""),
+    ));
+    wrap.appendChild(btn);
+  } else if (!want && has) {
+    has.remove();
+  }
+}
+
+/** บันทึกหลัง "ล็อกเฉย ๆ" — ตัวเลขไม่ขยับ จึงไม่ต้องเรียกตัวเกลี่ย */
+function _persistAfterCellLock() {
+  if (S.compositeAllocView && _regionalAggregateWritable()) {
+    queueRegionalAllocationSave("draft");
+  } else {
+    _saveAllocationSnapshot();
+    saveDraft(true);
+  }
 }
 
 function onResultEdit(el) {
@@ -6612,8 +6681,23 @@ function onResultEdit(el) {
     // ไม่ควรสร้างแถวใหม่จากการแตะเฉย ๆ
     if (val === 0) return;
   } else if (val === prev && !wasEdited) {
-    // ถ้ายังไม่เคยแก้ และค่าเดิมเท่าเดิม: ไม่ mark is_edited
-    el.classList.remove("is-edited");
+    /* คลิกเข้าไปในช่องแล้วออกโดยไม่เปลี่ยนเลข = "ล็อกค่านี้ไว้"
+       ตัวเกลี่ยอัตโนมัติหยิบเฉพาะช่องที่ยังไม่ถูกล็อก และรอบคำนวณใหม่ส่งค่านี้
+       ไปเป็น locked_edits — เดิมถือว่าไม่ได้แก้ เลขที่ตั้งใจคงไว้จึงถูกเกลี่ยหาย
+       ตอนไปแก้ช่องอื่น โดยผู้ใช้ไม่มีทางบอกระบบได้เลยว่า "ช่องนี้ห้ามขยับ" */
+    _pushUndoState(`lock:${emp}:${sku}`);
+    if (alloc) {
+      if (alloc._engine_boxes == null) alloc._engine_boxes = prev;
+      alloc.is_edited = true;
+    }
+    el.classList.add("is-edited");
+    S._hasUnsaved = true;
+    _syncCellRevertButton(el, alloc);
+    _persistAfterCellLock();
+    toast(
+      `🔒 ล็อก ${emp} · ${sku} ไว้ที่ ${val.toLocaleString("th-TH")} หีบ — กด ↺ ที่ช่องเพื่อปลดล็อก`,
+      "green",
+    );
     return;
   } else if (val === prev && wasEdited) {
     // เคยแก้แล้วแต่ครั้งนี้ไม่ได้เปลี่ยน: ไม่สร้าง undo/ไม่ถือเป็นแก้อีกครั้ง
@@ -6899,8 +6983,12 @@ function _syncResultTableAfterRebalance() {
       if (wh && String(el.dataset.wh || "").trim() !== wh) continue;
       if (el === document.activeElement) continue;
       const v = Number(a.allocated_boxes) || 0;
-      if (el.textContent.trim() !== String(v)) el.textContent = String(v);
+      // ต้องคั่นหลักเหมือน renderResult ไม่งั้นช่องที่ผ่าน fast path จะหน้าตาต่าง
+      // จากช่องอื่นในตารางเดียวกัน (ตัวแปลงตัดคอมมาออกตอนอ่านอยู่แล้ว)
+      const vText = v.toLocaleString("th-TH");
+      if (el.textContent.trim() !== vText) el.textContent = vText;
       el.classList.toggle("is-edited", !!a.is_edited);
+      _syncCellRevertButton(el, a);
     }
   }
 
@@ -7013,41 +7101,18 @@ function autoRebalance(silent = false, opts = {}) {
         S.newProductSkus.has(key);
       return evenNew ? 1 : Math.max(Number(a.hist_avg) || 0, 0) + 0.1;
     });
-    const wSum = weights.reduce((a, v) => a + v, 0) || unedited.length;
-
     if (delta > 0) {
-      // เติมส่วนที่ขาด: แจกเพิ่มให้ unedited ตามสัดส่วน hist
-      const raw = unedited.map((a, i) => delta * (weights[i] / wSum));
-      const add = raw.map(v => Math.floor(v));
-      let rem = delta - add.reduce((s, v) => s + v, 0);
-      const order = raw
-        .map((v, i) => ({ i, frac: v - add[i] }))
-        .sort((a, b) => b.frac - a.frac)
-        .map(o => o.i);
-      for (let k = 0; k < rem; k++) add[order[k % order.length]] += 1;
+      // เติมส่วนที่ขาด: แจกเพิ่มให้ unedited ตามสัดส่วน hist (largest remainder)
+      const add = AppLogic.spreadIncrease(delta, weights);
       unedited.forEach((a, i) => { a.allocated_boxes = (Number(a.allocated_boxes) || 0) + add[i]; });
       changed = true;
     } else {
       // ลดส่วนที่เกิน: ดึงออกจาก unedited โดยไม่ให้ติดลบ
-      let need = Math.abs(delta);
-      // เรียงคนที่มีหีบเยอะก่อน และประวัติน้อยก่อน (กันดึงจากคนขายเยอะจนผิดธรรมชาติ)
-      const idx = unedited
-        .map((a, i) => ({ i, boxes: Number(a.allocated_boxes) || 0, w: weights[i] }))
-        .sort((a, b) => (b.boxes - a.boxes) || (a.w - b.w))
-        .map(o => o.i);
-      for (const i of idx) {
-        if (need <= 0) break;
-        const a = unedited[i];
-        const have = Math.max(0, Number(a.allocated_boxes) || 0);
-        if (have <= 0) continue;
-        const take = Math.min(have, need);
-        a.allocated_boxes = have - take;
-        need -= take;
-      }
-      if (need > 0) {
-        // กันกรณี target ต่ำกว่า editedSum จนเหลือดึงไม่พอ: clamp แล้วจบ
-        // (อย่าไปยุ่ง edited)
-      }
+      // (คนที่มีหีบเยอะก่อน ประวัติน้อยก่อน — กันดึงจากคนขายเยอะจนผิดธรรมชาติ)
+      // ดึงไม่ครบก็ปล่อยไป แล้วรายงานเป็น residual ข้างล่าง — ห้ามแตะช่องที่ล็อกไว้
+      const boxes = unedited.map((a) => Number(a.allocated_boxes) || 0);
+      const take = AppLogic.spreadDecrease(Math.abs(delta), boxes, weights);
+      unedited.forEach((a, i) => { a.allocated_boxes = boxes[i] - take[i]; });
       changed = true;
     }
     // allocs เป็น reference เดียวกับ S.allocations (mutate in place) — sum ใหม่จากชุดเดิมได้เลย
@@ -7394,29 +7459,41 @@ function _lakehouseNonZeroInAllocs(brand = null) {
 
 /* ── ขอบเขตการกระจาย (โหมดรวมภาค) ─────────────────────────────────────────
    บางงวดเป้าเข้ามาใต้ซุปคนเดียว แต่ต้องเกลี่ยให้พนักงานทั้งหน่วยในภาคเดียวกัน
-   ค่าเริ่มต้นคือแบบเดิมเสมอ (แยกตามทีม) — ไม่จำข้ามงวด                     */
+   ค่าเริ่มต้นคือแบบเดิมเสมอ (แยกตามทีม) — ไม่จำข้ามงวด
+
+   ตัวเลือกจริงอยู่ใน modal ตอนกดกระจาย (openAllocScopeModal) เพราะเรดิโอเล็ก ๆ
+   ในการ์ดถูกมองข้ามจนกระจายผิดขอบเขตโดยไม่รู้ตัว                            */
 function _selectedAllocScope() {
   if (!_regionalAggregateWritable()) return "team";
-  const picked = document.querySelector('input[name="allocScope"]:checked');
-  return picked && picked.value === "unit" ? "unit" : "team";
+  return S.allocScope === "unit" ? "unit" : "team";
 }
 
-/** ทีมที่ถือเป้าของหน่วยงวดนี้ (ผู้ใช้เลือกเอง — ระบบเดาให้ไม่ได้) */
-function _allocScopeOwnerSup(supOrder) {
-  const el = document.getElementById("allocScopeOwner");
-  const picked = String(el?.value || "").trim().toUpperCase();
-  if (picked && supOrder.includes(picked)) return picked;
+/**
+ * ทีมที่ใช้ยิง /optimize ตอนรวมเป้าทั้งภาค
+ *
+ * ไม่ใช่ "ทีมเจ้าของเป้า" อีกแล้ว — เป้ามาจากผลบวกของทุกทีมใน target_sup_ids
+ * รหัสนี้เหลือหน้าที่เป็นที่อยู่ของไฟล์ผล/Excel และฐานตรวจสินค้าใหม่เท่านั้น
+ * จึงเลือกทีมของผู้ใช้เองก่อน (cache ของตัวเองมีแน่)
+ */
+function _unitWideApiSup(supOrder) {
   const cur = String(S.supId || "").trim().toUpperCase();
   if (cur && supOrder.includes(cur)) return cur;
   return supOrder[0];
 }
 
-function onAllocScopeChange() {
-  const wrap = document.getElementById("allocScopeOwnerWrap");
-  if (wrap) wrap.style.display = _selectedAllocScope() === "unit" ? "flex" : "none";
+function _allocScopeLabel(scope) {
+  return scope === "unit"
+    ? "รวมเป้าทั้งภาคเป็นก้อนเดียว"
+    : "แยกตามทีมของแต่ละ Supervisor";
 }
 
-/** แสดง/ซ่อนตัวเลือกขอบเขต + เติมรายชื่อทีม — เรียกตอนเข้าขั้นที่ 3 */
+/** ทีมในขอบเขตรวมภาคที่มีพนักงานจริง — เรียงตามลำดับที่แสดงในตาราง */
+function _allocScopeSupOrder() {
+  const grouped = _employeesGroupedBySupervisor();
+  return _aggregateSupervisorOrder().filter((sid) => grouped.has(sid));
+}
+
+/** แสดงขอบเขตที่เลือกอยู่ในการ์ดขั้นที่ 3 — เรียกตอนเข้าขั้นที่ 3 และหลังเปลี่ยนค่า */
 function syncAllocScopeUi() {
   const wrap = document.getElementById("allocScopeWrap");
   if (!wrap) return;
@@ -7424,20 +7501,122 @@ function syncAllocScopeUi() {
   wrap.style.display = on ? "block" : "none";
   if (!on) return;
 
-  const grouped = _employeesGroupedBySupervisor();
-  const supOrder = _aggregateSupervisorOrder().filter((sid) => grouped.has(sid));
-  const sel = document.getElementById("allocScopeOwner");
-  if (sel) {
-    const keep = String(sel.value || "").trim().toUpperCase();
-    sel.innerHTML = supOrder.map((sid) => {
-      const n = (grouped.get(sid) || []).length;
-      return `<option value="${escH(sid)}">${escH(sid)} (${n} คน)</option>`;
-    }).join("");
-    const cur = String(S.supId || "").trim().toUpperCase();
-    if (keep && supOrder.includes(keep)) sel.value = keep;
-    else if (cur && supOrder.includes(cur)) sel.value = cur;
+  // ผูก listener ครั้งเดียว (boy-scout: เลิก onclick= ใน HTML สำหรับส่วนที่แตะรอบนี้)
+  const changeBtn = document.getElementById("allocScopeChangeBtn");
+  if (changeBtn && !changeBtn.dataset.bound) {
+    changeBtn.dataset.bound = "1";
+    changeBtn.addEventListener("click", () => { openAllocScopeModal(); });
   }
-  onAllocScopeChange();
+
+  const scope = _selectedAllocScope();
+  const supOrder = _allocScopeSupOrder();
+  const valEl = document.getElementById("allocScopeValue");
+  if (valEl) {
+    valEl.textContent = _allocScopeLabel(scope);
+    valEl.classList.toggle("alloc-scope__value--unit", scope === "unit");
+  }
+  const hintEl = document.getElementById("allocScopeHint");
+  if (hintEl) {
+    hintEl.textContent = scope === "unit"
+      ? `บวกเป้าหีบของ ${supOrder.length} ทีมเป็นก้อนเดียว แล้วเกลี่ยให้พนักงานทุกทีมตามประวัติขาย`
+      : `แต่ละทีมใช้เป้าหีบของตัวเอง — กระจายทีละทีม (${supOrder.length} ทีม) หีบไม่ข้ามทีม`;
+  }
+}
+
+/** ทีมที่กระจายไว้แล้วแต่ยังไม่ได้ส่ง — กระจายใหม่ = ทับผลเดิม จึงต้องบอกก่อน */
+async function _pendingReallocateTeams() {
+  try {
+    const items = await _getAllocSummaryItems();
+    return (items || []).filter((it) => {
+      if (!it?.has_snapshot) return false;
+      const st = String(it.status || "").toLowerCase();
+      return st === "optimized" || st === "draft";
+    });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * ตัวเลือกขอบเขตการกระจายแบบ modal
+ *
+ * opts.run = true → ปุ่มหลักคือ "เริ่มกระจายหีบ" และคืน true เมื่อผู้ใช้ยืนยัน
+ * (รวมคำเตือน "ทีมที่กระจายไว้แล้วจะถูกทับ" ไว้ในใบเดียว — เดิมเป็น modal สองใบซ้อน)
+ */
+async function openAllocScopeModal(opts = {}) {
+  if (!_regionalAggregateWritable()) return true;
+  const run = opts.run === true;
+  const supOrder = _allocScopeSupOrder();
+  if (!supOrder.length) {
+    toast("ไม่พบพนักงานใต้ Supervisor ในภาคนี้", "amber");
+    return false;
+  }
+  const grouped = _employeesGroupedBySupervisor();
+  const empTotal = supOrder.reduce((n, sid) => n + (grouped.get(sid) || []).length, 0);
+  const pending = run ? await _pendingReallocateTeams() : [];
+  const cur = _selectedAllocScope();
+
+  const opt = (value, title, desc) => `
+    <label class="scope-opt${cur === value ? " scope-opt--on" : ""}">
+      <input type="radio" name="allocScopeModal" value="${value}"${cur === value ? " checked" : ""} />
+      <span class="scope-opt__body">
+        <span class="scope-opt__title">${escH(title)}</span>
+        <span class="scope-opt__desc">${desc}</span>
+      </span>
+    </label>`;
+
+  const teamList = supOrder.map((sid) => escH(sid)).join(" · ");
+  let bodyHtml =
+    `<div class="scope-modal__lead">รวม ${supOrder.length} ทีม · ${empTotal} คน — ` +
+    `<span class="scope-modal__teams">${teamList}</span></div>` +
+    `<div class="scope-modal__opts">` +
+    opt(
+      "team",
+      "แยกตามทีมของแต่ละ Supervisor",
+      "แต่ละทีมใช้<strong>เป้าหีบของตัวเอง</strong> กระจายทีละทีม — หีบไม่ข้ามทีม <em>(แบบเดิม)</em>",
+    ) +
+    opt(
+      "unit",
+      "รวมเป้าทั้งภาคเป็นก้อนเดียว",
+      "บวก<strong>เป้าหีบของทุกทีม</strong>ข้างบนเข้าด้วยกัน แล้วเกลี่ยให้พนักงานทุกทีม" +
+      "ตามประวัติขาย — สัดส่วนรายทีมจะเลื่อนจากเป้าเดิมของทีมนั้นได้" +
+      "<br>คู่พนักงาน×สินค้าที่ Target Sun ยังไม่มี จะถูกสร้างแถวใหม่ตอนส่ง",
+    ) +
+    `</div>`;
+
+  if (pending.length) {
+    bodyHtml +=
+      `<div class="scope-modal__warn"><strong>⚠️ กระจายใหม่จะทับผลเดิม</strong>` +
+      `<div>ทีมที่กระจายแล้วแต่ยังไม่ได้ส่งเข้า Target Sun:</div>` +
+      `<ul>${pending
+        .map((it) => `<li><code>${escH(String(it.sup_id || ""))}</code> — ${escH(_allocationStatusLabel(it.status))}</li>`)
+        .join("")}</ul>` +
+      `<div class="scope-modal__warn-foot">ทีมที่ส่ง Target Sun แล้วจะใช้เป้าจาก Target Sun เป็นฐานใหม่</div></div>`;
+  }
+
+  return new Promise((resolve) => {
+    _showInfoModal({
+      title: run ? "กระจายหีบทั้งภาค — เลือกขอบเขต" : "ขอบเขตการกระจาย",
+      bodyHtml,
+      primaryLabel: run ? "เริ่มกระจายหีบ" : "ใช้ขอบเขตนี้",
+      secondaryLabel: "ยกเลิก",
+      onPrimary: () => {
+        const picked = document.querySelector('input[name="allocScopeModal"]:checked');
+        S.allocScope = picked && picked.value === "unit" ? "unit" : "team";
+        syncAllocScopeUi();
+        resolve(true);
+      },
+      onSecondary: () => resolve(false),
+    });
+    // ไฮไลต์การ์ดที่เลือกอยู่ให้เห็นชัด (จุดเรดิโอเล็กเกินกว่าจะกวาดตาเจอ)
+    document.querySelectorAll('#infoModal input[name="allocScopeModal"]').forEach((el) => {
+      el.addEventListener("change", () => {
+        document.querySelectorAll("#infoModal .scope-opt").forEach((card) => {
+          card.classList.toggle("scope-opt--on", !!card.querySelector("input")?.checked);
+        });
+      });
+    });
+  });
 }
 
 /** SKU ที่มีเป้าหีบใน Target Sun งวดนี้ (supervisor_target_boxes > 0) + SKU ในผลกระจาย */
@@ -9121,23 +9300,15 @@ const TOAST_KINDS = {
      ช่องเงิน/บิว     parseFloat(ตัด comma)              "1.5" → 1.5
    ตัวเลขที่แก้มือกลายเป็น locked_edit ที่ engine ถือว่าเป็นเจตนาของผู้ใช้
    ค่าที่เพี้ยนตรงนี้จึงลามไปทั้งการกระจาย                                  */
-const _THAI_DIGITS = "๐๑๒๓๔๕๖๗๘๙";
-
+/* ตัวแปลงตัวเลขย้ายไป frontend/logic.js แล้ว (มีเทสจริงด้วย node --test)
+   คงชื่อเดิมไว้เป็นทางผ่าน เพราะมีจุดเรียกกระจายอยู่ทั้งไฟล์ */
 function _normalizeNumericText(raw) {
-  let s = String(raw ?? "").trim();
-  if (!s) return "";
-  s = s.replace(/[๐-๙]/g, (d) => String(_THAI_DIGITS.indexOf(d)));
-  return s.replace(/[,\s ]/g, "");
+  return AppLogic.normalizeNumericText(raw);
 }
 
 /** จำนวนหีบ — จำนวนเต็มไม่ติดลบ; invalid = พิมพ์อะไรที่ไม่ใช่ตัวเลขล้วน */
 function parseBoxCount(raw) {
-  const s = _normalizeNumericText(raw);
-  if (s === "") return { value: 0, invalid: false };
-  const n = Number(s);
-  if (!Number.isFinite(n)) return { value: 0, invalid: true };
-  const value = Math.max(0, Math.round(n));
-  return { value, invalid: !/^\d+$/.test(s) };
+  return AppLogic.parseBoxCount(raw);
 }
 
 /**
@@ -9164,11 +9335,7 @@ function onResultCellPaste(event, el) {
 
 /** จำนวนเงิน — ทศนิยมได้ ไม่ติดลบ */
 function parseMoney(raw) {
-  const s = _normalizeNumericText(raw);
-  if (s === "") return { value: 0, invalid: false };
-  const n = Number(s);
-  if (!Number.isFinite(n)) return { value: 0, invalid: true };
-  return { value: Math.max(0, n), invalid: n < 0 };
+  return AppLogic.parseMoney(raw);
 }
 
 function _toastStack() {
@@ -10775,7 +10942,7 @@ async function runReAllocationKeepEdits() {
   if (bannerBtn) { bannerBtn.disabled = true; bannerBtn.textContent = "⏳ กำลังดำเนินการ..."; }
 
   if (_regionalAggregateWritable()) {
-    const ok = await _confirmRegionalReallocateIfNeeded();
+    const ok = await openAllocScopeModal({ run: true });
     if (!ok) {
       if (bannerBtn) { bannerBtn.disabled = false; bannerBtn.textContent = "🔄 กระจายหีบใหม่ (คงตัวเลขที่แก้เอง)"; }
       return;
@@ -11728,7 +11895,6 @@ function adminSyncManagerLevelField() {
   const mlSel = document.getElementById("adminAddManagerLevel");
   const div = document.getElementById("adminAddAccDivision")?.value || "";
   if (wrap) wrap.style.display = lk === "manager_acc" ? "" : "none";
-  if (unitWrap) unitWrap.style.display = lk === "supervisor_acc" ? "" : "none";
   if (mlSel && lk === "manager_acc") {
     const cur = mlSel.value;
     const opts = _adminManagerLevelOpts(div);
@@ -11738,6 +11904,16 @@ function adminSyncManagerLevelField() {
     if (opts.some(([v]) => v === cur)) mlSel.value = cur;
     else if (opts.length === 1) mlSel.value = opts[0][0];
   }
+  // ต้องอ่าน manager_level "หลัง" เติมตัวเลือกแล้ว ไม่งั้นค่ายังว่างอยู่
+  // แล้วช่องหน่วยของ Mgr ภูมิภาคจะไม่โผล่จนกว่าจะไปแตะช่องอื่น
+  if (unitWrap) {
+    const show = _adminUnitFieldAllowed(lk, mlSel?.value || "");
+    unitWrap.style.display = show ? "" : "none";
+    if (!show) {
+      const unitSel = document.getElementById("adminAddAccUnit");
+      if (unitSel) unitSel.value = "";
+    }
+  }
 }
 
 function _adminRoleCssClass(row) {
@@ -11746,6 +11922,18 @@ function _adminRoleCssClass(row) {
   if (cat === "mgr_regional" || cat === "mgr_division") return "manager";
   if (cat === "marketing") return "marketing";
   return "none";
+}
+
+/**
+ * แถวนี้ระบุ "หน่วย" (credit/van) ได้ไหม — ต้องตรงกับ canonical_row ฝั่ง backend
+ *
+ * ซุป: ได้เสมอ · ผู้จัดการ: เฉพาะระดับภูมิภาค (ระดับดิวิชันขอบเขตคือทั้งดิวิชันอยู่แล้ว
+ * ถ้าให้ระบุหน่วยได้ ค่าจะถูก backend ตัดทิ้งเงียบ ๆ แล้วหน้าจอกับไฟล์จะไม่ตรงกัน)
+ */
+function _adminUnitFieldAllowed(loginKind, managerLevel) {
+  const lk = String(loginKind || "").trim();
+  if (lk === "supervisor_acc") return true;
+  return lk === "manager_acc" && String(managerLevel || "").trim() === "regional";
 }
 
 function _adminValidateAccessDraft(draft) {
@@ -11838,9 +12026,12 @@ function updateAdminNavVisibility() {
   if (loginBtn && !document.body.classList.contains("is-admin-login-only")) {
     // แอดมินรายภาคเป็น super manager ที่ใช้ dashboard ด้วย — ปุ่มนี้อยู่บน topbar พอ
     // ไม่ต้องดันขึ้นหน้าล็อกอินแบบ dev (ที่ไม่ได้ใช้ dashboard)
-    loginBtn.style.display = S.isAdmin && onLogin ? "block" : "none";
-    if (S.isAdmin && onLogin) {
-      loginBtn.textContent = "จัดการสิทธิ์ผู้ใช้ (แอดมิน)";
+    const showLoginAdminBtn = (S.isAdmin || _isAdminOnlyAccount()) && onLogin;
+    loginBtn.style.display = showLoginAdminBtn ? "block" : "none";
+    if (showLoginAdminBtn) {
+      loginBtn.textContent = S.isAdmin
+        ? "จัดการสิทธิ์ผู้ใช้ (แอดมิน)"
+        : "เข้าสู่ระบบแอดมิน (ภาค)";
     }
   }
   applyAdminLoginLayout();
@@ -13730,7 +13921,10 @@ function _adminSyncInlineManagerLevelRow(tr) {
     }
   }
   if (unitTd) {
-    if (lk === "supervisor_acc") {
+    const ml = tr.querySelector('[data-f="manager_level"]')?.value
+      || _adminInlineEdit?.draft?.manager_level
+      || "";
+    if (_adminUnitFieldAllowed(lk, ml)) {
       if (!unitTd.querySelector('[data-f="acc_unit"]')) {
         const curUnit = _adminInlineEdit?.draft?.acc_unit || "";
         const unitOpts = ADMIN_UNIT_OPTS.map((v) => [v, v || "—"]);
@@ -13746,6 +13940,10 @@ function _adminSyncInlineManagerLevelRow(tr) {
 }
 
 function _adminBindInlineEditRow(tr) {
+  // เปลี่ยน "ระดับ Mgr" แล้วช่องหน่วยต้องโผล่/หายทันที (ภูมิภาค = ระบุได้ · ดิวิชัน = ไม่ได้)
+  tr.querySelector('[data-f="manager_level"]')?.addEventListener("change", () => {
+    _adminSyncInlineManagerLevelRow(tr);
+  });
   const onField = () => _adminScheduleInlineVisiblePreview(tr);
   tr.querySelectorAll("[data-f]").forEach((el) => {
     if (el.dataset.f === "can_import_targetsun") return;
@@ -13817,7 +14015,9 @@ async function adminSaveInlineEdit() {
     login_kind: resolved.login_kind,
     acc_region: draft.acc_region,
     acc_division: draft.acc_division,
-    acc_unit: draft.acc_unit || null,
+    // ส่งสตริงว่าง ไม่ใช่ null — null แปลว่า "ไม่แตะฟิลด์นี้" ฝั่ง backend
+    // ทำให้ล้างหน่วยทิ้ง (กลับไปดูทั้งภาค) ไม่ได้เลย
+    acc_unit: draft.acc_unit || "",
     note: draft.note,
   };
   if (resolved.login_kind === "manager_acc") {
@@ -14416,7 +14616,7 @@ function _adminRenderTableRowEdit(tr, edit) {
   const divOpts = ADMIN_DIVISION_OPTS.map((v) => [v, v || "—"]);
   const unitOpts = ADMIN_UNIT_OPTS.map((v) => [v, v || "—"]);
   const showMgrLevel = d.login_kind === "manager_acc";
-  const showUnit = d.login_kind === "supervisor_acc";
+  const showUnit = _adminUnitFieldAllowed(d.login_kind, d.manager_level);
   const roleStack = [
     _adminInlineFieldHtml("บทบาท", _adminSelectHtml("adminInlineLk", lkOpts, d.login_kind, "login_kind")),
     showMgrLevel

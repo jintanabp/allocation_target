@@ -34,10 +34,15 @@ from ..core.paths import (
     hist_prev_month_cache_path,
     result_path,
     target_boxes_cache_path,
+    target_boxes_union_cache_path,
     tga_grain_cache_path,
 )
 from ..core.atomic_io import atomic_write_csv
-from ..core.targets import load_target_csv_for, target_boxes_source_path
+from ..core.targets import (
+    load_summed_target_boxes,
+    load_target_csv_for,
+    target_boxes_source_path,
+)
 from ..generate_excel import create_target_excel
 from ..schemas import OptimizeRequest
 from ..fabric_dax_connector import FabricDAXConnector
@@ -322,6 +327,45 @@ def _post_merge_revenue_balance(
     return df_out
 
 
+def _resolve_target_sup_ids(sup_id: str, raw: list[str] | None) -> list[str]:
+    """
+    ทีมที่เอาเป้ามาบวกรวมกัน — ทีมที่ยิง request ต้องอยู่ในกองเสมอและมาก่อน
+
+    ถ้าหลุดออกไป เป้าของทีมตัวเองจะหายจากผลรวม แล้วประตู I1 จะบังคับให้
+    ผลกระจายน้อยกว่าที่ควรเป็นทั้งภาค
+    """
+    own = str(sup_id or "").strip().upper()
+    out = [own] if own else []
+    for x in raw or []:
+        sid = str(x or "").strip().upper()
+        if sid and sid not in out:
+            out.append(sid)
+    return out
+
+
+def _excel_target_boxes_path(
+    sup_id: str,
+    target_month: int,
+    target_year: int,
+    df_summed: pd.DataFrame | None,
+) -> str:
+    """
+    แหล่งของแถว "เป้าหีบ (หัวหน้า)" ใน Excel ผลกระจาย
+
+    โหมดรวมเป้าทั้งภาคต้องเขียนไฟล์ยอดรวมแยกไว้ก่อน ถ้าชี้ไปที่ไฟล์ของทีมเดียว
+    Excel จะโชว์เป้าของทีมเดียวคู่กับหีบของทั้งภาค — ดูเหมือนกระจายเกินเป้ามหาศาล
+    """
+    if df_summed is None:
+        return target_boxes_source_path(sup_id, target_month, target_year)
+    path = target_boxes_union_cache_path(sup_id, target_month, target_year)
+    try:
+        atomic_write_csv(path, df_summed, index=False)
+        return path
+    except Exception as e:
+        logger.warning("เขียนไฟล์เป้ารวมภาคไม่สำเร็จ (%s) — Excel จะใช้เป้าของทีมเดียว", e)
+        return target_boxes_source_path(sup_id, target_month, target_year)
+
+
 def run_optimization_service(
     req: OptimizeRequest,
     sup_id: str,
@@ -348,7 +392,28 @@ def run_optimization_service(
 
     os.makedirs("data", exist_ok=True)
 
-    df_sku, _ = load_target_csv_for(sup_id, target_month, target_year)
+    target_sup_ids = _resolve_target_sup_ids(sup_id, req.target_sup_ids)
+    summed_target = len(target_sup_ids) > 1
+    if summed_target:
+        df_sku, missing_target_sups = load_summed_target_boxes(
+            target_sup_ids, target_month, target_year
+        )
+        if missing_target_sups:
+            raise HTTPException(
+                400,
+                detail=(
+                    "กระจายรวมทั้งภาคไม่ได้ — ยังไม่มีไฟล์เป้าหีบของทีม "
+                    + ", ".join(missing_target_sups)
+                    + " งวดนี้ กรุณาโหลดข้อมูลขั้นที่ 1 ใหม่แล้วลองอีกครั้ง"
+                ),
+            )
+        logger.info(
+            "optimize: รวมเป้าทั้งภาค %d ทีม (%s)",
+            len(target_sup_ids),
+            ", ".join(target_sup_ids[:8]),
+        )
+    else:
+        df_sku, _ = load_target_csv_for(sup_id, target_month, target_year)
     if df_sku is None:
         raise HTTPException(500, detail="ไม่พบเป้าหีบของทีมนี้ กรุณาโหลดหน้า Dashboard ก่อน")
 
@@ -859,7 +924,9 @@ def run_optimization_service(
         # ต้องเช็คว่ามีไฟล์จริง: df_sku ข้างบนอาจมาจาก fallback ไฟล์ global ช่วงเปลี่ยนผ่าน
         # ซึ่งแปลว่าไฟล์ราย sup ยังไม่มี — generate_excel เจอ path ไม่มีไฟล์แล้วคืน {} เงียบ ๆ
         # จะได้ Excel ที่แถว "เป้าหีบ (หัวหน้า)" ว่างทั้งที่ตัวเลขกระจายมีค่า
-        target_boxes_csv=target_boxes_source_path(sup_id, target_month, target_year),
+        target_boxes_csv=_excel_target_boxes_path(
+            sup_id, target_month, target_year, df_sku if summed_target else None
+        ),
     )
 
     return {

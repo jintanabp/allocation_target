@@ -40,6 +40,18 @@ def target_boxes_cache_path(sup_id: str, month: int, year: int) -> str:
     return f"data/target_boxes_{safe_id(sup_id)}_{year}_{month:02d}.csv"
 
 
+def target_boxes_union_cache_path(sup_id: str, month: int, year: int) -> str:
+    """
+    เป้าหีบ "รวมหลายทีม" ของรอบกระจายรวมทั้งภาค — ใช้เป็นแหล่งของแถว
+    "เป้าหีบ (หัวหน้า)" ใน Excel ผลกระจายเท่านั้น
+
+    แยกชื่อจาก target_boxes_{sup}_ ของจริงโดยตั้งใจ: ไฟล์ราย sup คือหลักฐาน
+    ที่ด่านก่อนส่งใช้เทียบ ถ้าเขียนทับด้วยยอดรวมภาค ทีมนั้นจะถูกตรวจด้วยเป้า
+    ของทั้งภาคแล้วส่งไม่ผ่านทุกครั้ง
+    """
+    return f"data/target_boxes_union_{safe_id(sup_id)}_{year}_{month:02d}.csv"
+
+
 def target_sun_cache_path(sup_id: str, month: int, year: int) -> str:
     """เป้า Target Sun ราย emp ต่อ (sup, งวด) — แทนไฟล์ global data/target_sun.csv เดิม"""
     return f"data/target_sun_{safe_id(sup_id)}_{year}_{month:02d}.csv"

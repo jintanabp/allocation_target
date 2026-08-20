@@ -34,6 +34,9 @@ const BROWSER = new Set([
   "IntersectionObserver","CustomEvent","Event","FileReader","Image","XMLHttpRequest","performance",
   "crypto","atob","btoa","queueMicrotask","Node","HTMLElement","msal","getComputedStyle","DOMParser",
   "globalThis","screen","matchMedia","CSS","Option","Audio","WebSocket","requestIdleCallback",
+  // frontend/logic.js ประกาศ window.AppLogic ไว้ (โหลดก่อน app.js ใน index.html)
+  // และรองรับ require() จาก node --test ด้วย จึงอ้าง module ได้
+  "AppLogic","module","require",
 ]);
 const ECMA = new Set(
   Object.getOwnPropertyNames(globalThis).concat(["undefined", "NaN", "Infinity", "arguments", "eval"])

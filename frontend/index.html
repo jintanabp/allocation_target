@@ -16,7 +16,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=2026081910" />
+  <link rel="stylesheet" href="style.css?v=2026081911" />
 </head>
 
 <body>
@@ -570,16 +570,6 @@
                 <div class="s-pill-desc">กระจายตามสัดส่วนยอดขายเดือนเดียวกับงวดที่เลือกในปีที่แล้ว </div>
               </div>
             </label>
-            <!-- ซ่อนชั่วคราว — โค้ด backend ยังรองรับ EVEN
-            <label class="s-pill">
-              <input type="checkbox" name="strategy" value="EVEN">
-              <span class="s-pill-icon">⚖️</span>
-              <div>
-                <div class="s-pill-name">เกลี่ยเท่ากัน</div>
-                <div class="s-pill-desc">แบ่งเท่าๆ กันทุกคน</div>
-              </div>
-            </label>
-            -->
             <label class="s-pill">
               <input type="checkbox" name="strategy" value="PUSH">
               <span class="s-pill-icon">🚀</span>
@@ -588,16 +578,6 @@
                 <div class="s-pill-desc">ใช้สัดส่วนยอดขายเฉลี่ย 3 เดือนย้อนหลัง แล้วเพิ่มให้พนักงานที่ขาย SKU นั้นน้อยหรือไม่มียอด โดยยังอยู่ในเป้าหมายที่ตั้งไว้</div>
               </div>
             </label>
-            <!-- ซ่อนชั่วคราว — โค้ด backend ยังรองรับ LP
-            <label class="s-pill">
-              <input type="checkbox" name="strategy" value="LP">
-              <span class="s-pill-icon">🤖</span>
-              <div>
-                <div class="s-pill-name">AI Smart Suggestion</div>
-                <div class="s-pill-desc">ปรับยอดเงินให้ตรงเป้า</div>
-              </div>
-            </label>
-            -->
           </div>
 
           <!-- Brand → Strategy mapping (โผล่เมื่อเลือกหลายวิธี) -->
@@ -756,25 +736,15 @@
 
         <div id="fabricChangeStep3Notice" class="fabric-change-inline" style="display:none;" aria-live="polite"></div>
 
-        <!-- โหมดรวมภาคเท่านั้น: บางงวดเป้าเข้ามาใต้ซุปคนเดียว แต่ต้องเกลี่ยทั้งหน่วย -->
+        <!-- โหมดรวมภาคเท่านั้น: ตัวเลือกจริงอยู่ใน modal ตอนกดกระจาย (เห็นชัดกว่าเรดิโอเล็ก ๆ)
+             การ์ดนี้เหลือหน้าที่บอก "ตอนนี้เลือกอะไรอยู่" ในตำแหน่งเดิม -->
         <div class="alloc-scope" id="allocScopeWrap" style="display:none;">
           <div class="alloc-scope__title">ขอบเขตการกระจาย</div>
-          <label class="alloc-scope__opt">
-            <input type="radio" name="allocScope" value="team" checked onchange="onAllocScopeChange()" />
-            <span>แยกตามทีมของแต่ละ Supervisor <em>(แบบเดิม)</em></span>
-          </label>
-          <label class="alloc-scope__opt">
-            <input type="radio" name="allocScope" value="unit" onchange="onAllocScopeChange()" />
-            <span>รวมทั้งหน่วย (credit/van) ในภาคเดียวกัน</span>
-          </label>
-          <div class="alloc-scope__owner" id="allocScopeOwnerWrap" style="display:none;">
-            เป้าอยู่ที่ทีม
-            <select id="allocScopeOwner" class="field-select" aria-label="ทีมที่ถือเป้าของหน่วย"></select>
-            <span class="alloc-scope__hint">
-              ระบบจะใช้เป้าของทีมนี้ แล้วเกลี่ยหีบให้พนักงานทุกทีมที่แสดงอยู่
-              · คู่พนักงาน×สินค้าที่ Target Sun ยังไม่มี จะถูกสร้างใหม่ตอนส่ง
-            </span>
+          <div class="alloc-scope__current">
+            <span class="alloc-scope__value" id="allocScopeValue">แยกตามทีมของแต่ละ Supervisor</span>
+            <button type="button" class="alloc-scope__change" id="allocScopeChangeBtn">เปลี่ยน</button>
           </div>
+          <div class="alloc-scope__hint" id="allocScopeHint"></div>
         </div>
 
         <div class="run-card">
@@ -1053,13 +1023,13 @@
             </select>
           </label>
           <label>ภูมิภาค<input type="text" id="adminAddAccRegion" class="field-input" placeholder="เช่น อีสาน" /></label>
-          <label id="adminAddAccUnitWrap" style="display:none;">หน่วย (ซุป)
+          <label id="adminAddAccUnitWrap" style="display:none;">หน่วย (ซุป / Mgr ภูมิภาค)
             <select id="adminAddAccUnit" class="field-input">
               <option value="">— ทั่วไป</option>
               <option value="van">van</option>
               <option value="credit">credit</option>
             </select>
-            <span class="admin-visible-help">มีหน่วย = ดูซุปหน่วยเดียวกันในภาค · ไม่ระบุ = ดูซุปทั้งภาค</span>
+            <span class="admin-visible-help">มีหน่วย = ดูเฉพาะทีมหน่วยเดียวกันในภาค · ไม่ระบุ = ดูทุกทีมในภาค</span>
           </label>
           <label class="admin-check-label"><input type="checkbox" id="adminAddTargetSun" /> ส่ง Target Sun ได้</label>
           <label>หมายเหตุ<input type="text" id="adminAddNote" class="field-input" placeholder="ไม่บังคับ" /></label>
@@ -1476,7 +1446,10 @@
 
   <!-- ใช้ไฟล์ในโปรเจกต์ — เครือข่ายองค์กรมักบล็อก alcdn.msauth.net ทำให้ msal ไม่โหลด -->
   <script src="vendor/msal-browser.min.js"></script>
-  <script src="app.js?v=2026081910"></script>
+  <!-- ตรรกะล้วน (ตัวแปลงเลข/คณิตการเกลี่ย) — ต้องมาก่อน app.js
+       ไฟล์นี้มีเทสจริงด้วย node --test tests/logic.test.js -->
+  <script src="logic.js?v=2026081911"></script>
+  <script src="app.js?v=2026081911"></script>
 </body>
 
 </html>

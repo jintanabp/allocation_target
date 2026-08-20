@@ -17,6 +17,12 @@ def run_optimization(
 ):
     ensure_supervisor_allowed(user, sup_id)
     ensure_own_supervisor_write(user, sup_id)
+    # โหมดรวมเป้าทั้งภาค: เป้าที่ใช้กระจายมาจากหลายทีม — ต้องตรวจสิทธิ์ "ทุกรหัส"
+    # ไม่ใช่แค่รหัสที่ยิง request ไม่งั้นดึงเป้าของภาคอื่นมาเป็นฐานได้
+    for peer in req.target_sup_ids:
+        pid = str(peer or "").strip().upper()
+        if pid and pid != sup_id.strip().upper():
+            ensure_supervisor_allowed(user, pid)
     return run_optimization_service(
         req=req,
         sup_id=sup_id,

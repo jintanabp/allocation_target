@@ -28,6 +28,7 @@ from .sl_link_store import (
     sync_by_manager_for_sl_links,
 )
 from .user_access_store import (
+    real_userpl,
     emails_with_targetsun,
     normalized_email,
     read_rows,
@@ -468,7 +469,8 @@ def load_acc_rows() -> list[dict]:
             "ไม่สามารถโหลดตารางสิทธิ์ผู้ใช้ (user_access.json)"
         ) from e
 
-    slim = [{"email": r["email"], "userpl": r["userpl"]} for r in rows]
+    # sentinel "none" ต้องไม่กลายเป็นรหัสทีมปลอม (ดู real_userpl)
+    slim = [{"email": r["email"], "userpl": real_userpl(r.get("userpl"))} for r in rows]
 
     with _ACC_LOCK:
         _ACC_ROWS_CACHE = slim

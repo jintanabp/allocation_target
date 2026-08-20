@@ -1,0 +1,8 @@
+{
+  "_comment": "ตัวอย่างค่าตั้งต้นของ config/app_runtime.json — คัดลอกเป็น app_runtime.json แล้วตั้งค่าจริงในหน้าแอดมิน (แท็บ 'แหล่งข้อมูล') ห้ามแก้ไฟล์บนเซิร์ฟเวอร์ด้วยมือ",
+  "_target_endpoint_preset": "test | uat | prod — ปลายทางที่จะส่ง Target Sun",
+  "target_read_source": "targetsun",
+  "target_endpoint_preset": "test",
+  "target_read_api_base": null,
+  "target_import_api_base": null
+}

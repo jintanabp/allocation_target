@@ -12,7 +12,7 @@ import re
 import time
 from typing import Any
 
-from .user_access_store import apply_inferred_access_fields, read_rows
+from .user_access_store import apply_inferred_access_fields, read_rows, real_userpl
 
 logger = logging.getLogger("target_allocation")
 
@@ -143,7 +143,7 @@ def _build_division_supervisor_index(
         if not div:
             continue
         region = str(r.get("acc_region") or "").strip()
-        upl = str(r.get("userpl") or "").strip().upper()
+        upl = real_userpl(r.get("userpl"))
         if upl:
             idx.setdefault((div, region), set()).add(upl)
     return idx
@@ -156,7 +156,7 @@ def _all_div_s_supervisors(rows: list[dict[str, Any]]) -> set[str]:
             continue
         if str(r.get("login_kind") or "") != "supervisor_acc":
             continue
-        upl = str(r.get("userpl") or "").strip().upper()
+        upl = real_userpl(r.get("userpl"))
         if upl:
             out.add(upl)
     return out
@@ -176,7 +176,7 @@ def compute_visible_supervisors_for_row(
     if div_s_supervisors is None:
         div_s_supervisors = _all_div_s_supervisors(source)
 
-    upl = str(row.get("userpl") or "").strip().upper()
+    upl = real_userpl(row.get("userpl"))
     login_kind = str(row.get("login_kind") or "standard")
     div = str(row.get("acc_division") or "").strip()
     region = str(row.get("acc_region") or "").strip()
@@ -192,33 +192,47 @@ def compute_visible_supervisors_for_row(
     def _unit_by_upl() -> dict[str, str]:
         out: dict[str, str] = {}
         for r in source:
-            code = str(r.get("userpl") or "").strip().upper()
+            code = real_userpl(r.get("userpl"))
             if code:
                 out[code] = str(r.get("acc_unit") or "").strip().lower()
         return out
 
     if login_kind == "manager_acc":
+        unit = str(row.get("acc_unit") or "").strip().lower()
+
+        def _limit_to_unit(codes: set[str]) -> set[str]:
+            """
+            ผู้จัดการที่ระบุหน่วย (credit/van) เห็นเฉพาะซุปหน่วยเดียวกัน — กติกาเดียวกับซุป
+
+            ไม่กรองรหัสของตัวเอง: _mgr_team เติมทีหลังเพื่อให้ผู้จัดการโหลด
+            หน้าตัวเองได้ ถ้ากรองทิ้งจะล็อกอินเข้ามาแล้วไม่เห็นอะไรเลย
+            """
+            if unit not in ("credit", "van"):
+                return codes
+            units = _unit_by_upl()
+            return {c for c in codes if units.get(c) == unit}
+
         if not mgr_level and div == "Div.S" and not region:
             mgr_level = "division"
         elif not mgr_level and region:
             mgr_level = "regional"
         if mgr_level == "division":
             if div == "Div.S":
-                return _mgr_team(div_s_supervisors)
+                return _mgr_team(_limit_to_unit(div_s_supervisors))
             if div:
                 allowed: set[str] = set()
                 for (d, _r), codes in division_index.items():
                     if d == div:
                         allowed.update(codes)
-                return _mgr_team(allowed)
+                return _mgr_team(_limit_to_unit(allowed))
         if div and region:
-            return _mgr_team(division_index.get((div, region), set()))
+            return _mgr_team(_limit_to_unit(division_index.get((div, region), set())))
         if div:
             allowed = set()
             for (d, r), codes in division_index.items():
                 if d == div and (not region or r == region):
                     allowed.update(codes)
-            return _mgr_team(allowed)
+            return _mgr_team(_limit_to_unit(allowed))
 
     if login_kind == "supervisor_acc":
         if div and region and scope in ("region_peers", "credit", "van", "all", ""):
@@ -238,7 +252,7 @@ def compute_visible_supervisors_for_row(
 def apply_roster_overrides(row: dict[str, Any]) -> dict[str, Any]:
     """แก้ edge case จาก Excel ที่ไม่ตรงโครงสร้างจริง"""
     nr = dict(row)
-    upl = str(nr.get("userpl") or "").strip().upper()
+    upl = real_userpl(nr.get("userpl"))
     div = str(nr.get("acc_division") or "").strip()
     if div == "Div.S" and upl in DIV_S_FORCE_SUPERVISOR_USERPLS:
         nr["login_kind"] = "supervisor_acc"
@@ -275,7 +289,7 @@ def build_hierarchy_payload(rows: list[dict[str, Any]] | None = None) -> dict[st
     pair_rows: list[dict[str, str]] = []
 
     for r in source:
-        upl = str(r.get("userpl") or "").strip().upper()
+        upl = real_userpl(r.get("userpl"))
         lk = str(r.get("login_kind") or "")
         vis = [str(x).strip().upper() for x in (r.get("visible_supervisor_codes") or []) if x]
 
