@@ -455,6 +455,9 @@ API: `PUT /admin/user-access/targetsun/bulk` รับ `{emails: [...], enabled:
 | `GET/POST/PUT/DELETE` | `/admin/sku-links` | ผูกรหัส SKU (รวมประวัติ) |
 | `GET` | `/admin/sku-links/catalog` | รายการสินค้าในงวด (จาก cache Dashboard) |
 | `GET` | `/admin/sku-links/preview` | ทดสอบยอดประวัติ 3M/LY หลังรวม alias |
+| `GET` | `/admin/target-baseline` | เป้าตั้งต้นของงวด + ส่วนต่างจากเป้าปัจจุบัน (แอดมินทุกระดับ ตามขอบเขต) |
+| `GET` | `/admin/target-baseline/export` | ดาวน์โหลดเป้าตั้งต้นเป็นไฟล์ |
+| `POST` | `/admin/target-baseline/restore` | เขียนเป้าตั้งต้นกลับทับเป้าปัจจุบัน — **dev เท่านั้น** · audit ทุกครั้ง |
 
 Swagger UI: `<URL แอปบน server>/docs`
 
@@ -469,6 +472,12 @@ Swagger UI: `<URL แอปบน server>/docs`
 | **Env** | แก้ `config/.env` **บน server** โดยตรง (ไม่ผ่าน Git) เมื่อเปลี่ยน secret / URL Target Sun |
 
 `config/.env` และ `data/` บน server **ไม่ถูกทับ** เมื่อ deploy โค้ดใหม่จาก Git
+(ผลการกระจาย เป้าตั้งต้น และบันทึกการใช้งานอยู่ใน `data/` ทั้งหมด จึงปลอดภัยเสมอ)
+
+⚠️ แต่ `config/user_access.json`, `access_hierarchy.json`, `sl_links.json`, `sku_links.json`
+**ถูก git ติดตามอยู่ และแอปเขียนทับตอนแอดมินแก้บนเว็บ** — ถ้า `git pull` ฟ้อง
+"local changes would be overwritten" ให้ copy ไฟล์เก็บก่อน **ห้าม `git reset --hard` บน server**
+เพราะจะลบผู้ใช้ที่เพิ่มบนเว็บทิ้งทันที (ดู `config/README.md` หัวข้อความปลอดภัย)
 
 ---
 

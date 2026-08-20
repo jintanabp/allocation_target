@@ -57,6 +57,18 @@ def target_sun_cache_path(sup_id: str, month: int, year: int) -> str:
     return f"data/target_sun_{safe_id(sup_id)}_{year}_{month:02d}.csv"
 
 
+def target_baseline_path(sup_id: str, month: int, year: int) -> str:
+    """
+    เป้า "ตอนเปิดงวดครั้งแรก" — เขียนครั้งเดียวแล้วไม่แตะอีก
+
+    ไฟล์เป้าจริง (target_boxes_/target_sun_) ถูกเขียนทับทุกครั้งที่โหลดขั้นที่ 1 ใหม่
+    และไม่มีสำเนาเก่าเก็บไว้เลย ถ้าเป้าต้นทางเปลี่ยน/หาย จึงไม่มีอะไรให้เทียบหรือกู้
+    ไฟล์นี้คือสำเนาชุดแรกไว้เป็นหลักฐาน — อยู่คนละโฟลเดอร์เพื่อไม่ให้ปนกับ cache
+    ที่ถูกล้างตามอายุ (ตัวล้างวนเฉพาะไฟล์ใน data/ ชั้นเดียว ไม่ลงโฟลเดอร์ย่อย)
+    """
+    return f"data/baselines/{safe_id(sup_id)}_{year}_{month:02d}.json"
+
+
 def emp_cache_path(sup_id: str, month: int, year: int) -> str:
     return f"data/emp_cache_{safe_id(sup_id)}_{year}_{month:02d}.csv"
 

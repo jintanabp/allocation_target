@@ -41,6 +41,8 @@ API_MAP = [
     {"endpoint": "POST /lakehouse/import-targetsun", "fabric": True, "sources": ["tga grain + dims"]},
     {"endpoint": "POST /lakehouse/upload", "fabric": True, "sources": ["OneLake ADLS"]},
     {"endpoint": "GET /admin/supervisor-team", "fabric": True, "sources": ["Dim_Salesman", "emp_cache_*"]},
+    {"endpoint": "GET /admin/target-baseline", "fabric": False, "sources": ["baselines/*.json", "target_boxes_*", "target_sun_*"]},
+    {"endpoint": "POST /admin/target-baseline/restore", "fabric": False, "sources": ["baselines/*.json → target_boxes_*, target_sun_* (dev เท่านั้น)"]},
     {"endpoint": "GET /admin/user-access", "fabric": False, "sources": ["user_access.json"]},
     {"endpoint": "GET /admin/sku-links", "fabric": False, "sources": ["sku_links.json"]},
     {"endpoint": "GET /admin/sku-links/catalog", "fabric": True, "sources": ["tga_target_salesman_next", "Dim_Product", "sku_links.json"]},

@@ -50,6 +50,8 @@ from .sku_link_store import (
     extra_aliases_for_canonical,
     read_links,
 )
+from .target_baseline import capture_baseline_once, diff_against_baseline
+from .usage_log_store import append_log
 from .wh_split import expand_employee_rows, warehouses_per_emp_from_tga
 from .employee_payload_cache import (
     read_cached_employee_payload,
@@ -291,6 +293,13 @@ def load_employees_payload(
         # เขียน cache ชุดเดียวกับ Step 1 จริง — ขั้นกระจายหีบและดาวน์โหลด Excel
         # อ่านเป้า/ประวัติจากไฟล์เหล่านี้ ไม่ได้อ่านจาก payload ที่ส่งกลับไป
         demo_data.write_demo_caches(sup_id, target_month, target_year)
+        # เก็บเป้าตั้งต้นให้ทีมสาธิตด้วย — ทีมสาธิตเขียนไฟล์เป้าจริงเหมือนทีมปกติ
+        # และเป็นทางเดียวที่สาธิต/ทดสอบเรื่องกู้คืนเป้าได้โดยไม่แตะข้อมูลจริง
+        try:
+            _dsku, _dsun = load_target_csv_for(sup_id, target_month, target_year)
+            capture_baseline_once(sup_id, target_month, target_year, _dsku, _dsun)
+        except Exception as e:
+            logger.warning("เก็บเป้าตั้งต้นของทีมสาธิตไม่สำเร็จ: %s", e)
         return demo_data.build_employees_payload(sup_id, target_month, target_year)
     # ต้องเช็ค target_csv_ready ด้วย: ถ้า cache hit จะ return ก่อนถึงจุดที่เขียนไฟล์เป้าราย sup
     # ทีมที่มี cache ค้างจะไม่มีวันสร้างไฟล์ แล้วตกไปใช้ไฟล์ global ของทีมอื่นตลอดไป
@@ -630,6 +639,39 @@ def load_employees_payload(
 
     if df_sun_csv is None:
         _, df_sun_csv = load_target_csv_for(sup_id, target_month, target_year)
+
+    # ── เป้าตั้งต้น: เก็บครั้งแรกที่งวดนี้ถูกเปิด ────────────────────────
+    #
+    # วางไว้ตรงนี้เพราะเป็นจุดเดียวที่ "ทุกเส้นทาง" มาบรรจบกัน — ทั้งตอนดึงใหม่จาก
+    # Fabric และตอนอ่านจากไฟล์เป้าที่มีอยู่แล้ว (ถ้าวางไว้เฉพาะฝั่งดึงใหม่ ทีมที่
+    # เคยเปิดงวดไว้ก่อนจะไม่มีวันได้ baseline เลย เพราะเข้าทางอ่านไฟล์ตลอด)
+    #
+    # เขียนครั้งเดียวเท่านั้น รอบต่อ ๆ ไปจึงเหลือแค่การเทียบว่าต่างจากตั้งต้นตรงไหน
+    if not capture_baseline_once(sup_id, target_month, target_year, df_sku, df_sun_csv):
+        _drift = diff_against_baseline(sup_id, target_month, target_year, df_sku, df_sun_csv)
+        if _drift:
+            logger.warning(
+                "เป้างวดนี้ต่างจากตั้งต้น: %s %s-%02d | หีบ %d -> %d (%+d) | SKU เปลี่ยน %d | เป้าเงินเปลี่ยน %d คน",
+                sup_id, target_year, target_month,
+                _drift["boxes_before"], _drift["boxes_after"], _drift["boxes_delta"],
+                _drift["sku_changed"], _drift["emp_target_changed"],
+            )
+            try:
+                append_log(
+                    level="warn",
+                    email="",
+                    role="system",
+                    sup_id=sup_id,
+                    action="target_baseline_drift",
+                    message=(
+                        f"เป้างวด {target_month:02d}/{target_year} ต่างจากตอนเปิดครั้งแรก — "
+                        f"หีบรวม {_drift['boxes_before']} → {_drift['boxes_after']} "
+                        f"({_drift['boxes_delta']:+d})"
+                    ),
+                    detail=_drift,
+                )
+            except Exception as e:   # การบันทึกต้องไม่ทำให้โหลดหน้าจอพัง
+                logger.warning("บันทึก target_baseline_drift ไม่สำเร็จ: %s", e)
 
     sku_list = df_sku["sku"].tolist()
 

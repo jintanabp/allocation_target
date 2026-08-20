@@ -86,6 +86,12 @@ from ..services.employee_payload_cache import (
 )
 from ..services.fabric_cache import cache_status, invalidate_period_cache
 from ..services.allocation_store import delete_snapshot, list_all_snapshots, read_snapshot
+from ..services.target_baseline import (
+    diff_against_baseline,
+    read_baseline,
+    restore_baseline_to_target_files,
+)
+from ..core.targets import load_target_csv_for
 from ..services.usage_log_store import append_log, read_logs
 from ..services.user_access_store import read_rows as read_user_access_rows
 from ..fabric_dax_connector import FabricDAXConnector
@@ -1170,6 +1176,83 @@ def admin_delete_allocation(
     if not delete_snapshot(sid, target_month, target_year):
         raise HTTPException(status_code=404, detail="ไม่พบผลกระจายที่จะลบ")
     return {"status": "ok", "sup_id": sid}
+
+
+@router.get("/target-baseline")
+def admin_get_target_baseline(
+    admin: dict = Depends(require_admin_scoped),
+    sup_id: str = Query(..., min_length=1),
+    target_month: int = Query(..., ge=1, le=12),
+    target_year: int = Query(..., ge=2020, le=2100),
+) -> dict[str, Any]:
+    """
+    เป้าตั้งต้นของงวด (สำเนาชุดแรกที่ระบบดึงมา) — ผู้ดูแลทุกระดับดูได้
+
+    ใช้ตอบคำถาม "เป้าเดิมเป็นเท่าไร" เมื่อเป้าปัจจุบันดูผิด · ตัวเทียบกับของปัจจุบัน
+    อยู่ในคำตอบด้วย จะได้เห็นทันทีว่าต่างตรงไหนโดยไม่ต้องไล่เอง
+    """
+    sid = sup_id.strip().upper()
+    ensure_sup_in_admin_scope(admin, sid)
+    base = read_baseline(sid, target_month, target_year)
+    if not base:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "ยังไม่มีเป้าตั้งต้นของงวดนี้ — ระบบเก็บให้อัตโนมัติตอนเปิดงวดครั้งแรก "
+                "(งวดที่เปิดไปก่อนที่ระบบนี้จะมี จึงยังไม่มีสำเนา)"
+            ),
+        )
+    df_sku, df_sun = load_target_csv_for(sid, target_month, target_year)
+    return {
+        "baseline": base,
+        "diff": diff_against_baseline(sid, target_month, target_year, df_sku, df_sun),
+    }
+
+
+@router.get("/target-baseline/export")
+def admin_export_target_baseline(
+    admin: dict = Depends(require_admin_scoped),
+    sup_id: str = Query(..., min_length=1),
+    target_month: int = Query(..., ge=1, le=12),
+    target_year: int = Query(..., ge=2020, le=2100),
+):
+    """ดาวน์โหลดเป้าตั้งต้นเป็นไฟล์ JSON ไว้เก็บ/ส่งต่อ"""
+    sid = sup_id.strip().upper()
+    ensure_sup_in_admin_scope(admin, sid)
+    base = read_baseline(sid, target_month, target_year)
+    if not base:
+        raise HTTPException(status_code=404, detail="ยังไม่มีเป้าตั้งต้นของงวดนี้")
+    fname = f"target_baseline_{sid}_{target_year}_{target_month:02d}.json"
+    return JSONResponse(
+        content=base,
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.post("/target-baseline/restore")
+def admin_restore_target_baseline(
+    admin: dict = Depends(require_admin_user),
+    sup_id: str = Query(..., min_length=1),
+    target_month: int = Query(..., ge=1, le=12),
+    target_year: int = Query(..., ge=2020, le=2100),
+) -> dict[str, Any]:
+    """
+    เขียนเป้าตั้งต้นกลับทับไฟล์เป้าปัจจุบัน — **dev เท่านั้น**
+
+    เป็นการทับข้อมูลที่คนอื่นอาจกำลังใช้อยู่ จึงไม่เปิดให้ผู้ดูแลระดับอื่น
+    ไม่แตะผลกระจายที่บันทึกไว้ (snapshot) — คืนแค่ "เป้า" ให้กลับไปเป็นชุดแรก
+    แล้วผู้ใช้กดกระจายใหม่เองตามต้องการ
+    """
+    sid = sup_id.strip().upper()
+    result = restore_baseline_to_target_files(sid, target_month, target_year)
+    _audit_admin(
+        admin,
+        "target_baseline_restore",
+        f"กู้คืนเป้าตั้งต้น {sid} งวด {target_month:02d}/{target_year}",
+        f"SKU {result['skus']} รายการ ({result['total_boxes']} หีบ) · พนักงาน {result['employees']} คน",
+        level="warn",
+    )
+    return {"ok": True, **result}
 
 
 @router.get("/allocations/export")

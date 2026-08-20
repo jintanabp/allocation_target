@@ -8809,12 +8809,13 @@ body.is-admin-login-only #msLogoutBtn {
   vertical-align: middle;
 }
 
-#adminView .admin-table--alloc .alloc-col-who { width: 27%; }
-#adminView .admin-table--alloc .alloc-col-place { width: 23%; }
+#adminView .admin-table--alloc .alloc-col-who { width: 20%; }
+#adminView .admin-table--alloc .alloc-col-place { width: 21%; }
 #adminView .admin-table--alloc .alloc-col-period { width: 8%; }
 #adminView .admin-table--alloc .alloc-col-status { width: 13%; }
-#adminView .admin-table--alloc .alloc-col-updated { width: 17%; }
-#adminView .admin-table--alloc .alloc-col-act { width: 12%; }
+#adminView .admin-table--alloc .alloc-col-updated { width: 19%; }
+/* ปุ่ม 4 ตัว (ดู / สำรอง / เป้าตั้งต้น / ลบ) ต้องอยู่ในบรรทัดเดียวโดยไม่ล้นขอบ */
+#adminView .admin-table--alloc .alloc-col-act { width: 20%; }
 
 /* ช่องที่เนื้อหาสั้นและคาดเดาได้ — ไม่ให้ตัดบรรทัด แถวจะได้สูงเท่ากันทั้งตาราง */
 #adminView .admin-table--alloc .alloc-col-period,
@@ -8864,9 +8865,10 @@ body.is-admin-login-only #msLogoutBtn {
 
 /* จอแคบ: ชื่อกับสังกัดยาวกว่าช่องอื่น ให้ลดลงก่อน */
 @media (max-width: 1200px) {
-  #adminView .admin-table--alloc .alloc-col-who { width: 24%; }
-  #adminView .admin-table--alloc .alloc-col-place { width: 20%; }
-  #adminView .admin-table--alloc .alloc-col-act { width: 15%; }
+  #adminView .admin-table--alloc .alloc-col-who { width: 17%; }
+  #adminView .admin-table--alloc .alloc-col-place { width: 17%; }
+  #adminView .admin-table--alloc .alloc-col-updated { width: 17%; }
+  #adminView .admin-table--alloc .alloc-col-act { width: 26%; }
 }
 
 /* ══════════════════════════════════════════════
@@ -8969,4 +8971,13 @@ body.is-admin-login-only #msLogoutBtn {
   display: inline-flex;
   width: auto;
   white-space: nowrap;
+}
+
+/* คอลัมน์จัดการมีปุ่มหลายตัว — ลดระยะคั่นลงให้พอดีบรรทัดเดียว */
+#adminView .admin-table--alloc td.alloc-col-act .admin-action {
+  padding: 5px 7px;
+}
+
+#adminView .admin-table--alloc td.alloc-col-act .admin-action + .admin-action {
+  padding-left: 8px;
 }

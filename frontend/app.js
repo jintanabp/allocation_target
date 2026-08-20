@@ -13265,6 +13265,7 @@ function adminRenderAllocationsTable() {
       <td class="alloc-col-act admin-td-actions">
         <button type="button" class="admin-action" onclick="adminViewAllocationSnapshot('${sidRaw}', ${m}, ${y})">ดู</button>
         <button type="button" class="admin-action" onclick="adminDownloadAllocation('${sidRaw}', ${m}, ${y})">สำรอง</button>
+        <button type="button" class="admin-action" onclick="adminShowTargetBaseline('${sidRaw}', ${m}, ${y})" title="ดูเป้าตอนเปิดงวดครั้งแรก">เป้าตั้งต้น</button>
         <button type="button" class="admin-action admin-action--del" onclick="adminDeleteAllocation('${sidRaw}', ${m}, ${y})">ลบ</button>
       </td>
     </tr>`;
@@ -13302,6 +13303,102 @@ async function adminDownloadAllocationsXlsx() {
     const m = cd.match(/filename="?([^";]+)"?/i);
     dl(blob, (m && m[1]) || "allocation_report.xlsx");
     toast("ดาวน์โหลดรายงานผลการกระจาย (Excel) แล้ว", "green");
+  } catch (e) {
+    toast(e.message, "red");
+  }
+}
+
+/* ── เป้าตั้งต้นของงวด (กันเป้าหาย) ────────────────────────────────────
+   ไฟล์เป้าจริงถูกเขียนทับทุกครั้งที่โหลดขั้นที่ 1 ใหม่และไม่มีสำเนาเก่า
+   ระบบจึงเก็บชุดแรกไว้ให้ตอนเปิดงวดครั้งแรก — ตรงนี้คือที่เปิดดู/กู้คืน
+   ดูได้ทุกคนที่เข้าหน้านี้ · ปุ่มกู้คืนโผล่เฉพาะ dev เพราะเป็นการทับข้อมูลของคนอื่น */
+async function adminShowTargetBaseline(supId, month, year) {
+  const q = new URLSearchParams({
+    sup_id: supId, target_month: String(month), target_year: String(year),
+  });
+  let data;
+  try {
+    const res = await fetchWithTimeout(`${API_BASE_URL}/admin/target-baseline?${q}`, {}, 20000);
+    data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || "เปิดเป้าตั้งต้นไม่สำเร็จ");
+  } catch (e) {
+    toast(e.message, "amber");
+    return;
+  }
+
+  const base = data.baseline || {};
+  const diff = data.diff;
+  const period = `${String(month).padStart(2, "0")}/${year}`;
+  const capturedAt = base.captured_at
+    ? new Date(base.captured_at).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" })
+    : "—";
+
+  let body =
+    `<div class="tchange-chips" style="margin-bottom:10px;">` +
+    `<span class="tchange-chip">เก็บเมื่อ ${escapeHtml(capturedAt)}</span>` +
+    `<span class="tchange-chip tchange-chip--box">${Number(base.total_target_boxes || 0).toLocaleString("th-TH")} หีบ</span>` +
+    `<span class="tchange-chip">${(base.skus || []).length} SKU</span>` +
+    `<span class="tchange-chip">${(base.employees || []).length} คน</span>` +
+    `</div>`;
+
+  if (!diff) {
+    body += `<p style="margin:0 0 10px;line-height:1.7;">เป้าปัจจุบันของงวด ${escapeHtml(period)} ` +
+      `<strong>ตรงกับตอนเปิดครั้งแรกทุกรายการ</strong> — ไม่มีอะไรหายหรือถูกทับ</p>`;
+  } else {
+    const sign = diff.boxes_delta > 0 ? "+" : "";
+    body +=
+      `<p style="margin:0 0 8px;line-height:1.7;">เป้าปัจจุบัน<strong>ต่างจากตอนเปิดครั้งแรก</strong> — ` +
+      `หีบรวม ${Number(diff.boxes_before).toLocaleString("th-TH")} → ` +
+      `<strong>${Number(diff.boxes_after).toLocaleString("th-TH")}</strong> (${sign}${diff.boxes_delta}) · ` +
+      `สินค้าเปลี่ยน ${diff.sku_changed} รายการ · เป้าเงินเปลี่ยน ${diff.emp_target_changed} คน</p>` +
+      `<details class="tchange-details" open><summary>ดูรายการที่ต่าง</summary><ul>` +
+      (diff.changes || []).map((c) =>
+        `<li><strong>${escapeHtml(c.sku)}</strong>: ${c.before} → ${c.after} หีบ (${c.delta > 0 ? "+" : ""}${c.delta})</li>`
+      ).join("") +
+      `</ul></details>`;
+  }
+
+  const canRestore = S.isAdmin || S.role === "dev";
+  body += `<p style="margin:10px 0 0;font-size:12px;color:var(--text-2);line-height:1.6;">` +
+    (canRestore
+      ? `การกู้คืนจะเขียนเป้าตั้งต้นทับเป้าปัจจุบัน <strong>ไม่แตะผลกระจายที่บันทึกไว้</strong> — ` +
+        `ผู้ใช้ต้องกดกระจายใหม่เองถ้าต้องการผลที่ตรงกับเป้าที่กู้มา`
+      : `การกู้คืนสงวนไว้ให้ Dev เพราะเป็นการทับข้อมูลที่ทีมอื่นอาจกำลังใช้อยู่`) +
+    `</p>`;
+
+  _showInfoModal({
+    title: `เป้าตั้งต้น ${supId} · งวด ${period}`,
+    bodyHtml: body,
+    primaryLabel: canRestore ? "กู้คืนเป้าตั้งต้น" : "",
+    secondaryLabel: "ปิด",
+    onPrimary: canRestore ? () => _adminConfirmRestoreBaseline(supId, month, year) : undefined,
+  });
+}
+
+function _adminConfirmRestoreBaseline(supId, month, year) {
+  _showInfoModal({
+    title: "ยืนยันกู้คืนเป้าตั้งต้น",
+    bodyHtml:
+      `<p style="margin:0;line-height:1.7;">จะเขียนเป้าตั้งต้นของ <strong>${escapeHtml(supId)}</strong> ` +
+      `งวด ${String(month).padStart(2, "0")}/${year} ทับเป้าปัจจุบัน<br>` +
+      `ถ้าทีมนี้กำลังทำงานอยู่ ตัวเลขที่เขาเห็นจะเปลี่ยนทันทีที่โหลดหน้าใหม่</p>`,
+    primaryLabel: "กู้คืน",
+    secondaryLabel: "ยกเลิก",
+    onPrimary: () => _adminDoRestoreBaseline(supId, month, year),
+  });
+}
+
+async function _adminDoRestoreBaseline(supId, month, year) {
+  try {
+    const q = new URLSearchParams({
+      sup_id: supId, target_month: String(month), target_year: String(year),
+    });
+    const res = await fetchWithTimeout(
+      `${API_BASE_URL}/admin/target-baseline/restore?${q}`, { method: "POST" }, 30000
+    );
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.detail || "กู้คืนไม่สำเร็จ");
+    toast(`กู้คืนเป้าตั้งต้นแล้ว — ${j.skus} SKU (${Number(j.total_boxes).toLocaleString("th-TH")} หีบ)`, "green");
   } catch (e) {
     toast(e.message, "red");
   }
