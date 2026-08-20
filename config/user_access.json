@@ -120,8 +120,8 @@
     "can_import_targetsun": false,
     "note": "บัญชีผู้ดูแลระบบ (ไม่มีตำแหน่งงาน)",
     "login_kind": "standard",
-    "role": "admin",
-    "admin_scope": "all"
+    "role": "head_admin",
+    "admin_scope": "division_region"
   },
   {
     "email": "atthaporn.n@sahapat.co.th",
