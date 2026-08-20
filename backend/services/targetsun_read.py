@@ -112,6 +112,21 @@ def _acc_division_to_code(acc_division: str) -> str:
     return div.upper()[:1]
 
 
+# ตัวย่อ salesType ของ Target Sun สลับกับที่ตัวอักษรชวนให้เดา:
+# "C" คือ van (รถเงินสด) ไม่ใช่ credit · "S" คือ credit (เครดิต) ไม่ใช่ sales
+# อ่านผิดกันมาแล้ว จึงมีตารางแปลงเป็นชื่อเต็มไว้ใช้ตอนแสดงผลโดยเฉพาะ
+SALES_TYPE_LABEL_TH = {
+    "C": "รถเงินสด (van)",
+    "S": "เครดิต (credit)",
+}
+
+
+def sales_type_label(sales_type: str) -> str:
+    """ชื่อหน่วยขายแบบเต็มสำหรับแสดงบนหน้าจอ — ไม่ใช้ตัดสินใจอะไรทั้งสิ้น"""
+    st = str(sales_type or "").strip().upper()[:1]
+    return SALES_TYPE_LABEL_TH.get(st, st or "—")
+
+
 def _acc_unit_to_sales_type(acc_unit: str) -> str:
     u = str(acc_unit or "").strip().lower()
     if u == "credit":
@@ -440,10 +455,12 @@ def fetch_targetsun_periods_overview() -> list[dict[str, Any]]:
 
     out: list[dict[str, Any]] = []
     for division_code, sales_type in sorted(combos):
-        label = f"Div.{division_code} / {sales_type}"
+        # เขียนชื่อหน่วยเต็ม ไม่ใช้ตัวย่อ C/S บนหน้าจอ — ตัวย่อสลับกับที่คนเดา
+        label = f"Div.{division_code} · {sales_type_label(sales_type)}"
         entry: dict[str, Any] = {
             "division_code": division_code,
             "sales_type": sales_type,
+            "sales_type_label": sales_type_label(sales_type),
             "label": label,
             "max_effective_date": None,
             "target_year": None,
