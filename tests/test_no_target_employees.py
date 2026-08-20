@@ -349,6 +349,39 @@ class TestFrontend(unittest.TestCase):
         body = self.src[i:i + 800]
         self.assertIn("supervisor_code", body)
 
+    def test_money_of_excluded_people_is_redistributed(self):
+        """
+        เป้าหีบของทีมไม่ลดตามการกันคนออก เงินก้อนของเขาจึงต้องไปอยู่กับคนที่เหลือ
+
+        เจอกับ SL509 จริง: ผลรวมขั้นที่ 2 ขาด 155,638 บาท เท่ากับเป้าของ C444 + C449
+        เป๊ะ แล้วปุ่ม「เริ่มคำนวณ」ถูกปิดตาย (btn.disabled = true) ใช้ฟีเจอร์ต่อไม่ได้เลย
+        """
+        i = self.src.index("function _redistributeNoTargetShare(")
+        body = self.src[i:i + 1800]
+        self.assertIn("_noTargetEmployees", body)
+        self.assertIn("_allocEligibleEmployees", body)
+
+    def test_redistribution_never_overwrites_a_locked_cell(self):
+        """ช่องที่ผู้ใช้ล็อกไว้คือเจตนาที่ชัดเจน ห้ามเอาเงินไปโปะทับ (หลักเดียวกับ I2)"""
+        i = self.src.index("function _redistributeNoTargetShare(")
+        body = self.src[i:i + 1800]
+        self.assertIn("S.yellowLocked", body)
+
+    def test_redistribution_runs_at_every_place_that_seeds_yellow(self):
+        """
+        มีสามจุดที่ตั้งเป้าเงินตั้งต้น: โหลดครั้งแรก · รีเซ็ตเป็น Target Sun · รีเฟรชเป้าสด
+
+        พลาดจุดใดจุดหนึ่ง ผู้ใช้จะเจอ "ยอดรวมไม่ตรง" อีกทันทีที่กดปุ่มนั้น
+        """
+        self.assertEqual(self.src.count("_redistributeNoTargetShare(S.yellow)"), 3)
+
+    def test_user_is_told_why_the_numbers_differ_from_target_sun(self):
+        """ไม่บอก = ผู้ใช้เห็นเลขไม่ตรงกับ Target Sun แล้วนึกว่าระบบคำนวณผิด"""
+        i = self.src.index("function renderYellowTable(")
+        body = self.src[i:i + 3000]
+        self.assertIn("_noTargetSpareBaht", body)
+        self.assertIn("ถูกเกลี่ยให้คนที่เหลือ", body)
+
     def test_step1_banner_separates_the_two_reasons(self):
         """'ระบบไม่พบเป้า' ควรไปตาม ส่วน 'แอดมินกันไว้' ถูกต้องแล้ว — ปนกันแล้วผู้ใช้ไล่ผิดเรื่อง"""
         i = self.src.index("const viewOnlyBanner = qs(")

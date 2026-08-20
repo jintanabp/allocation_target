@@ -4021,6 +4021,52 @@ function _noTargetEmployees() {
   return (S.employees || []).filter(_isNoTargetEmp);
 }
 
+/**
+ * เกลี่ยเป้าเงินของคนที่「ไม่ต้องตั้งเป้า」ไปให้คนที่เหลือ — แก้ในที่
+ *
+ * เป้าหีบของทีมไม่ลดตามการกันคนออก (I1) ทีมยังต้องขายให้ครบเท่าเดิม เงินก้อนของ
+ * คนที่ถูกกันจึงต้องไปอยู่กับคนที่เหลือ ไม่งั้นผลรวมขั้นที่ 2 จะขาดเท่ากับก้อนนั้นพอดี
+ * แล้ว **ปุ่ม「เริ่มคำนวณ」ถูกปิดตาย** — เจอกับ SL509 จริง: ขาด 155,638 บาท
+ * เท่ากับเป้าของ C444 + C449 เป๊ะ ใช้ฟีเจอร์ต่อไม่ได้เลย
+ *
+ * เกลี่ยตามสัดส่วนเป้าเดิมของแต่ละคน (คนเป้าใหญ่รับมากกว่า) คิดเป็นสตางค์ทั้งหมด
+ * เพื่อไม่ให้ทศนิยมลอย และเศษที่ปัดลงยกให้คนเป้าสูงสุด ผลรวมจึงตรงเป๊ะ ไม่ใช่ "เกือบตรง"
+ */
+function _redistributeNoTargetShare(yellowMap) {
+  const spareC = Math.round(
+    _noTargetEmployees().reduce((a, e) => a + (Number(e.target_sun) || 0), 0) * 100
+  );
+  if (spareC <= 0) return yellowMap;
+  // ช่องที่ผู้ใช้ล็อกไว้คือเจตนาที่ชัดเจน ห้ามเอาเงินไปโปะทับ (หลักเดียวกับ I2)
+  // ถ้าล็อกไว้หมดก็ไม่ทำอะไร แล้วปล่อยให้แถบ "ยอดรวมยังไม่ตรง" บอกผู้ใช้ตามปกติ
+  const keys = _allocEligibleEmployees()
+    .map(e => _allocKey(e))
+    .filter(k => !(S.yellowLocked || {})[k]);
+  if (!keys.length) return yellowMap;
+
+  const baseC = keys.map(k => Math.round((Number(yellowMap[k]) || 0) * 100));
+  const totalC = baseC.reduce((a, b) => a + b, 0);
+  const addC = keys.map((_, i) =>
+    totalC > 0
+      ? Math.floor((spareC * baseC[i]) / totalC)
+      // ทุกคนที่เหลือเป้า 0 — หารตามสัดส่วนไม่ได้ ต้องแบ่งเท่ากันแทน
+      : Math.floor(spareC / keys.length)
+  );
+  const restC = spareC - addC.reduce((a, b) => a + b, 0);
+  if (restC > 0) {
+    let top = 0;
+    for (let i = 1; i < keys.length; i++) if (baseC[i] > baseC[top]) top = i;
+    addC[top] += restC;
+  }
+  keys.forEach((k, i) => { yellowMap[k] = (baseC[i] + addC[i]) / 100; });
+  return yellowMap;
+}
+
+/** ยอดเงินที่ถูกเกลี่ยออกจากคนที่ไม่ต้องตั้งเป้า — ใช้บอกผู้ใช้ว่าตัวเลขต่างจาก Target Sun เพราะอะไร */
+function _noTargetSpareBaht() {
+  return _noTargetEmployees().reduce((a, e) => a + (Number(e.target_sun) || 0), 0);
+}
+
 function _empViewOnlyNoteHtml(e) {
   if (_isNoTargetEmp(e)) {
     return `<div class="emp-no-target-note">ไม่ต้องตั้งเป้า</div>`;
@@ -4166,6 +4212,7 @@ function applyDataPayload(data) {
     const base = _isAllocEligible(e) ? Number(e.target_sun) : 0;
     S.yellow[_allocKey(e)] = Number.isFinite(base) ? Math.max(0, base) : 0;
   });
+  _redistributeNoTargetShare(S.yellow);
   _sanitizeYellowForEligibleOnly();
   document.getElementById("totalTargetDisplay").textContent = baht(S.totalTarget);
   _updateAggregateModeUI();
@@ -5154,7 +5201,14 @@ function renderYellowTable() {
       bits.push(`ขั้นนี้แสดงเฉพาะพนักงานที่มีเป้า — ซ่อน ${hidden.length} คน (${names}) ที่ไม่นำไปกระจายเป้า`);
     }
     if (noTargetN) {
-      bits.push(`แถบเข้ม ${noTargetN} แถว = พนักงานที่แอดมินกำหนดว่าไม่ต้องตั้งเป้า (เป้าเงิน 0 · ไม่ถูกกระจายหีบ)`);
+      const spare = _noTargetSpareBaht();
+      bits.push(
+        `แถบเข้ม ${noTargetN} แถว = พนักงานที่แอดมินกำหนดว่าไม่ต้องตั้งเป้า (เป้าเงิน 0 · ไม่ถูกกระจายหีบ)`
+        + (spare > 0
+          // ต้องบอก ไม่งั้นผู้ใช้เห็นเลขไม่ตรงกับ Target Sun แล้วนึกว่าระบบคำนวณผิด
+          ? ` — เป้าเดิมของเขา ${baht(spare)} บาท ถูกเกลี่ยให้คนที่เหลือตามสัดส่วน เพราะเป้าหีบของทีมยังเท่าเดิม`
+          : "")
+      );
     }
     step2Notice.style.display = bits.length ? "" : "none";
     step2Notice.textContent = bits.join(" · ");
@@ -5321,6 +5375,8 @@ async function resetYellowToTargetSun() {
     const base = Number(e.target_sun);
     S.yellow[_allocKey(e)] = Number.isFinite(base) ? Math.max(0, base) : 0;
   });
+  // รีเซ็ตแล้วต้องเกลี่ยซ้ำ ไม่งั้นปุ่มนี้จะพาผู้ใช้กลับไปสู่สภาพ "ยอดไม่ตรง" ทุกครั้ง
+  _redistributeNoTargetShare(S.yellow);
   renderYellowTable();
   updateValidation();
   _updateNegGrowthReasonState();
@@ -10176,6 +10232,8 @@ function _syncStateAfterLiveTargets() {
     const base = _isAllocEligible(emp) ? Number(emp.target_sun) || 0 : 0;
     S.yellow[key] = Number.isFinite(base) ? Math.max(0, base) : 0;
   }
+  // เป้าสดเขียนทับค่าที่เกลี่ยไว้ — ต้องเกลี่ยใหม่ ไม่งั้นรีเฟรชเป้าทีเดียวยอดก็ขาดอีก
+  _redistributeNoTargetShare(S.yellow);
   _sanitizeYellowForEligibleOnly();
   renderStep1();
   renderYellowTable();
