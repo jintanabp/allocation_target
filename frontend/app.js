@@ -3878,11 +3878,18 @@ function _collectLockedEdits() {
     }));
 }
 
+/** พนักงานกรณีพิเศษที่แอดมินกำหนดว่า "ไม่ต้องตั้งเป้า" — ต่างจากคนที่ระบบอนุมานว่าเป้า 0 */
+function _isNoTargetEmp(e) {
+  return !!(e && e.no_target === true);
+}
+
 function _enrichEmployeeAllocFlags(e) {
   if (!e) return e;
   const ts = Number(e.target_sun) || 0;
   const hasTga = e.has_tga_rows === true;
-  const eligible = hasTga && ts > 0;
+  // ต้องเคารพ no_target ที่นี่ด้วย ไม่ใช่แค่ใน _isAllocEligible — ตัวนี้คำนวณ flag ใหม่
+  // จาก target_sun ล้วน ทุกครั้งที่รีเฟรชเป้าสดจึงจะปลดล็อกคนที่ถูกกันไว้เงียบ ๆ
+  const eligible = hasTga && ts > 0 && !_isNoTargetEmp(e);
   e.allocation_eligible = eligible;
   e.include_in_allocation = eligible;
   e.view_only = !eligible;
@@ -3891,6 +3898,7 @@ function _enrichEmployeeAllocFlags(e) {
 
 function _isAllocEligible(e) {
   if (!e) return false;
+  if (_isNoTargetEmp(e)) return false;
   const ts = Number(e.target_sun) || 0;
   if (ts <= 0) return false;
   if (e.has_tga_rows !== true) return false;
@@ -3921,6 +3929,8 @@ function _repairAllocWarehouse(a, rowsInBatch) {
     e => String(e.emp_id || "").trim() === emp && e.wh_split === true
   );
   if (!splitRows.length) return a;   // พนักงานคลังเดียว — คีย์เปล่าถูกต้องอยู่แล้ว
+  // คนที่แอดมินกันไว้ไม่มีคลังที่ใช้ได้เลยโดยตั้งใจ — ไม่ใช่กรณีที่ต้องเตือน
+  if (splitRows.some(_isNoTargetEmp)) return a;
 
   const eligible = splitRows.filter(_isAllocEligible);
   // มีคลังที่ใช้ได้มากกว่าหนึ่ง = เดาไม่ได้ว่าหีบก้อนนี้เป็นของคลังไหน
@@ -4002,7 +4012,19 @@ function _viewOnlyEmployees() {
   return (S.employees || []).filter(e => !_isAllocEligible(e));
 }
 
+/** คนที่ระบบอนุมานว่าไม่มีเป้า — ไม่รวมคนที่แอดมินตั้งว่าไม่ต้องตั้งเป้า (คนละเรื่องกัน) */
+function _viewOnlyNotNoTarget() {
+  return _viewOnlyEmployees().filter(e => !_isNoTargetEmp(e));
+}
+
+function _noTargetEmployees() {
+  return (S.employees || []).filter(_isNoTargetEmp);
+}
+
 function _empViewOnlyNoteHtml(e) {
+  if (_isNoTargetEmp(e)) {
+    return `<div class="emp-no-target-note">ไม่ต้องตั้งเป้า</div>`;
+  }
   if (_isAllocEligible(e)) return "";
   return `<div class="emp-view-only-note">*ไม่นำไปกระจายเป้า</div>`;
 }
@@ -4013,7 +4035,14 @@ function _teamHasWhSplit() {
 
 function _employeeWhGroups(opts = {}) {
   const allocOnly = !!opts.allocOnly;
-  const source = allocOnly ? _allocEligibleEmployees() : (S.employees || []);
+  // ขั้นที่ 2 ขอแถว "ไม่ต้องตั้งเป้า" มาด้วย (withNoTarget) — เจตนาของแอดมินต้องปรากฏ
+  // บนจอเป็นแถบเข้ม ไม่ใช่หายไปเฉย ๆ แล้วหัวหน้าทีมสงสัยว่าข้อมูลตกหล่น
+  // กรองจาก S.employees ตรง ๆ เพื่อคงลำดับพนักงานเดิม ไม่ใช่ต่อท้ายทีหลัง
+  const source = allocOnly
+    ? (S.employees || []).filter(
+        e => _isAllocEligible(e) || (opts.withNoTarget && _isNoTargetEmp(e))
+      )
+    : (S.employees || []);
   const map = new Map();
   for (const e of source) {
     const groupKey = _employeeWhGroupKey(e);
@@ -4067,6 +4096,10 @@ function _yellowTargetPayloadRow(e) {
   if (e.wh_split && String(e.warehouse_code || "").trim()) {
     row.warehouse_code = String(e.warehouse_code).trim();
   }
+  // ทีมเจ้าของแถว — ด่าน「ไม่ต้องตั้งเป้า」ฝั่ง server ใช้กันให้ตรงคน เพราะโหมดรวมภาค
+  // ส่งพนักงานหลายทีมมาใน request เดียวและ emp_id ซ้ำข้ามทีมได้ (I7)
+  const sup = _supervisorCodeForAllocRow(e);
+  if (sup) row.supervisor_code = sup;
   return row;
 }
 
@@ -4633,7 +4666,9 @@ function _renderEmpStep1() {
         ? Number(e.ly_sales) || 0
         : Number(e.hist_avg_3m) || 0;
     const gHtml = _fmtEmpGrowthHtml(tgt, mid);
-    const viewOnlyCls = !_isAllocEligible(e) ? " emp-row--view-only" : "";
+    const viewOnlyCls = _isNoTargetEmp(e)
+      ? " emp-row--no-target"
+      : (!_isAllocEligible(e) ? " emp-row--view-only" : "");
     const childCls = opts.child ? " emp-wh-child" : "";
     const empPad = opts.child && !showWh ? ' style="padding-left:22px;"' : "";
     return `<tr class="emp-wh-row${childCls}${viewOnlyCls}">
@@ -4702,16 +4737,29 @@ function renderStep1() {
   }
   const viewOnlyBanner = qs("#empStep1ViewOnlyNotice");
   if (viewOnlyBanner) {
-    if (viewOnlyN > 0) {
+    // แยกสองเรื่องออกจากกัน: "ไม่มีเป้าในงวดนี้" ระบบอนุมานเอง ส่วน "ไม่ต้องตั้งเป้า"
+    // แอดมินตั้งไว้ ปนกันแล้วผู้ใช้จะเข้าใจว่าเป็นความผิดพลาดของข้อมูลต้นทาง
+    const auto = _viewOnlyNotNoTarget();
+    const noTarget = _noTargetEmployees();
+    const lines = [];
+    if (auto.length) {
       // ต่อท้ายชื่อคลังเมื่อแถวเป็นพนักงานที่แยกคลัง — ไม่งั้นแบนเนอร์จะบอกว่า
       // "C442 ไม่นำไปกระจายเป้า" ทั้งที่คลัง R408 ของเขาถูกกระจายอยู่ตามปกติ
-      const names = _viewOnlyEmployees()
+      const names = auto
         .map(e => `${e.emp_id}${e.emp_name ? ` (${e.emp_name})` : ""}`
           + (e.wh_split && e.warehouse_code ? ` · คลัง ${e.warehouse_code}` : ""))
         .join(", ");
+      lines.push(`พนักงาน ${auto.length} คน (${names}) — *ไม่นำไปกระจายเป้า`);
+    }
+    if (noTarget.length) {
+      const names = [...new Set(noTarget.map(
+        e => `${e.emp_id}${e.emp_name ? ` (${e.emp_name})` : ""}`
+      ))].join(", ");
+      lines.push(`พนักงาน ${names} — แอดมินกำหนดว่า「ไม่ต้องตั้งเป้า」เป้าเงินเป็น 0 และไม่ถูกกระจายหีบ`);
+    }
+    if (lines.length) {
       viewOnlyBanner.style.display = "";
-      viewOnlyBanner.textContent =
-        `พนักงาน ${viewOnlyN} คน (${names}) — *ไม่นำไปกระจายเป้า`;
+      viewOnlyBanner.innerHTML = lines.map(t => `<div>${escH(t)}</div>`).join("");
     } else {
       viewOnlyBanner.style.display = "none";
       viewOnlyBanner.textContent = "";
@@ -4985,7 +5033,36 @@ function toggleSkuGroup(idx) {
 /* ══════════════════════════════════════════════
    STEP 2 — YELLOW TABLE
 ══════════════════════════════════════════════ */
+/**
+ * แถบ "ไม่ต้องตั้งเป้า" ในขั้นที่ 2 — แสดงแถวไว้ แต่แก้ไม่ได้และเป้าเป็น 0
+ *
+ * ต่างจากคนที่ไม่มีเป้าซึ่งถูกซ่อนทิ้ง: คนกลุ่มนี้เป็นการตัดสินใจของแอดมิน หัวหน้าทีม
+ * ต้องเห็นว่าเจตนากันไว้ ไม่ใช่หายไปเฉย ๆ แล้วสงสัยว่าข้อมูลตกหล่น
+ */
+function _yellowNoTargetRowHtml(e, opts = {}) {
+  const cls = opts.child ? "emp-wh-child emp-row--no-target" : "emp-row--no-target";
+  const empCell = opts.child
+    ? `<td class="sticky-left-col" style="padding-left:22px;">
+        <span class="emp-wh-badge">W/H ${escH(e.warehouse_code || "—")}</span>
+      </td>`
+    : `<td class="sticky-left-col">
+        <span class="emp-tag">${escH(e.emp_id)}</span>
+        ${e.emp_name ? `<span style="font-size:11px;color:var(--text-3);margin-left:4px;">${escH(e.emp_name)}</span>` : ""}
+        <span class="emp-no-target-chip">ไม่ต้องตั้งเป้า</span>
+      </td>`;
+  return `<tr class="${cls}">
+    ${empCell}
+    <td class="r mono">${baht(e.ly_sales || 0)}</td>
+    <td class="r mono">${baht(e.hist_avg_3m || 0)}</td>
+    <td class="r mono">${baht(e.target_sun || 0)}</td>
+    <td class="r mono"><strong>0</strong></td>
+    <td class="r">—</td>
+    <td class="r mono">—</td>
+  </tr>`;
+}
+
 function _yellowRowHtml(e, opts = {}) {
+  if (!opts.groupHeader && _isNoTargetEmp(e)) return _yellowNoTargetRowHtml(e, opts);
   if (!opts.groupHeader && !_isAllocEligible(e)) return "";
   const ySum = sumYellow();
   const showBui = !!S.buiColumnOpen && !_aggregateBlocksWrite();
@@ -5063,28 +5140,47 @@ function renderYellowTable() {
   const ySum = sumYellow();
   const showBui = !!S.buiColumnOpen && !_aggregateBlocksWrite();
   const eligible = _allocEligibleEmployees();
-  const viewOnlyN = _viewOnlyEmployees().length;
+  // คนที่ "ไม่ต้องตั้งเป้า" ไม่ได้ถูกซ่อนแล้ว (แสดงเป็นแถบเข้ม) จึงต้องไม่นับรวมในข้อความ
+  // "ซ่อน n คน" ไม่งั้นจะบอกว่าซ่อนคนที่ผู้ใช้มองเห็นอยู่ตรงหน้า
+  const hidden = _viewOnlyNotNoTarget();
+  const noTargetN = _noTargetEmployees().length;
   const step2Notice = qs("#step2ViewOnlyNotice");
   if (step2Notice) {
-    if (viewOnlyN > 0) {
-      const names = _viewOnlyEmployees()
+    const bits = [];
+    if (hidden.length) {
+      const names = hidden
         .map(e => `${e.emp_id}${e.emp_name ? ` (${e.emp_name})` : ""}`)
         .join(", ");
-      step2Notice.style.display = "";
-      step2Notice.textContent =
-        `ขั้นนี้แสดงเฉพาะพนักงานที่มีเป้า — ซ่อน ${viewOnlyN} คน (${names}) ที่ไม่นำไปกระจายเป้า`;
-    } else {
-      step2Notice.style.display = "none";
-      step2Notice.textContent = "";
+      bits.push(`ขั้นนี้แสดงเฉพาะพนักงานที่มีเป้า — ซ่อน ${hidden.length} คน (${names}) ที่ไม่นำไปกระจายเป้า`);
     }
+    if (noTargetN) {
+      bits.push(`แถบเข้ม ${noTargetN} แถว = พนักงานที่แอดมินกำหนดว่าไม่ต้องตั้งเป้า (เป้าเงิน 0 · ไม่ถูกกระจายหีบ)`);
+    }
+    step2Notice.style.display = bits.length ? "" : "none";
+    step2Notice.textContent = bits.join(" · ");
   }
   const parts = [];
   if (eligible.length === 0) {
+    const why = noTargetN
+      ? "พนักงานทุกคนในทีมนี้อยู่ในรายชื่อ「ไม่ต้องตั้งเป้า」— ปลดอย่างน้อยหนึ่งคนในหน้าแอดมินก่อน"
+      : "ไม่มีพนักงานที่มีเป้าในงวดนี้ — ปรับเป้าเงินไม่ได้";
     qs("#yellowTableBody").innerHTML =
-      `<tr><td colspan="7" style="padding:16px;color:var(--text-3);text-align:center;">ไม่มีพนักงานที่มีเป้าในงวดนี้ — ปรับเป้าเงินไม่ได้</td></tr>`;
+      `<tr><td colspan="7" style="padding:16px;color:var(--text-3);text-align:center;">${escH(why)}</td></tr>`;
     return;
   }
-  for (const g of _employeeWhGroups({ allocOnly: true })) {
+  for (const g of _employeeWhGroups({ allocOnly: true, withNoTarget: true })) {
+    if (_isNoTargetEmp(g.rows[0])) {
+      // รวมเป็นแถวเดียวต่อคน — แยกรายคลังไม่มีความหมายเมื่อกันไว้ทั้งคนอยู่แล้ว
+      parts.push(_yellowNoTargetRowHtml({
+        ...g.rows[0],
+        emp_id: g.empId,
+        emp_name: g.name,
+        ly_sales: g.totalLy,
+        hist_avg_3m: g.totalAvg3,
+        target_sun: g.totalTargetSun,
+      }));
+      continue;
+    }
     if (!g.isGroup) {
       if (!_isAllocEligible(g.rows[0])) continue;
       parts.push(_yellowRowHtml(g.rows[0]));
@@ -14105,6 +14201,97 @@ async function adminInitTeamPanel() {
   }
 }
 
+/* ── พนักงานที่ไม่ต้องตั้งเป้า (แท็บทีมพนักงาน) ─────────────────
+   เก็บทั้ง saved และ draft: ปุ่มบันทึกต้องบอกได้ว่ามีอะไรค้างยังไม่บันทึก
+   ไม่งั้นแอดมินติ๊กแล้วเปลี่ยนแท็บไป ของหายโดยไม่มีอะไรเตือน */
+let _adminTeamNoTarget = { superCode: "", saved: new Set(), draft: new Set() };
+
+async function _adminFetchNoTargetIds(superCode) {
+  try {
+    const q = new URLSearchParams({ super_code: superCode });
+    const res = await fetchWithTimeout(`${API_BASE_URL}/admin/no-target-employees?${q}`, {}, 20000);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.employees || []).map((r) => String(r.emp_id || "").trim().toUpperCase());
+  } catch (e) {
+    console.warn("[admin] โหลดรายชื่อไม่ต้องตั้งเป้าไม่ได้:", e);
+    return [];
+  }
+}
+
+/** Marketing เข้าแท็บนี้ได้แต่เขียนไม่ได้ — ปิดช่องติ๊กตั้งแต่แรก ดีกว่าให้กดแล้วเจอ 403 */
+function _adminNoTargetReadOnly() {
+  return !!S.isMarketing && !S.isAdmin;
+}
+
+function _adminNoTargetDirty() {
+  const { saved, draft } = _adminTeamNoTarget;
+  if (saved.size !== draft.size) return true;
+  for (const id of draft) if (!saved.has(id)) return true;
+  return false;
+}
+
+function _adminRenderNoTargetBar() {
+  const bar = document.getElementById("adminTeamNoTargetBar");
+  const label = document.getElementById("adminTeamNoTargetCount");
+  if (!bar || !label) return;
+  const n = _adminTeamNoTarget.draft.size;
+  const dirty = _adminNoTargetDirty();
+  bar.style.display = (_adminTeamNoTarget.superCode && !_adminNoTargetReadOnly()) ? "" : "none";
+  label.textContent = dirty
+    ? `เลือกไว้ ${n} คน — ยังไม่ได้บันทึก`
+    : `ไม่ต้องตั้งเป้า ${n} คนในทีมนี้`;
+  label.classList.toggle("admin-team-notarget-count--dirty", dirty);
+}
+
+function adminToggleNoTarget(box) {
+  const id = String(box?.dataset?.emp || "").trim().toUpperCase();
+  if (!id) return;
+  if (box.checked) _adminTeamNoTarget.draft.add(id);
+  else _adminTeamNoTarget.draft.delete(id);
+  const tr = box.closest("tr");
+  if (tr) tr.classList.toggle("admin-team-row--notarget", box.checked);
+  _adminRenderNoTargetBar();
+}
+
+async function adminSaveNoTargetEmployees() {
+  const sup = _adminTeamNoTarget.superCode;
+  if (!sup) return;
+  const names = {};
+  document.querySelectorAll("#adminTeamBody .admin-team-notarget-box").forEach((b) => {
+    const id = String(b.dataset.emp || "").trim().toUpperCase();
+    if (id && b.dataset.name) names[id] = b.dataset.name;
+  });
+  try {
+    const res = await fetchWithTimeout(`${API_BASE_URL}/admin/no-target-employees`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        super_code: sup,
+        emp_ids: [..._adminTeamNoTarget.draft],
+        names,
+      }),
+    }, 20000);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || res.statusText);
+    }
+    const data = await res.json();
+    _adminTeamNoTarget.saved = new Set(_adminTeamNoTarget.draft);
+    _adminRenderNoTargetBar();
+    const bits = [];
+    if ((data.added || []).length) bits.push(`เพิ่ม ${data.added.length}`);
+    if ((data.removed || []).length) bits.push(`ปลด ${data.removed.length}`);
+    toast(
+      `บันทึกรายชื่อไม่ต้องตั้งเป้าของ ${sup} แล้ว${bits.length ? ` (${bits.join(" · ")})` : ""}`
+      + " — ซุปต้องโหลดขั้นที่ 1 ใหม่จึงจะเห็นผล",
+      "green"
+    );
+  } catch (e) {
+    toast(`บันทึกไม่สำเร็จ: ${String(e.message || e)}`, "red");
+  }
+}
+
 async function adminLoadTeam(forceRefresh) {
   const sel = document.getElementById("adminTeamSuper");
   const monthSel = document.getElementById("adminTeamMonth");
@@ -14116,10 +14303,10 @@ async function adminLoadTeam(forceRefresh) {
   const month = parseInt(monthSel.value, 10);
   const year = parseInt(yearInp.value, 10);
   if (!superCode) {
-    body.innerHTML = '<tr><td colspan="3" class="admin-empty">เลือก Supervisor</td></tr>';
+    body.innerHTML = '<tr><td colspan="4" class="admin-empty">เลือก Supervisor</td></tr>';
     return;
   }
-  body.innerHTML = '<tr><td colspan="3" class="admin-empty">กำลังโหลด…</td></tr>';
+  body.innerHTML = '<tr><td colspan="4" class="admin-empty">กำลังโหลด…</td></tr>';
   if (meta) meta.textContent = "";
   try {
     const q = new URLSearchParams({
@@ -14135,16 +14322,30 @@ async function adminLoadTeam(forceRefresh) {
     }
     const data = await res.json();
     const employees = data.employees || [];
+    // รายชื่อไม่ต้องตั้งเป้าของทีมนี้ — โหลดคู่กันเสมอ ไม่งั้นติ๊กที่ผู้ใช้เห็นจะไม่ตรงของจริง
+    const blocked = await _adminFetchNoTargetIds(superCode);
+    _adminTeamNoTarget = { superCode, saved: new Set(blocked), draft: new Set(blocked) };
     if (!employees.length) {
-      body.innerHTML = '<tr><td colspan="3" class="admin-empty">ไม่พบพนักงาน</td></tr>';
+      body.innerHTML = '<tr><td colspan="4" class="admin-empty">ไม่พบพนักงาน</td></tr>';
     } else {
       body.innerHTML = employees
-        .map(
-          (e) =>
-            `<tr><td><code>${escapeHtml(e.emp_id)}</code></td><td>${escapeHtml(e.emp_name || "—")}</td><td>${escapeHtml(e.super_code || "")}</td></tr>`
-        )
+        .map((e) => {
+          const id = String(e.emp_id || "").trim().toUpperCase();
+          const on = _adminTeamNoTarget.draft.has(id);
+          return `<tr class="${on ? "admin-team-row--notarget" : ""}" data-emp="${escapeHtml(id)}">`
+            + `<td><code>${escapeHtml(e.emp_id)}</code></td>`
+            + `<td>${escapeHtml(e.emp_name || "—")}</td>`
+            + `<td>${escapeHtml(e.super_code || "")}</td>`
+            + `<td class="admin-team-col-notarget">`
+            + `<input type="checkbox" class="admin-team-notarget-box" ${on ? "checked" : ""}`
+            + `${_adminNoTargetReadOnly() ? " disabled" : ""}`
+            + ` data-emp="${escapeHtml(id)}" data-name="${escapeHtml(e.emp_name || "")}"`
+            + ` onchange="adminToggleNoTarget(this)" aria-label="ไม่ต้องตั้งเป้า ${escapeHtml(id)}" />`
+            + `</td></tr>`;
+        })
         .join("");
     }
+    _adminRenderNoTargetBar();
     if (meta) {
       const src = data.from_cache ? "จาก cache" : "ดึงจาก Fabric";
       const badgeCls = data.from_cache ? "admin-badge--cache" : "admin-badge--fabric";
@@ -14156,7 +14357,7 @@ async function adminLoadTeam(forceRefresh) {
       }
     }
   } catch (e) {
-    body.innerHTML = `<tr><td colspan="3" class="admin-empty">${escapeHtml(String(e.message || e))}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="4" class="admin-empty">${escapeHtml(String(e.message || e))}</td></tr>`;
   }
 }
 

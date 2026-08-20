@@ -1,5 +1,6 @@
 import logging
 import os
+from typing import Any
 
 import pandas as pd
 from fastapi import HTTPException
@@ -48,6 +49,7 @@ from ..core.targets import (
 from ..generate_excel import create_target_excel
 from ..schemas import OptimizeRequest
 from ..fabric_dax_connector import FabricDAXConnector
+from . import no_target_store
 from .sku_link_store import collapse_hist_to_canonical
 from .wh_split import (
     _norm_wh,
@@ -74,6 +76,63 @@ def _allow_allocation_mismatch() -> bool:
         "true",
         "yes",
     )
+
+
+def _drop_no_target_employees(df_all_targets, sup_id: str, req) -> tuple[Any, list[str]]:
+    """
+    ตัดพนักงานในรายชื่อ「ไม่ต้องตั้งเป้า」ออกจากคำขอ — คืน (frame ที่เหลือ, รายชื่อที่ตัด)
+
+    ทีมของแต่ละแถวเอาจาก `supervisor_code` ที่หน้าเว็บส่งมา ถ้าแถวไหนไม่บอกทีม
+    (หน้าเว็บรุ่นเก่า) จะตกไปใช้ชุดรวมของทุกทีมที่เกี่ยวกับคำขอนี้ — กันเกินดีกว่ากันขาด
+    เพราะกันเกินเห็นทันทีบนหน้าจอและปลดได้ ส่วนกันขาดคือหีบไหลไปหาคนที่ไม่ควรได้
+    แล้วถูกส่งขึ้นระบบจริง
+
+    เป้าหีบของทีมไม่ลดตาม (I1) — คนที่เหลือรับส่วนนั้นไป ซึ่งเป็นสิ่งที่ผู้ใช้ต้องการ
+    """
+    if df_all_targets.empty:
+        return df_all_targets, []
+    try:
+        entries = no_target_store.read_entries()
+    except Exception as e:
+        logger.error("อ่านรายชื่อไม่ต้องตั้งเป้าไม่ได้ — ไม่ตัดใครออกรอบนี้: %s", e)
+        return df_all_targets, []
+    if not entries:
+        return df_all_targets, []
+
+    by_sup = no_target_store.no_target_map(entries)
+    involved = {no_target_store.norm_sup(sup_id)}
+    for attr in ("peer_sup_ids", "target_sup_ids"):
+        for code in getattr(req, attr, None) or []:
+            involved.add(no_target_store.norm_sup(code))
+    involved.discard("")
+    fallback = no_target_store.no_target_emp_ids_for_sups(involved, entries)
+
+    has_sup_col = "supervisor_code" in df_all_targets.columns
+
+    def _blocked(row) -> bool:
+        emp = no_target_store.norm_emp(row.get("emp_id"))
+        if not emp:
+            return False
+        row_sup = no_target_store.norm_sup(row.get("supervisor_code")) if has_sup_col else ""
+        if row_sup:
+            return emp in by_sup.get(row_sup, set())
+        return emp in fallback
+
+    mask = df_all_targets.apply(_blocked, axis=1)
+    if not mask.any():
+        return df_all_targets, []
+    dropped = sorted(
+        {
+            no_target_store.norm_emp(e)
+            for e in df_all_targets.loc[mask, "emp_id"]
+            if no_target_store.norm_emp(e)
+        }
+    )
+    logger.info(
+        "optimize %s: ตัดพนักงานที่ไม่ต้องตั้งเป้า %d คน — %s",
+        sup_id, len(dropped), ", ".join(dropped[:10]),
+    )
+    return df_all_targets.loc[~mask].copy(), dropped
 
 
 def _requested_alloc_keys(df_all_targets) -> list[dict]:
@@ -491,6 +550,20 @@ def run_optimization_service(
     df_all_targets["yellow_target"] = pd.to_numeric(
         df_all_targets["yellow_target"], errors="coerce"
     ).fillna(0.0)
+    # ตัดพนักงานที่ "ไม่ต้องตั้งเป้า" ออกก่อนทุกอย่าง — /optimize ไม่เคยกรองพนักงานเลย
+    # เชื่อรายชื่อจากหน้าเว็บล้วน หน้าเว็บรุ่นเก่าที่ค้างในเบราว์เซอร์จึงส่งคนเหล่านี้มาได้
+    # ต้องตัดก่อน _requested_alloc_keys ด้วย ไม่งั้นด่าน I8 จะเติมแถว 0 พาเขากลับเข้ามา
+    df_all_targets, dropped_no_target = _drop_no_target_employees(
+        df_all_targets, sup_id, req
+    )
+    if df_all_targets.empty:
+        raise HTTPException(
+            400,
+            detail=(
+                "ไม่มีพนักงานให้กระจายหีบ — ทุกคนที่ส่งมาอยู่ในรายชื่อ "
+                "「พนักงานที่ไม่ต้องตั้งเป้า」 กรุณาปลดอย่างน้อยหนึ่งคนในหน้าแอดมิน"
+            ),
+        )
     # บันทึก "ใครถูกขอมาบ้าง" ก่อนกรองเป้าเงิน — ด่าน I8 ท้ายฟังก์ชันใช้ชุดนี้เทียบ
     # ต้องเก็บจาก frame ที่ยังไม่กรอง ไม่งั้นคนที่ถูกกรองออกจะไม่มีวันถูกตรวจ = ด่านหลอก
     requested_alloc_keys = _requested_alloc_keys(df_all_targets)
@@ -1009,4 +1082,7 @@ def run_optimization_service(
         "tier_strict_sku_count": max(0, len(df_sku) - len(tier_flex_skus)) if req.tiered_allocation else 0,
         "revenue_scale": round(_revenue_scale_factor(df_emp_targets, df_sku), 6),
         "optimization_fallback": optimization_fallback,
+        # ใครถูกตัดเพราะอยู่ในรายชื่อ「ไม่ต้องตั้งเป้า」— หน้าเว็บเอาไปบอกผู้ใช้
+        # ไม่งั้นจะเห็นแค่ว่าคนหายไปจากตาราง แล้วเข้าใจว่าเป็นบั๊กแบบเดียวกับ C442
+        "no_target_excluded": dropped_no_target,
     }

@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from ..core.allocation_checks import detect_new_product_skus
 from ..core.atomic_io import atomic_write_csv
 from ..core.constants import PRICE_FALLBACK
-from . import demo_data
+from . import demo_data, no_target_store
 from ..core.paths import (
     emp_cache_path,
     hist_cache_path,
@@ -261,13 +261,28 @@ def _clean(df: pd.DataFrame) -> list:
 
 def _enrich_employee_allocation_flags(
     emp_records: list[dict[str, Any]],
+    sup_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """คำนวณ allocation_eligible / include_in_allocation ทุกครั้ง (รวม cache เก่า)"""
+    """
+    คำนวณ allocation_eligible / include_in_allocation ทุกครั้ง (รวม cache เก่า)
+
+    จุดเดียวที่ทุกเส้นทางผ่าน (cache hit / สร้างใหม่ / โหมดรวมภาค) รายชื่อ
+    "ไม่ต้องตั้งเป้า" จึงมาเกาะที่นี่ ไม่ต้องไล่แก้ทีละเส้นแล้วลืมเส้นใดเส้นหนึ่ง
+
+    ทีมของแต่ละแถวเอาจาก `supervisor_code` ของแถวเองก่อน (โหมดรวมภาคมีหลายทีม
+    ในลิสต์เดียว) แล้วค่อยตกมาที่ sup_id ที่กำลังโหลด
+    """
+    blocked = no_target_store.no_target_map_safe()
+    default_sup = no_target_store.norm_sup(sup_id)
     for rec in emp_records:
+        sup = no_target_store.norm_sup(rec.get("supervisor_code")) or default_sup
+        emp = no_target_store.norm_emp(rec.get("emp_id"))
+        no_target = bool(emp and emp in blocked.get(sup, set()))
         eligible = is_allocation_eligible(
             bool(rec.get("has_tga_rows")),
             float(rec.get("target_sun") or 0),
-        )
+        ) and not no_target
+        rec["no_target"] = no_target
         rec["allocation_eligible"] = eligible
         rec["include_in_allocation"] = eligible
         rec["view_only"] = not eligible
@@ -326,7 +341,7 @@ def load_employees_payload(
                 emps = cached.get("employees")
                 if isinstance(emps, list):
                     cached["employees"] = _enrich_employee_allocation_flags(
-                        [dict(e) for e in emps]
+                        [dict(e) for e in emps], sup_id
                     )
                 return cached
 
@@ -1106,7 +1121,7 @@ def load_employees_payload(
         ly_amount_by_emp_wh=ly_amount_by_emp_wh,
         avg3_amount_by_emp_wh=avg3_amount_by_emp_wh,
     )
-    emp_records = _enrich_employee_allocation_flags(emp_records)
+    emp_records = _enrich_employee_allocation_flags(emp_records, sup_id)
     if wh_split_emps:
         sku_warnings.append(
             {

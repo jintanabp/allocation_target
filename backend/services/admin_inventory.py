@@ -48,6 +48,8 @@ API_MAP = [
     {"endpoint": "GET /admin/sku-links/catalog", "fabric": True, "sources": ["tga_target_salesman_next", "Dim_Product", "sku_links.json"]},
     {"endpoint": "GET /admin/sku-links/preview", "fabric": True, "sources": ["cross_sold_history_2y_qu", "Dim_Salesman"]},
     {"endpoint": "GET /admin/sl-links", "fabric": False, "sources": ["sl_links.json"]},
+    {"endpoint": "GET /admin/no-target-employees", "fabric": False, "sources": ["no_target_employees.json"]},
+    {"endpoint": "PUT /admin/no-target-employees", "fabric": False, "sources": ["no_target_employees.json"]},
 ]
 
 _CACHE_PATTERNS = [

@@ -11,6 +11,12 @@ class YellowTargetInput(BaseModel):
     emp_id: str
     yellow_target: float = Field(ge=0)
     warehouse_code: str | None = None
+    """
+    ทีมเจ้าของแถว — โหมดรวมภาคส่งพนักงานหลายทีมมาใน request เดียวและ emp_id ซ้ำ
+    ข้ามทีมได้ (I7) ด่าน "ไม่ต้องตั้งเป้า" จึงต้องรู้ทีมถึงจะกันได้ตรงคน
+    ไม่ส่งมาก็ได้ (หน้าเว็บรุ่นเก่าที่ค้างในเบราว์เซอร์) แล้วด่านจะตกไปใช้ชุดรวมทุกทีมแทน
+    """
+    supervisor_code: str | None = None
 
 
 class LockedEditInput(BaseModel):

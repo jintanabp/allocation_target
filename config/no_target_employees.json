@@ -1,0 +1,36 @@
+{
+  "employees": [
+    {
+      "super_code": "SL397",
+      "emp_id": "C445",
+      "emp_name": "",
+      "note": "พนักงานกรณีพิเศษ",
+      "updated_by": "",
+      "updated_at": ""
+    },
+    {
+      "super_code": "SL460",
+      "emp_id": "C497",
+      "emp_name": "",
+      "note": "พนักงานกรณีพิเศษ",
+      "updated_by": "",
+      "updated_at": ""
+    },
+    {
+      "super_code": "SL509",
+      "emp_id": "C444",
+      "emp_name": "",
+      "note": "พนักงานกรณีพิเศษ",
+      "updated_by": "",
+      "updated_at": ""
+    },
+    {
+      "super_code": "SL509",
+      "emp_id": "C449",
+      "emp_name": "",
+      "note": "พนักงานกรณีพิเศษ",
+      "updated_by": "",
+      "updated_at": ""
+    }
+  ]
+}

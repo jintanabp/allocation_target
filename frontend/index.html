@@ -16,7 +16,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=2026082016" />
+  <link rel="stylesheet" href="style.css?v=2026082017" />
 </head>
 
 <body>
@@ -1262,6 +1262,11 @@
             <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminLoadTeam(true)">รีเฟรชจาก Fabric</button>
           </div>
           <div id="adminTeamMeta" class="admin-team-meta" aria-live="polite"></div>
+          <div class="admin-help-strip admin-help-strip--compact">
+            ติ๊ก <strong>ไม่ต้องตั้งเป้า</strong> ให้พนักงานกรณีพิเศษ — ในหน้ากระจายหีบของซุปคนนั้น
+            แถวจะเป็นแถบเข้มในขั้นที่ 1–2 เป้าเงินถูกตั้งเป็น 0 แก้ไม่ได้ และขั้นที่ 3 จะไม่ถูกกระจายหีบ
+            <strong>เป้าหีบของทีมยังเท่าเดิม</strong> คนที่เหลือรับส่วนนั้นไป · มีผลถาวรจนกว่าจะเอาติ๊กออก
+          </div>
           <div class="admin-table-wrap">
             <table class="admin-table admin-table--team">
               <thead>
@@ -1269,12 +1274,18 @@
                   <th>รหัสพนักงาน</th>
                   <th>ชื่อ</th>
                   <th>SuperCode</th>
+                  <th class="admin-team-col-notarget">ไม่ต้องตั้งเป้า</th>
                 </tr>
               </thead>
               <tbody id="adminTeamBody">
-                <tr><td colspan="3" class="admin-empty">เลือก Supervisor แล้วกดโหลด</td></tr>
+                <tr><td colspan="4" class="admin-empty">เลือก Supervisor แล้วกดโหลด</td></tr>
               </tbody>
             </table>
+          </div>
+          <div id="adminTeamNoTargetBar" class="admin-team-notarget-bar" style="display:none;">
+            <span id="adminTeamNoTargetCount" class="admin-team-notarget-count"></span>
+            <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminSaveNoTargetEmployees()">บันทึกรายชื่อไม่ต้องตั้งเป้า</button>
+            <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminLoadTeam(false)">ยกเลิกการแก้</button>
           </div>
         </section>
       </div>
@@ -1488,8 +1499,8 @@
   <script src="vendor/msal-browser.min.js"></script>
   <!-- ตรรกะล้วน (ตัวแปลงเลข/คณิตการเกลี่ย) — ต้องมาก่อน app.js
        ไฟล์นี้มีเทสจริงด้วย node --test tests/logic.test.js -->
-  <script src="logic.js?v=2026082016"></script>
-  <script src="app.js?v=2026082016"></script>
+  <script src="logic.js?v=2026082017"></script>
+  <script src="app.js?v=2026082017"></script>
 </body>
 
 </html>

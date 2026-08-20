@@ -58,6 +58,7 @@ from ..services.user_access_store import (
     upsert_row,
     write_rows,
 )
+from ..services import no_target_store
 from ..services.admin_team import list_supervisor_codes, load_supervisor_team
 from ..services.admin_inventory import build_data_inventory
 from ..services.sku_link_store import (
@@ -1176,6 +1177,85 @@ def admin_delete_allocation(
     if not delete_snapshot(sid, target_month, target_year):
         raise HTTPException(status_code=404, detail="ไม่พบผลกระจายที่จะลบ")
     return {"status": "ok", "sup_id": sid}
+
+
+class NoTargetBody(BaseModel):
+    super_code: str
+    emp_ids: list[str] = Field(default_factory=list)
+    notes: dict[str, str] = Field(default_factory=dict)
+    names: dict[str, str] = Field(default_factory=dict)
+
+
+@router.get("/no-target-employees")
+def admin_list_no_target_employees(
+    user: dict = Depends(require_admin_or_marketing_team),
+    super_code: str | None = Query(None),
+) -> dict[str, Any]:
+    """
+    รายชื่อพนักงานที่ไม่ต้องตั้งเป้า — ระบุ super_code เพื่อดูทีมเดียว
+
+    ต่างจาก「ไม่นำไปกระจายเป้า」ที่ระบบอนุมานจากเป้าเงิน รายชื่อชุดนี้เป็นการ
+    ตัดสินใจของคน จึงอยู่ถาวรจนกว่าจะปลด
+    """
+    rows = no_target_store.read_entries()
+    if user.get("role") in ADMIN_ROLES:
+        allowed = {
+            str(c).strip().upper()
+            for c in ((user.get("admin_scope") or {}).get("sl_codes") or set())
+        }
+        rows = [r for r in rows if r["super_code"] in allowed]
+    if super_code:
+        sup = no_target_store.norm_sup(super_code)
+        if user.get("role") in ADMIN_ROLES:
+            ensure_sup_in_admin_scope(user, sup)
+        rows = [r for r in rows if r["super_code"] == sup]
+    return {"employees": rows, "count": len(rows)}
+
+
+@router.put("/no-target-employees")
+def admin_set_no_target_employees(
+    body: NoTargetBody,
+    admin: dict = Depends(require_admin_scoped),
+) -> dict[str, Any]:
+    """
+    แทนที่รายชื่อของทีมเดียวทั้งชุด — หน้าแอดมินส่งสถานะทั้งทีมมาทีเดียว
+
+    การแทนที่ทั้งชุดตรงกับสิ่งที่ผู้ใช้เห็นบนจอ (ติ๊ก/ไม่ติ๊ก) และปลดคนที่เอาติ๊กออก
+    ได้โดยไม่ต้องมีคำสั่งลบแยก · ทีมอื่นไม่ถูกแตะ
+    """
+    sup = no_target_store.norm_sup(body.super_code)
+    if not sup:
+        raise HTTPException(status_code=400, detail="ไม่ได้ระบุรหัสซุป")
+    ensure_sup_in_admin_scope(admin, sup)
+    before = sorted(no_target_store.no_target_emp_ids(sup))
+    rows = no_target_store.set_for_supervisor(
+        sup,
+        body.emp_ids,
+        updated_by=admin.get("email") or "",
+        notes=body.notes,
+        names=body.names,
+    )
+    after = sorted(no_target_store.no_target_emp_ids(sup))
+    added = [e for e in after if e not in before]
+    removed = [e for e in before if e not in after]
+    if added or removed:
+        _audit_admin(
+            admin,
+            "no_target_employees_set",
+            f"ตั้งพนักงานที่ไม่ต้องตั้งเป้า {sup} — รวม {len(after)} คน",
+            (
+                (f"เพิ่ม: {', '.join(added)}" if added else "")
+                + (" · " if added and removed else "")
+                + (f"ปลด: {', '.join(removed)}" if removed else "")
+            ),
+        )
+    return {
+        "ok": True,
+        "super_code": sup,
+        "employees": [r for r in rows if r["super_code"] == sup],
+        "added": added,
+        "removed": removed,
+    }
 
 
 @router.get("/target-baseline")

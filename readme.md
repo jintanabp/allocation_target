@@ -458,6 +458,8 @@ API: `PUT /admin/user-access/targetsun/bulk` รับ `{emails: [...], enabled:
 | `GET` | `/admin/target-baseline` | เป้าตั้งต้นของงวด + ส่วนต่างจากเป้าปัจจุบัน (แอดมินทุกระดับ ตามขอบเขต) |
 | `GET` | `/admin/target-baseline/export` | ดาวน์โหลดเป้าตั้งต้นเป็นไฟล์ |
 | `POST` | `/admin/target-baseline/restore` | เขียนเป้าตั้งต้นกลับทับเป้าปัจจุบัน — **dev เท่านั้น** · audit ทุกครั้ง |
+| `GET` | `/admin/no-target-employees` | รายชื่อพนักงานที่ไม่ต้องตั้งเป้า (แอดมิน + Marketing อ่านได้) |
+| `PUT` | `/admin/no-target-employees` | แทนที่รายชื่อของทีมเดียวทั้งชุด — ตามขอบเขตผู้ดูแล · audit ทุกครั้ง |
 
 Swagger UI: `<URL แอปบน server>/docs`
 
