@@ -2917,8 +2917,9 @@ function syncLoginFormReady() {
  * พร้อมข้อความ "โหลดรายการไม่สำเร็จ" ทั้งที่ระบบทำงานปกติ แล้วเข้าต่อไม่ได้เลย
  */
 function _isAdminOnlyAccount() {
-  if (S.viewAsEmail) return false;
-  if (!(S.isAdmin || S.isRegionAdmin)) return false;
+  // นับรวมโหมดดูสิทธิ์ด้วย — dev ดูบัญชีแอดมินอย่างเดียวต้องเห็นเหมือนเจ้าตัวจริง
+  // (S.role มาจากบัญชีที่กำลังดูอยู่แล้ว เมื่อ backend จำลอง role ตาม view-as)
+  if (!(S.isAdmin || S.isRegionAdmin || S.role === "dev")) return false;
   return S.loginPickCount === 0;
 }
 
@@ -3103,7 +3104,9 @@ async function loadManagers(force = false) {
       /* role จริงจาก server: dev | admin (รายภาค) | marketing | user
          is_admin คงไว้เพื่อความเข้ากันได้ = dev เท่านั้น
          แอดมินรายภาคต้องไม่ถูกนับเป็น dev ที่ไหนเลย ไม่งั้นจะเห็นแท็บตั้งค่าระบบ */
-      S.role = S.viewAsEmail ? "user" : String(data.role || (data.is_admin ? "dev" : "user"));
+      // ในโหมดดูสิทธิ์ backend ส่ง role ของ "บัญชีที่กำลังดู" มาให้ — ใช้ตรง ๆ
+      // เพื่อให้ dev เห็นหน้าจอ (รวมหน้าแอดมิน) เหมือนบัญชีนั้นจริง ๆ
+      S.role = String(data.role || (data.is_admin ? "dev" : "user"));
       S.isRegionAdmin = S.role === "admin";
       S.adminRegions = Array.isArray(data.admin_regions) ? data.admin_regions : [];
       updateViewAsBanner();
@@ -3186,6 +3189,15 @@ async function loadManagers(force = false) {
       }
     }
     S.loginPickCount = 0;
+    if (S.viewAsEmail) {
+      // โหมดดูสิทธิ์กับบัญชีที่ไม่มีทีมฝั่งผู้ใช้ — ไม่ใช่ความผิดพลาด อย่าหลอกให้กดรีเฟรช
+      populateLoginSupervisorSelect(
+        [],
+        "บัญชีนี้ไม่มีทีมฝั่งผู้ใช้ให้แสดง — กด「กลับหน้าแอดมิน」ด้านบนเพื่อออกจากโหมดดูสิทธิ์",
+      );
+      if (retryBtn) retryBtn.style.display = "none";
+      return;
+    }
     populateLoginSupervisorSelect([], "ดึงรายการ Supervisor / Manager ไม่สำเร็จ — ลองกดรีเฟรช");
     if (retryBtn) retryBtn.style.display = "inline-flex";
   } catch (err) {
@@ -12389,7 +12401,10 @@ function updateAdminNavVisibility() {
   const loginBtn = document.getElementById("adminNavLoginBtn");
   const onLogin = document.getElementById("loginView")?.style.display !== "none";
   const inAdmin = document.getElementById("adminView")?.style.display !== "none";
-  const adminUi = (S.isAdmin || S.isRegionAdmin || S.isMarketing) && !S.viewAsEmail;
+  // โหมดดูสิทธิ์: ถ้าบัญชีที่กำลังดูมีสิทธิ์แอดมิน (ภาค/dev) ปุ่มแอดมินต้องโผล่
+  // เหมือนที่บัญชีนั้นเห็นจริง — บัญชีธรรมดาเท่านั้นที่ไม่มีปุ่ม
+  const simAdmin = S.isRegionAdmin || S.role === "dev";
+  const adminUi = (S.isAdmin || simAdmin || S.isMarketing) && (!S.viewAsEmail || simAdmin);
   if (topBtn) {
     topBtn.style.display = adminUi && !onLogin && !inAdmin ? "inline-flex" : "none";
     if (S.isMarketing && !S.isAdmin) {
@@ -12421,7 +12436,12 @@ function updateViewAsBanner() {
   const active = !!S.viewAsEmail;
   document.body.classList.toggle("has-view-as-banner", active);
   if (active) {
-    txt.textContent = `โหมดทดสอบ: กำลังดูสิทธิ์แบบ ${S.viewAsEmail} (ไม่มีสิทธิ์แอดมิน)`;
+    const roleLabel = S.role === "admin"
+      ? "สิทธิ์แอดมินภาคตามบัญชีนั้น"
+      : S.role === "dev"
+        ? "สิทธิ์ dev ตามบัญชีนั้น"
+        : "ไม่มีสิทธิ์แอดมิน";
+    txt.textContent = `โหมดทดสอบ: กำลังดูสิทธิ์แบบ ${S.viewAsEmail} (${roleLabel})`;
     bar.style.display = "flex";
     updateAdminNavVisibility();
   } else {
@@ -12466,7 +12486,11 @@ function _adminShowTablePlaceholder(message) {
 
 function openAdminView(opts = {}) {
   const teamOnly = opts.teamOnly === true || (S.isMarketing && !S.isAdmin && !S.isRegionAdmin);
-  if ((!S.isAdmin && !S.isRegionAdmin && !S.isMarketing) || S.viewAsEmail) return;
+  // โหมดดูสิทธิ์เปิดหน้าแอดมินได้เมื่อบัญชีที่กำลังดูมีสิทธิ์แอดมินจริง
+  // (backend จำกัดขอบเขตข้อมูลตามบัญชีนั้นให้แล้ว — ดูแบบผู้ใช้ธรรมดายังเข้าไม่ได้)
+  const simAdmin = S.isRegionAdmin || S.role === "dev";
+  if (!(S.isAdmin || simAdmin || S.isMarketing)) return;
+  if (S.viewAsEmail && !simAdmin) return;
   const av = document.getElementById("adminView");
   const dash = document.getElementById("dashboardView");
   const login = document.getElementById("loginView");
@@ -15373,6 +15397,9 @@ async function adminToggleTargetSun(email, enabled) {
 }
 
 async function adminStartViewAs(email) {
+  // โหมดดูสิทธิ์จำลอง "ของจริง" ทั้งสองฝั่ง: บัญชีมีทีม = หน้าจอฝั่งผู้ใช้,
+  // บัญชีแอดมิน = เข้าหน้าแอดมินตามขอบเขตของบัญชีนั้น (backend กรองข้อมูลให้ตาม
+  // X-View-As-Email — dev เป็นคนกดเท่านั้น สิทธิ์มีแต่แคบลง ไม่มีทางกว้างขึ้น)
   S.viewAsEmail = (email || "").trim().toLowerCase();
   S.isAdmin = false;
   S.managers = [];

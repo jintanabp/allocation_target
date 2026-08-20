@@ -41,6 +41,54 @@ def _identity_from_bearer(authorization: str | None) -> dict:
     return ident
 
 
+def _viewed_privileged_context(
+    view_as: str,
+    acting_email: str | None,
+    *,
+    allow_marketing: bool = False,
+) -> dict:
+    """
+    สิทธิ์ของ "บัญชีที่กำลังดูแบบ" สำหรับ route ฝั่งแอดมิน — ใช้เมื่อคนกดเป็น dev เท่านั้น
+
+    โหมดดูสิทธิ์ต้องเหมือนจริง: dev กดดูบัญชีแอดมินภาคแล้วต้องเห็นหน้าแอดมิน
+    แบบเดียวกับที่บัญชีนั้นเห็น (แท็บ/ขอบเขต/ข้อมูลถูกกรองตามภาคของบัญชีนั้น)
+    ไม่ใช่การยกสิทธิ์ — คนกดเป็น dev ซึ่งมีสิทธิ์เต็มอยู่แล้ว มีแต่ "แคบลง" เท่านั้น
+    บัญชีที่ไม่มีสิทธิ์แอดมินได้ 403 แบบเดียวกับที่เจ้าตัวจริงจะเจอ
+    """
+    role = role_for_email(view_as)
+    if role == ROLE_DEV:
+        return {
+            "email": view_as, "is_admin": True, "is_marketing": False,
+            "role": ROLE_DEV, "admin_scope": None,
+            "view_as_email": view_as, "acting_admin_email": acting_email,
+        }
+    if role == ROLE_REGION_ADMIN:
+        scope = admin_scope_for_email(view_as)
+        if not admin_scope_is_usable(scope):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "บัญชีที่กำลังดูแบบยังไม่ได้ระบุภาค/ดิวิชันตามขอบเขตที่ตั้งไว้ — "
+                    "เจ้าตัวจริงล็อกอินมาก็จะเจอ 403 แบบเดียวกัน (เติมข้อมูลให้ก่อน)"
+                ),
+            )
+        return {
+            "email": view_as, "is_admin": False, "is_marketing": False,
+            "role": ROLE_REGION_ADMIN, "admin_scope": scope,
+            "view_as_email": view_as, "acting_admin_email": acting_email,
+        }
+    if allow_marketing and is_marketing_email(view_as):
+        return {
+            "email": view_as, "is_admin": False, "is_marketing": True,
+            "role": "marketing", "admin_scope": None,
+            "view_as_email": view_as, "acting_admin_email": acting_email,
+        }
+    raise HTTPException(
+        status_code=403,
+        detail="บัญชีที่กำลังดูแบบไม่มีสิทธิ์แอดมิน — เจ้าตัวจริงก็เข้าส่วนนี้ไม่ได้เช่นกัน",
+    )
+
+
 def require_authenticated_user(
     authorization: Annotated[str | None, Header()] = None,
     x_view_as_email: Annotated[str | None, Header(alias="X-View-As-Email")] = None,
@@ -50,7 +98,19 @@ def require_authenticated_user(
     แอดมินส่ง X-View-As-Email เพื่อทดสอบมุมมองผู้ใช้ (JWT ยังเป็นตัวแอดมิน)
     """
     if not auth_entra.auth_enabled():
-        return unrestricted_user_context()
+        # โหมดปิด auth = เครื่อง dev — ให้ view-as ใช้งานได้เหมือนโหมดจริง
+        view_as_local = normalized_email(x_view_as_email) if x_view_as_email else ""
+        if not view_as_local:
+            return unrestricted_user_context()
+        try:
+            ctx = build_user_access_context(view_as_local, allow_admin_bypass=False)
+        except (PermissionError, ValueError) as e:
+            raise HTTPException(status_code=403, detail=str(e)) from None
+        ctx["is_admin"] = False
+        ctx["view_as_email"] = view_as_local
+        ctx["acting_admin_email"] = None
+        ctx["acc_admin_full_access"] = False
+        return ctx
 
     t0 = time.perf_counter()
     ident = _identity_from_bearer(authorization)
@@ -86,14 +146,24 @@ def require_authenticated_user(
 
 def require_admin_user(
     authorization: Annotated[str | None, Header()] = None,
+    x_view_as_email: Annotated[str | None, Header(alias="X-View-As-Email")] = None,
 ) -> dict:
     """
-    role dev เท่านั้น — ทำได้ทุกอย่างทั้งระบบ ไม่รับ view-as (ใช้ JWT จริง)
+    role dev เท่านั้น — ทำได้ทุกอย่างทั้งระบบ
 
     ใช้กับของที่มีผลทั้งระบบ: ตั้งค่าปลายทาง/แหล่งข้อมูล, rebuild ลำดับชั้น,
     ล้าง cache, ลบผลกระจาย, export รายชื่อทั้งไฟล์, เปิดสิทธิ์ส่งแบบยกชุด
+
+    ระหว่าง "ดูสิทธิ์แบบผู้ใช้อื่น": จำลองตามจริง — บัญชีที่ดูไม่ใช่ dev ก็ต้อง 403
+    เหมือนที่เจ้าตัวจริงจะเจอ (กันจอ dev-only หลุดเข้าไปในการจำลองแอดมินภาค)
     """
+    view_as = normalized_email(x_view_as_email) if x_view_as_email else ""
     if not auth_entra.auth_enabled():
+        if view_as and role_for_email(view_as) != ROLE_DEV:
+            raise HTTPException(
+                status_code=403,
+                detail="กำลังดูสิทธิ์แบบผู้ใช้อื่น — ส่วนนี้เฉพาะ dev (บัญชีที่ดูไม่ใช่ dev)",
+            )
         return {
             "auth_disabled": True, "email": None, "is_admin": True,
             "is_marketing": False, "role": ROLE_DEV, "admin_scope": None,
@@ -105,6 +175,11 @@ def require_admin_user(
             status_code=403,
             detail="เฉพาะผู้ดูแลระบบ (dev) เท่านั้น — แอดมินรายภาคไม่มีสิทธิ์ส่วนนี้",
         )
+    if view_as and role_for_email(view_as) != ROLE_DEV:
+        raise HTTPException(
+            status_code=403,
+            detail="กำลังดูสิทธิ์แบบผู้ใช้อื่น — ส่วนนี้เฉพาะ dev (บัญชีที่ดูไม่ใช่ dev)",
+        )
     return {
         "email": email, "is_admin": True, "is_marketing": False,
         "role": ROLE_DEV, "admin_scope": None,
@@ -113,6 +188,7 @@ def require_admin_user(
 
 def require_admin_scoped(
     authorization: Annotated[str | None, Header()] = None,
+    x_view_as_email: Annotated[str | None, Header(alias="X-View-As-Email")] = None,
 ) -> dict:
     """
     dev หรือแอดมินรายภาค — คืนขอบเขตมาด้วยเสมอ
@@ -120,8 +196,14 @@ def require_admin_scoped(
     dev ได้ admin_scope = None (ไม่จำกัด) ส่วนแอดมินรายภาคได้ "เซ็ตจริง" เสมอ
     ผู้เรียกต้องกรอง/ตรวจด้วย ensure_row_in_admin_scope หรือ admin_scope["sl_codes"]
     ไม่ใช่แค่ผ่านด่านนี้แล้วถือว่าทำได้ทุกแถว
+
+    dev ที่กำลัง "ดูสิทธิ์แบบ" บัญชีแอดมินภาค จะได้ขอบเขตของบัญชีนั้นแทน —
+    การจำลองมีแต่แคบลง (dev เต็มอยู่แล้ว) และคนที่ไม่ใช่ dev ใช้ view-as ไม่ได้
     """
+    view_as = normalized_email(x_view_as_email) if x_view_as_email else ""
     if not auth_entra.auth_enabled():
+        if view_as:
+            return _viewed_privileged_context(view_as, None)
         return {
             "auth_disabled": True, "email": None, "is_admin": True,
             "is_marketing": False, "role": ROLE_DEV, "admin_scope": None,
@@ -129,10 +211,14 @@ def require_admin_scoped(
     ident = _identity_from_bearer(authorization)
     email = normalized_email(ident.get("email"))
     if is_allocation_admin_email(email):
+        if view_as:
+            return _viewed_privileged_context(view_as, email)
         return {
             "email": email, "is_admin": True, "is_marketing": False,
             "role": ROLE_DEV, "admin_scope": None,
         }
+    if view_as:
+        raise HTTPException(status_code=403, detail="ไม่มีสิทธิ์ใช้โหมดดูแบบผู้ใช้อื่น")
     if is_region_admin_email(email):
         scope = admin_scope_for_email(email)
         if not admin_scope_is_usable(scope):
@@ -186,9 +272,13 @@ def ensure_sup_in_admin_scope(user: dict, sup_id: str) -> None:
 
 def require_admin_or_marketing_team(
     authorization: Annotated[str | None, Header()] = None,
+    x_view_as_email: Annotated[str | None, Header(alias="X-View-As-Email")] = None,
 ) -> dict:
-    """dev, แอดมินรายภาค หรือ Marketing (ทีมพนักงาน)"""
+    """dev, แอดมินรายภาค หรือ Marketing (ทีมพนักงาน) — view-as จำลองตามบัญชีที่ดู"""
+    view_as = normalized_email(x_view_as_email) if x_view_as_email else ""
     if not auth_entra.auth_enabled():
+        if view_as:
+            return _viewed_privileged_context(view_as, None, allow_marketing=True)
         return {
             "auth_disabled": True, "email": None, "is_admin": True,
             "is_marketing": True, "role": ROLE_DEV, "admin_scope": None,
@@ -196,10 +286,14 @@ def require_admin_or_marketing_team(
     ident = _identity_from_bearer(authorization)
     email = normalized_email(ident.get("email"))
     if is_allocation_admin_email(email):
+        if view_as:
+            return _viewed_privileged_context(view_as, email, allow_marketing=True)
         return {
             "email": email, "is_admin": True, "is_marketing": False,
             "role": ROLE_DEV, "admin_scope": None,
         }
+    if view_as:
+        raise HTTPException(status_code=403, detail="ไม่มีสิทธิ์ใช้โหมดดูแบบผู้ใช้อื่น")
     if is_region_admin_email(email):
         return {
             "email": email, "is_admin": False, "is_marketing": False,

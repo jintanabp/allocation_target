@@ -61,12 +61,14 @@ def get_managers(user: dict = Depends(require_authenticated_user)):
         out["is_marketing"] = bool(user.get("is_marketing"))
         # role จริงของบัญชี — หน้าเว็บใช้ตัดสินว่าจะโชว์แท็บแอดมินไหนบ้าง
         # is_admin คงไว้เพื่อความเข้ากันได้ (= role dev) แต่ตัวที่ควรใช้ต่อไปคือ role
-        if user.get("view_as_email"):
-            out["role"] = "user"   # โหมดดูแบบผู้ใช้อื่น = ไม่มีสิทธิ์แอดมินติดไปด้วย
-        else:
-            out["role"] = role_for_email(user.get("email"))
+        #
+        # โหมดดูแบบผู้ใช้อื่น = จำลอง "ตามบัญชีที่ดู" ทั้ง role ด้วย — dev จะได้เห็น
+        # หน้าแอดมินแบบเดียวกับที่บัญชีนั้นเห็นจริง (deps ฝั่ง /admin/* กรองข้อมูล
+        # ตามขอบเขตของบัญชีที่ดูให้แล้ว และ view-as ใช้ได้เฉพาะ dev เท่านั้น)
+        effective_role_email = user.get("view_as_email") or user.get("email")
+        out["role"] = role_for_email(effective_role_email)
         if out["role"] == ROLE_REGION_ADMIN:
-            scope = admin_scope_for_email(user.get("email"))
+            scope = admin_scope_for_email(effective_role_email)
             out["admin_regions"] = sorted(scope.get("regions") or [])
             out["admin_divisions"] = sorted(scope.get("divisions") or [])
             # ขอบเขต "แก้ผู้ใช้คนไหนได้" ที่ dev ตั้งไว้ — หน้าเว็บเอาไปขึ้นบอกให้ชัด
