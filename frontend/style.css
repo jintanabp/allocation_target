@@ -1889,7 +1889,6 @@ body.is-admin .admin-view {
   border: 1px solid var(--border);
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
-}
 .admin-table-wrap--panel {
   flex: 1;
   min-height: 200px;
@@ -5784,6 +5783,13 @@ body.is-admin .admin-view {
   border: 1px solid var(--accent-brd);
 }
 
+/* หัวหน้าแอดมิน — อยู่กึ่งกลางระหว่างแอดมินกับ dev จึงใช้สีเข้มกว่าแอดมินแต่ยังไม่ทึบ */
+.admin-sysrole-chip--head_admin {
+  background: var(--accent);
+  color: var(--white);
+  border: 1px solid var(--accent);
+}
+
 .admin-sysrole-chip--dev {
   background: var(--accent-strong);
   color: var(--white);
@@ -8592,4 +8598,150 @@ body.is-admin-login-only #msLogoutBtn {
 .admin-btn-ghost {
   white-space: nowrap;
   gap: 6px;
+}
+
+/* ══════════════════════════════════════════════
+   หน้าแอดมิน — ปรับปุ่มให้เป็น "ระบบเดียว"
+
+   ปัญหาเดิม: ปุ่มในแถวเดียวกันมาจาก 4 คลาสที่นิยามคนละที คนละยุค — padding
+   ตั้งแต่ 5–10px, ฟอนต์ 11–13px, มุมโค้ง 6/8/10px, บางตัวมีขอบบางตัวไม่มี
+   (ตัวที่ไม่มีขอบเตี้ยกว่า 2px) และ align-items:center ทำให้ลอยคนละระดับ
+
+   แก้ที่ "ระดับ" ไม่ใช่รายปุ่ม: กำหนดความสูงร่วม (--admin-btn-h) แล้วให้ทุกปุ่ม
+   ในหน้าแอดมินยึดค่าเดียวกัน · จำกัดขอบเขตด้วย #adminView เพื่อไม่ให้กระทบหน้าอื่น
+══════════════════════════════════════════════ */
+#adminView {
+  --admin-btn-h: 34px;
+  --admin-btn-h-sm: 30px;
+  --admin-btn-r: 8px;
+}
+
+/* แถวปุ่มด้านบน: ยืดเท่ากันทุกใบ แทนที่จะลอยกลางคนละระดับ */
+#adminView .admin-top__actions,
+#adminView .admin-data-actions,
+#adminView .admin-period-bar {
+  align-items: center;
+}
+
+#adminView .admin-btn-primary,
+#adminView .admin-btn-ghost,
+#adminView .admin-btn-back,
+#adminView .admin-btn-refresh,
+#adminView .admin-bell {
+  min-height: var(--admin-btn-h);
+  padding-top: 0;
+  padding-bottom: 0;
+  border-radius: var(--admin-btn-r);
+  font-size: 12px;
+  font-weight: 700;
+  gap: 6px;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+#adminView .admin-btn-primary--sm,
+#adminView .admin-btn-ghost--sm,
+#adminView .admin-btn-refresh--sm,
+#adminView .admin-btn-ack--sm {
+  min-height: var(--admin-btn-h-sm);
+  padding-top: 0;
+  padding-bottom: 0;
+  border-radius: var(--admin-btn-r);
+  font-size: 12px;
+}
+
+/* ปุ่มไม่มีขอบต้องชดเชย 1px ไม่งั้นเตี้ยกว่าเพื่อนที่มีขอบ */
+#adminView .admin-btn-primary {
+  border: 1px solid transparent;
+}
+
+/* ไอคอนในปุ่มต้องไม่ดันความสูง — emoji ที่ 14px สูงกว่าตัวอักษรข้าง ๆ */
+#adminView .admin-btn-refresh__icon,
+#adminView .admin-btn-back__icon {
+  font-size: 13px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* ช่องกรอก/ดรอปดาวน์ในแถบตัวกรอง ให้สูงเท่าปุ่มเล็ก */
+#adminView .admin-period-bar .field-input,
+#adminView .admin-period-bar .admin-select,
+#adminView .admin-data-actions .field-input {
+  min-height: var(--admin-btn-h-sm);
+  box-sizing: border-box;
+}
+
+/* ปุ่มในตาราง: ระยะซ้าย-ขวาเท่ากัน (เดิม 9px ขวา 10px ซ้ายจากเส้นคั่น) */
+#adminView .admin-action {
+  padding: 5px 10px;
+}
+
+/* ลิงก์ที่ทำหน้าที่เป็นปุ่ม — ห้ามขีดเส้นใต้/ใช้สีลิงก์ของเบราว์เซอร์ */
+#adminView a.admin-btn-ghost,
+#adminView a.admin-btn-primary {
+  text-decoration: none;
+  color: inherit;
+}
+
+/* เมนูซ้าย: คั่นกลุ่มให้เห็นจริง แทนที่จะห่างเท่ากับรายการธรรมดา */
+#adminView .admin-nav-group + .admin-nav-group {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+#adminView .admin-nav-item {
+  border-radius: var(--admin-btn-r);
+}
+
+/* จอแคบ: ให้แถวปุ่มบนเป็นกริดเท่ากันตั้งแต่ 900px ให้ตรงกับจุดที่ layout เปลี่ยน
+   (เดิมปุ่มเปลี่ยนที่ 768px แต่ sidebar เปลี่ยนที่ 900px — ช่วง 769–900 จึงเพี้ยน) */
+@media (max-width: 900px) {
+  #adminView .admin-top__actions {
+    width: 100%;
+    margin-left: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  #adminView .admin-top__actions > * {
+    width: 100%;
+    justify-content: center;
+  }
+
+  #adminView .admin-top__actions > .admin-btn-primary {
+    grid-column: 1 / -1;
+  }
+}
+
+/* คลาสที่ markup ใช้อยู่แต่ไม่เคยมีนิยาม — เติมให้ตรงกับที่ตั้งใจไว้
+   (ไม่ลบออกจาก markup เพราะชื่อคลาสสื่อความหมายให้คนอ่านโค้ดต่อ) */
+#adminView .admin-btn-del:hover,
+#adminView .roles-revoke:hover {
+  background: var(--red-bg);
+  color: var(--red);
+}
+
+#adminView .admin-bell__label {
+  font-weight: 700;
+}
+
+#adminView .admin-radio-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--border-md);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#adminView .admin-radio-pill:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent);
 }

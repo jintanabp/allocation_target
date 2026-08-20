@@ -524,12 +524,28 @@ class TestRolesPageIsWhereRolesAreSet(unittest.TestCase):
         self.assertIn("admin-sysrole-chip", body)
         del inspect
 
-    def test_roles_page_is_dev_only(self):
-        """แอดมินภาคต้องไม่เห็นหน้านี้ — มอบสิทธิ์ต่อให้ตัวเองไม่ได้"""
+    def test_plain_admin_does_not_see_the_roles_page(self):
+        """แอดมินธรรมดาต้องไม่เห็นหน้านี้ — มอบสิทธิ์ต่อให้ตัวเองไม่ได้"""
         src = self._read("app.js")
-        m = re.search(r"const ADMIN_TABS_REGION = \[(.*?)\];", src, re.S)
-        self.assertIsNotNone(m)
+        m = re.search(r"const ADMIN_TABS_ADMIN = \[(.*?)\];", src, re.S)
+        self.assertIsNotNone(m, "ไม่พบรายการแท็บของแอดมินธรรมดา")
         self.assertNotIn("roles", m.group(1))
+
+    def test_head_admin_does_see_the_roles_page(self):
+        """หัวหน้าแอดมินเพิ่ม/ถอดสิทธิ์แอดมินคนอื่นได้ จึงต้องมีแท็บนี้"""
+        src = self._read("app.js")
+        m = re.search(r"const ADMIN_TABS_HEAD_ADMIN = \[(.*?)\];", src, re.S)
+        self.assertIsNotNone(m, "ไม่พบรายการแท็บของหัวหน้าแอดมิน")
+        self.assertIn("roles", m.group(1))
+        self.assertNotIn("data", m.group(1), "แหล่งข้อมูลมีผลทั้งระบบ — ต้องเป็นของ dev เท่านั้น")
+
+    def test_frontend_role_options_match_the_backend(self):
+        """ตัวเลือกระดับสิทธิ์ฝั่งหน้าเว็บต้องตรงกับที่ backend ยอมรับ ไม่งั้นกดแล้วได้ 400"""
+        src = self._read("app.js")
+        m = re.search(r"const ADMIN_SYSROLE_OPTS = \[(.*?)\];", src, re.S)
+        self.assertIsNotNone(m)
+        found = set(re.findall(r'\["([a-z_]+)",', m.group(1)))
+        self.assertEqual(found, set(ac.ASSIGNABLE_ROLES))
 
     def test_scope_options_match_the_backend(self):
         """รายการตัวเลือกฝั่งหน้าเว็บต้องตรงกับที่ backend ยอมรับ ไม่งั้นกดแล้วได้ 400"""
@@ -549,14 +565,33 @@ class TestRoleCannotBeSelfAssigned(unittest.TestCase):
             "ถ้า role แก้ผ่าน PUT /user-access ได้ แอดมินรายภาคจะเลื่อนขั้นตัวเองเป็น dev",
         )
 
-    def test_role_endpoint_is_dev_only(self):
+    def test_role_endpoint_is_limited_to_role_managers(self):
+        """
+        เปลี่ยนพฤติกรรมโดยตั้งใจ (2026-08-20): เดิม dev เท่านั้น ตอนนี้หัวหน้าแอดมินด้วย
+
+        แต่ต้องผ่านด่านเฉพาะ (require_role_manager) ไม่ใช่ด่านแอดมินทั่วไป —
+        ถ้าใช้ require_admin_scoped ตรง ๆ แอดมินธรรมดาจะตั้งสิทธิ์ได้ทันที
+        """
         import inspect
 
         from backend.routers import admin as admin_router
 
         src = inspect.getsource(admin_router.set_user_role)
-        self.assertIn("require_admin_user", src)
-        self.assertNotIn("require_admin_scoped", src)
+        self.assertIn("require_role_manager", src)
+        self.assertNotIn("Depends(require_admin_scoped)", src)
+        self.assertIn(
+            "ensure_can_assign_role", src,
+            "หัวหน้าแอดมินต้องถูกจำกัดว่ามอบได้เฉพาะ 'admin' และแตะสิทธิ์ตัวเองไม่ได้",
+        )
+
+    def test_role_manager_dep_excludes_plain_admin(self):
+        import inspect
+
+        from backend import deps
+
+        src = inspect.getsource(deps.require_role_manager)
+        self.assertIn("ROLE_HEAD_ADMIN", src)
+        self.assertNotIn("ROLE_ADMIN,", src, "แอดมินธรรมดาต้องไม่หลุดเข้ามาในด่านนี้")
 
 
 class TestRoleSurvivesFileWrites(_RbacBase):

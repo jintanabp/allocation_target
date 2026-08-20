@@ -9,6 +9,7 @@ from ..deps import require_authenticated_user
 from ..services.access_control import (
     ADMIN_SCOPE_LABELS,
     DEFAULT_ADMIN_SCOPE,
+    ADMIN_ROLES,
     ROLE_REGION_ADMIN,
     admin_scope_for_email,
     filter_managers_payload_for_user,
@@ -67,7 +68,7 @@ def get_managers(user: dict = Depends(require_authenticated_user)):
         # ตามขอบเขตของบัญชีที่ดูให้แล้ว และ view-as ใช้ได้เฉพาะ dev เท่านั้น)
         effective_role_email = user.get("view_as_email") or user.get("email")
         out["role"] = role_for_email(effective_role_email)
-        if out["role"] == ROLE_REGION_ADMIN:
+        if out["role"] in ADMIN_ROLES:
             scope = admin_scope_for_email(effective_role_email)
             out["admin_regions"] = sorted(scope.get("regions") or [])
             out["admin_divisions"] = sorted(scope.get("divisions") or [])

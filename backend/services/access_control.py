@@ -87,12 +87,25 @@ def is_allocation_admin_email(email: str | None) -> bool:
 
 
 # ── role ที่เก็บใน user_access.json ────────────────────────────────────────
-# dev   = ทำได้ทุกอย่างทั้งระบบ (เดิมคือ "แอดมิน")
-# admin = ผู้ดูแลรายภาค — จัดการผู้ใช้/ผูกรหัส/ดูผลกระจายเฉพาะภาคของตัวเอง
-#         แต่แตะการตั้งค่าระบบ (แหล่งข้อมูล/endpoint/cache) ไม่ได้
+# dev        = ทำได้ทุกอย่างทั้งระบบ รวมการตั้งค่าระบบ (แหล่งข้อมูล/endpoint/cache)
+# head_admin = หัวหน้าแอดมิน — เหมือน admin แต่เพิ่มหน้า "ผู้ดูแลระบบ":
+#              เพิ่ม/ถอดสิทธิ์ admin คนอื่นในขอบเขตตัวเองได้ (ตั้ง dev/หัวหน้าแอดมินไม่ได้)
+# admin      = ผู้ดูแล — จัดการผู้ใช้/ผูกรหัส/ดูผลการดำเนินงาน/ทีม ในขอบเขตของตัวเอง
+#              ตั้งสิทธิ์ใครไม่ได้ และแตะการตั้งค่าระบบไม่ได้
 ROLE_DEV = "dev"
-ROLE_REGION_ADMIN = "admin"
-ASSIGNABLE_ROLES = (ROLE_DEV, ROLE_REGION_ADMIN)
+ROLE_HEAD_ADMIN = "head_admin"
+ROLE_ADMIN = "admin"
+# ชื่อเดิมของ ROLE_ADMIN — คงไว้ให้โค้ด/เทสที่อ้างอยู่เดิมยังทำงาน (ค่าเดียวกันเป๊ะ)
+ROLE_REGION_ADMIN = ROLE_ADMIN
+# เรียง "แรง → เบา" และใช้ลำดับนี้ตัดสิน role ที่แรงที่สุดของอีเมลหนึ่ง ๆ ด้วย
+ASSIGNABLE_ROLES = (ROLE_DEV, ROLE_HEAD_ADMIN, ROLE_ADMIN)
+# role ที่เป็น "ผู้ดูแล" (ไม่ใช่ dev) — มีขอบเขตจำกัดเสมอ ไม่เคยได้ sentinel "ไม่จำกัด"
+ADMIN_ROLES = (ROLE_HEAD_ADMIN, ROLE_ADMIN)
+ROLE_LABELS = {
+    ROLE_DEV: "Dev (ทั้งระบบ)",
+    ROLE_HEAD_ADMIN: "หัวหน้าแอดมิน",
+    ROLE_ADMIN: "แอดมิน",
+}
 
 # ── ขอบเขตของแอดมิน — "แก้ผู้ใช้คนไหนได้บ้าง" (field `admin_scope` ในไฟล์) ──
 # ตั้งตอน dev มอบสิทธิ์ ไล่จากกว้างไปแคบ:
@@ -129,27 +142,48 @@ def _role_from_rows(email: str) -> str:
         }
     except Exception:
         return ""
-    if ROLE_DEV in roles:
-        return ROLE_DEV
-    if ROLE_REGION_ADMIN in roles:
-        return ROLE_REGION_ADMIN
+    for level in ASSIGNABLE_ROLES:  # เรียงแรง → เบา ไว้แล้ว
+        if level in roles:
+            return level
     return ""
 
 
-def is_region_admin_email(email: str | None) -> bool:
-    """แอดมินรายภาค — ไม่ใช่ dev (dev ตรวจด้วย is_allocation_admin_email)"""
+def admin_role_for_email(email: str | None) -> str:
+    """
+    role ผู้ดูแลของอีเมลนี้ — คืน head_admin / admin / "" (ไม่ใช่ผู้ดูแล)
+
+    dev ไม่นับที่นี่ (ตรวจด้วย is_allocation_admin_email) เพราะ dev ไม่มีขอบเขต
+    ส่วนผู้ดูแลทั้งสองระดับต้องมีขอบเขตจำกัดเสมอ
+    """
     ne = normalized_email(email)
     if not ne or ne in parse_allocation_admin_emails():
-        return False
-    return _role_from_rows(ne) == ROLE_REGION_ADMIN
+        return ""
+    role = _role_from_rows(ne)
+    return role if role in ADMIN_ROLES else ""
+
+
+def is_head_admin_email(email: str | None) -> bool:
+    """หัวหน้าแอดมิน — ตั้ง/ถอดสิทธิ์ admin คนอื่นในขอบเขตตัวเองได้"""
+    return admin_role_for_email(email) == ROLE_HEAD_ADMIN
+
+
+def is_region_admin_email(email: str | None) -> bool:
+    """
+    ผู้ดูแล (ระดับ admin ตรง ๆ) — ไม่ใช่ dev และไม่ใช่หัวหน้าแอดมิน
+
+    ชื่อฟังก์ชันมาจากตอนที่ยังเรียกว่า "แอดมินภาค" — คงชื่อไว้เพราะมีเทสอ้างอยู่
+    ถ้าต้องการ "ผู้ดูแลระดับใดก็ได้" ให้ใช้ admin_role_for_email แทน
+    """
+    return admin_role_for_email(email) == ROLE_ADMIN
 
 
 def role_for_email(email: str | None) -> str:
     """role สำหรับส่งให้หน้าเว็บใช้ตัดสินใจว่าจะโชว์แท็บไหน"""
     if is_allocation_admin_email(email):
         return ROLE_DEV
-    if is_region_admin_email(email):
-        return ROLE_REGION_ADMIN
+    admin_role = admin_role_for_email(email)
+    if admin_role:
+        return admin_role
     if is_marketing_email(email):
         return "marketing"
     return "user"

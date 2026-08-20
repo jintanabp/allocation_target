@@ -609,6 +609,7 @@ async function initEntraAuth() {
     if (msBtn) msBtn.style.display = "none";
     const msOut = document.getElementById("msLogoutBtn");
     const line = document.getElementById("msUserLine");
+    S.userEmail = String(acc.username || "").trim().toLowerCase();
     if (line) {
       line.style.display = "block";
       line.textContent = acc.username || acc.name || "";
@@ -810,9 +811,15 @@ let S = {
   isAdmin: false,
   /** role จริงจาก server: dev | admin | marketing | user */
   role: "user",
-  /** แอดมินรายภาค — จัดการเฉพาะภาคตัวเอง แตะการตั้งค่าระบบไม่ได้ */
+  /** แอดมิน (ระดับธรรมดา) — จัดการเฉพาะขอบเขตตัวเอง แตะการตั้งค่าระบบไม่ได้ */
   isRegionAdmin: false,
-  /** ภาคที่แอดมินรายภาคคนนี้ดูแล (ใช้แสดงบนหน้าจอ) */
+  /** อีเมลของคนที่ล็อกอินอยู่ (จากบัญชี Microsoft) — ใช้กันแก้สิทธิ์ตัวเอง */
+  userEmail: "",
+  /** หัวหน้าแอดมิน — เหมือนแอดมิน + จัดการสิทธิ์ผู้ดูแลคนอื่นได้ */
+  isHeadAdmin: false,
+  /** ผู้ดูแลระดับใดก็ได้ (admin หรือ head_admin) — ไม่รวม dev */
+  isAdminRole: false,
+  /** ภาคที่ผู้ดูแลคนนี้ดูแล (ใช้แสดงบนหน้าจอ) */
   adminRegions: [],
   /** Marketing — แอดมินแท็บทีมพนักงานเท่านั้น */
   isMarketing: false,
@@ -2912,14 +2919,14 @@ function syncLoginFormReady() {
 /**
  * บัญชี "แอดมินอย่างเดียว" — มีสิทธิ์ดูแลระบบแต่ไม่มีทีมให้เลือกสักรายการ
  *
- * แอดมินรายภาคส่วนใหญ่เป็นซุป/ผู้จัดการที่มีสิทธิ์แอดมินซ้อนอยู่ (มีทีมให้เลือก)
+ * ผู้ดูแลส่วนใหญ่เป็นซุป/ผู้จัดการที่มีสิทธิ์แอดมินซ้อนอยู่ (มีทีมให้เลือก)
  * แต่บางบัญชีตั้งไว้เพื่อดูแลระบบล้วน ๆ — เดิมคนกลุ่มนี้ล็อกอินแล้วเจอฟอร์มเปล่า
  * พร้อมข้อความ "โหลดรายการไม่สำเร็จ" ทั้งที่ระบบทำงานปกติ แล้วเข้าต่อไม่ได้เลย
  */
 function _isAdminOnlyAccount() {
   // นับรวมโหมดดูสิทธิ์ด้วย — dev ดูบัญชีแอดมินอย่างเดียวต้องเห็นเหมือนเจ้าตัวจริง
   // (S.role มาจากบัญชีที่กำลังดูอยู่แล้ว เมื่อ backend จำลอง role ตาม view-as)
-  if (!(S.isAdmin || S.isRegionAdmin || S.role === "dev")) return false;
+  if (!(S.isAdmin || S.isAdminRole || S.role === "dev")) return false;
   return S.loginPickCount === 0;
 }
 
@@ -2930,7 +2937,7 @@ function applyAdminLoginLayout() {
   const adminWait = document.getElementById("adminLoginWait");
   const msBtn = document.getElementById("msLoginBtn");
   const onLogin = document.getElementById("loginView")?.style.display !== "none";
-  // dev = ไม่มีตำแหน่งอยู่แล้ว · แอดมินรายภาคเข้าเงื่อนไขนี้เฉพาะเมื่อไม่มีทีมให้เลือก
+  // dev = ไม่มีตำแหน่งอยู่แล้ว · ผู้ดูแลเข้าเงื่อนไขนี้เฉพาะเมื่อไม่มีทีมให้เลือก
   // (ถ้ามีทีม เขาคือซุป/ผู้จัดการที่มีสิทธิ์แอดมินซ้อน — ต้องได้ฟอร์มล็อกอินตามปกติ)
   const adminMode = !!(
     (S.isAdmin || _isAdminOnlyAccount()) && !S.viewAsEmail && entraMsalReady() && onLogin
@@ -3103,11 +3110,13 @@ async function loadManagers(force = false) {
       }
       /* role จริงจาก server: dev | admin (รายภาค) | marketing | user
          is_admin คงไว้เพื่อความเข้ากันได้ = dev เท่านั้น
-         แอดมินรายภาคต้องไม่ถูกนับเป็น dev ที่ไหนเลย ไม่งั้นจะเห็นแท็บตั้งค่าระบบ */
+         ผู้ดูแลต้องไม่ถูกนับเป็น dev ที่ไหนเลย ไม่งั้นจะเห็นแท็บตั้งค่าระบบ */
       // ในโหมดดูสิทธิ์ backend ส่ง role ของ "บัญชีที่กำลังดู" มาให้ — ใช้ตรง ๆ
       // เพื่อให้ dev เห็นหน้าจอ (รวมหน้าแอดมิน) เหมือนบัญชีนั้นจริง ๆ
       S.role = String(data.role || (data.is_admin ? "dev" : "user"));
       S.isRegionAdmin = S.role === "admin";
+      S.isHeadAdmin = S.role === "head_admin";
+      S.isAdminRole = S.isRegionAdmin || S.isHeadAdmin;
       S.adminRegions = Array.isArray(data.admin_regions) ? data.admin_regions : [];
       updateViewAsBanner();
       updateAdminNavVisibility();
@@ -12353,7 +12362,7 @@ function _adminValidateAccessDraft(draft) {
 const ADMIN_DIVISION_OPTS = ["", "Div.B", "Div.E", "Div.S"];
 const ADMIN_UNIT_OPTS = ["", "van", "credit"];
 
-// ขอบเขตของ "แอดมินภาค" — แก้ผู้ใช้คนไหนได้บ้าง (ต้องตรงกับ ASSIGNABLE_ADMIN_SCOPES ฝั่ง backend)
+// ขอบเขตของผู้ดูแล — แก้ผู้ใช้คนไหนได้บ้าง (ต้องตรงกับ ASSIGNABLE_ADMIN_SCOPES ฝั่ง backend)
 // เรียงแคบ → กว้าง ให้ค่าที่ปลอดภัยสุดอยู่บนสุดของรายการ
 const ADMIN_SCOPE_OPTS = [
   ["division_region", "ดิวิชัน + ภาคของตัวเอง"],
@@ -12401,22 +12410,17 @@ function updateAdminNavVisibility() {
   const loginBtn = document.getElementById("adminNavLoginBtn");
   const onLogin = document.getElementById("loginView")?.style.display !== "none";
   const inAdmin = document.getElementById("adminView")?.style.display !== "none";
-  // โหมดดูสิทธิ์: ถ้าบัญชีที่กำลังดูมีสิทธิ์แอดมิน (ภาค/dev) ปุ่มแอดมินต้องโผล่
+  // โหมดดูสิทธิ์: ถ้าบัญชีที่กำลังดูมีสิทธิ์ผู้ดูแล (ระดับใดก็ได้) หรือ dev ปุ่มต้องโผล่
   // เหมือนที่บัญชีนั้นเห็นจริง — บัญชีธรรมดาเท่านั้นที่ไม่มีปุ่ม
-  const simAdmin = S.isRegionAdmin || S.role === "dev";
+  const simAdmin = S.isAdminRole || S.role === "dev";
   const adminUi = (S.isAdmin || simAdmin || S.isMarketing) && (!S.viewAsEmail || simAdmin);
   if (topBtn) {
     topBtn.style.display = adminUi && !onLogin && !inAdmin ? "inline-flex" : "none";
-    if (S.isMarketing && !S.isAdmin) {
-      topBtn.textContent = "ทีมพนักงาน";
-    } else if (S.isRegionAdmin) {
-      topBtn.textContent = "หน้าแอดมิน";
-    } else {
-      topBtn.textContent = "แอดมิน";
-    }
+    // ผู้ดูแลทุกระดับใช้คำเดียวกัน — ระดับสิทธิ์ต่างกันที่ "เข้าไปแล้วเห็นอะไร" ไม่ใช่ชื่อปุ่ม
+    topBtn.textContent = S.isMarketing && !S.isAdmin ? "ทีมพนักงาน" : "หน้าแอดมิน";
   }
   if (loginBtn && !document.body.classList.contains("is-admin-login-only")) {
-    // แอดมินรายภาคเป็น super manager ที่ใช้ dashboard ด้วย — ปุ่มนี้อยู่บน topbar พอ
+    // ผู้ดูแลส่วนใหญ่เป็น super manager ที่ใช้ dashboard ด้วย — ปุ่มนี้อยู่บน topbar พอ
     // ไม่ต้องดันขึ้นหน้าล็อกอินแบบ dev (ที่ไม่ได้ใช้ dashboard)
     const showLoginAdminBtn = (S.isAdmin || _isAdminOnlyAccount()) && onLogin;
     loginBtn.style.display = showLoginAdminBtn ? "block" : "none";
@@ -12436,7 +12440,9 @@ function updateViewAsBanner() {
   const active = !!S.viewAsEmail;
   document.body.classList.toggle("has-view-as-banner", active);
   if (active) {
-    const roleLabel = S.role === "admin"
+    const roleLabel = S.role === "head_admin"
+      ? "สิทธิ์หัวหน้าแอดมินตามบัญชีนั้น"
+      : S.role === "admin"
       ? "สิทธิ์แอดมินตามบัญชีนั้น"
       : S.role === "dev"
         ? "สิทธิ์ dev ตามบัญชีนั้น"
@@ -12485,10 +12491,10 @@ function _adminShowTablePlaceholder(message) {
 }
 
 function openAdminView(opts = {}) {
-  const teamOnly = opts.teamOnly === true || (S.isMarketing && !S.isAdmin && !S.isRegionAdmin);
+  const teamOnly = opts.teamOnly === true || (S.isMarketing && !S.isAdmin && !S.isAdminRole);
   // โหมดดูสิทธิ์เปิดหน้าแอดมินได้เมื่อบัญชีที่กำลังดูมีสิทธิ์แอดมินจริง
   // (backend จำกัดขอบเขตข้อมูลตามบัญชีนั้นให้แล้ว — ดูแบบผู้ใช้ธรรมดายังเข้าไม่ได้)
-  const simAdmin = S.isRegionAdmin || S.role === "dev";
+  const simAdmin = S.isAdminRole || S.role === "dev";
   if (!(S.isAdmin || simAdmin || S.isMarketing)) return;
   if (S.viewAsEmail && !simAdmin) return;
   const av = document.getElementById("adminView");
@@ -12527,19 +12533,25 @@ function openAdminView(opts = {}) {
   adminLoadRows();
 }
 
-/** ผูกรหัส SL/SKU — dev และแอดมินรายภาคทำได้ (ฝั่ง server ตรวจขอบเขตภาคอีกชั้น) */
+/** ผูกรหัส SL/SKU — dev และผู้ดูแลทุกระดับทำได้ (ฝั่ง server ตรวจขอบเขตอีกชั้น) */
 function _canManageLinks() {
-  return !!(S.isAdmin || S.isRegionAdmin);
+  return !!(S.isAdmin || S.isAdminRole);
 }
 
-/* แท็บที่แต่ละ role เข้าได้ — null = ทุกแท็บ
-   แอดมินรายภาคไม่ได้ "แหล่งข้อมูล" (ตั้งค่าปลายทาง/แหล่งเป้า/ล้าง cache) เพราะมีผลทั้งระบบ */
+/* แท็บที่แต่ละ role เข้าได้ — null = ทุกแท็บ (dev)
+
+   ผู้ดูแลทุกระดับไม่ได้ "แหล่งข้อมูล" (ตั้งค่าปลายทาง/แหล่งเป้า/ล้าง cache) เพราะมีผลทั้งระบบ
+   ต่างกันที่ "ผู้ดูแลระบบ": หัวหน้าแอดมินเข้าได้ (เพิ่ม/ถอดสิทธิ์แอดมินคนอื่นในขอบเขตตัวเอง)
+   ส่วนแอดมินธรรมดาเข้าไม่ได้ — backend กันซ้ำอีกชั้นด้วย require_role_manager */
 const ADMIN_TABS_MARKETING = ["team", "skuLinks", "slLinks"];
-const ADMIN_TABS_REGION = ["users", "slLinks", "skuLinks", "allocations", "usageLogs", "team"];
+const ADMIN_TABS_ADMIN = ["users", "slLinks", "skuLinks", "allocations", "usageLogs", "team"];
+const ADMIN_TABS_HEAD_ADMIN = ["users", "roles", "slLinks", "skuLinks", "allocations", "usageLogs", "team"];
 
 function _adminAllowedTabs(teamOnly) {
   if (teamOnly) return ADMIN_TABS_MARKETING;
-  if (S.isRegionAdmin && !S.isAdmin) return ADMIN_TABS_REGION;
+  if (S.isAdmin) return null;
+  if (S.isHeadAdmin) return ADMIN_TABS_HEAD_ADMIN;
+  if (S.isAdminRole) return ADMIN_TABS_ADMIN;
   return null;
 }
 
@@ -12613,7 +12625,7 @@ let _adminSlLinkRows = [];
 let _adminSlLinkEditOld = null;
 
 function adminSwitchTab(tab) {
-  const teamOnly = S.isMarketing && !S.isAdmin && !S.isRegionAdmin;
+  const teamOnly = S.isMarketing && !S.isAdmin && !S.isAdminRole;
   const allowed = _adminAllowedTabs(teamOnly);
   if (allowed && !allowed.includes(tab)) {
     tab = allowed[0];
@@ -14747,7 +14759,7 @@ function _adminIncompleteBadgeHtml(r) {
 }
 
 /**
- * ช่องตั้งสิทธิ์ระบบ (dev / แอดมินภาค) — เห็นเฉพาะ dev
+ * ช่องตั้งสิทธิ์ระบบ (dev / หัวหน้าแอดมิน / แอดมิน) — ตั้งได้ที่หน้า "ผู้ดูแลระบบ"
  *
  * แยกจากคอลัมน์ "ตำแหน่ง" โดยตั้งใจ: ตำแหน่งคือบทบาทในงานขาย (Supervisor/Manager)
  * ส่วนอันนี้คือสิทธิ์ในการดูแลระบบ คนละเรื่องกัน และ dev เท่านั้นที่ตั้งได้
@@ -14760,11 +14772,11 @@ function _adminSystemRoleControlHtml(r) {
   const cur = String(r.system_role || "").toLowerCase();
   if (!cur) return "";
   const scope = String(r.admin_scope || "").toLowerCase() || ADMIN_SCOPE_DEFAULT;
-  const label = cur === "dev" ? "Dev" : "แอดมิน";
+  const label = cur === "dev" ? "Dev" : cur === "head_admin" ? "หัวหน้าแอดมิน" : "แอดมิน";
   const tip =
     cur === "dev"
       ? "Dev — ดูแลได้ทั้งระบบ (แก้ที่หน้า ผู้ดูแลระบบ)"
-      : `แอดมิน · ขอบเขต: ${_adminScopeLabel(scope)} (แก้ที่หน้า ผู้ดูแลระบบ)`;
+      : `${label} · ขอบเขต: ${_adminScopeLabel(scope)} (แก้ที่หน้า ผู้ดูแลระบบ)`;
   return `<span class="admin-sysrole-chip admin-sysrole-chip--${cur}" title="${escapeHtml(tip)}">${escapeHtml(label)}</span>`;
 }
 
@@ -14797,10 +14809,48 @@ function _adminRolesRows() {
       return true;
     })
     .sort((a, b) => {
-      const ra = String(a.system_role) === "dev" ? 0 : 1;
-      const rb = String(b.system_role) === "dev" ? 0 : 1;
-      return ra - rb || String(a.email).localeCompare(String(b.email));
+      // เรียงแรง → เบา: dev → หัวหน้าแอดมิน → แอดมิน แล้วค่อยเรียงตามอีเมล
+      const rank = (x) => ADMIN_SYSROLE_RANK[String(x.system_role || "").toLowerCase()] ?? 9;
+      return rank(a) - rank(b) || String(a.email).localeCompare(String(b.email));
     });
+}
+
+/** ระดับสิทธิ์ที่ผู้ใช้ปัจจุบันมอบได้ — dev ได้ครบ · หัวหน้าแอดมินได้เฉพาะ "แอดมิน" */
+const ADMIN_SYSROLE_OPTS = [
+  ["admin", "แอดมิน"],
+  ["head_admin", "หัวหน้าแอดมิน"],
+  ["dev", "Dev (ทั้งระบบ)"],
+];
+
+/** คำอธิบายเต็มในฟอร์มเพิ่มผู้ดูแล */
+const ADMIN_SYSROLE_DETAIL = {
+  admin: "แอดมิน — จัดการผู้ใช้/ผูกรหัส/ผลการดำเนินงาน ตามขอบเขต",
+  head_admin: "หัวหน้าแอดมิน — เหมือนแอดมิน + เพิ่ม/ถอดสิทธิ์แอดมินคนอื่นได้",
+  dev: "Dev — ทำได้ทุกอย่างทั้งระบบ",
+};
+
+/** ลำดับความแรงสำหรับเรียงตาราง (ต้องตรงกับ ASSIGNABLE_ROLES ฝั่ง backend) */
+const ADMIN_SYSROLE_RANK = { dev: 0, head_admin: 1, admin: 2 };
+
+function _adminAssignableRoles() {
+  return S.isAdmin || S.role === "dev" ? ADMIN_SYSROLE_OPTS : [ADMIN_SYSROLE_OPTS[0]];
+}
+
+function _adminRoleOptionsHtml(cur) {
+  const allowed = _adminAssignableRoles().map(([v]) => v);
+  // ระดับที่มอบไม่ได้ยังต้องแสดงถ้าแถวนั้นเป็นระดับนั้นอยู่ ไม่งั้น select จะโชว์ค่าผิด
+  return ADMIN_SYSROLE_OPTS.filter(([v]) => allowed.includes(v) || v === cur)
+    .map(([v, l]) => `<option value="${v}" ${v === cur ? "selected" : ""}>${escapeHtml(l)}</option>`)
+    .join("");
+}
+
+/** หัวหน้าแอดมินแก้ได้เฉพาะแถวระดับ "แอดมิน" ที่ไม่ใช่ตัวเอง — dev แก้ได้ทุกแถว */
+function _adminCanEditRoleRow(r) {
+  if (S.isAdmin || S.role === "dev") return true;
+  const cur = String(r.system_role || "").toLowerCase();
+  const me = String(S.userEmail || "").trim().toLowerCase();
+  if (me && me === String(r.email || "").trim().toLowerCase()) return false;
+  return cur === "admin";
 }
 
 function adminRenderRolesPanel() {
@@ -14811,10 +14861,14 @@ function adminRenderRolesPanel() {
   if (empty) empty.style.display = rows.length ? "none" : "";
   body.innerHTML = "";
   rows.forEach((r) => {
-    const isDev = String(r.system_role).toLowerCase() === "dev";
+    const cur = String(r.system_role || "").toLowerCase();
+    const isDev = cur === "dev";
     const scope = String(r.admin_scope || "").toLowerCase() || ADMIN_SCOPE_DEFAULT;
     // ขอบเขตที่ไม่ใช่ "ทุกคนในระบบ" ต้องรู้ดิวิชัน/ภาคของคนนี้ ไม่งั้นขอบเขตว่าง
     const scopeNeedsPlace = !isDev && scope !== "all";
+    // หัวหน้าแอดมินแก้ได้เฉพาะแถวระดับ "แอดมิน" และไม่ใช่แถวของตัวเอง
+    // (backend กันซ้ำด้วย ensure_can_assign_role — ตรงนี้แค่ไม่ให้กดแล้วเจอ 403)
+    const canEditThisRow = _adminCanEditRoleRow(r);
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td class="roles-td-who">
@@ -14833,15 +14887,20 @@ function adminRenderRolesPanel() {
           : '<span class="roles-onlyadmin">แอดมินอย่างเดียว</span><div class="roles-sub">ไม่มีตำแหน่งงาน · ไม่เห็นข้อมูลทีม</div>'
       }</td>
       <td class="roles-td-role">
-        <select class="roles-select roles-select--role" aria-label="สิทธิ์ดูแลระบบของ ${escapeHtml(r.email)}">
-          <option value="admin" ${isDev ? "" : "selected"}>แอดมิน</option>
-          <option value="dev" ${isDev ? "selected" : ""}>Dev (ทั้งระบบ)</option>
-        </select>
+        <select class="roles-select roles-select--role" aria-label="สิทธิ์ดูแลระบบของ ${escapeHtml(r.email)}"${
+          canEditThisRow ? "" : " disabled"
+        }>
+          ${_adminRoleOptionsHtml(cur)}
+        </select>${
+          canEditThisRow
+            ? ""
+            : '<div class="roles-scope-hint">ระดับนี้ต้องให้ Dev เป็นคนแก้</div>'
+        }
       </td>
       <td class="roles-td-scope">${
         isDev
           ? '<span class="roles-scope-na">ทั้งระบบ — ไม่มีขอบเขตให้จำกัด</span>'
-          : `<select class="roles-select roles-select--scope" aria-label="ขอบเขตของ ${escapeHtml(r.email)}">
+          : `<select class="roles-select roles-select--scope" aria-label="ขอบเขตของ ${escapeHtml(r.email)}"${canEditThisRow ? "" : " disabled"}>
               ${ADMIN_SCOPE_OPTS.map(
                 ([v, l]) => `<option value="${v}" ${v === scope ? "selected" : ""}>${escapeHtml(l)}</option>`
               ).join("")}
@@ -14849,13 +14908,15 @@ function adminRenderRolesPanel() {
             <div class="roles-scope-hint">${escapeHtml(ADMIN_SCOPE_DETAIL[scope] || "")}</div>`
       }</td>
       <td class="roles-td-act">
-        <button type="button" class="admin-action admin-action--del roles-revoke">ถอดสิทธิ์</button>
+        <button type="button" class="admin-action admin-action--del roles-revoke"${canEditThisRow ? "" : " disabled"}>ถอดสิทธิ์</button>
       </td>`;
     tr.querySelector(".roles-select--role")?.addEventListener("change", (e) => {
       adminSetSystemRole(r.email, e.target.value, tr.querySelector(".roles-select--scope")?.value || "");
     });
     tr.querySelector(".roles-select--scope")?.addEventListener("change", (e) => {
-      adminSetSystemRole(r.email, "admin", e.target.value);
+      // คงระดับเดิมไว้ — เปลี่ยนแค่ขอบเขต (เดิม hardcode "admin" ทำให้หัวหน้าแอดมินถูกลดขั้นเงียบ ๆ)
+      const roleNow = tr.querySelector(".roles-select--role")?.value || cur || "admin";
+      adminSetSystemRole(r.email, roleNow, e.target.value);
     });
     tr.querySelector(".roles-revoke")?.addEventListener("click", () => {
       adminSetSystemRole(r.email, "", "");
@@ -14889,8 +14950,9 @@ async function adminRolesShowAdd() {
       <label class="roles-add__field">
         <span>สิทธิ์</span>
         <select id="rolesAddRole" class="field-input">
-          <option value="admin" selected>แอดมิน — จัดการผู้ใช้ตามขอบเขต</option>
-          <option value="dev">Dev — ทำได้ทุกอย่างทั้งระบบ</option>
+          ${_adminAssignableRoles()
+            .map(([v]) => `<option value="${v}" ${v === "admin" ? "selected" : ""}>${escapeHtml(ADMIN_SYSROLE_DETAIL[v] || v)}</option>`)
+            .join("")}
         </select>
       </label>
       <label class="roles-add__field" id="rolesAddScopeWrap">
@@ -15078,7 +15140,7 @@ function _adminRenderTableRowView(tr, r) {
         <button type="button" class="admin-action admin-action--edit">แก้ไข</button>
         ${
           // "ดูแบบนี้" = สวมสิทธิ์เข้าไปเห็นข้อมูลของคนอื่น — สงวนไว้ให้ dev เท่านั้น
-          // แอดมินภาคจัดการรายชื่อ/แก้ไข/ลบได้ แต่ไม่ควรเข้าไปดูข้อมูลขายของทีมใคร
+          // ผู้ดูแลจัดการรายชื่อ/แก้ไข/ลบได้ แต่ไม่ควรเข้าไปดูข้อมูลขายของทีมใคร
           // (backend ตอบ 403 อยู่แล้ว — ตรงนี้คือไม่โชว์ปุ่มที่กดไปก็ไม่ได้)
           S.isAdmin
             ? '<button type="button" class="admin-action admin-action--view">ดูแบบนี้</button>'

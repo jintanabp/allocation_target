@@ -16,7 +16,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=2026082004" />
+  <link rel="stylesheet" href="style.css?v=2026082006" />
 </head>
 
 <body>
@@ -1173,8 +1173,12 @@
               <span>เห็นและทำได้ทุกอย่างทั้งระบบ รวมการตั้งค่าปลายทางที่ส่งข้อมูลจริง</span>
             </div>
             <div class="roles-legend__item">
+              <span class="admin-sysrole-chip admin-sysrole-chip--head_admin">หัวหน้าแอดมิน</span>
+              <span>เหมือนแอดมิน + <strong>เพิ่ม/ถอดสิทธิ์แอดมินคนอื่น</strong>ในขอบเขตตัวเองได้ (ตั้ง Dev หรือหัวหน้าแอดมินไม่ได้)</span>
+            </div>
+            <div class="roles-legend__item">
               <span class="admin-sysrole-chip admin-sysrole-chip--admin">แอดมิน</span>
-              <span>จัดการผู้ใช้ / ผูกรหัส / ดูผลการกระจาย ตาม<strong>ขอบเขต</strong>ที่กำหนดให้ แต่แตะการตั้งค่าระบบไม่ได้</span>
+              <span>จัดการผู้ใช้ / ผูกรหัส / ดูผลการดำเนินงาน ตาม<strong>ขอบเขต</strong>ที่กำหนดให้ แต่ตั้งสิทธิ์ใครและแตะการตั้งค่าระบบไม่ได้</span>
             </div>
             <p class="roles-legend__note">
               สิทธิ์นี้<strong>ซ้อนทับตำแหน่งเดิม</strong> — คนหนึ่งเป็นทั้ง Supervisor และแอดมินได้พร้อมกัน ตำแหน่งงานและการเห็นข้อมูลทีมยังเหมือนเดิมทุกอย่าง
@@ -1480,8 +1484,8 @@
   <script src="vendor/msal-browser.min.js"></script>
   <!-- ตรรกะล้วน (ตัวแปลงเลข/คณิตการเกลี่ย) — ต้องมาก่อน app.js
        ไฟล์นี้มีเทสจริงด้วย node --test tests/logic.test.js -->
-  <script src="logic.js?v=2026082004"></script>
-  <script src="app.js?v=2026082004"></script>
+  <script src="logic.js?v=2026082006"></script>
+  <script src="app.js?v=2026082006"></script>
 </body>
 
 </html>

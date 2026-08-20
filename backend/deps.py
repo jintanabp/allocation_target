@@ -6,8 +6,12 @@ from fastapi import Header, HTTPException
 
 from . import auth_entra
 from .services.access_control import (
+    ADMIN_ROLES,
+    ROLE_ADMIN,
     ROLE_DEV,
+    ROLE_HEAD_ADMIN,
     ROLE_REGION_ADMIN,
+    admin_role_for_email,
     admin_scope_for_email,
     admin_scope_is_usable,
     build_user_access_context,
@@ -50,7 +54,7 @@ def _viewed_privileged_context(
     """
     สิทธิ์ของ "บัญชีที่กำลังดูแบบ" สำหรับ route ฝั่งแอดมิน — ใช้เมื่อคนกดเป็น dev เท่านั้น
 
-    โหมดดูสิทธิ์ต้องเหมือนจริง: dev กดดูบัญชีแอดมินภาคแล้วต้องเห็นหน้าแอดมิน
+    โหมดดูสิทธิ์ต้องเหมือนจริง: dev กดดูบัญชีผู้ดูแลแล้วต้องเห็นหน้าแอดมิน
     แบบเดียวกับที่บัญชีนั้นเห็น (แท็บ/ขอบเขต/ข้อมูลถูกกรองตามภาคของบัญชีนั้น)
     ไม่ใช่การยกสิทธิ์ — คนกดเป็น dev ซึ่งมีสิทธิ์เต็มอยู่แล้ว มีแต่ "แคบลง" เท่านั้น
     บัญชีที่ไม่มีสิทธิ์แอดมินได้ 403 แบบเดียวกับที่เจ้าตัวจริงจะเจอ
@@ -62,7 +66,7 @@ def _viewed_privileged_context(
             "role": ROLE_DEV, "admin_scope": None,
             "view_as_email": view_as, "acting_admin_email": acting_email,
         }
-    if role == ROLE_REGION_ADMIN:
+    if role in ADMIN_ROLES:
         scope = admin_scope_for_email(view_as)
         if not admin_scope_is_usable(scope):
             raise HTTPException(
@@ -74,7 +78,7 @@ def _viewed_privileged_context(
             )
         return {
             "email": view_as, "is_admin": False, "is_marketing": False,
-            "role": ROLE_REGION_ADMIN, "admin_scope": scope,
+            "role": role, "admin_scope": scope,
             "view_as_email": view_as, "acting_admin_email": acting_email,
         }
     if allow_marketing and is_marketing_email(view_as):
@@ -155,7 +159,7 @@ def require_admin_user(
     ล้าง cache, ลบผลกระจาย, export รายชื่อทั้งไฟล์, เปิดสิทธิ์ส่งแบบยกชุด
 
     ระหว่าง "ดูสิทธิ์แบบผู้ใช้อื่น": จำลองตามจริง — บัญชีที่ดูไม่ใช่ dev ก็ต้อง 403
-    เหมือนที่เจ้าตัวจริงจะเจอ (กันจอ dev-only หลุดเข้าไปในการจำลองแอดมินภาค)
+    เหมือนที่เจ้าตัวจริงจะเจอ (กันจอ dev-only หลุดเข้าไปในการจำลองผู้ดูแล)
     """
     view_as = normalized_email(x_view_as_email) if x_view_as_email else ""
     if not auth_entra.auth_enabled():
@@ -173,7 +177,7 @@ def require_admin_user(
     if not is_allocation_admin_email(email):
         raise HTTPException(
             status_code=403,
-            detail="เฉพาะผู้ดูแลระบบ (dev) เท่านั้น — แอดมินรายภาคไม่มีสิทธิ์ส่วนนี้",
+            detail="เฉพาะผู้ดูแลระบบ (dev) เท่านั้น — ผู้ดูแลระดับอื่นไม่มีสิทธิ์ส่วนนี้",
         )
     if view_as and role_for_email(view_as) != ROLE_DEV:
         raise HTTPException(
@@ -191,13 +195,13 @@ def require_admin_scoped(
     x_view_as_email: Annotated[str | None, Header(alias="X-View-As-Email")] = None,
 ) -> dict:
     """
-    dev หรือแอดมินรายภาค — คืนขอบเขตมาด้วยเสมอ
+    dev หรือผู้ดูแล (หัวหน้าแอดมิน/แอดมิน) — คืนขอบเขตมาด้วยเสมอ
 
-    dev ได้ admin_scope = None (ไม่จำกัด) ส่วนแอดมินรายภาคได้ "เซ็ตจริง" เสมอ
+    dev ได้ admin_scope = None (ไม่จำกัด) ส่วนผู้ดูแลได้ "เซ็ตจริง" เสมอ
     ผู้เรียกต้องกรอง/ตรวจด้วย ensure_row_in_admin_scope หรือ admin_scope["sl_codes"]
     ไม่ใช่แค่ผ่านด่านนี้แล้วถือว่าทำได้ทุกแถว
 
-    dev ที่กำลัง "ดูสิทธิ์แบบ" บัญชีแอดมินภาค จะได้ขอบเขตของบัญชีนั้นแทน —
+    dev ที่กำลัง "ดูสิทธิ์แบบ" บัญชีผู้ดูแล จะได้ขอบเขตของบัญชีนั้นแทน —
     การจำลองมีแต่แคบลง (dev เต็มอยู่แล้ว) และคนที่ไม่ใช่ dev ใช้ view-as ไม่ได้
     """
     view_as = normalized_email(x_view_as_email) if x_view_as_email else ""
@@ -219,7 +223,8 @@ def require_admin_scoped(
         }
     if view_as:
         raise HTTPException(status_code=403, detail="ไม่มีสิทธิ์ใช้โหมดดูแบบผู้ใช้อื่น")
-    if is_region_admin_email(email):
+    admin_role = admin_role_for_email(email)
+    if admin_role:
         scope = admin_scope_for_email(email)
         if not admin_scope_is_usable(scope):
             # ขอบเขตที่ตั้งไว้ต้องมีข้อมูลรองรับ (ภาค/ดิวิชันของตัวเอง)
@@ -233,9 +238,51 @@ def require_admin_scoped(
             )
         return {
             "email": email, "is_admin": False, "is_marketing": False,
-            "role": ROLE_REGION_ADMIN, "admin_scope": scope,
+            "role": admin_role, "admin_scope": scope,
         }
     raise HTTPException(status_code=403, detail="ไม่มีสิทธิ์เข้าถึงหน้านี้")
+
+
+def require_role_manager(
+    authorization: Annotated[str | None, Header()] = None,
+    x_view_as_email: Annotated[str | None, Header(alias="X-View-As-Email")] = None,
+) -> dict:
+    """
+    ผู้ที่ "ตั้ง/ถอดสิทธิ์คนอื่น" ได้ — dev หรือหัวหน้าแอดมิน
+
+    หัวหน้าแอดมินได้ context ที่มีขอบเขตติดมาเสมอ ตัว handler ต้องบังคับเพิ่มอีกชั้นว่า
+    มอบได้เฉพาะ role `admin` และเฉพาะแถวในขอบเขตตัวเอง (ดู admin.set_user_role)
+    """
+    ctx = require_admin_scoped(authorization=authorization, x_view_as_email=x_view_as_email)
+    if ctx.get("role") in (ROLE_DEV, ROLE_HEAD_ADMIN) or ctx.get("auth_disabled"):
+        return ctx
+    raise HTTPException(
+        status_code=403,
+        detail="เฉพาะ Dev และหัวหน้าแอดมินเท่านั้นที่ตั้งสิทธิ์ผู้ดูแลได้",
+    )
+
+
+def ensure_can_assign_role(actor: dict, target_role: str, target_email: str) -> None:
+    """
+    หัวหน้าแอดมินมอบได้เฉพาะ role `admin` และห้ามแตะสิทธิ์ของตัวเอง
+
+    กันสองอย่างที่ต้องกันเสมอ: เลื่อนขั้นตัวเอง/พวกพ้องเป็น dev หรือหัวหน้าแอดมิน
+    และถอดสิทธิ์ตัวเองจนไม่มีใครดูแลต่อ (dev เท่านั้นที่จัดการระดับบนได้)
+    """
+    if actor.get("auth_disabled") or actor.get("role") == ROLE_DEV:
+        return
+    role = str(target_role or "").strip().lower()
+    if role and role != ROLE_ADMIN:
+        raise HTTPException(
+            status_code=403,
+            detail="หัวหน้าแอดมินมอบได้เฉพาะสิทธิ์ 'แอดมิน' — ระดับ Dev/หัวหน้าแอดมินต้องให้ Dev เป็นคนตั้ง",
+        )
+    actor_email = normalized_email(actor.get("email"))
+    if actor_email and actor_email == normalized_email(target_email):
+        raise HTTPException(
+            status_code=403,
+            detail="แก้สิทธิ์ของตัวเองไม่ได้ — ให้ Dev เป็นคนแก้",
+        )
 
 
 def ensure_row_in_admin_scope(user: dict, row: dict | None) -> None:
@@ -243,7 +290,7 @@ def ensure_row_in_admin_scope(user: dict, row: dict | None) -> None:
     แถวผู้ใช้แถวนี้อยู่ในภาคที่คนนี้ดูแลไหม — ใช้ทั้งตอนอ่านแถวเดิมและตอนตรวจค่าที่ส่งมา
 
     ต้องตรวจ **ทั้งสองฝั่ง**: แถวเป้าหมายเดิม และค่าใหม่ที่จะบันทึก
-    ไม่งั้นแอดมินภาคจะย้ายคนออกนอกภาคตัวเอง (หรือดึงคนของภาคอื่นเข้ามา) ได้
+    ไม่งั้นผู้ดูแลจะย้ายคนออกนอกขอบเขตตัวเอง (หรือดึงคนนอกขอบเขตเข้ามา) ได้
     """
     if user.get("auth_disabled") or user.get("role") == ROLE_DEV:
         return
@@ -274,7 +321,7 @@ def require_admin_or_marketing_team(
     authorization: Annotated[str | None, Header()] = None,
     x_view_as_email: Annotated[str | None, Header(alias="X-View-As-Email")] = None,
 ) -> dict:
-    """dev, แอดมินรายภาค หรือ Marketing (ทีมพนักงาน) — view-as จำลองตามบัญชีที่ดู"""
+    """dev, ผู้ดูแล หรือ Marketing (ทีมพนักงาน) — view-as จำลองตามบัญชีที่ดู"""
     view_as = normalized_email(x_view_as_email) if x_view_as_email else ""
     if not auth_entra.auth_enabled():
         if view_as:
@@ -294,10 +341,11 @@ def require_admin_or_marketing_team(
         }
     if view_as:
         raise HTTPException(status_code=403, detail="ไม่มีสิทธิ์ใช้โหมดดูแบบผู้ใช้อื่น")
-    if is_region_admin_email(email):
+    admin_role = admin_role_for_email(email)
+    if admin_role:
         return {
             "email": email, "is_admin": False, "is_marketing": False,
-            "role": ROLE_REGION_ADMIN, "admin_scope": admin_scope_for_email(email),
+            "role": admin_role, "admin_scope": admin_scope_for_email(email),
         }
     if is_marketing_email(email):
         return {

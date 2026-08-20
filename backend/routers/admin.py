@@ -4,10 +4,10 @@ Admin API — จัดการ user_access.json และการตั้ง
 สองระดับสิทธิ์:
   - **dev** (`require_admin_user`) — ทำได้ทุกอย่างทั้งระบบ มาจาก ALLOCATION_ADMIN_EMAILS
     หรือแถวที่ตั้ง role=dev
-  - **แอดมินรายภาค** (`require_admin_scoped`) — จัดการผู้ใช้/ผูกรหัส/ดูผลกระจาย
+  - **ผู้ดูแล** (`require_admin_scoped`) — จัดการผู้ใช้/ผูกรหัส/ดูผลการดำเนินงาน
     เฉพาะภาคของตัวเอง แตะการตั้งค่าระบบไม่ได้
 
-route ที่มีผลทั้งระบบต้องใช้ require_admin_user เสมอ ส่วน route ที่ให้แอดมินภาคใช้ได้
+route ที่มีผลทั้งระบบต้องใช้ require_admin_user เสมอ ส่วน route ที่ให้ผู้ดูแลใช้ได้
 ต้องกรอง/ตรวจขอบเขตในตัว handler ด้วย — ผ่านด่านอย่างเดียวไม่พอ
 """
 
@@ -22,19 +22,24 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from ..deps import (
+    ensure_can_assign_role,
     ensure_row_in_admin_scope,
     ensure_sup_in_admin_scope,
     require_admin_or_marketing_team,
     require_admin_scoped,
     require_admin_user,
     require_authenticated_user,
+    require_role_manager,
 )
 from ..services.access_control import (
     ADMIN_SCOPE_LABELS,
     ASSIGNABLE_ADMIN_SCOPES,
     ASSIGNABLE_ROLES,
     DEFAULT_ADMIN_SCOPE,
+    ADMIN_ROLES,
+    ROLE_ADMIN,
     ROLE_DEV,
+    ROLE_HEAD_ADMIN,
     ROLE_REGION_ADMIN,
     enrich_user_access_rows,
     invalidate_user_access_cache,
@@ -149,7 +154,7 @@ def _patch_row_meta(row: dict[str, Any], body: UserAccessUpdateBody) -> None:
 
 
 def _scope_rows(admin: dict, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """dev เห็นทุกแถว แอดมินรายภาคเห็นเฉพาะภาคตัวเอง"""
+    """dev เห็นทุกแถว ผู้ดูแลเห็นเฉพาะขอบเขตตัวเอง"""
     if admin.get("auth_disabled") or admin.get("role") == ROLE_DEV:
         return rows
     scope = admin.get("admin_scope") or {}
@@ -242,7 +247,7 @@ def create_user_access(
         "note": str(body.note or "").strip(),
     }
     _patch_row_meta(new_row, body)
-    # แอดมินภาคสร้างคนเข้าภาคอื่นไม่ได้ — ตรวจ "ค่าที่จะบันทึก" ไม่ใช่แค่ตัวผู้เรียก
+    # ผู้ดูแลสร้างคนนอกขอบเขตไม่ได้ — ตรวจ "ค่าที่จะบันทึก" ไม่ใช่แค่ตัวผู้เรียก
     ensure_row_in_admin_scope(admin, new_row)
     write_rows(rows + [new_row])
     invalidate_user_access_cache()
@@ -377,11 +382,14 @@ class UserRoleBody(BaseModel):
 @router.put("/user-access/role")
 def set_user_role(
     body: UserRoleBody,
-    admin: dict = Depends(require_admin_user),
+    admin: dict = Depends(require_role_manager),
 ) -> dict[str, Any]:
     """
-    ตั้ง/ถอด role (dev | admin) — **dev เท่านั้น** และไม่อยู่ใน _META_PATCH_KEYS
-    โดยตั้งใจ เพื่อไม่ให้แอดมินรายภาคเลื่อนขั้นตัวเองผ่าน PUT /user-access ปกติ
+    ตั้ง/ถอด role (dev | head_admin | admin) — **dev หรือหัวหน้าแอดมิน**
+
+    ไม่อยู่ใน _META_PATCH_KEYS โดยตั้งใจ เพื่อไม่ให้ผู้ดูแลเลื่อนขั้นตัวเองผ่าน
+    PUT /user-access ปกติ · หัวหน้าแอดมินถูกจำกัดอีกชั้นด้วย ensure_can_assign_role
+    (มอบได้เฉพาะ 'admin' · แตะสิทธิ์ตัวเองไม่ได้) และต้องอยู่ในขอบเขตตัวเอง
     """
     em = normalized_email(body.email)
     role = str(body.role or "").strip().lower()
@@ -390,17 +398,29 @@ def set_user_role(
             status_code=400,
             detail=f"role ต้องเป็น {' หรือ '.join(ASSIGNABLE_ROLES)} หรือค่าว่างเพื่อถอดสิทธิ์",
         )
+    ensure_can_assign_role(admin, role, em)
     scope = str(body.admin_scope or "").strip().lower()
     if scope and scope not in ASSIGNABLE_ADMIN_SCOPES:
         raise HTTPException(
             status_code=400,
             detail=f"ขอบเขตต้องเป็น {' หรือ '.join(ASSIGNABLE_ADMIN_SCOPES)}",
         )
-    if role != ROLE_REGION_ADMIN:
-        # role อื่นไม่มีขอบเขต — ล้างทิ้งเสมอ กันค่าค้างที่จะกลับมามีผลถ้าถูกตั้งเป็น admin อีก
+    if role not in ADMIN_ROLES:
+        # dev ไม่มีขอบเขต — ล้างทิ้งเสมอ กันค่าค้างที่จะกลับมามีผลถ้าถูกตั้งเป็นผู้ดูแลอีก
         scope = ""
     elif not scope:
         scope = DEFAULT_ADMIN_SCOPE
+
+    # หัวหน้าแอดมินแตะได้เฉพาะคนในขอบเขตตัวเอง — ทั้งตอนมอบและตอนถอด
+    if not (admin.get("auth_disabled") or admin.get("role") == ROLE_DEV):
+        target_rows = [r for r in read_rows() if normalized_email(r.get("email")) == em]
+        for r in target_rows:
+            ensure_row_in_admin_scope(admin, r)
+        if not target_rows and role:
+            raise HTTPException(
+                status_code=403,
+                detail="หัวหน้าแอดมินเพิ่มสิทธิ์ให้อีเมลที่ยังไม่มีในระบบไม่ได้ — ให้ Dev เป็นคนเพิ่ม",
+            )
 
     div = str(body.acc_division or "").strip()
     region = str(body.acc_region or "").strip()
@@ -526,7 +546,7 @@ def set_targetsun_bulk(
 @router.get("/supervisor-codes")
 def admin_supervisor_codes(user: dict = Depends(require_admin_or_marketing_team)) -> dict[str, Any]:
     codes = list_supervisor_codes()
-    if user.get("role") == ROLE_REGION_ADMIN:
+    if user.get("role") in ADMIN_ROLES:
         allowed = {
             str(c).strip().upper()
             for c in ((user.get("admin_scope") or {}).get("sl_codes") or set())
@@ -543,8 +563,8 @@ def admin_supervisor_team(
     force_refresh: int = Query(0, ge=0, le=1),
     user: dict = Depends(require_admin_or_marketing_team),
 ) -> dict[str, Any]:
-    # เดิมรับ super_code อะไรก็ได้ — แอดมินรายภาคต้องดูได้เฉพาะทีมในภาคตัวเอง
-    if user.get("role") == ROLE_REGION_ADMIN:
+    # เดิมรับ super_code อะไรก็ได้ — ผู้ดูแลต้องดูได้เฉพาะทีมในขอบเขตตัวเอง
+    if user.get("role") in ADMIN_ROLES:
         ensure_sup_in_admin_scope(user, super_code)
     return load_supervisor_team(
         super_code,
@@ -593,7 +613,7 @@ def list_sku_links(_user: dict = Depends(require_admin_or_marketing_team)) -> di
     return {"links": rows, "count": len(rows)}
 
 
-# ผูกรหัสสินค้าเป็นข้อมูลกลางของทั้งระบบ ไม่มีมิติภาคให้แบ่ง — เปิดให้แอดมินรายภาค
+# ผูกรหัสสินค้าเป็นข้อมูลกลางของทั้งระบบ ไม่มีมิติภาคให้แบ่ง — เปิดให้ผู้ดูแล
 # จัดการได้ตามที่ตกลง แต่ต้อง log ทุกครั้งเพราะกระทบทุกทีม
 @router.post("/sku-links")
 def create_sku_link(
@@ -791,7 +811,7 @@ def list_sl_links(_user: dict = Depends(require_admin_or_marketing_team)) -> dic
 
 def _ensure_sl_link_in_scope(admin: dict, old: str, new_sls: list[str]) -> None:
     """
-    ผูกรหัสมีผลกับสิทธิ์การมองเห็น — แอดมินรายภาคต้องแตะได้เฉพาะรหัสในภาคตัวเอง
+    ผูกรหัสมีผลกับสิทธิ์การมองเห็น — ผู้ดูแลต้องแตะได้เฉพาะรหัสในขอบเขตตัวเอง
     ต้องตรวจ **ทุกรหัสในกลุ่ม** ไม่ใช่แค่รหัสหลัก ไม่งั้นดึงทีมของภาคอื่นเข้ามาผูกได้
     """
     if admin.get("auth_disabled") or admin.get("role") == ROLE_DEV:
@@ -1110,7 +1130,7 @@ def admin_list_allocations(
     target_month: int | None = Query(None, ge=1, le=12),
     target_year: int | None = Query(None, ge=2020, le=2100),
 ):
-    """รายการ snapshot ผลกระจาย — แอดมินรายภาคเห็นเฉพาะทีมในภาคตัวเอง"""
+    """รายการ snapshot ผลกระจาย — ผู้ดูแลเห็นเฉพาะทีมในขอบเขตตัวเอง"""
     items = _scoped_allocation_items(admin, target_month, target_year)
     return {"items": items, "count": len(items)}
 
@@ -1404,8 +1424,8 @@ def admin_get_usage_logs(
 
 
 def _filter_usage_items_for_admin(admin: dict, items: list[dict]) -> list[dict]:
-    """แอดมินรายภาคเห็นเฉพาะเหตุการณ์ของทีมในภาค หรือของผู้ใช้ในภาคตัวเอง"""
-    if admin.get("role") != ROLE_REGION_ADMIN:
+    """ผู้ดูแลเห็นเฉพาะเหตุการณ์ของทีมในขอบเขตตัวเอง หรือของผู้ใช้ในขอบเขตนั้น"""
+    if admin.get("role") not in ADMIN_ROLES:
         return items
     scope = admin.get("admin_scope") or {}
     codes = {str(c).strip().upper() for c in (scope.get("sl_codes") or set())}
