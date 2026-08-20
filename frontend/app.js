@@ -622,6 +622,7 @@ async function initEntraAuth() {
     if (formBlock) formBlock.classList.add("login-form-disabled");
     _syncSupSelectAwaitingMsOrManagers();
     syncLoginFormReady();
+    applyAdminLoginLayout(); // ซ่อนช่องเลือกรหัส/งวดจนกว่าจะล็อกอินเสร็จ
   }
 }
 
@@ -2957,6 +2958,17 @@ function applyAdminLoginLayout() {
   if (adminBtn) adminBtn.style.display = "none";
   const msOut = document.getElementById("msLogoutBtn");
   if (msOut) msOut.style.display = entraMsalReady() ? "inline-flex" : "none";
+
+  // ยังไม่ล็อกอิน Microsoft (หรือกำลังตรวจสิทธิ์อยู่) = ยังไม่รู้ว่าใคร —
+  // ไม่โชว์ช่องเลือกรหัส/งวดเลย (เดิมโชว์แบบจาง ๆ ทำให้ dev/แอดมินเห็นแล้ว
+  // เข้าใจว่า "ยังต้องเลือกทีมอยู่" ทั้งที่ล็อกอินเสร็จระบบจะพาเข้าหน้าแอดมินเอง
+  // หรือค่อยเปิดฟอร์มให้เฉพาะคนที่มีทีมให้เลือกจริง)
+  if ((AUTH_CONFIG?.authRequired && !entraMsalReady()) || checkingAdmin) {
+    if (formBlock) formBlock.style.display = "none";
+    if (loginBtn) loginBtn.style.display = "none";
+    return;
+  }
+
   if (formBlock) formBlock.style.display = "";
   if (loginBtn) loginBtn.style.display = "";
   syncLoginFormReady();

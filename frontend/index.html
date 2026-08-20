@@ -16,7 +16,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=2026082001" />
+  <link rel="stylesheet" href="style.css?v=2026082002" />
 </head>
 
 <body>
@@ -126,7 +126,9 @@
               <p class="ms-auth-hint">กำลังเตรียมการล็อกอิน Microsoft…</p>
             </div>
 
-            <div id="loginFormBlock">
+            <!-- ซ่อนไว้ก่อนจนกว่าจะรู้ว่าใครล็อกอิน — dev/แอดมินไม่ต้องเห็นช่องเลือกทีม/งวดเลย
+                 (applyAdminLoginLayout เป็นคนเปิดให้เฉพาะบัญชีที่มีทีมให้เลือกจริง) -->
+            <div id="loginFormBlock" style="display:none;">
             <div class="field-group">
               <label class="field-label">ผู้รับผิดชอบ (Supervisor / Manager)</label>
               <div>
@@ -1478,8 +1480,8 @@
   <script src="vendor/msal-browser.min.js"></script>
   <!-- ตรรกะล้วน (ตัวแปลงเลข/คณิตการเกลี่ย) — ต้องมาก่อน app.js
        ไฟล์นี้มีเทสจริงด้วย node --test tests/logic.test.js -->
-  <script src="logic.js?v=2026082001"></script>
-  <script src="app.js?v=2026082001"></script>
+  <script src="logic.js?v=2026082002"></script>
+  <script src="app.js?v=2026082002"></script>
 </body>
 
 </html>
