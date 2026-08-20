@@ -12410,7 +12410,7 @@ function updateAdminNavVisibility() {
     if (S.isMarketing && !S.isAdmin) {
       topBtn.textContent = "ทีมพนักงาน";
     } else if (S.isRegionAdmin) {
-      topBtn.textContent = "แอดมินภาค";
+      topBtn.textContent = "หน้าแอดมิน";
     } else {
       topBtn.textContent = "แอดมิน";
     }
@@ -12437,7 +12437,7 @@ function updateViewAsBanner() {
   document.body.classList.toggle("has-view-as-banner", active);
   if (active) {
     const roleLabel = S.role === "admin"
-      ? "สิทธิ์แอดมินภาคตามบัญชีนั้น"
+      ? "สิทธิ์แอดมินตามบัญชีนั้น"
       : S.role === "dev"
         ? "สิทธิ์ dev ตามบัญชีนั้น"
         : "ไม่มีสิทธิ์แอดมิน";
@@ -12603,8 +12603,8 @@ const ADMIN_TAB_META = {
   slLinks: { group: "การผูกรหัส", title: "ผูกรหัส SL", sub: "รหัสใหม่สืบทอดสิทธิ/ทีมจากรหัสเก่า — เช่น SL524 → SL508" },
   skuLinks: { group: "การผูกรหัส", title: "ผูกรหัส SKU", sub: "รวมประวัติขายข้ามรหัสเก่า — แสดงรายการสินค้าทันทีเมื่อเปิดแท็บ" },
   data: { group: "ข้อมูล", title: "แหล่งข้อมูล", sub: "สรุปการดึง ใช้ และส่งข้อมูลในระบบ + แคช" },
-  usageLogs: { group: "ปฏิบัติการ", title: "บันทึกการใช้งาน", sub: "ใครส่ง Target Sun / ข้อผิดพลาด — เก็บถาวร ไม่มีการลบ" },
-  allocations: { group: "ปฏิบัติการ", title: "ผลการกระจาย", sub: "snapshot บน server ต่อ SL × งวด" },
+  usageLogs: { group: "ผลการดำเนินงาน", title: "บันทึกการใช้งาน", sub: "ใครส่ง Target Sun / ข้อผิดพลาด — เก็บถาวร ไม่มีการลบ" },
+  allocations: { group: "ผลการดำเนินงาน", title: "ผลการกระจาย", sub: "snapshot บน server ต่อ SL × งวด" },
   team: { group: "ทีม", title: "ทีมพนักงาน", sub: "รายชื่อพนักงานใต้ Supervisor จาก Fabric / cache" },
 };
 
