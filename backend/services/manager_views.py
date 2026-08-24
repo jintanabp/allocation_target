@@ -43,11 +43,23 @@ def team_supervisor_codes(
     team: list[str],
     manager_code: str,
     exclude_manager_codes: set[str] | None = None,
+    *,
+    keep_own_code: bool = False,
 ) -> list[str]:
-    """รหัส Supervisor ในทีม — ตัดรหัส Manager ที่เกี่ยวข้อง (ไม่ใช่ Manager ทั้งองค์กร)"""
+    """
+    รหัส Supervisor ในทีม — ตัดรหัส Manager ที่เกี่ยวข้อง (ไม่ใช่ Manager ทั้งองค์กร)
+
+    keep_own_code: บางรหัสผู้จัดการมีพนักงานขายสังกัดตรง ไม่ได้ผ่านทีมซุปเลย
+    (เจอจริง 5 คนจาก 25 เช่น SL359 มีพนักงาน 4 คนที่มีเป้าเต็ม ๆ) พอตัดรหัสตัวเอง
+    ออกเสมอ คนกลุ่มนี้จึงไม่มีทีมไหนเปิดถึงได้เลย ทั้งที่ ensure_supervisor_allowed
+    ผ่านอยู่แล้ว — สิทธิ์มีแต่ไม่มีปุ่มให้กด · รหัสพ้องที่ผูกไว้ (sl_links) ยังตัดเหมือนเดิม
+    """
     mgr = manager_code.strip().upper()
     excl = {str(x).strip().upper() for x in (exclude_manager_codes or ())}
-    excl.add(mgr)
+    if keep_own_code:
+        excl.discard(mgr)
+    else:
+        excl.add(mgr)
     out: list[str] = []
     seen: set[str] = set()
     for raw in team:
@@ -81,15 +93,22 @@ def build_manager_view_options(
     mgr = manager_code.strip().upper()
     roster = _row_by_userpl()
     mgr_row = roster.get(mgr)
-    supers = team_supervisor_codes(team_codes, mgr, exclude_manager_codes)
+    # ทีมซุปจริง ๆ ใต้ผู้จัดการ — ใช้กับการรวมเป้า (ยอดรวมต้องไม่ขยับจากของเดิม)
+    team_only = team_supervisor_codes(team_codes, mgr, exclude_manager_codes)
+    # รายการให้ "เลือกเปิดทีละทีม" มีรหัสตัวเองด้วย เผื่อมีพนักงานขายสังกัดตรง
+    # (ดู team_supervisor_codes) ไม่มีพนักงานก็เปิดแล้วเจอทีมว่าง ซึ่งเป็นความจริง
+    supers = sorted({*team_only, mgr}) if mgr else list(team_only)
 
     meta: dict[str, dict[str, str]] = {}
     by_region: dict[str, list[str]] = {}
-    for sc in supers:
+    for sc in team_only:
         reg = supervisor_region_for_code(sc, roster)
         meta[sc] = {"region": reg}
         if reg:
             by_region.setdefault(reg, []).append(sc)
+
+    if mgr and mgr not in meta:
+        meta[mgr] = {"region": supervisor_region_for_code(mgr, roster)}
 
     for reg in by_region:
         by_region[reg] = sorted(by_region[reg])
@@ -117,7 +136,7 @@ def build_manager_view_options(
     region_entry = {
         "id": mgr_region or "__team__",
         "label": _region_display_label(mgr_region) if mgr_region else "ทั้งทีม",
-        "supervisor_codes": supers,
+        "supervisor_codes": list(team_only),
     }
     return {
         "manager_code": mgr,
@@ -167,7 +186,9 @@ def resolve_aggregate_supervisor_codes(
     if view == "all":
         if "all" not in opts["modes"]:
             raise ValueError("ไม่มีสิทธิ์ดูแบบรวมทั้งหมด")
-        return list(opts["supervisor_codes"])
+        # supervisor_codes มีรหัสของผู้จัดการเองรวมอยู่ด้วย (ไว้ให้เลือกเปิดทีละทีม)
+        # แต่การรวมเป้ายังนับเฉพาะทีมซุปเหมือนเดิม ยอดรวมจึงไม่ขยับจากของเก่า
+        return [c for c in opts["supervisor_codes"] if c != mgr]
 
     if view == "region":
         if "region" not in opts["modes"]:

@@ -1505,16 +1505,21 @@ function _managerTeamFromLogin(mgrCode) {
       }
     }
   }
-  return _supervisorOnlyTeam(team, mgr);
+  return _supervisorOnlyTeam(team, mgr, true);
 }
 
-/** รายการ Supervisor จริง — ตัดรหัส Manager ออก (Manager ไม่ถือเป็นตำแหน่ง Sup) */
-function _supervisorOnlyTeam(choices, mgrCode) {
+/** รายการ Supervisor จริง — ตัดรหัส Manager อื่นออก (Manager ไม่ถือเป็นตำแหน่ง Sup)
+
+   keepOwn: รหัสของผู้จัดการเองอาจมีพนักงานขายสังกัดตรง ไม่ได้ผ่านทีมซุปเลย
+   คนกลุ่มนั้นจะเข้าไม่ถึงถ้าตัดรหัสตัวเองทิ้งด้วย — ใช้กับรายการให้เลือกทีม
+   ส่วนตอนเลือก "ทีมแรกที่จะเปิด" ยังข้ามรหัสตัวเองเหมือนเดิม จะได้ไม่เปลี่ยน
+   หน้าที่เปิดมาเจอเป็นอย่างแรกของผู้จัดการทุกคน */
+function _supervisorOnlyTeam(choices, mgrCode, keepOwn = false) {
   const mgr = String(mgrCode || "").trim().toUpperCase();
   const mgrSet = S._managerSet || new Set();
   return (choices || [])
     .map((c) => String(c).trim().toUpperCase())
-    .filter((c) => c && c !== mgr && !mgrSet.has(c));
+    .filter((c) => c && (c === mgr ? keepOwn : !mgrSet.has(c)));
 }
 
 /** Supervisor แรกสำหรับ Manager — ข้ามรหัส Manager (เช่น SL508) ที่ไม่มีพนักงานใน Fabric */
@@ -1532,7 +1537,7 @@ function _individualSupChoices() {
     const base = (Array.isArray(fromOpts) && fromOpts.length)
       ? fromOpts
       : (S.supervisorChoices || []);
-    return _supervisorOnlyTeam(base, S.managerCode);
+    return _supervisorOnlyTeam(base, S.managerCode, true);
   }
   return [...new Set((S.supervisorChoices || []).map((c) => String(c).trim().toUpperCase()).filter(Boolean))].sort();
 }
@@ -3298,7 +3303,7 @@ async function handleLogin() {
       if (S.managerViewOptions?.supervisor_codes?.length) {
         S.supervisorChoices = [...S.managerViewOptions.supervisor_codes];
       } else {
-        S.supervisorChoices = _supervisorOnlyTeam(S.supervisorChoices, mgrCode);
+        S.supervisorChoices = _supervisorOnlyTeam(S.supervisorChoices, mgrCode, true);
       }
       S.supervisorChoices = [...new Set(S.supervisorChoices.map(c => String(c).trim().toUpperCase()))].sort();
       if (S.supervisorChoices.length === 0) {
