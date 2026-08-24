@@ -2,9 +2,45 @@
 
 from __future__ import annotations
 
+import os
+import re
 from typing import Any
 
 from .user_access_store import read_rows
+
+_EMP_FILE_RE = re.compile(r"^(?:emp_cache|tga_lines)_(.+)_\d{4}_\d{2}\.csv$")
+
+
+def codes_with_own_salesmen(data_dir: str = "data") -> set[str]:
+    """
+    รหัสที่ "เคยดึงข้อมูลมาแล้วพบพนักงานสังกัดตรง" — ดูจากไฟล์ที่แคชไว้
+
+    ระบบรู้ล่วงหน้าไม่ได้ว่าผู้จัดการคนไหนมีพนักงานขายสังกัดรหัสตัวเอง ต้องดึงจาก
+    Fabric ก่อนถึงจะรู้ ซึ่งเป็นไก่กับไข่ — ยิงทุกครั้งที่ล็อกอินก็ช้าเกินไป
+    จึงอ่านชื่อไฟล์ในโฟลเดอร์ data รอบเดียว: รหัสไหนเคยมีข้อมูลพนักงานจริง
+    รหัสนั้นถือว่ามีทีมของตัวเอง · เปิดทีมตัวเองครั้งแรกเมื่อไหร่ ระบบจะจำได้เอง
+    ตั้งแต่นั้น (คนที่ยังไม่เคยเปิด ก็ยังเข้าหน้าทีมซุปทีมแรกเหมือนเดิม)
+    """
+    out: set[str] = set()
+    try:
+        names = os.listdir(data_dir)
+    except OSError:
+        return out
+    for name in names:
+        m = _EMP_FILE_RE.match(name)
+        if not m:
+            continue
+        code = m.group(1).strip().upper()
+        if not code or code in out:
+            continue
+        try:
+            with open(os.path.join(data_dir, name), encoding="utf-8-sig") as f:
+                f.readline()                      # header
+                if f.readline().strip():          # มีอย่างน้อยหนึ่งแถว
+                    out.add(code)
+        except OSError:
+            continue
+    return out
 
 
 def _row_by_userpl() -> dict[str, dict[str, Any]]:
@@ -84,13 +120,19 @@ def build_manager_view_options(
     manager_code: str,
     team_codes: list[str],
     exclude_manager_codes: set[str] | None = None,
+    own_salesmen_codes: set[str] | None = None,
 ) -> dict[str, Any]:
     """
     คืนตัวเลือกมุมมองสำหรับ Manager:
     - division-wide: individual + all + regions[]
     - regional: individual + region (ทั้งภาคเดียว)
+
+    own_salesmen_codes: รหัสที่รู้แล้วว่ามีพนักงานสังกัดตรง (ดู codes_with_own_salesmen)
+    ใช้บอกหน้าเว็บว่าควรเปิดหน้าทีมของตัวเองเป็นหน้าแรกไหม
     """
     mgr = manager_code.strip().upper()
+    known = own_salesmen_codes if own_salesmen_codes is not None else codes_with_own_salesmen()
+    own_has_staff = bool(mgr) and mgr in known
     roster = _row_by_userpl()
     mgr_row = roster.get(mgr)
     # ทีมซุปจริง ๆ ใต้ผู้จัดการ — ใช้กับการรวมเป้า (ยอดรวมต้องไม่ขยับจากของเดิม)
@@ -129,6 +171,7 @@ def build_manager_view_options(
             ],
             "supervisor_meta": meta,
             "supervisor_codes": supers,
+            "own_team_has_staff": own_has_staff,
         }
 
     mgr_region = str((mgr_row or {}).get("acc_region") or "").strip()
@@ -145,6 +188,7 @@ def build_manager_view_options(
         "regions": [region_entry],
         "supervisor_meta": meta,
         "supervisor_codes": supers,
+        "own_team_has_staff": own_has_staff,
         "manager_region": mgr_region,
     }
 
@@ -167,10 +211,11 @@ def build_manager_views_map(
             continue
         bm[mk] = sorted({str(x).strip().upper() for x in (v or []) if str(x).strip()})
     codes = manager_codes if manager_codes is not None else sorted(bm.keys())
+    known = codes_with_own_salesmen()      # อ่านชื่อไฟล์รอบเดียวสำหรับผู้จัดการทุกคน
     out: dict[str, Any] = {}
     for m in sorted({str(c).strip().upper() for c in codes if str(c).strip()}):
         excl = manager_codes_to_exclude_from_team(m, picks, links)
-        out[m] = build_manager_view_options(m, bm.get(m, []), excl)
+        out[m] = build_manager_view_options(m, bm.get(m, []), excl, known)
     return out
 
 

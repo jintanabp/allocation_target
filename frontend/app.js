@@ -1522,12 +1522,20 @@ function _supervisorOnlyTeam(choices, mgrCode, keepOwn = false) {
     .filter((c) => c && (c === mgr ? keepOwn : !mgrSet.has(c)));
 }
 
-/** Supervisor แรกสำหรับ Manager — ข้ามรหัส Manager (เช่น SL508) ที่ไม่มีพนักงานใน Fabric */
+/** Supervisor แรกสำหรับ Manager — ข้ามรหัส Manager (เช่น SL508) ที่ไม่มีพนักงานใน Fabric
+
+   ยกเว้นผู้จัดการที่มีพนักงานขายสังกัดรหัสตัวเอง (own_team_has_staff จาก server)
+   คนกลุ่มนั้นให้เปิดหน้าทีมตัวเองเป็นหน้าแรก เพราะนั่นคือทีมที่เขาต้องทำงานด้วย
+   ส่วนคนที่ไม่มี ยังเข้าหน้าทีมซุปทีมแรกเหมือนเดิม ไม่เปลี่ยนของใคร */
 function _firstSupervisorForManager(mgrCode, choices) {
+  const mgr = String(mgrCode || "").trim().toUpperCase();
+  const opts = S.managerViews?.[mgr] || S.managerViewOptions;
+  const ownFirst = !!opts?.own_team_has_staff
+    && (choices || []).some((c) => String(c).trim().toUpperCase() === mgr);
+  if (ownFirst) return mgr;
   const list = _supervisorOnlyTeam(choices, mgrCode);
   if (list.length) return list[0];
-  const mgr = String(mgrCode || "").trim().toUpperCase();
-  return list[0] || String(choices?.[0] || mgr).trim().toUpperCase() || mgr;
+  return String(choices?.[0] || mgr).trim().toUpperCase() || mgr;
 }
 
 /** รายการ SL ในมุมมองรายคน (ตัดรหัส Manager ออก) */

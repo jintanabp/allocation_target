@@ -25,6 +25,7 @@ import unittest
 REPO = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, REPO)
 
+import backend.services.manager_views as mv  # noqa: E402
 from backend.services.manager_views import (  # noqa: E402
     build_manager_view_options,
     resolve_aggregate_supervisor_codes,
@@ -109,6 +110,53 @@ class TestOtherManagerCodesStillDropped(unittest.TestCase):
         self.assertEqual(
             team_supervisor_codes(["SL359", "SL396"], "SL359"),
             ["SL396"],
+        )
+
+
+class TestDefaultLandingTeam(_Base):
+    """หน้าแรกที่เปิด: คนที่มีพนักงานสังกัดตรงเข้าทีมตัวเอง คนอื่นเหมือนเดิม"""
+
+    def setUp(self):
+        super().setUp()
+        self._data = tempfile.TemporaryDirectory()
+        os.makedirs(os.path.join(self._data.name, "data"), exist_ok=True)
+
+    def tearDown(self):
+        self._data.cleanup()
+        super().tearDown()
+
+    def _write_cache(self, code, rows=("E001,ชื่อพนักงาน,SL359",)):
+        path = os.path.join(self._data.name, "data", f"emp_cache_{code}_2026_09.csv")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("emp_id,emp_name,super_code\n")
+            for r in rows:
+                fh.write(r + "\n")
+
+    def _known(self):
+        return mv.codes_with_own_salesmen(os.path.join(self._data.name, "data"))
+
+    def test_code_with_cached_employees_is_detected(self):
+        self._write_cache("SL359")
+        self.assertIn("SL359", self._known())
+
+    def test_header_only_file_does_not_count(self):
+        path = os.path.join(self._data.name, "data", "emp_cache_SL396_2026_09.csv")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("emp_id,emp_name,super_code\n")
+        self.assertNotIn("SL396", self._known())
+
+    def test_missing_folder_is_not_an_error(self):
+        self.assertEqual(mv.codes_with_own_salesmen("ไม่มีโฟลเดอร์นี้"), set())
+
+    def test_flag_is_true_only_for_codes_with_staff(self):
+        self._write_cache("SL359")
+        known = self._known()
+        self.assertTrue(build_manager_view_options("SL359", TEAM, None, known)["own_team_has_staff"])
+        self.assertFalse(build_manager_view_options("SL396", TEAM, None, known)["own_team_has_staff"])
+
+    def test_flag_is_false_when_nothing_is_cached_yet(self):
+        self.assertFalse(
+            build_manager_view_options("SL359", TEAM, None, set())["own_team_has_staff"]
         )
 
 
