@@ -280,9 +280,44 @@ def enrich_rows_with_visibility(rows: list[dict[str, Any]]) -> list[dict[str, An
     return out
 
 
-def build_hierarchy_payload(rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    """สร้าง payload สำหรับ GET /managers และ access_control"""
+def existing_by_manager() -> dict[str, list[str]]:
+    """
+    อ่าน by_manager จากไฟล์ปัจจุบันตรง ๆ — ไม่ rebuild ต่อถ้าไฟล์หาย
+
+    ใช้ load_hierarchy_payload ตรงนี้ไม่ได้ เพราะไฟล์หายเมื่อไหร่มันจะเรียก
+    build_hierarchy_payload ต่อ ซึ่งเป็นตัวที่เรียกฟังก์ชันนี้อยู่ = วนไม่จบ
+    """
+    path = access_hierarchy_json_path()
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        logger.warning("อ่าน by_manager เดิมไม่ได้: %s", e)
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, list[str]] = {}
+    for k, v in (data.get("by_manager") or {}).items():
+        out[str(k).strip().upper()] = [str(x).strip().upper() for x in (v or []) if x]
+    return out
+
+
+def build_hierarchy_payload(
+    rows: list[dict[str, Any]] | None = None,
+    *,
+    keep_uncomputable_teams: bool = True,
+) -> dict[str, Any]:
+    """
+    สร้าง payload สำหรับ GET /managers และ access_control
+
+    keep_uncomputable_teams: ผู้จัดการที่แถวไม่มี division/ภาค คำนวณทีมกลับไม่ได้
+    เหลือแค่รหัสตัวเอง — ให้คงทีมเดิมจาก roster ไว้ ไม่งั้น rebuild หนึ่งครั้งเท่ากับ
+    ตัดสิทธิ์เขาถาวรและกู้ไม่ได้ (ข้อมูลชุดนั้นมาจาก Excel ที่แอปสร้างใหม่เองไม่ได้)
+    """
     source = enrich_rows_with_visibility(rows if rows is not None else read_rows())
+    previous = existing_by_manager() if keep_uncomputable_teams else {}
     supervisors: set[str] = set()
     manager_codes: set[str] = set()
     by_manager: dict[str, set[str]] = {}
@@ -298,6 +333,12 @@ def build_hierarchy_payload(rows: list[dict[str, Any]] | None = None) -> dict[st
             team = set(vis)
             if upl in team or not team:
                 team.add(upl)
+            # คำนวณแล้วได้แค่ตัวเอง = ข้อมูลไม่พอ ไม่ใช่ "ทีมว่างจริง"
+            if team <= {upl}:
+                kept = {c for c in (previous.get(upl) or ()) if c}
+                if kept - team:
+                    logger.info("USERPL=%s คำนวณทีมไม่ได้ — คงทีมเดิม %d รหัส", upl, len(kept))
+                    team |= kept
             by_manager[upl] = team
             for sc in sorted(team):
                 supervisors.add(sc)

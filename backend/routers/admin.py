@@ -143,6 +143,36 @@ _META_PATCH_KEYS = (
 )
 
 
+def _sync_access_hierarchy(admin: dict, what: str) -> None:
+    """
+    อัปเดตลำดับสิทธิ์ให้เองทุกครั้งที่รายชื่อผู้ใช้เปลี่ยน
+
+    เดิมเป็นปุ่มที่คนต้องจำไปกดเอง และเปิดให้เฉพาะ dev — แอดมินที่แก้ผู้ใช้ได้
+    กลับกดไม่ได้ เจอแต่ 403 ผู้ใช้ใหม่จึงล็อกอินเข้ามาแล้วไม่มีทีมให้เลือก
+    เพราะ access_hierarchy.json ยังไม่รู้จักเขา
+
+    ปลอดภัยที่จะทำอัตโนมัติเพราะ build_hierarchy_payload คงทีมของผู้จัดการที่
+    คำนวณกลับไม่ได้ไว้ให้แล้ว (keep_uncomputable_teams) จึงไม่มีทางตัดสิทธิ์ใคร
+    ล้มก็ไม่เป็นไร งานหลัก (บันทึกผู้ใช้) สำเร็จไปแล้ว รอบหน้าค่อยซ่อมให้เอง
+    """
+    from ..services.managers import rebuild_managers_from_roster
+
+    try:
+        payload = rebuild_managers_from_roster()
+        logger.info(
+            "sync ลำดับสิทธิ์หลัง %s: ผจก. %d · ซุป %d",
+            what,
+            len(payload.get("manager_codes") or []),
+            len(payload.get("supervisors") or []),
+        )
+    except Exception as e:
+        logger.warning("sync ลำดับสิทธิ์หลัง %s ไม่สำเร็จ: %s", what, e)
+        _audit_admin(
+            admin, "admin_hierarchy_sync_failed",
+            "อัปเดตลำดับสิทธิ์อัตโนมัติไม่สำเร็จ", f"{what}: {e}", level="warn",
+        )
+
+
 def _patch_row_meta(row: dict[str, Any], body: UserAccessUpdateBody) -> None:
     # "ดูได้" คิดจากฟิลด์พวกนี้ ถ้ามีค่าเก่าติดมากับแถว (ไฟล์ที่แก้มือ หรือของที่
     # import ไว้ก่อนหน้า) ต้องทิ้งไปพร้อมกับการแก้ ไม่งั้นมันจะไปทับผลคำนวณใหม่
@@ -280,6 +310,7 @@ def create_user_access(
     ensure_row_in_admin_scope(admin, new_row)
     write_rows(rows + [new_row])
     invalidate_user_access_cache()
+    _sync_access_hierarchy(admin, f"เพิ่มผู้ใช้ {em}")
     _audit_admin(
         admin, "admin_user_create", f"เพิ่มผู้ใช้ {em}",
         f"USERPL={upl} ภาค={new_row.get('acc_region') or '-'} div={new_row.get('acc_division') or '-'}",
@@ -332,6 +363,7 @@ def update_user_access(
     ]
     write_rows(out)
     invalidate_user_access_cache()
+    _sync_access_hierarchy(admin, f"แก้ผู้ใช้ {em}")
     _audit_admin(
         admin, "admin_user_update", f"แก้ผู้ใช้ {em}",
         f"USERPL={upl}→{new_upl} ภาค={existing.get('acc_region') or '-'}→{updated_row.get('acc_region') or '-'}",
@@ -358,6 +390,7 @@ def remove_user_access(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     invalidate_user_access_cache()
+    _sync_access_hierarchy(admin, f"ลบผู้ใช้ {em}")
     _audit_admin(
         admin, "admin_user_delete", f"ลบผู้ใช้ {em}",
         f"USERPL={upl} ภาค={existing.get('acc_region') or '-'}", level="warn",
@@ -533,6 +566,8 @@ def set_user_role(
 
     write_rows(out)
     invalidate_user_access_cache()
+    # ตั้ง role สร้างแถวใหม่ได้ (บัญชีแอดมินอย่างเดียว) ลำดับสิทธิ์ต้องรู้จักด้วย
+    _sync_access_hierarchy(admin, f"ตั้ง role ให้ {em}")
     scope_note = f" (ขอบเขต: {ADMIN_SCOPE_LABELS.get(scope, scope)})" if scope else ""
     what = "สร้างบัญชีแอดมินอย่างเดียว" if created else "ตั้ง role ของ"
     _audit_admin(

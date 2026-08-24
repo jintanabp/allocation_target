@@ -13703,115 +13703,6 @@ async function adminExportUserAccess() {
   }
 }
 
-/**
- * ยืนยันเมื่อการอัปเดตลำดับสิทธิ์จะทำให้ผู้จัดการเห็นทีมน้อยลง
- *
- * เคยเกิดจริง: กดครั้งเดียว ผู้จัดการ 8 คนเหลือทีมจาก 12 → 1 โดยหน้าจอไม่บอกอะไรเลย
- */
-function _confirmHierarchyShrink(detail) {
-  const rows = (detail?.shrinking || []).map((s) =>
-    `<div class="shortfall-sku"><div class="shortfall-sku__head"><div>`
-    + `<code class="shortfall-sku__code">${escH(String(s.manager_code || ""))}</code>`
-    + `<div class="shortfall-sku__nums">ทีมใต้สังกัด ${Number(s.before) || 0} → `
-    + `<strong style="color:var(--red);">${Number(s.after) || 0}</strong></div>`
-    + `</div></div></div>`
-  ).join("");
-  return new Promise((resolve) => {
-    let decided = false;
-    _showInfoModal({
-      title: "จะทำให้ผู้จัดการเห็นทีมน้อยลง — ยังไม่อัปเดต",
-      bodyHtml:
-        `<p style="margin:0;text-align:left;line-height:1.7;">`
-        + `ผู้จัดการ <strong>${Number(detail?.shrinking_count) || 0} คน</strong> จะเห็นทีมใต้สังกัดน้อยลง</p>`
-        + `<p style="margin:10px 0 0;text-align:left;line-height:1.7;color:var(--text-2);">`
-        + `มักเกิดเมื่อแถวของผู้จัดการไม่มี Division/ภาค ระบบจึงคำนวณทีมกลับไม่ได้ — `
-        + `<strong>ควรเติมข้อมูลให้ครบก่อน</strong> หรือนำเข้าจากไฟล์ roster ใหม่</p>`
-        + `<div class="shortfall-list">${rows}</div>`,
-      primaryLabel: "ยืนยันอัปเดตทั้งที่ทีมจะหด",
-      onPrimary: () => { decided = true; resolve(true); },
-      secondaryLabel: "ยกเลิก",
-      onSecondary: () => { if (!decided) { decided = true; resolve(false); } },
-    });
-  });
-}
-
-/* อัปเดตลำดับสิทธิ์ให้เองหลังแก้รายชื่อ — ไม่ต้องให้คนจำว่าต้องกดปุ่ม
-
-   เป็นขั้นตอนที่ลืมกันบ่อยที่สุด: เพิ่มผู้ใช้แล้วไม่กด คนนั้นจะยังไม่เห็นทีมตัวเอง
-   ทำอัตโนมัติได้อย่างปลอดภัยเพราะ server มีด่านกันอยู่แล้ว — ถ้าผลลัพธ์จะทำให้
-   ผู้จัดการคนไหนเห็นทีมน้อยลง จะตอบ 409 กลับมา เราจะ **ไม่ยืนยันแทนผู้ใช้**
-   แต่บอกให้ไปกดปุ่มเองเพื่อดูรายชื่อก่อนตัดสินใจ
-
-   @returns {"ok"|"needs_review"|"failed"} */
-async function _autoRebuildHierarchy() {
-  try {
-    const res = await fetchWithTimeout(
-      `${API_BASE_URL}/admin/access-hierarchy/rebuild`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ confirm_shrink: false }),
-      },
-      60000
-    );
-    if (res.ok) return "ok";
-    const j = await res.json().catch(() => ({}));
-    if (j?.detail?.code === "hierarchy_rebuild_shrinks_teams") return "needs_review";
-    return "failed";
-  } catch (_) {
-    return "failed";
-  }
-}
-
-/** บอกผลการอัปเดตอัตโนมัติต่อท้ายข้อความหลัก โดยไม่กลบข้อความว่างานหลักสำเร็จแล้ว */
-function _toastWithAutoRebuild(mainMsg, status) {
-  if (status === "ok") {
-    toast(`${mainMsg} · อัปเดตลำดับสิทธิ์ให้แล้ว`, "green");
-  } else if (status === "needs_review") {
-    toast(`${mainMsg} — แต่ลำดับสิทธิ์ยังไม่อัปเดต`, "green");
-    toast('การอัปเดตจะทำให้บางทีมเล็กลง — กด "อัปเดตลำดับสิทธิ์" เพื่อดูรายชื่อก่อนยืนยัน', "amber");
-  } else {
-    toast(`${mainMsg} — แต่อัปเดตลำดับสิทธิ์ไม่สำเร็จ`, "green");
-    toast('กด "อัปเดตลำดับสิทธิ์" อีกครั้งด้วยตัวเอง', "amber");
-  }
-}
-
-async function adminRebuildHierarchy() {
-  const ok = await _confirmDialog(
-    "ระบบจะคำนวณใหม่ว่า Manager/Supervisor ดูทีม SL ไหนได้ แล้วเขียน access_hierarchy.json\n"
-    + "ควรทำหลังเพิ่มหรือแก้ผู้ใช้",
-    { title: "อัปเดตลำดับสิทธิ์จากรายชื่อผู้ใช้ปัจจุบัน", okLabel: "อัปเดต", cancelLabel: "ยกเลิก" }
-  );
-  if (!ok) return;
-
-  const post = async (confirmShrink) => {
-    const res = await fetchWithTimeout(
-      `${API_BASE_URL}/admin/access-hierarchy/rebuild`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ confirm_shrink: !!confirmShrink }),
-      },
-      60000
-    );
-    return { res, j: await res.json().catch(() => ({})) };
-  };
-
-  try {
-    let { res, j } = await post(false);
-    // server กันไว้เมื่อผลลัพธ์จะตัดทีมของผู้จัดการ — ต้องให้คนเห็นก่อนตัดสินใจ
-    if (!res.ok && j?.detail?.code === "hierarchy_rebuild_shrinks_teams") {
-      if (!await _confirmHierarchyShrink(j.detail)) return;
-      ({ res, j } = await post(true));
-    }
-    if (!res.ok) throw new Error(_userFacingError(_formatApiErrorDetail(j), "อัปเดตไม่สำเร็จ"));
-    toast(`อัปเดตลำดับสิทธิ์แล้ว — ผจก. ${j.manager_count} คน · ซุป ${j.supervisor_count} ทีม`, "green");
-    await adminLoadRows();
-  } catch (e) {
-    toast(_userFacingError(e), "red");
-  }
-}
-
 async function adminRunDeepHealth() {
   const el = document.getElementById("adminDeepHealthBody");
   if (el) el.textContent = "กำลังทดสอบการเชื่อมต่อ Fabric และ Target Sun…";
@@ -15073,18 +14964,12 @@ async function adminSaveInlineEdit() {
     }
     const viewEmail = _adminInlineEdit.origEmail;
     const newEmail = draft.email;
-    const orig = _adminInlineEdit.orig || {};
     _adminInlineEdit = null;
     _adminShowError("");
-    // คำนวณลำดับสิทธิ์ใหม่เฉพาะตอนที่ค่าที่ "กำหนดลำดับชั้น" เปลี่ยนจริง
-    // (แก้หมายเหตุหรือสลับสิทธิ์ส่ง ไม่ต้องไปเขียนไฟล์ลำดับชั้นใหม่)
-    const HIER_FIELDS = ["userpl", "login_kind", "manager_level", "acc_division", "acc_region", "acc_unit"];
-    const hierChanged = HIER_FIELDS.some(
-      (k) => String(orig[k] ?? "") !== String(draft[k] ?? "")
-    );
-    const rebuilt = hierChanged ? await _autoRebuildHierarchy() : null;
+    // server อัปเดตลำดับสิทธิ์ให้ในคำขอเดียวกันแล้ว — ไม่ต้องยิงตามอีกรอบ
+    // และไม่ต้องเดาเองว่าฟิลด์ไหน "กำหนดลำดับชั้น"
     await adminLoadRows();
-    if (rebuilt) _toastWithAutoRebuild(`บันทึก ${newEmail} แล้ว`, rebuilt);
+    toast(`บันทึก ${newEmail} แล้ว`, "green");
     if (S.viewAsEmail && S.viewAsEmail === viewEmail) {
       S.viewAsEmail = newEmail;
       updateViewAsBanner();
@@ -15860,10 +15745,9 @@ async function adminSubmitAdd() {
     const ml = document.getElementById("adminAddManagerLevel");
     if (ml) ml.value = "";
     adminSyncManagerLevelField();
-    // ผู้ใช้ใหม่ยังไม่มีใน access_hierarchy.json จนกว่าจะคำนวณใหม่ — ทำให้เลย
-    const rebuilt = await _autoRebuildHierarchy();
+    // server อัปเดตลำดับสิทธิ์ให้ในคำขอเดียวกันแล้ว ไม่ต้องยิงตามอีกรอบ
     await adminLoadRows();
-    _toastWithAutoRebuild(`เพิ่ม ${email} แล้ว`, rebuilt);
+    toast(`เพิ่ม ${email} แล้ว`, "green");
   } catch (e) {
     _adminShowError(e?.message || String(e));
   }
@@ -15885,10 +15769,8 @@ async function adminDeleteRow(email, userpl) {
       body: JSON.stringify({ email, userpl }),
     }, 15000);
     if (!res.ok) throw new Error("ลบไม่สำเร็จ");
-    // คนที่ถูกลบยังค้างอยู่ใน access_hierarchy.json จนกว่าจะคำนวณใหม่
-    const rebuilt = await _autoRebuildHierarchy();
     await adminLoadRows();
-    _toastWithAutoRebuild(`ลบ ${email} แล้ว`, rebuilt);
+    toast(`ลบ ${email} แล้ว`, "green");
   } catch (e) {
     _adminShowError(e?.message || String(e));
   }
