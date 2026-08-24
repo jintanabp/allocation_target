@@ -16,6 +16,7 @@ from .access_hierarchy import (
     compute_visible_supervisors_for_row,
     parse_hierarchy_metadata,
 )
+from .demo_data import DEMO_SUP_IDS, any_demo_supervisor
 from .manager_views import build_manager_view_options, build_manager_views_map
 from .sl_link_store import (
     expand_sl_codes,
@@ -398,12 +399,16 @@ def _full_rows_by_email_userpl() -> dict[tuple[str, str], dict[str, Any]]:
 
 
 def _visible_codes_for_row(row: dict[str, Any], all_rows: list[dict[str, Any]]) -> set[str]:
+    """
+    "ดูได้" คำนวณสดจากตำแหน่ง/ดิวิชัน/ภาค/หน่วยของแถวเสมอ
+
+    เดิมถ้าแถวมี visible_supervisor_codes ติดมา จะใช้ค่านั้นทับผลคำนวณ ผลคือแอดมิน
+    แก้หน่วยหรือภาคแล้วสิทธิ์ไม่ขยับเลย — ทั้งในตารางแอดมินและตอนล็อกอินจริง
+    (ช่อง preview ในฟอร์มคำนวณสดอยู่แล้ว เลยโชว์ค่าใหม่สวนกับค่าที่บันทึกไป)
+    ค่านั้นเป็นผลลัพธ์ที่คำนวณได้อยู่แล้ว ไม่ใช่ข้อมูลตั้งต้น จึงไม่ควรมีสิทธิ์ทับ
+    """
     upl = str(row.get("userpl") or "").strip().upper()
-    stored = row.get("visible_supervisor_codes")
-    if isinstance(stored, list) and stored:
-        vis = {str(x).strip().upper() for x in stored if str(x).strip()}
-    else:
-        vis = set(compute_visible_supervisors_for_row(row, all_rows=all_rows))
+    vis = set(compute_visible_supervisors_for_row(row, all_rows=all_rows))
     if upl:
         vis.add(upl)
     return vis
@@ -466,21 +471,64 @@ def compute_allowed_supervisor_codes(
     ne = normalized_email(email)
 
     sl_links = read_sl_links()
+
+    # ทีมจาก roster เดิม (access_hierarchy.json) — โหลดต่อเมื่อต้องใช้จริง
+    roster_by_manager: dict[str, list[str]] | None = None
+
+    def _roster_team(codes: set[str]) -> set[str]:
+        nonlocal roster_by_manager, mdata
+        if roster_by_manager is None:
+            if mdata is None:
+                mdata = managers_svc.load_full_managers_payload()
+            _, _, roster_by_manager = parse_hierarchy_metadata(mdata)
+        out: set[str] = set()
+        for c in codes:
+            out.update(roster_by_manager.get(c) or ())
+        return out
+
     allowed: set[str] = set()
     for upl in userpls:
         check_upls = expand_sl_codes({upl}, sl_links)
         merged = False
+        is_manager = False
+        from_row: set[str] = set()
         for check in sorted(check_upls):
             meta = meta_map.get((ne, check))
             if meta:
-                allowed.update(_visible_codes_for_row(meta, full_rows))
+                from_row.update(_visible_codes_for_row(meta, full_rows))
                 merged = True
+                if str(meta.get("login_kind") or "") == "manager_acc":
+                    is_manager = True
             elif check:
-                allowed.add(check)
+                from_row.add(check)
         if not merged and upl:
-            allowed.add(upl)
+            from_row.add(upl)
             logger.info("USERPL=%s ใช้รหัสตัวเองเป็น fallback", upl)
-        allowed.add(upl)
+        from_row.add(upl)
+
+        # ผู้จัดการที่แถวไม่มี division/ภาค คำนวณทีมกลับไม่ได้ เหลือแค่รหัสตัวเอง
+        # — กดเลือกลูกน้องแล้วโดน 403 ทั้งที่หน้าจอยังโชว์ทีมให้เลือกจาก roster
+        # ระหว่างรอเติมข้อมูลให้ครบ ให้ถอยไปใช้ทีมจาก roster ที่เก็บไว้แล้ว
+        # ใช้เฉพาะตอนคำนวณแล้วไม่ได้อะไรเลย พอเติม division/ภาค ครบเมื่อไหร่
+        # ผลคำนวณจะเข้ามาแทนเองและ fallback นี้จะเลิกทำงานไปเงียบ ๆ
+        if is_manager and from_row <= (check_upls | {upl}):
+            roster = _roster_team(check_upls | {upl})
+            if roster - from_row:
+                logger.warning(
+                    "USERPL=%s ไม่มี division/ภาค — ใช้ทีม %d รหัสจาก roster ไปก่อน",
+                    upl, len(roster),
+                )
+                from_row.update(roster)
+
+        allowed.update(from_row)
+
+    # ทีมสาธิตไม่ได้อยู่ใน roster จริง — มี 3 ทีมแต่มีบัญชีล็อกอินแค่ 2 ทีม
+    # SLDEMO3 จึงไม่มีแถวให้คำนวณเป็นเพื่อนร่วมภาค ต้องเติมเองเหมือนที่ /managers
+    # เติมเข้า payload อยู่แล้ว ไม่งั้นเดโมโหมดรวมภาค/รวมหน่วยไม่ได้ (ดู demo_data)
+    # เช็คจากรหัสของตัวเอง ไม่ใช่แค่อีเมล — demoadmin เป็นแอดมินอย่างเดียว
+    # ไม่มีรหัสขาย ต้องไม่ได้ทีมติดมาด้วย
+    if any_demo_supervisor(userpls):
+        allowed.update(DEMO_SUP_IDS)
 
     return expand_sl_codes(allowed, sl_links)
 

@@ -122,11 +122,6 @@ def canonicalize_user_access_row(row: dict[str, Any]) -> dict[str, Any]:
         acc_type = _opt_canonical_str(work, "acc_type")
         acc_joblevel = _opt_canonical_str(work, "acc_joblevel")
 
-    vis = work.get("visible_supervisor_codes")
-    if not isinstance(vis, list):
-        vis = []
-    vis_out = sorted({str(x).strip().upper() for x in vis if str(x).strip()})
-
     scope = str(work.get("acc_scope") or "").strip()
     if not scope:
         scope = NONE_SENTINEL
@@ -155,7 +150,9 @@ def canonicalize_user_access_row(row: dict[str, Any]) -> dict[str, Any]:
         "role": _opt_canonical_str(work, "role"),
         # ขอบเขตของ role admin — แก้ผู้ใช้คนไหนได้บ้าง (all/division/division_region)
         "admin_scope": _opt_canonical_str(work, "admin_scope"),
-        "visible_supervisor_codes": vis_out,
+        # ไม่มี visible_supervisor_codes โดยตั้งใจ — "ดูได้" เป็นผลลัพธ์ที่คำนวณสด
+        # ทุกครั้งจากตำแหน่ง/ดิวิชัน/ภาค/หน่วย (ดู _visible_codes_for_row)
+        # เคยเก็บลงไฟล์แล้วค่าที่ค้างไปทับผลคำนวณ ทำให้แก้สิทธิ์แล้วไม่มีอะไรเปลี่ยน
     }
 
 
@@ -282,9 +279,8 @@ def _normalize_row(row: dict[str, Any]) -> dict[str, Any] | None:
         if val is not None and str(val).strip():
             out[key] = str(val).strip()
     apply_inferred_access_fields(out)
-    vis = row.get("visible_supervisor_codes")
-    if isinstance(vis, list) and vis:
-        out["visible_supervisor_codes"] = [str(x).strip().upper() for x in vis if x]
+    # visible_supervisor_codes ถูกตัดทิ้งตรงนี้ — ทั้งตอนอ่านและตอนเขียน
+    # ไฟล์เก่าที่ยังมีฟิลด์นี้อยู่จะถูกล้างเองเมื่อบันทึกครั้งถัดไป
     return out
 
 

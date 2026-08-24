@@ -104,6 +104,8 @@ class TestSlLinkAccess(unittest.TestCase):
         # compute_allowed uses read_rows internally — set USER_ACCESS path or mock
         from unittest.mock import patch
 
+        # ทีมของ SL508 ต้องมาจากซุปที่อยู่ใน Div.B/กรุงเทพ จริง ๆ
+        # ("ดูได้" คำนวณสดเสมอ — ยัดรายชื่อสำเร็จรูปใส่แถวไม่ได้อีกแล้ว)
         full_rows = [
             {
                 "email": "thanit.l@sahapat.co.th",
@@ -112,13 +114,18 @@ class TestSlLinkAccess(unittest.TestCase):
                 "acc_division": "Div.B",
                 "acc_region": "กรุงเทพ",
                 "acc_scope": "all",
-                "visible_supervisor_codes": ["SL508", "SL532"],
             },
             {
                 "email": "thanit.l@sahapat.co.th",
                 "userpl": "SL524",
                 "login_kind": "manager_acc",
-                "visible_supervisor_codes": ["SL524"],
+            },
+            {
+                "email": "somchai.x@sahapat.co.th",
+                "userpl": "SL532",
+                "login_kind": "supervisor_acc",
+                "acc_division": "Div.B",
+                "acc_region": "กรุงเทพ",
             },
         ]
         with patch("backend.services.access_control.read_rows", return_value=full_rows):

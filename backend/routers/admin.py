@@ -144,6 +144,9 @@ _META_PATCH_KEYS = (
 
 
 def _patch_row_meta(row: dict[str, Any], body: UserAccessUpdateBody) -> None:
+    # "ดูได้" คิดจากฟิลด์พวกนี้ ถ้ามีค่าเก่าติดมากับแถว (ไฟล์ที่แก้มือ หรือของที่
+    # import ไว้ก่อนหน้า) ต้องทิ้งไปพร้อมกับการแก้ ไม่งั้นมันจะไปทับผลคำนวณใหม่
+    row.pop("visible_supervisor_codes", None)
     for key in _META_PATCH_KEYS:
         if getattr(body, key, None) is None:
             continue

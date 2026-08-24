@@ -2,7 +2,7 @@
   {
     "email": "amata.p@sahapat.co.th",
     "userpl": "SL397",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "อมต ปลื้มชัย",
     "acc_region": "อีสาน",
@@ -11,17 +11,12 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.S",
     "acc_unit": "van",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL397",
-      "SL460",
-      "SL509"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "anut.l@sahapat.co.th",
     "userpl": "SL520",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "อานัด  แลหมัน",
     "acc_region": "ใต้",
@@ -31,17 +26,12 @@
     "acc_division": "Div.B",
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯหน่วยรถภาคใต้",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL362",
-      "SL399",
-      "SL520"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "apichai.w@sahapat.co.th",
     "userpl": "SL396",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "อภิชัย วิเศษศิริลักษณ์",
     "acc_region": "เหนือ",
@@ -50,16 +40,12 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.S",
     "acc_unit": "credit",
-    "acc_scope": "credit",
-    "visible_supervisor_codes": [
-      "SL396",
-      "SL506"
-    ]
+    "acc_scope": "credit"
   },
   {
     "email": "apichat.t@sahapat.co.th",
     "userpl": "SL459",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "อภิชาติ เถี้ยมดำ",
     "acc_region": "ใต้",
@@ -68,17 +54,12 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.S",
     "acc_unit": "van",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL459",
-      "SL515",
-      "SL518"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "arkkadech.k@sahapat.co.th",
     "userpl": "SL460",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "อัคคเดช โคตรชมภู",
     "acc_region": "อีสาน",
@@ -87,17 +68,12 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.S",
     "acc_unit": "van",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL397",
-      "SL460",
-      "SL509"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "arnon.n@sahapat.co.th",
     "userpl": "SL375",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "อานนท์ โณกันที",
     "acc_region": "กลาง",
@@ -107,17 +83,12 @@
     "acc_division": "Div.B",
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯหน่วยรถภาคกลาง",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL375",
-      "SL381",
-      "SL418"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "assamaporn.i@sahapat.co.th",
     "userpl": "",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "บัญชีผู้ดูแลระบบ (ไม่มีตำแหน่งงาน)",
     "login_kind": "standard",
     "role": "head_admin",
@@ -126,7 +97,7 @@
   {
     "email": "atthaporn.n@sahapat.co.th",
     "userpl": "SL527",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "อรรถพร เนตรประภา",
     "acc_region": "กลาง",
@@ -135,29 +106,21 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.S",
     "acc_unit": "credit",
-    "acc_scope": "credit",
-    "visible_supervisor_codes": [
-      "SL453",
-      "SL527",
-      "SL531"
-    ]
+    "acc_scope": "credit"
   },
   {
     "email": "chaisant.l@sahapat.co.th",
     "userpl": "SL112",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "acc_type": "NON",
     "acc_joblevel": "A",
-    "login_kind": "standard",
-    "visible_supervisor_codes": [
-      "SL112"
-    ]
+    "login_kind": "standard"
   },
   {
     "email": "chaiwat.k@sahapat.co.th",
     "userpl": "SL372",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "ชัยวัฒน์ แก้วกระมล",
     "acc_region": "เหนือ",
@@ -166,20 +129,12 @@
     "login_kind": "manager_acc",
     "manager_level": "regional",
     "acc_division": "Div.S",
-    "acc_scope": "all",
-    "visible_supervisor_codes": [
-      "SL351",
-      "SL372",
-      "SL393",
-      "SL396",
-      "SL506",
-      "SL535"
-    ]
+    "acc_scope": "all"
   },
   {
     "email": "chaiyan.f@sahapat.co.th",
     "userpl": "SL328",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "ไชยันต์ ฟ้ามงคลชัย",
     "acc_region": "ใต้",
@@ -189,16 +144,12 @@
     "acc_division": "Div.B",
     "acc_unit": "credit",
     "acc_position": "ซุปเปอร์ฯเครดิตภาคใต้",
-    "acc_scope": "credit",
-    "visible_supervisor_codes": [
-      "SL328",
-      "SL412"
-    ]
+    "acc_scope": "credit"
   },
   {
     "email": "chalam.c@sahapat.co.th",
     "userpl": "SL362",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "ฉลาม  จันทร์เหลา",
     "acc_region": "ใต้",
@@ -208,17 +159,12 @@
     "acc_division": "Div.B",
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯหน่วยรถภาคใต้",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL362",
-      "SL399",
-      "SL520"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "chanyakrit.k@sahapat.co.th",
     "userpl": "SL540",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "acc_region": "กรุงเทพ",
     "acc_type": "NON",
@@ -226,15 +172,12 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.E",
     "acc_unit": "van",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL540"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "chartri.n@sahapat.co.th",
     "userpl": "SL406",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "ชาตรี นนตกร",
     "acc_region": "เหนือ",
@@ -243,16 +186,12 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.E",
     "acc_position": "ซุปเปอร์ฯ Div.E ภาคเหนือ",
-    "acc_scope": "region_peers",
-    "visible_supervisor_codes": [
-      "SL406",
-      "SL523"
-    ]
+    "acc_scope": "region_peers"
   },
   {
     "email": "chatree.j@sahapat.co.th",
     "userpl": "SL526",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "ชาตรี จิตอารี",
     "acc_region": "กลาง",
@@ -261,17 +200,12 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.S",
     "acc_unit": "van",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL350",
-      "SL457",
-      "SL526"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "chayanin.m@sahapat.co.th",
     "userpl": "SL539",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "ชญานิน มูลศิริ",
     "acc_region": "เหนือ",
@@ -281,17 +215,12 @@
     "acc_division": "Div.B",
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯหน่วยรถภาคเหนือ",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL307",
-      "SL514",
-      "SL539"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "chumphon.a@sahapat.co.th",
     "userpl": "SL415",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "ชุมพล อินสาคำ",
     "acc_region": "อีสาน",
@@ -301,24 +230,16 @@
     "acc_division": "Div.B",
     "acc_unit": "credit",
     "acc_position": "ซุปเปอร์ฯเครดิตภาคอีสาน",
-    "acc_scope": "credit",
-    "visible_supervisor_codes": [
-      "SL319",
-      "SL415",
-      "SL454"
-    ]
+    "acc_scope": "credit"
   },
   {
     "email": "danai.k@sahapat.co.th",
     "userpl": "SL386",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "acc_type": "NON",
     "acc_joblevel": "3",
-    "login_kind": "standard",
-    "visible_supervisor_codes": [
-      "SL386"
-    ]
+    "login_kind": "standard"
   },
   {
     "email": "demoadmin@sahapat.co.th",
@@ -340,12 +261,7 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.B",
     "acc_unit": "credit",
-    "acc_scope": "credit",
-    "visible_supervisor_codes": [
-      "SLDEMO1",
-      "SLDEMO2",
-      "SLDEMO3"
-    ]
+    "acc_scope": "credit"
   },
   {
     "email": "demosuperwithadmin@sahapat.co.th",
@@ -360,43 +276,32 @@
     "acc_unit": "credit",
     "acc_scope": "credit",
     "role": "admin",
-    "admin_scope": "division_region",
-    "visible_supervisor_codes": [
-      "SLDEMO1",
-      "SLDEMO2",
-      "SLDEMO3"
-    ]
+    "admin_scope": "division_region"
   },
   {
     "email": "jantaluk.w@sahapat.co.th",
     "userpl": "SL959",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
-    "acc_scope": "region_peers",
-    "visible_supervisor_codes": [
-      "SL959"
-    ]
+    "acc_scope": "region_peers"
   },
   {
     "email": "jaroonsub.t@sahapat.co.th",
     "userpl": "SL369",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc",
-    "acc_scope": "all",
-    "visible_supervisor_codes": [
-      "SL369"
-    ]
+    "acc_scope": "all"
   },
   {
     "email": "jensak.s@sahapat.co.th",
     "userpl": "SL523",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "เจนศักดิ์ เสกิละ",
     "acc_region": "เหนือ",
@@ -405,29 +310,22 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.E",
     "acc_position": "ซุปเปอร์ฯ Div.E ภาคเหนือ",
-    "acc_scope": "region_peers",
-    "visible_supervisor_codes": [
-      "SL406",
-      "SL523"
-    ]
+    "acc_scope": "region_peers"
   },
   {
     "email": "jessada.m@sahapat.co.th",
     "userpl": "SL513",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
-    "acc_scope": "region_peers",
-    "visible_supervisor_codes": [
-      "SL513"
-    ]
+    "acc_scope": "region_peers"
   },
   {
     "email": "jirat.s@sahapat.co.th",
     "userpl": "SL381",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "จิรัฎฐ์  สุนทรนัย",
     "acc_region": "กลาง",
@@ -437,30 +335,22 @@
     "acc_division": "Div.B",
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯหน่วยรถภาคกลาง",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL375",
-      "SL381",
-      "SL418"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "kanittha.h@sahapat.co.th",
     "userpl": "SL629",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc",
-    "acc_scope": "all",
-    "visible_supervisor_codes": [
-      "SL629"
-    ]
+    "acc_scope": "all"
   },
   {
     "email": "karntawit.k@sahapat.co.th",
     "userpl": "SL301",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "การณ์ธวิศ แก้วกิ้ม",
     "acc_type": "NON",
@@ -468,39 +358,12 @@
     "login_kind": "manager_acc",
     "manager_level": "division",
     "acc_division": "Div.S",
-    "acc_scope": "all",
-    "visible_supervisor_codes": [
-      "SL301",
-      "SL330",
-      "SL350",
-      "SL351",
-      "SL380",
-      "SL393",
-      "SL396",
-      "SL397",
-      "SL452",
-      "SL453",
-      "SL456",
-      "SL457",
-      "SL459",
-      "SL460",
-      "SL506",
-      "SL509",
-      "SL515",
-      "SL518",
-      "SL525",
-      "SL526",
-      "SL527",
-      "SL529",
-      "SL530",
-      "SL531",
-      "SL535"
-    ]
+    "acc_scope": "all"
   },
   {
     "email": "kerdpong.v@sahapat.co.th",
     "userpl": "SL528",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "เกิดพงศ์ วิจารณปัญญาสกุล",
     "acc_region": "กลาง",
@@ -510,17 +373,12 @@
     "acc_division": "Div.B",
     "acc_unit": "credit",
     "acc_position": "ซุปเปอร์ฯเครดิตภาคกลาง",
-    "acc_scope": "credit",
-    "visible_supervisor_codes": [
-      "SL341",
-      "SL382",
-      "SL528"
-    ]
+    "acc_scope": "credit"
   },
   {
     "email": "korrapath.b@sahapat.co.th",
     "userpl": "SL412",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "กรพัฒน์ บุญครองชีพ",
     "acc_region": "ใต้",
@@ -530,16 +388,12 @@
     "acc_division": "Div.B",
     "acc_unit": "credit",
     "acc_position": "ซุปเปอร์ฯเครดิตภาคใต้",
-    "acc_scope": "credit",
-    "visible_supervisor_codes": [
-      "SL328",
-      "SL412"
-    ]
+    "acc_scope": "credit"
   },
   {
     "email": "kriangsak.w@sahapat.co.th",
     "userpl": "SL518",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "เกรียงศักดิ์ วิรุณสาร",
     "acc_region": "ใต้",
@@ -548,17 +402,12 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.S",
     "acc_unit": "van",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL459",
-      "SL515",
-      "SL518"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "kritsada.h@sahapat.co.th",
     "userpl": "SL531",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "กฤษฎา หรูศิริวงศ์",
     "acc_region": "กลาง",
@@ -567,17 +416,12 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.S",
     "acc_unit": "credit",
-    "acc_scope": "credit",
-    "visible_supervisor_codes": [
-      "SL453",
-      "SL527",
-      "SL531"
-    ]
+    "acc_scope": "credit"
   },
   {
     "email": "manu.s@sahapat.co.th",
     "userpl": "SL525",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "มนู แซ่บู๊",
     "acc_region": "ใต้",
@@ -586,17 +430,12 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.S",
     "acc_unit": "credit",
-    "acc_scope": "credit",
-    "visible_supervisor_codes": [
-      "SL380",
-      "SL525",
-      "SL530"
-    ]
+    "acc_scope": "credit"
   },
   {
     "email": "nantavut.t@sahapat.co.th",
     "userpl": "SL399",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "นันทวุธ  ตัณฑะจินะ",
     "acc_region": "ใต้",
@@ -606,30 +445,22 @@
     "acc_division": "Div.B",
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯหน่วยรถภาคใต้",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL362",
-      "SL399",
-      "SL520"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "napat.w@sahapat.co.th",
     "userpl": "SL458",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
-    "acc_scope": "region_peers",
-    "visible_supervisor_codes": [
-      "SL458"
-    ]
+    "acc_scope": "region_peers"
   },
   {
     "email": "narut.p@sahapat.co.th",
     "userpl": "SL346",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "นรุตม์  ประยูร",
     "acc_region": "กลาง",
@@ -638,15 +469,12 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.E",
     "acc_position": "ซุปเปอร์ฯ Div.E ภาคกลาง",
-    "acc_scope": "region_peers",
-    "visible_supervisor_codes": [
-      "SL346"
-    ]
+    "acc_scope": "region_peers"
   },
   {
     "email": "natee.k@sahapat.co.th",
     "userpl": "SL454",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "นที ไกรอักษร",
     "acc_region": "อีสาน",
@@ -656,17 +484,12 @@
     "acc_division": "Div.B",
     "acc_unit": "credit",
     "acc_position": "ซุปเปอร์ฯเครดิตภาคอีสาน",
-    "acc_scope": "credit",
-    "visible_supervisor_codes": [
-      "SL319",
-      "SL415",
-      "SL454"
-    ]
+    "acc_scope": "credit"
   },
   {
     "email": "nattapol.b@sahapat.co.th",
     "userpl": "SL456",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "ณัฐพล บุษยทริกากรณ์",
     "acc_region": "อีสาน",
@@ -675,17 +498,12 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.S",
     "acc_unit": "credit",
-    "acc_scope": "credit",
-    "visible_supervisor_codes": [
-      "SL452",
-      "SL456",
-      "SL529"
-    ]
+    "acc_scope": "credit"
   },
   {
     "email": "nirut.w@sahapat.co.th",
     "userpl": "SL388",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "นิรุต วิชัยดิษฐ",
     "acc_region": "อีสาน",
@@ -695,21 +513,12 @@
     "manager_level": "regional",
     "acc_division": "Div.B",
     "acc_position": "ผจก.ภาคอีสาน",
-    "acc_scope": "all",
-    "visible_supervisor_codes": [
-      "SL319",
-      "SL387",
-      "SL388",
-      "SL407",
-      "SL408",
-      "SL415",
-      "SL454"
-    ]
+    "acc_scope": "all"
   },
   {
     "email": "noppadon.t@sahapat.co.th",
     "userpl": "SL515",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "นพดล ตรีสุวรรณ",
     "acc_region": "ใต้",
@@ -718,17 +527,12 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.S",
     "acc_unit": "van",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL459",
-      "SL515",
-      "SL518"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "noppol.p@sahapat.co.th",
     "userpl": "SL418",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "นพพล ปารมีส้าว",
     "acc_region": "กลาง",
@@ -738,30 +542,22 @@
     "acc_division": "Div.B",
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯหน่วยรถภาคกลาง",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL375",
-      "SL381",
-      "SL418"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "noppol.t@sahapat.co.th",
     "userpl": "SL411",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
-    "acc_scope": "region_peers",
-    "visible_supervisor_codes": [
-      "SL411"
-    ]
+    "acc_scope": "region_peers"
   },
   {
     "email": "numchok.p@sahapat.co.th",
     "userpl": "SL387",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "นำโชค  เพ็งบุญ",
     "acc_region": "อีสาน",
@@ -771,30 +567,22 @@
     "acc_division": "Div.B",
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯหน่วยรถภาคอีสาน",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL387",
-      "SL407",
-      "SL408"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "nuttawan.c@sahapat.co.th",
     "userpl": "SL223",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
-    "acc_scope": "region_peers",
-    "visible_supervisor_codes": [
-      "SL223"
-    ]
+    "acc_scope": "region_peers"
   },
   {
     "email": "paibool.t@sahapat.co.th",
     "userpl": "SL320",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "ไพบูลย์  ฐิติตานนท์",
     "acc_region": "กรุงเทพ",
@@ -802,32 +590,25 @@
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
     "acc_division": "Div.E",
+    "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯ Div.E ภาคกทม.",
-    "acc_scope": "region_peers",
-    "visible_supervisor_codes": [
-      "SL315",
-      "SL320",
-      "SL376"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "pairat.c@sahapat.co.th",
     "userpl": "SL358",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "acc_region": "ใต้",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
-    "acc_scope": "region_peers",
-    "visible_supervisor_codes": [
-      "SL358"
-    ]
+    "acc_scope": "region_peers"
   },
   {
     "email": "pakpoom.k@sahapat.co.th",
     "userpl": "SL345",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "ภาคภูมิ คงคติธรรม",
     "acc_region": "กลาง",
@@ -837,21 +618,12 @@
     "manager_level": "regional",
     "acc_division": "Div.B",
     "acc_position": "ผช.ผจก.ภาคกลาง",
-    "acc_scope": "all",
-    "visible_supervisor_codes": [
-      "SL341",
-      "SL345",
-      "SL375",
-      "SL381",
-      "SL382",
-      "SL418",
-      "SL528"
-    ]
+    "acc_scope": "all"
   },
   {
     "email": "panuwat.c@sahapat.co.th",
     "userpl": "SL350",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "ภาณุวัฒน์ ชยวัฒน์",
     "acc_region": "กลาง",
@@ -860,17 +632,12 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.S",
     "acc_unit": "van",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL350",
-      "SL457",
-      "SL526"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "payom.k@sahapat.co.th",
     "userpl": "SL330",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "พยอม คำลือ",
     "acc_region": "กรุงเทพ",
@@ -878,27 +645,21 @@
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
     "acc_division": "Div.S",
-    "acc_scope": "region_peers",
-    "visible_supervisor_codes": [
-      "SL330"
-    ]
+    "acc_scope": "region_peers"
   },
   {
     "email": "peerachat.o@sahapat.co.th",
     "userpl": "SL214",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "acc_type": "NON",
     "acc_joblevel": "3",
-    "login_kind": "standard",
-    "visible_supervisor_codes": [
-      "SL214"
-    ]
+    "login_kind": "standard"
   },
   {
     "email": "phanuwat.j@sahapat.co.th",
     "userpl": "SL392",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "ภาณุวัตร์ จินดา",
     "acc_region": "กลาง",
@@ -907,21 +668,12 @@
     "login_kind": "manager_acc",
     "manager_level": "regional",
     "acc_division": "Div.S",
-    "acc_scope": "all",
-    "visible_supervisor_codes": [
-      "SL350",
-      "SL392",
-      "SL453",
-      "SL457",
-      "SL526",
-      "SL527",
-      "SL531"
-    ]
+    "acc_scope": "all"
   },
   {
     "email": "phisit.w@sahapat.co.th",
     "userpl": "SL394",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "พิสิษฐ์ วายุอิสระ",
     "acc_region": "เหนือ",
@@ -931,33 +683,22 @@
     "manager_level": "regional",
     "acc_division": "Div.B",
     "acc_position": "ผจก.ภาคเหนือ",
-    "acc_scope": "all",
-    "visible_supervisor_codes": [
-      "SL225",
-      "SL307",
-      "SL394",
-      "SL503",
-      "SL514",
-      "SL539"
-    ]
+    "acc_scope": "all"
   },
   {
     "email": "pich.c@sahapat.co.th",
     "userpl": "SL958",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
-    "acc_scope": "region_peers",
-    "visible_supervisor_codes": [
-      "SL958"
-    ]
+    "acc_scope": "region_peers"
   },
   {
     "email": "pittaya.k@sahapat.co.th",
     "userpl": "SL453",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "พิทยา เครือบุดดี",
     "acc_region": "กลาง",
@@ -966,17 +707,12 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.S",
     "acc_unit": "credit",
-    "acc_scope": "credit",
-    "visible_supervisor_codes": [
-      "SL453",
-      "SL527",
-      "SL531"
-    ]
+    "acc_scope": "credit"
   },
   {
     "email": "pongpol.k@sahapat.co.th",
     "userpl": "SL382",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "ปองพล คชพงศ์",
     "acc_region": "กลาง",
@@ -986,17 +722,12 @@
     "acc_division": "Div.B",
     "acc_unit": "credit",
     "acc_position": "ซุปเปอร์ฯเครดิตภาคกลาง",
-    "acc_scope": "credit",
-    "visible_supervisor_codes": [
-      "SL341",
-      "SL382",
-      "SL528"
-    ]
+    "acc_scope": "credit"
   },
   {
     "email": "ponlawat.p@sahapat.co.th",
     "userpl": "SL532",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "พลวัต เพชรนารถ",
     "acc_region": "กรุงเทพ",
@@ -1006,43 +737,34 @@
     "acc_division": "Div.B",
     "acc_unit": "credit",
     "acc_position": "ซุปเปอร์ฯเครดิตภาคกรุงเทพฯ",
-    "acc_scope": "credit",
-    "visible_supervisor_codes": [
-      "SL532"
-    ]
+    "acc_scope": "credit"
   },
   {
     "email": "pornsak.c@sahapat.co.th",
     "userpl": "SL367",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
-    "acc_scope": "region_peers",
-    "visible_supervisor_codes": [
-      "SL367"
-    ]
+    "acc_scope": "region_peers"
   },
   {
     "email": "prasert.c@sahapat.co.th",
     "userpl": "SL352",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "acc_region": "ใต้",
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc",
     "manager_level": "regional",
-    "acc_scope": "all",
-    "visible_supervisor_codes": [
-      "SL352"
-    ]
+    "acc_scope": "all"
   },
   {
     "email": "prasert.c@sahapat.co.th",
     "userpl": "SL532",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "ประเสริฐ ชุ่มชนต์",
     "acc_region": "ใต้",
@@ -1051,21 +773,12 @@
     "login_kind": "manager_acc",
     "manager_level": "regional",
     "acc_division": "Div.S",
-    "acc_scope": "all",
-    "visible_supervisor_codes": [
-      "SL380",
-      "SL459",
-      "SL515",
-      "SL518",
-      "SL525",
-      "SL530",
-      "SL532"
-    ]
+    "acc_scope": "all"
   },
   {
     "email": "pratak.k@sahapat.co.th",
     "userpl": "SL529",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "ประทักษ์ กองแดง",
     "acc_region": "อีสาน",
@@ -1074,17 +787,12 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.S",
     "acc_unit": "credit",
-    "acc_scope": "credit",
-    "visible_supervisor_codes": [
-      "SL452",
-      "SL456",
-      "SL529"
-    ]
+    "acc_scope": "credit"
   },
   {
     "email": "preecha.k@sahapat.co.th",
     "userpl": "SL402",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "ปรีชา ขวัญแย้ม",
     "acc_region": "ใต้",
@@ -1094,20 +802,12 @@
     "manager_level": "regional",
     "acc_division": "Div.B",
     "acc_position": "ผจก.ภาคใต้",
-    "acc_scope": "all",
-    "visible_supervisor_codes": [
-      "SL328",
-      "SL362",
-      "SL399",
-      "SL402",
-      "SL412",
-      "SL520"
-    ]
+    "acc_scope": "all"
   },
   {
     "email": "preecha.p@sahapat.co.th",
     "userpl": "SL393",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "ปรีชา พุ่มพวง",
     "acc_region": "เหนือ",
@@ -1116,17 +816,12 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.S",
     "acc_unit": "van",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL351",
-      "SL393",
-      "SL535"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "ronnachai.s@sahapat.co.th",
     "userpl": "SL319",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "รณชัย แสงมณี",
     "acc_region": "อีสาน",
@@ -1136,17 +831,12 @@
     "acc_division": "Div.B",
     "acc_unit": "credit",
     "acc_position": "ซุปเปอร์ฯเครดิตภาคอีสาน",
-    "acc_scope": "credit",
-    "visible_supervisor_codes": [
-      "SL319",
-      "SL415",
-      "SL454"
-    ]
+    "acc_scope": "credit"
   },
   {
     "email": "sanchai.m@sahapat.co.th",
     "userpl": "SL376",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "สรรชัย มั่นพิริยะ",
     "acc_region": "กรุงเทพ",
@@ -1156,17 +846,12 @@
     "acc_division": "Div.E",
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯ Div.E ภาคกทม.",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL315",
-      "SL320",
-      "SL376"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "santi.n@sahapat.co.th",
     "userpl": "SL408",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "สันติ  นิธิเดชวาณิช",
     "acc_region": "อีสาน",
@@ -1176,17 +861,12 @@
     "acc_division": "Div.B",
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯหน่วยรถภาคอีสาน",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL387",
-      "SL407",
-      "SL408"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "sarawut.p@sahapat.co.th",
     "userpl": "SL535",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "สราวุธ ปัญญายศ",
     "acc_region": "เหนือ",
@@ -1195,30 +875,22 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.S",
     "acc_unit": "van",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL351",
-      "SL393",
-      "SL535"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "senee.k@sahapat.co.th",
     "userpl": "SL356",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc",
-    "acc_scope": "all",
-    "visible_supervisor_codes": [
-      "SL356"
-    ]
+    "acc_scope": "all"
   },
   {
     "email": "sittidat.o@sahapat.co.th",
     "userpl": "SL351",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "สิทธิเดช อุตเลิศ",
     "acc_region": "เหนือ",
@@ -1227,30 +899,22 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.S",
     "acc_unit": "van",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL351",
-      "SL393",
-      "SL535"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "somchart.c@sahapat.co.th",
     "userpl": "SL413",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
-    "acc_scope": "region_peers",
-    "visible_supervisor_codes": [
-      "SL413"
-    ]
+    "acc_scope": "region_peers"
   },
   {
     "email": "somphop.j@sahapat.co.th",
     "userpl": "SL105",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "สมภพ จันทร์หอม",
     "acc_type": "NON",
@@ -1258,39 +922,12 @@
     "login_kind": "manager_acc",
     "manager_level": "division",
     "acc_division": "Div.S",
-    "acc_scope": "all",
-    "visible_supervisor_codes": [
-      "SL105",
-      "SL330",
-      "SL350",
-      "SL351",
-      "SL380",
-      "SL393",
-      "SL396",
-      "SL397",
-      "SL452",
-      "SL453",
-      "SL456",
-      "SL457",
-      "SL459",
-      "SL460",
-      "SL506",
-      "SL509",
-      "SL515",
-      "SL518",
-      "SL525",
-      "SL526",
-      "SL527",
-      "SL529",
-      "SL530",
-      "SL531",
-      "SL535"
-    ]
+    "acc_scope": "all"
   },
   {
     "email": "sompod.m@sahapat.co.th",
     "userpl": "SL307",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "สมโภช  มีเกียรติชัยกุล",
     "acc_region": "เหนือ",
@@ -1300,17 +937,12 @@
     "acc_division": "Div.B",
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯหน่วยรถภาคเหนือ",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL307",
-      "SL514",
-      "SL539"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "somrat.w@sahapat.co.th",
     "userpl": "SL380",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "สมรัตน์ วัฒนมงคลสุข",
     "acc_region": "ใต้",
@@ -1319,12 +951,7 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.S",
     "acc_unit": "credit",
-    "acc_scope": "credit",
-    "visible_supervisor_codes": [
-      "SL380",
-      "SL525",
-      "SL530"
-    ]
+    "acc_scope": "credit"
   },
   {
     "email": "somtawin.n@sahapat.co.th",
@@ -1338,17 +965,12 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.S",
     "acc_unit": "van",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL350",
-      "SL457",
-      "SL526"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "songtham.c@sahapat.co.th",
     "userpl": "SL417",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "ทรงธรรม ชาวอุทัย",
     "acc_region": "อีสาน",
@@ -1357,41 +979,32 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.E",
     "acc_position": "ซุปเปอร์ฯ Div.E ภาคอีสาน",
-    "acc_scope": "region_peers",
-    "visible_supervisor_codes": [
-      "SL417"
-    ]
+    "acc_scope": "region_peers"
   },
   {
     "email": "sorakom.n@sahapat.co.th",
     "userpl": "SL371",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
-    "acc_scope": "region_peers",
-    "visible_supervisor_codes": [
-      "SL371"
-    ]
+    "acc_scope": "region_peers"
   },
   {
     "email": "sorawich.s@sahapat.co.th",
     "userpl": "SL340",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
-    "acc_scope": "region_peers",
-    "visible_supervisor_codes": [
-      "SL340"
-    ]
+    "acc_scope": "region_peers"
   },
   {
     "email": "suban.c@sahapat.co.th",
     "userpl": "SL506",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "สุบรรณ ใจภูมิ",
     "acc_region": "เหนือ",
@@ -1400,16 +1013,12 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.S",
     "acc_unit": "credit",
-    "acc_scope": "credit",
-    "visible_supervisor_codes": [
-      "SL396",
-      "SL506"
-    ]
+    "acc_scope": "credit"
   },
   {
     "email": "sukhee.n@sahapat.co.th",
     "userpl": "SL359",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "สุขี นนทวี",
     "acc_region": "เหนือ",
@@ -1418,46 +1027,33 @@
     "login_kind": "manager_acc",
     "manager_level": "regional",
     "acc_division": "Div.S",
-    "acc_scope": "all",
-    "visible_supervisor_codes": [
-      "SL351",
-      "SL359",
-      "SL393",
-      "SL396",
-      "SL506",
-      "SL535"
-    ]
+    "acc_unit": "credit",
+    "acc_scope": "all"
   },
   {
     "email": "sumeth.s@sahapat.co.th",
     "userpl": "SL311",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc",
-    "acc_scope": "all",
-    "visible_supervisor_codes": [
-      "SL311"
-    ]
+    "acc_scope": "all"
   },
   {
     "email": "surachai.a@sahapat.co.th",
     "userpl": "SL395",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "acc_type": "NON",
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
-    "acc_scope": "region_peers",
-    "visible_supervisor_codes": [
-      "SL395"
-    ]
+    "acc_scope": "region_peers"
   },
   {
     "email": "surachet.s@sahapat.co.th",
     "userpl": "SL315",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "สุรเชษฎ์ สิทธิวิชยาพันธุ์",
     "acc_region": "กรุงเทพ",
@@ -1465,18 +1061,14 @@
     "acc_joblevel": "1",
     "login_kind": "supervisor_acc",
     "acc_division": "Div.E",
+    "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯ Div.E ภาคกทม.",
-    "acc_scope": "region_peers",
-    "visible_supervisor_codes": [
-      "SL315",
-      "SL320",
-      "SL376"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "tanakorn.p@sahapat.co.th",
     "userpl": "SL341",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "ธณากร พวงทอง",
     "acc_region": "กลาง",
@@ -1486,12 +1078,7 @@
     "acc_division": "Div.B",
     "acc_unit": "credit",
     "acc_position": "ซุปเปอร์ฯเครดิตภาคกลาง",
-    "acc_scope": "credit",
-    "visible_supervisor_codes": [
-      "SL341",
-      "SL382",
-      "SL528"
-    ]
+    "acc_scope": "credit"
   },
   {
     "email": "tanameat.s@sahapat.co.th",
@@ -1505,16 +1092,12 @@
     "login_kind": "manager_acc",
     "manager_level": "regional",
     "acc_division": "Div.S",
-    "acc_scope": "all",
-    "visible_supervisor_codes": [
-      "SL330",
-      "SL384"
-    ]
+    "acc_scope": "all"
   },
   {
     "email": "tanat.t@sahapat.co.th",
     "userpl": "SL360",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "ธนัท ธราธรปัญญา",
     "acc_type": "NON",
@@ -1522,39 +1105,12 @@
     "login_kind": "manager_acc",
     "manager_level": "division",
     "acc_division": "Div.S",
-    "acc_scope": "all",
-    "visible_supervisor_codes": [
-      "SL330",
-      "SL350",
-      "SL351",
-      "SL360",
-      "SL380",
-      "SL393",
-      "SL396",
-      "SL397",
-      "SL452",
-      "SL453",
-      "SL456",
-      "SL457",
-      "SL459",
-      "SL460",
-      "SL506",
-      "SL509",
-      "SL515",
-      "SL518",
-      "SL525",
-      "SL526",
-      "SL527",
-      "SL529",
-      "SL530",
-      "SL531",
-      "SL535"
-    ]
+    "acc_scope": "all"
   },
   {
     "email": "taweesak.p@sahapat.co.th",
     "userpl": "SL204",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "ทวีศักดิ์ พัฒนสุนทโร",
     "acc_type": "NON",
@@ -1562,39 +1118,12 @@
     "login_kind": "manager_acc",
     "manager_level": "division",
     "acc_division": "Div.S",
-    "acc_scope": "all",
-    "visible_supervisor_codes": [
-      "SL204",
-      "SL330",
-      "SL350",
-      "SL351",
-      "SL380",
-      "SL393",
-      "SL396",
-      "SL397",
-      "SL452",
-      "SL453",
-      "SL456",
-      "SL457",
-      "SL459",
-      "SL460",
-      "SL506",
-      "SL509",
-      "SL515",
-      "SL518",
-      "SL525",
-      "SL526",
-      "SL527",
-      "SL529",
-      "SL530",
-      "SL531",
-      "SL535"
-    ]
+    "acc_scope": "all"
   },
   {
     "email": "teerasak.w@sahapat.co.th",
     "userpl": "SL225",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "ธีระศักดิ์ วิมลรัตน์",
     "acc_region": "เหนือ",
@@ -1604,16 +1133,12 @@
     "acc_division": "Div.B",
     "acc_unit": "credit",
     "acc_position": "ซุปเปอร์ฯเครดิตภาคเหนือ",
-    "acc_scope": "credit",
-    "visible_supervisor_codes": [
-      "SL225",
-      "SL503"
-    ]
+    "acc_scope": "credit"
   },
   {
     "email": "thanit.l@sahapat.co.th",
     "userpl": "SL508",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "ฐานิต  เลิศสิริกุล",
     "acc_region": "กรุงเทพ",
@@ -1623,29 +1148,22 @@
     "manager_level": "regional",
     "acc_division": "Div.B",
     "acc_position": "ผช.ผจก.ภาคกรุงเทพฯ",
-    "acc_scope": "all",
-    "visible_supervisor_codes": [
-      "SL508",
-      "SL532"
-    ]
+    "acc_scope": "all"
   },
   {
     "email": "thanit.l@sahapat.co.th",
     "userpl": "SL524",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc",
-    "acc_scope": "all",
-    "visible_supervisor_codes": [
-      "SL524"
-    ]
+    "acc_scope": "all"
   },
   {
     "email": "thavorn.k@sahapat.co.th",
     "userpl": "SL452",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "ถาวร การะหงษ์",
     "acc_region": "อีสาน",
@@ -1654,17 +1172,12 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.S",
     "acc_unit": "credit",
-    "acc_scope": "credit",
-    "visible_supervisor_codes": [
-      "SL452",
-      "SL456",
-      "SL529"
-    ]
+    "acc_scope": "credit"
   },
   {
     "email": "therdsak.s@sahapat.co.th",
     "userpl": "SL514",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "เทอดศักดิ์  สิทธิ",
     "acc_region": "เหนือ",
@@ -1674,30 +1187,22 @@
     "acc_division": "Div.B",
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯหน่วยรถภาคเหนือ",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL307",
-      "SL514",
-      "SL539"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "thitiwat.a@sahapat.co.th",
     "userpl": "SL511",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc",
-    "acc_scope": "all",
-    "visible_supervisor_codes": [
-      "SL511"
-    ]
+    "acc_scope": "all"
   },
   {
     "email": "tree.p@sahapat.co.th",
     "userpl": "SL510",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "ตรี เป๊กทอง",
     "acc_region": "อีสาน",
@@ -1706,21 +1211,12 @@
     "login_kind": "manager_acc",
     "manager_level": "regional",
     "acc_division": "Div.S",
-    "acc_scope": "all",
-    "visible_supervisor_codes": [
-      "SL397",
-      "SL452",
-      "SL456",
-      "SL460",
-      "SL509",
-      "SL510",
-      "SL529"
-    ]
+    "acc_scope": "all"
   },
   {
     "email": "waranyoo.n@sahapat.co.th",
     "userpl": "SL530",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "วรัญญู หนูดำ",
     "acc_region": "ใต้",
@@ -1729,17 +1225,12 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.S",
     "acc_unit": "credit",
-    "acc_scope": "credit",
-    "visible_supervisor_codes": [
-      "SL380",
-      "SL525",
-      "SL530"
-    ]
+    "acc_scope": "credit"
   },
   {
     "email": "watchara.m@sahapat.co.th",
     "userpl": "SL407",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "วัชระ ม่วงแก้ว",
     "acc_region": "อีสาน",
@@ -1749,17 +1240,12 @@
     "acc_division": "Div.B",
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯหน่วยรถภาคอีสาน",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL387",
-      "SL407",
-      "SL408"
-    ]
+    "acc_scope": "van"
   },
   {
     "email": "werachai.j@sahapat.co.th",
     "userpl": "SL503",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "วีระชัย จอมบัว",
     "acc_region": "เหนือ",
@@ -1769,29 +1255,22 @@
     "acc_division": "Div.B",
     "acc_unit": "credit",
     "acc_position": "ซุปเปอร์ฯเครดิตภาคเหนือ",
-    "acc_scope": "credit",
-    "visible_supervisor_codes": [
-      "SL225",
-      "SL503"
-    ]
+    "acc_scope": "credit"
   },
   {
     "email": "wichit.l@sahapat.co.th",
     "userpl": "SL374",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "acc_type": "NON",
     "acc_joblevel": "2",
     "login_kind": "manager_acc",
-    "acc_scope": "all",
-    "visible_supervisor_codes": [
-      "SL374"
-    ]
+    "acc_scope": "all"
   },
   {
     "email": "wigit.w@sahapat.co.th",
     "userpl": "SL349",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "วิจิตร วิกัยวัฒน",
     "acc_type": "NON",
@@ -1800,22 +1279,12 @@
     "manager_level": "division",
     "acc_division": "Div.E",
     "acc_position": "ผจก.แผนก Div.E",
-    "acc_scope": "all",
-    "visible_supervisor_codes": [
-      "SL315",
-      "SL320",
-      "SL346",
-      "SL349",
-      "SL376",
-      "SL406",
-      "SL417",
-      "SL523"
-    ]
+    "acc_scope": "all"
   },
   {
     "email": "winai.s@sahapat.co.th",
     "userpl": "SL309",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "วินัย สุจริตจันทร์",
     "acc_type": "NON",
@@ -1823,39 +1292,12 @@
     "login_kind": "manager_acc",
     "manager_level": "division",
     "acc_division": "Div.S",
-    "acc_scope": "all",
-    "visible_supervisor_codes": [
-      "SL309",
-      "SL330",
-      "SL350",
-      "SL351",
-      "SL380",
-      "SL393",
-      "SL396",
-      "SL397",
-      "SL452",
-      "SL453",
-      "SL456",
-      "SL457",
-      "SL459",
-      "SL460",
-      "SL506",
-      "SL509",
-      "SL515",
-      "SL518",
-      "SL525",
-      "SL526",
-      "SL527",
-      "SL529",
-      "SL530",
-      "SL531",
-      "SL535"
-    ]
+    "acc_scope": "all"
   },
   {
     "email": "wirat.a@sahapat.co.th",
     "userpl": "SL509",
-    "can_import_targetsun": false,
+    "can_import_targetsun": true,
     "note": "",
     "full_name": "วิรัตน์ อนุภักดิ์",
     "acc_region": "อีสาน",
@@ -1864,11 +1306,6 @@
     "login_kind": "supervisor_acc",
     "acc_division": "Div.S",
     "acc_unit": "van",
-    "acc_scope": "van",
-    "visible_supervisor_codes": [
-      "SL397",
-      "SL460",
-      "SL509"
-    ]
+    "acc_scope": "van"
   }
 ]
