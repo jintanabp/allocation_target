@@ -20,3 +20,6 @@ docs/user-manual-th.pdf
 # แล้วหลัง deploy ครั้งแรกให้เข้าหน้าแอดมิน > แหล่งข้อมูล ตั้ง preset ใหม่ 1 ครั้ง
 # (ดู docs/DEPLOY_QA_CHECKLIST.md) ต้นแบบอยู่ที่ config/app_runtime.example.json
 config/app_runtime.json
+
+# Claude Code — ตั้งค่าเฉพาะเครื่อง + worktree ชั่วคราว ไม่ใช่ของโปรเจกต์
+.claude/
