@@ -89,5 +89,39 @@ class TestPriceBySalesUnit(unittest.TestCase):
         self.assertTrue(bool(df_sku.iloc[0]["price_missing"]))
 
 
+class TestBoxTargetNeverDependsOnPrice(unittest.TestCase):
+    """
+    เป้าหีบต้องไม่ขยับเพราะเรื่องราคา — เป้าหีบมาจาก Target Sun ตรง ๆ
+
+    ราคามีผลกับ "เป้าเงิน" เท่านั้น ถ้าวันไหนเป้าหีบขยับตามราคาได้ แปลว่าจำนวนที่
+    จะส่งกลับเข้า Target Sun เพี้ยนตามราคาไปด้วย ซึ่งเป็นข้อมูลคนละก้อนกัน
+    """
+
+    def _boxes(self, sales_type, credit, cash):
+        df_sku, _sun, _ = _build_sku_and_sun_from_tga(
+            _tga(qty=17), _product(credit=credit, cash=cash),
+            ["C413"], [SKU], sales_type=sales_type,
+        )
+        return int(df_sku.loc[df_sku["sku"] == SKU, "supervisor_target_boxes"].iloc[0])
+
+    def test_same_boxes_for_van_and_credit(self):
+        self.assertEqual(self._boxes("C", 352.0, 300.0), 17)
+        self.assertEqual(self._boxes("S", 352.0, 300.0), 17)
+
+    def test_same_boxes_when_prices_change(self):
+        for credit, cash in ((352.0, 300.0), (1.0, 9999.0), (0.0, 0.0)):
+            with self.subTest(credit=credit, cash=cash):
+                self.assertEqual(self._boxes("C", credit, cash), 17)
+
+    def test_same_boxes_when_price_is_missing_entirely(self):
+        """ราคาหายหมด เป้าหีบยังต้องครบ — ที่หายคือเงิน ไม่ใช่หีบ"""
+        df_sku, _sun, _ = _build_sku_and_sun_from_tga(
+            _tga(qty=17), pd.DataFrame(), ["C413"], [SKU], sales_type="C",
+        )
+        self.assertEqual(
+            int(df_sku.loc[df_sku["sku"] == SKU, "supervisor_target_boxes"].iloc[0]), 17
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
