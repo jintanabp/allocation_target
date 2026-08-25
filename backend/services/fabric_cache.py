@@ -52,7 +52,15 @@ def _tga_skus_path(year: int, month: int) -> str:
     return os.path.join(cache_dir(), f"tga_skus_{int(year)}_{int(month):02d}.csv")
 
 
-def _read_meta(path: str) -> dict[str, Any] | None:
+def _read_meta(path: str, *, allow_stale: bool = False) -> dict[str, Any] | None:
+    """
+    allow_stale: ยอมใช้แคชที่หมดอายุแล้ว — สำหรับตอนดึงของใหม่ไม่ได้เท่านั้น
+
+    ราคาสินค้าแทบไม่ขยับระหว่างงวด ราคาเมื่อวานจึงใกล้เคียงความจริงกว่า 0 มาก
+    ตอน Fabric ล่ม (เช่น capacity เต็ม) ถ้าทิ้งแคชเก่าไปด้วย ทุก SKU จะได้ราคา 0
+    แล้ว "เป้ารวม (บาท)" ของทุกทีมกลายเป็น 0 ทั้งที่จำนวนหีบมาจาก Target Sun
+    ครบถ้วน — หน้าเว็บอ่านค่า 0 นั้นแล้วสรุปว่า "ไม่มีเป้าในงวดนี้" ทั้งระบบ
+    """
     if not _cache_enabled() or not os.path.isfile(path):
         return None
     try:
@@ -69,7 +77,12 @@ def _read_meta(path: str) -> dict[str, Any] | None:
             cached_at = cached_at.replace(tzinfo=timezone.utc)
         age = (datetime.now(timezone.utc) - cached_at.astimezone(timezone.utc)).total_seconds()
         if age > fabric_static_cache_ttl_sec():
-            return None
+            if not allow_stale:
+                return None
+            logger.warning(
+                "ใช้แคชที่หมดอายุแล้ว %s (เก่า %.1f ชม.) — ดึงของใหม่ไม่ได้",
+                os.path.basename(path), age / 3600.0,
+            )
         return doc
     except Exception as e:
         logger.warning("fabric cache read %s: %s", path, e)
@@ -101,8 +114,10 @@ def product_price_asof(year: int, month: int) -> str:
     return f"{int(year):04d}-{int(month):02d}-01"
 
 
-def read_product_info_df(year: int, month: int) -> pd.DataFrame | None:
-    doc = _read_meta(_product_path(year, month))
+def read_product_info_df(
+    year: int, month: int, *, allow_stale: bool = False
+) -> pd.DataFrame | None:
+    doc = _read_meta(_product_path(year, month), allow_stale=allow_stale)
     if not doc:
         return None
     # แคชที่เขียนไว้ก่อนแก้บั๊กราคา (ไม่มี price_asof) ถือราคา ณ "วันที่ดึง"
@@ -135,8 +150,10 @@ def write_product_info_df(year: int, month: int, df: pd.DataFrame) -> None:
     )
 
 
-def read_price_map(year: int, month: int) -> dict[str, float] | None:
-    doc = _read_meta(_price_path(year, month))
+def read_price_map(
+    year: int, month: int, *, allow_stale: bool = False
+) -> dict[str, float] | None:
+    doc = _read_meta(_price_path(year, month), allow_stale=allow_stale)
     if not doc:
         return None
     prices = doc.get("prices")

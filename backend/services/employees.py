@@ -672,6 +672,25 @@ def load_employees_payload(
                 except Exception as e:
                     logger.warning("get_product_info error: %s", e)
 
+        # ดึงราคาใหม่ไม่ได้ → ยอมใช้แคชที่หมดอายุแทนการปล่อยให้ราคาเป็น 0
+        #
+        # ราคาที่หายไปไม่ได้ทำให้แค่ช่องราคาว่าง แต่ทำให้ "เป้ารวม (บาท)" ของทั้งทีม
+        # เป็น 0 (เป้ารวม = ผลบวก ราคา x หีบ) แล้วหน้าเว็บอ่านค่า 0 นั้นเป็นสัญญาณว่า
+        # "ไม่มีเป้าในงวดนี้" — พอ Fabric ล่ม (เช่น capacity เต็ม) จึงกลายเป็นว่า
+        # ทุกซุปเปิดงวดไม่ได้พร้อมกัน ทั้งที่จำนวนหีบจาก Target Sun มาครบทุกแถว
+        # ราคาเมื่อวานใกล้ความจริงกว่า 0 มาก และยังตรวจ price_asof เหมือนเดิม
+        if df_sku_base.empty and sku_union:
+            stale_product = fc.read_product_info_df(
+                target_year, target_month, allow_stale=True
+            )
+            if stale_product is not None and not stale_product.empty:
+                df_sku_base = stale_product[
+                    stale_product["sku"].astype(str).isin(sku_union)
+                ].copy()
+                logger.warning(
+                    "ใช้ข้อมูลสินค้าจากแคชที่หมดอายุ %d แถว — ดึงจาก Fabric ไม่ได้",
+                    len(df_sku_base),
+                )
         if df_sku_base.empty and sku_union:
             df_sku_base = pd.DataFrame({"sku": sku_union})
 
@@ -693,8 +712,17 @@ def load_employees_payload(
                     fc.write_price_map(target_year, target_month, price_latest)
             except Exception as e:
                 logger.warning(
-                    "get_latest_price_per_box_by_sku error: %s (price จะเป็น 0 + flag missing)",
+                    "get_latest_price_per_box_by_sku error: %s — จะลองใช้แคชที่หมดอายุแทน",
                     e,
+                )
+        if not price_latest:
+            price_latest = fc.read_price_map(
+                target_year, target_month, allow_stale=True
+            ) or {}
+            if price_latest:
+                logger.warning(
+                    "ใช้ราคาจากแคชที่หมดอายุ %d SKU — ดึงจาก Fabric ไม่ได้",
+                    len(price_latest),
                 )
 
         df_sku, df_sun_csv, emp_with_tga = _build_sku_and_sun_from_tga(

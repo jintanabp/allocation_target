@@ -4227,6 +4227,32 @@ function applyDataPayload(data) {
   S.tgaPeriodStatus = data.tga_period_status || "ok";
 
   if (S.totalTarget === 0) {
+    // มีหีบแต่คิดเป็นเงินไม่ได้ = คนละเรื่องกับ "งวดนี้ยังไม่มีเป้า"
+    //
+    // เป้ารวม (บาท) = ผลบวก ราคา x หีบ ถ้าราคาหายทุกตัว ผลรวมจะเป็น 0 ทั้งที่
+    // จำนวนหีบจาก Target Sun มาครบ · ตอน Fabric ล่ม (ราคามาจาก Fabric) ทุกทีมจะ
+    // เจอหน้าต่าง "ไม่มีเป้าในงวดนี้" พร้อมกัน แล้วไปตามหาที่ระบบเป้าซึ่งไม่ผิดเลย
+    const boxes = (S.skus || []).reduce(
+      (a, s) => a + (Number(s.supervisor_target_boxes) || 0), 0
+    );
+    if (boxes > 0) {
+      _showInfoModal({
+        title: "เป้ามาครบ แต่ราคาสินค้าดึงไม่ได้",
+        bodyHtml:
+          `<p style="margin:0 0 10px;line-height:1.7;">`
+          + `งวดนี้มีเป้า <strong>${boxes.toLocaleString()} หีบ</strong> จากระบบเป้าครบถ้วน `
+          + `แต่ระบบดึง<strong>ราคาต่อหีบ</strong>ไม่ได้เลยสักตัว จึงคิดเป็นเงินไม่ได้`
+          + `</p>`
+          + `<p style="margin:0 0 10px;line-height:1.7;">`
+          + `ราคามาจาก Fabric คนละทางกับเป้า — ปัญหาอยู่ที่ฝั่ง Fabric ไม่ใช่ระบบเป้า `
+          + `ลองใหม่อีกครั้งในภายหลัง ถ้ายังไม่หายให้แจ้ง IT ว่า Fabric ดึงราคาไม่ได้`
+          + `</p>`
+          + `<p style="margin:0;font-size:12px;color:var(--text-3);line-height:1.6;">`
+          + `จำนวนหีบไม่ได้หายไปไหน และเป้าที่เคยส่งเข้าระบบเป้าแล้วไม่ได้รับผลกระทบ</p>`,
+        primaryLabel: "เข้าใจแล้ว",
+      });
+      return false;
+    }
     if (S.aggregateMode && S.employees.length > 0) {
       /* โหมดรวม — อนุญาตเข้าดูแม้บางซุปไม่มีเป้า */
     } else {
