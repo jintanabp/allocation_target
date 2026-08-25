@@ -18,6 +18,7 @@ from .routers import lakehouse as lakehouse_router
 from .routers import managers as managers_router
 from .routers import optimize as optimize_router
 from .services.access_control import parse_allocation_admin_emails
+from .services.fabric_cache import seed_cache_from_repo
 from .services.managers import warm_managers_cache_at_startup
 
 logger = logging.getLogger("target_allocation")
@@ -48,6 +49,15 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(app_: FastAPI):
         os.makedirs("data", exist_ok=True)
+        # เติมแคชตั้งต้นก่อนอย่างอื่น — ถ้า Fabric ดึงไม่ได้และเครื่องนี้ยังไม่เคย
+        # ดึงงวดนั้นสำเร็จ ราคาจะเป็น 0 ทั้งระบบแล้วทุกทีมเปิดงวดไม่ได้
+        # เขียนเฉพาะไฟล์ที่ยังไม่มี ของที่ดึงสดมาได้จึงไม่ถูกแตะ
+        try:
+            n_seed = seed_cache_from_repo()
+            if n_seed:
+                logger.info("เติมแคชตั้งต้นจาก seed/cache: %d ไฟล์", n_seed)
+        except Exception as e:
+            logger.warning("เติมแคชตั้งต้นไม่สำเร็จ: %s", e)
         _warn_if_multi_worker()
         cleanup_old_caches(max_age_days=7)
         cleanup_export_artifacts_keep_latest_per_sup(keep_n=1)

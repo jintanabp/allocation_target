@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import tempfile
 import threading
 from datetime import datetime, timezone
@@ -50,6 +51,45 @@ def _price_path(year: int, month: int) -> str:
 
 def _tga_skus_path(year: int, month: int) -> str:
     return os.path.join(cache_dir(), f"tga_skus_{int(year)}_{int(month):02d}.csv")
+
+
+def seed_cache_from_repo() -> int:
+    """
+    เติมไฟล์แคชตั้งต้นจาก seed/cache/ ถ้า data/cache/ ยังไม่มีไฟล์นั้น
+
+    ใช้ตอนเซิร์ฟเวอร์ยังไม่เคยดึงข้อมูลงวดนั้นสำเร็จเลย และ Fabric ก็ดึงไม่ได้
+    (เช่น capacity เต็ม) — ถ้าไม่มีราคาเลย เป้ารวมจะเป็น 0 แล้วทุกทีมเปิดงวด
+    ไม่ได้พร้อมกัน · คัดลอกเฉพาะไฟล์ที่ยังไม่มี **ไม่เคยเขียนทับของจริง**
+    ของที่ดึงสดมาได้จึงชนะเสมอ และพอ Fabric กลับมาปกติไฟล์นี้ก็ถูกแทนที่ไปเอง
+
+    วางไว้ที่ seed/ แทนที่จะ track ไฟล์ใน data/cache/ ตรง ๆ เพราะไฟล์แคชจริง
+    เขียนทับตัวเองทุกครั้งที่ดึงสำเร็จ ถ้า track ไว้ pull ครั้งหน้าจะชนกันเอง
+    (บทเรียนเดียวกับ config/app_runtime.json ที่โดน pull ทับจนค่าหาย)
+    """
+    src_dir = os.path.join(_repo_root(), "seed", "cache")
+    if not os.path.isdir(src_dir):
+        return 0
+    dst_dir = cache_dir()
+    copied = 0
+    try:
+        os.makedirs(dst_dir, exist_ok=True)
+        names = sorted(os.listdir(src_dir))
+    except OSError as e:
+        logger.warning("อ่านโฟลเดอร์ seed ไม่ได้: %s", e)
+        return 0
+    for name in names:
+        if not name.endswith(".json"):
+            continue
+        dst = os.path.join(dst_dir, name)
+        if os.path.exists(dst):
+            continue                      # ของจริงมีอยู่แล้ว ห้ามแตะ
+        try:
+            shutil.copyfile(os.path.join(src_dir, name), dst)
+            copied += 1
+            logger.info("เติมแคชตั้งต้นจาก seed: %s", name)
+        except OSError as e:
+            logger.warning("คัดลอก seed %s ไม่สำเร็จ: %s", name, e)
+    return copied
 
 
 def _read_meta(path: str, *, allow_stale: bool = False) -> dict[str, Any] | None:
