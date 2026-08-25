@@ -113,5 +113,85 @@ class TestRevenueBalanceAtScale(unittest.TestCase):
         self.assertGreaterEqual(int(res["allocated_boxes"].min()), 0)
 
 
+class TestBandsRelaxWhenMoneyCannotReachTarget(unittest.TestCase):
+    """
+    รั้วประวัติต้องยอมผ่อน เมื่อไม่ผ่อนแล้วเงินเข้าเป้าไม่ได้
+
+    ทุกเซลล์ถูกล็อกในกรอบ +-12% (strict) / +-35% (flex) รอบประวัติของคนนั้น
+    กระจายทีมเดียวไม่มีปัญหาเพราะ baseline มาจากเป้าของทีมนั้นเอง แต่ "รวมเป้า
+    ทั้งภาคเป็นก้อนเดียว" baseline มาจากประวัติทั้งภาค ส่วนเป้าเงินยังเป็นของทีม
+    ตัวเอง — สองอย่างนี้คนละรูปกัน พอถูกล็อกแคบ ๆ ก็ย้ายหีบไม่พอ
+    (ของจริง SL527 งวด 09/2026 ดิฟสูงสุด 1,040,440 บาท)
+
+    โหมดหลายวิธีล็อกหนักกว่าอีกชั้น: SKU ที่ไม่ใช่ตัวหลักถูกห้ามแตะเลย ไม่ใช่แค่
+    จำกัดกรอบ จึงต้องปลดเป็นขั้นสุดท้ายด้วย
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        df_out, df_emp, df_sku, prices = _scenario(60, 200, seed=11)
+        cls.args = (df_out, df_emp, df_sku, prices)
+        value = {
+            str(r["sku"]): float(r["price_per_box"]) * float(r["supervisor_target_boxes"])
+            for _, r in df_sku.iterrows()
+        }
+        total = sum(value.values())
+        acc, flex = 0.0, set()
+        for sku, v in sorted(value.items(), key=lambda kv: -kv[1]):
+            if acc < 0.80 * total:
+                flex.add(sku)
+                acc += v
+        cls.flex = frozenset(flex)
+        cls.strict = frozenset(s for s in value if s not in flex)
+        # baseline = จุดตั้งต้น (เกลี่ยเท่ากัน) → รั้วผูกรอบค่านั้น
+        cls.base_map = {
+            (str(r["emp_id"]), str(r["sku"])): int(r["allocated_boxes"])
+            for _, r in df_out.iterrows()
+        }
+
+    def _run(self, skip=frozenset()):
+        df_out, df_emp, df_sku, prices = self.args
+        res = _greedy_revenue_balancer(
+            df_out.copy(), df_emp, df_sku,
+            tolerance_baht=TOLERANCE,
+            skip_balance_skus=skip,
+            base_map=self.base_map,
+            tiered_allocation=True,
+            flex_skus=self.flex,
+        )
+        rev = (
+            res.assign(v=res["allocated_boxes"] * res["sku"].map(prices))
+            .groupby("emp_id")["v"].sum()
+        )
+        gap = (rev - df_emp.set_index("emp_id")["yellow_target"]).abs()
+        return res, df_sku, gap
+
+    def test_reaches_tolerance_with_history_bands(self):
+        _res, _sku, gap = self._run()
+        self.assertLessEqual(gap.max(), TOLERANCE)
+
+    def test_reaches_tolerance_when_strict_skus_are_locked(self):
+        """เส้นทาง 'เลือกสองวิธี' — strict ถูกกันออกจากการเกลี่ยตั้งแต่ต้น"""
+        _res, _sku, gap = self._run(skip=self.strict)
+        self.assertLessEqual(gap.max(), TOLERANCE)
+
+    def test_boxes_still_match_target_after_relaxing(self):
+        """ผ่อนรั้วได้ แต่ห้ามแลกด้วยยอดหีบต่อ SKU"""
+        for skip in (frozenset(), self.strict):
+            with self.subTest(locked=bool(skip)):
+                res, df_sku, _gap = self._run(skip=skip)
+                got = res.groupby("sku")["allocated_boxes"].sum()
+                want = df_sku.set_index("sku")["supervisor_target_boxes"]
+                pd.testing.assert_series_equal(
+                    got.reindex(want.index).fillna(0).astype(int),
+                    want.astype(int),
+                    check_names=False,
+                )
+
+    def test_no_negative_cells_after_relaxing(self):
+        res, _sku, _gap = self._run()
+        self.assertGreaterEqual(int(res["allocated_boxes"].min()), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

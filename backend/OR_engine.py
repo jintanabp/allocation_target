@@ -860,6 +860,23 @@ def _greedy_revenue_balancer(
 
     _bounds_cache: dict[tuple[str, str], tuple[int, int] | None] = {}
 
+    # รั้วประวัติผ่อนเป็นขั้น เมื่อเงินยังห่างเป้าและขยับต่อไม่ได้แล้ว
+    #
+    # ทุกเซลล์ถูกล็อกให้อยู่ในกรอบ +-12% (strict) / +-35% (flex) รอบประวัติของคนนั้น
+    # กระจายทีมเดียวไม่มีปัญหา เพราะ baseline มาจากการเกลี่ยเป้าของทีมนั้นเองอยู่แล้ว
+    # แต่ "รวมเป้าทั้งภาคเป็นก้อนเดียว" baseline มาจากประวัติทั้งภาค ขณะที่เป้าเงิน
+    # รายคนยังเป็นของทีมตัวเอง สองอย่างนี้ไม่ตรงรูปกัน พอถูกล็อกไว้แคบ ๆ เครื่องจึง
+    # ย้ายหีบไม่พอ แล้วทุกคนค้างห่างเป้าหลักแสนพร้อมกัน (จำลอง 120 คน: 462,169 บาท)
+    #
+    # ผู้ใช้ยึดวิธีกระจายเป็นหลักก็จริง แต่ยอมรับได้แค่ระดับหลักพัน จึงคลายรั้วให้
+    # เฉพาะเมื่อจำเป็น: ลองกรอบเดิมก่อนเสมอ ถ้ายังไม่เข้าเกณฑ์ค่อยขยาย และหยุดทันที
+    # ที่ทุกคนเข้าเกณฑ์ — เคสที่เดิมผ่านอยู่แล้วจึงได้ผลเหมือนเดิมเป๊ะ
+    _BAND_SCALES = (1.0, 2.5, 6.0, None)      # None = ปล่อยอิสระ (ยังคุมด้วยเป้าราย SKU)
+    _band_idx = 0
+
+    def _band_scale() -> float | None:
+        return _BAND_SCALES[_band_idx]
+
     def _cell_bounds(emp: str, sku: str) -> tuple[int, int] | None:
         # memoize: ถูกเรียกซ้ำหลักแสนครั้งในลูป แต่ผลขึ้นกับ (emp, sku) ล้วน
         ck = (emp, sku)
@@ -887,6 +904,9 @@ def _greedy_revenue_balancer(
             except (TypeError, ValueError):
                 tgt = 0
             return (min_box, max(min_box, _zero_baseline_cap(tgt, n_emps, cap_multiplier)))
+        scale = _band_scale()
+        if scale is None:
+            return None                    # ผ่อนเต็มที่ — เหลือแค่เป้าราย SKU คุมไว้
         cell_band = _tier_cell_band_pct(
             sku_key,
             tiered_allocation=tiered_allocation,
@@ -895,7 +915,7 @@ def _greedy_revenue_balancer(
             flex_band_pct=flex_band_pct,
             strict_band_pct=strict_band_pct,
         )
-        return _hist_band_int_bounds(base, cell_band, min_box)
+        return _hist_band_int_bounds(base, cell_band * scale, min_box)
 
     def _can_move_box(from_emp: str, to_emp: str, sku: str) -> bool:
         bounds_from = _cell_bounds(from_emp, sku)
@@ -951,6 +971,35 @@ def _greedy_revenue_balancer(
     ]
     floors = {sku: _min_floor_boxes(sku) for sku, _ in candidates}
 
+    # โหมดหลายวิธีล็อกหนักกว่าอีกชั้น: SKU ที่ไม่ใช่ตัวหลัก (strict) ถูกห้ามแตะเลย
+    # ไม่ใช่แค่จำกัดกรอบ · ถ้าอิสระที่เหลือในกลุ่มตัวหลักไม่พอ เงินก็เข้าเป้าไม่ได้
+    # และการผ่อนรั้วอย่างเดียวช่วยไม่ได้ เพราะ SKU พวกนั้นไม่อยู่ในรายการให้เลือกด้วยซ้ำ
+    # จึงปลดเป็นขั้นสุดท้าย หลังผ่อนรั้วจนสุดแล้วยังไม่เข้าเกณฑ์
+    # (สินค้าใหม่ที่ตั้งใจเกลี่ยเท่ากันยังห้ามแตะตลอด — เจตนาคนละเรื่อง)
+    _strict_locked = bool(skip_balance_skus - set(even_skus))
+
+    def _relax() -> bool:
+        """ผ่อนข้อจำกัดทีละขั้น คืน True ถ้ายังผ่อนต่อได้"""
+        nonlocal _band_idx, _strict_locked, candidates, floors
+        nonlocal stall_count, prev_total_error
+        if _band_idx + 1 < len(_BAND_SCALES):
+            _band_idx += 1
+        elif _strict_locked:
+            _strict_locked = False
+            keep_out = set(even_skus)
+            candidates = [
+                (sku, float(price or 0))
+                for sku, price in sku_prices.items()
+                if _norm_sku(sku) not in keep_out
+            ]
+            floors = {sku: _min_floor_boxes(sku) for sku, _ in candidates}
+        else:
+            return False
+        _bounds_cache.clear()
+        stall_count = 0
+        prev_total_error = float("inf")
+        return True
+
     prev_total_error = float("inf")
     stall_count = 0
     for _ in range(int(max_iters)):
@@ -986,6 +1035,8 @@ def _greedy_revenue_balancer(
         if total_error >= prev_total_error - 1e-6:
             stall_count += 1
             if stall_count >= 20:
+                if _relax():
+                    continue                 # ลองใหม่ด้วยข้อจำกัดที่ผ่อนแล้ว
                 break
         else:
             stall_count = 0
@@ -1016,6 +1067,9 @@ def _greedy_revenue_balancer(
                 best_sku_to_move = sku
 
         if best_sku_to_move is None:
+            # ย้ายอะไรไม่ได้แล้วในกรอบนี้ — ผ่อนข้อจำกัดแล้วลองใหม่ ก่อนจะยอมแพ้
+            if _relax():
+                continue
             break
 
         moved_price = float(sku_prices.get(best_sku_to_move, 0) or 0)
