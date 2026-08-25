@@ -1871,16 +1871,26 @@ def admin_cache_refresh(
     result: dict[str, Any] = {"status": "ok", "layer": layer}
 
     if layer in ("product", "all", "fabric"):
-        fc.invalidate_period_cache(body.year, body.month, layers={"product", "price"})
+        # ห้ามลบก่อนดึงใหม่ — ถ้า Fabric ล่ม (เช่น capacity เต็ม) จะได้ "ไม่มีอะไรเลย"
+        # แทนที่จะได้ของเดิม แล้วราคากลายเป็น 0 ทั้งระบบจนทุกทีมเปิดงวดไม่ได้
+        # กด "รีเฟรช" แล้วแย่กว่าเดิมเป็นพฤติกรรมที่ไม่ควรมี — ดึงให้ได้ก่อนค่อยทับ
         sup = (body.sup_id or "").strip().upper()
         if sup:
-            load_employees_payload(
-                sup_id=sup,
-                target_month=body.month,
-                target_year=body.year,
-                refresh=True,
-            )
-            result["warmed_sup"] = sup
+            try:
+                load_employees_payload(
+                    sup_id=sup,
+                    target_month=body.month,
+                    target_year=body.year,
+                    refresh=True,
+                )
+                result["warmed_sup"] = sup
+            except Exception as e:
+                logger.warning("warm product/price cache ไม่สำเร็จ: %s", e)
+                result["warm_error"] = str(e)
+                result["hint"] = (
+                    "ดึงข้อมูลใหม่ไม่สำเร็จ — เก็บแคชเดิมไว้ให้ใช้งานต่อได้ "
+                    "ลองใหม่อีกครั้งเมื่อ Fabric กลับมาปกติ"
+                )
         else:
             result["hint"] = "ระบุ sup_id เพื่อ warm product/price cache จาก DAX"
 

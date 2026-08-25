@@ -323,6 +323,30 @@ def _load_history(
     return pd.DataFrame(columns=_HIST_COLS)
 
 
+def _payload_has_boxes_but_no_money(payload: dict[str, Any] | None) -> bool:
+    """
+    ผลที่เก็บไว้ตอน "ราคาดึงไม่ได้" — มีเป้าหีบ แต่มูลค่ารวมเป็น 0
+
+    เกิดตอน Fabric ล่มแล้วไม่มีราคาให้ใช้เลย · หน้าเว็บอ่านมูลค่ารวม 0 เป็น
+    สัญญาณว่า "งวดนี้ยังไม่มีเป้า" แล้วปิดทางเข้า ถ้าปล่อยให้ของแบบนี้ค้างใน
+    แคช ผู้ใช้จะเปิดไม่ได้ต่อไปอีกจนกว่าแคชจะหมดอายุ แม้ราคาจะกลับมาแล้ว
+    """
+    skus = (payload or {}).get("skus")
+    if not isinstance(skus, list) or not skus:
+        return False
+    boxes = 0.0
+    money = 0.0
+    for s in skus:
+        try:
+            b = float(s.get("supervisor_target_boxes") or 0)
+            p = float(s.get("price_per_box") or 0)
+        except (TypeError, ValueError, AttributeError):
+            continue
+        boxes += b
+        money += b * p
+    return boxes > 0 and money <= 0
+
+
 def _enrich_employee_allocation_flags(
     emp_records: list[dict[str, Any]],
     sup_id: str | None = None,
@@ -400,6 +424,17 @@ def load_employees_payload(
                     sup_id,
                     cached_src,
                     current_src,
+                )
+            elif _payload_has_boxes_but_no_money(cached):
+                # ผลที่เก็บไว้ตอนราคาดึงไม่ได้ = มีหีบแต่คิดเป็นเงินไม่ได้
+                #
+                # เก็บของแบบนี้ไว้แล้วเสิร์ฟซ้ำ ทำให้หน้าเว็บขึ้น "ไม่มีเป้าในงวดนี้"
+                # ต่อไปอีกเป็นชั่วโมง แม้ราคาจะกลับมาแล้วก็ตาม · ทิ้งแล้วสร้างใหม่
+                # ดีกว่า เพราะรอบใหม่จะหยิบราคาที่กลับมาแล้วมาใช้ได้ทันที
+                # (ไม่ต้องรอ TTL และไม่ต้องให้ใครไปกดล้างแคชบนเครื่องเซิร์ฟเวอร์)
+                logger.warning(
+                    "payload cache ของ %s %s-%02d มีหีบแต่เป็นเงิน 0 — ทิ้งแล้วสร้างใหม่",
+                    sup_id, target_year, target_month,
                 )
             else:
                 emps = cached.get("employees")
