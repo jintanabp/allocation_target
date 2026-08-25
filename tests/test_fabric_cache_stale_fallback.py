@@ -102,5 +102,37 @@ class TestStaleCacheFallback(unittest.TestCase):
         self.assertIsNone(fc.read_product_info_df(YEAR, MONTH, allow_stale=True))
 
 
+    def test_old_cache_without_cash_price_is_refreshed_normally(self):
+        """ปกติต้องทิ้งแคชรุ่นเก่าแล้วดึงใหม่ ทีมรถเงินสดจะได้ไม่ติดราคาเครดิต"""
+        self._write(
+            f"dim_product_{YEAR}_{MONTH:02d}.json",
+            {
+                "cached_at": _stamp(1),
+                "price_asof": fc.product_price_asof(YEAR, MONTH),
+                "rows": [{"sku": "734046", "credit_unit_price": 352.0}],
+                "row_count": 1,
+            },
+        )
+        self.assertIsNone(fc.read_product_info_df(YEAR, MONTH))
+
+    def test_old_cache_without_cash_price_is_still_usable_as_last_resort(self):
+        """
+        แต่ตอน Fabric ล่มต้องยอมใช้ — ไม่งั้นไม่เหลือราคาอะไรเลย แล้วทุกทีมเปิดงวด
+        ไม่ได้พร้อมกันเหมือนเหตุการณ์ 2026-08-25 · ราคาเครดิตยังดีกว่าราคา 0
+        """
+        self._write(
+            f"dim_product_{YEAR}_{MONTH:02d}.json",
+            {
+                "cached_at": _stamp(48),
+                "price_asof": fc.product_price_asof(YEAR, MONTH),
+                "rows": [{"sku": "734046", "credit_unit_price": 352.0}],
+                "row_count": 1,
+            },
+        )
+        df = fc.read_product_info_df(YEAR, MONTH, allow_stale=True)
+        self.assertIsNotNone(df)
+        self.assertEqual(float(df.iloc[0]["credit_unit_price"]), 352.0)
+
+
 if __name__ == "__main__":
     unittest.main()
