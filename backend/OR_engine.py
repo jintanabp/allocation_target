@@ -972,7 +972,16 @@ def _greedy_revenue_balancer(
         if diffs[rich_emp] <= 0 or diffs[poor_emp] >= 0:
             break
 
-        total_error = abs(diffs[rich_emp]) + abs(diffs[poor_emp])
+        # ความคลาดเคลื่อนรวมของ "ทุกคน" ไม่ใช่แค่คู่ที่กำลังจับอยู่รอบนี้
+        #
+        # ของเดิมวัดจาก |รวย| + |จน| ของคู่ปัจจุบัน ซึ่งกระโดดขึ้นทุกครั้งที่คนจน
+        # คนหนึ่งเต็มแล้วเลื่อนไปหาคนจนรายถัดไป (คนถัดไปห่างเป้ามากกว่าคนที่เพิ่งเสร็จ)
+        # ตัวนับ stall จึงเพิ่มขึ้นเรื่อย ๆ ทั้งที่งานเดินหน้าอยู่ พอครบ 20 ก็เลิกกลางคัน
+        # ทีมเดียว ~15-25 คนไม่เคยเห็นปัญหาเพราะ 20 ครั้งพอปิดจ๊อบทุกคนอยู่แล้ว
+        # แต่รวมภาคมีเป็นร้อยคน มันจึงหยุดตั้งแต่เพิ่งเกลี่ยไปได้ไม่ถึงยี่สิบคน
+        # เหลือที่เหลือห่างเป้าหลักแสน · ผลรวมทั้งก้อนลดลงจริงทุกครั้งที่ย้ายได้ผล
+        # ค่านี้จึงไม่กระโดด และ "ไม่ลดลง" ก็แปลว่าติดจริง
+        total_error = sum(abs(v) for v in diffs.values())
         # กันติด: ถ้าไม่ดีขึ้นต่อเนื่องให้หยุด แต่ให้โอกาสมากขึ้น
         if total_error >= prev_total_error - 1e-6:
             stall_count += 1
@@ -1010,13 +1019,34 @@ def _greedy_revenue_balancer(
             break
 
         moved_price = float(sku_prices.get(best_sku_to_move, 0) or 0)
+        # ย้ายทีละหลายหีบเมื่อช่องว่างยังกว้าง — ของเดิมย้ายรอบละ 1 หีบเสมอ
+        #
+        # ทีมเดียวไม่เคยเห็นปัญหา เพราะช่องว่างรวมปิดได้ในไม่กี่พันหีบ แต่รวมภาค
+        # มีเป็นร้อยคนและช่องว่างตั้งต้นหลักสิบล้านบาท ต้องย้ายหลายหมื่นใบ พอชน
+        # เพดาน max_iters ก่อนก็เลิกกลางคัน ทุกคนเลยค้างห่างเป้าหลักแสนพร้อมกัน
+        # (จำลอง 150 คน/600 SKU: ดิฟมัธยฐาน 175,956 บาท ทั้งที่ยอมรับได้แค่หลักพัน)
+        #
+        # จำนวนที่ย้ายถูกจำกัดด้วยสามอย่าง ไม่ให้เลยเป้าฝั่งไหน และไม่ทะลุรั้วของเซลล์
+        steps = 1
+        if moved_price > 0:
+            room = [int(min(d_rich, -d_poor) // moved_price)]      # ไม่ให้ข้ามเป้า
+            take = alloc[rich_emp][best_sku_to_move] - floors[best_sku_to_move]
+            b_from = _cell_bounds(rich_emp, best_sku_to_move)
+            if b_from is not None:
+                take = min(take, alloc[rich_emp][best_sku_to_move] - b_from[0])
+            room.append(take)                                      # ดึงออกได้เท่าไร
+            b_to = _cell_bounds(poor_emp, best_sku_to_move)
+            if b_to is not None:
+                room.append(b_to[1] - alloc[poor_emp][best_sku_to_move])   # ใส่เพิ่มได้เท่าไร
+            # อย่างน้อย 1 ใบเสมอ — _can_move_box ผ่านแล้วว่าย้ายใบแรกได้จริง
+            steps = max(1, min(room))
         alloc[rich_emp][best_sku_to_move] = max(
-            floors[best_sku_to_move], alloc[rich_emp][best_sku_to_move] - 1
+            floors[best_sku_to_move], alloc[rich_emp][best_sku_to_move] - steps
         )
-        alloc[poor_emp][best_sku_to_move] += 1
+        alloc[poor_emp][best_sku_to_move] += steps
         # ปรับรายได้แบบก้าวเดียว แทนการรวมใหม่ทั้งตาราง
-        rev[rich_emp] -= moved_price
-        rev[poor_emp] += moved_price
+        rev[rich_emp] -= moved_price * steps
+        rev[poor_emp] += moved_price * steps
 
     # ต้องคืน "ทุกเซลล์" รวมที่เป็น 0 ด้วย
     #
