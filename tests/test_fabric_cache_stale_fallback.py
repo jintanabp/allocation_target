@@ -56,7 +56,8 @@ class TestStaleCacheFallback(unittest.TestCase):
             {
                 "cached_at": _stamp(hours_ago),
                 "price_asof": price_asof or fc.product_price_asof(YEAR, MONTH),
-                "rows": [{"sku": "734046", "credit_unit_price": 352.0}],
+                "rows": [{"sku": "734046", "credit_unit_price": 352.0,
+                          "cash_unit_price": 300.0}],
                 "row_count": 1,
             },
         )

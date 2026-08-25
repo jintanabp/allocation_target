@@ -68,14 +68,24 @@ def _build_sku_and_sun_from_tga(
     emp_list: list,
     sku_list: list,
     price_latest_by_sku: dict[str, float] | None = None,
+    sales_type: str = "",
 ) -> tuple[pd.DataFrame, pd.DataFrame, set[str]]:
     """
     จาก TGA (จำนวนหีบ = QUANTITYCASE ต่อคู่ emp×sku):
     - supervisor_target_boxes ต่อ SKU = SUM หีบของทีมต่อ SKU
     - target_sun ต่อคน = SUM(หีบ × ราคา/หีบ) รายพนักงาน
-      ราคา: หลัก cfm_product_characteristic[CREDITUNITPRICE] (PRODUCTSIZE=0, PRODUCTCODE);
+      ราคา: หลัก cfm_product_characteristic (PRODUCTSIZE=0, PRODUCTCODE, แถว FROMDATE
+      ล่าสุดที่ยังไม่หมดอายุ) — หน่วยรถเงินสดใช้ CASHUNITPRICE หน่วยเครดิตใช้
+      CREDITUNITPRICE เพราะบางสินค้าสองราคานี้ไม่เท่ากัน;
       ไม่มี → Amount÷Qty ประวัติ (ไฮไลต์ฟ้า); ไม่มีเลย → 0 + เหลือง
+
+    sales_type: "C" = รถเงินสด (van) · "S" = เครดิต · ไม่รู้ → ใช้เครดิตเหมือนเดิม
     """
+    price_col = (
+        "cash_unit_price"
+        if str(sales_type or "").strip().upper()[:1] == "C"
+        else "credit_unit_price"
+    )
     sku_list = [str(s).strip() for s in sku_list if str(s).strip()]
     team_set = set(str(e).strip() for e in emp_list)
 
@@ -120,7 +130,10 @@ def _build_sku_and_sun_from_tga(
             pname_th = str(r0.get("product_name_thai", "") or "")
             pname_en = str(r0.get("product_name_english", "") or "")
             section = str(r0.get("section", "") or "").strip()
-            credit_unit_price = float(r0.get("credit_unit_price", 0) or 0)
+            # แคชรุ่นเก่ามีแต่ราคาเครดิต — ถอยไปใช้ตัวนั้นดีกว่าได้ 0
+            credit_unit_price = float(r0.get(price_col, 0) or 0)
+            if credit_unit_price <= 0 and price_col != "credit_unit_price":
+                credit_unit_price = float(r0.get("credit_unit_price", 0) or 0)
         sk = str(sku).strip()
         sales_price: float | None = None
         if price_latest_by_sku is not None and sk in price_latest_by_sku:
@@ -761,7 +774,9 @@ def load_employees_payload(
                 )
 
         df_sku, df_sun_csv, emp_with_tga = _build_sku_and_sun_from_tga(
-            df_tga, df_sku_base, emp_list, sku_union, price_latest_by_sku=price_latest
+            df_tga, df_sku_base, emp_list, sku_union,
+            price_latest_by_sku=price_latest,
+            sales_type=ts_st or "",
         )
         emp_with_tga_set = emp_with_tga
 
@@ -1287,10 +1302,25 @@ def load_employees_payload(
     return payload
 
 
+def _sales_unit_by_sup() -> dict[str, str]:
+    """หน่วยขายของแต่ละรหัสทีมจาก user_access — อ่านไฟล์ล้วน ไม่ยิง Fabric"""
+    from .targetsun_read import _acc_unit_to_sales_type
+    from .user_access_store import read_rows
+
+    out: dict[str, str] = {}
+    for row in read_rows():
+        upl = str(row.get("userpl") or "").strip().upper()
+        st = _acc_unit_to_sales_type(str(row.get("acc_unit") or ""))
+        if upl and st and upl not in out:
+            out[upl] = st
+    return out
+
+
 def _authoritative_price_map(
     skus: set[str],
     target_month: int,
     target_year: int,
+    sales_type: str = "",
 ) -> dict[str, tuple[float, bool]]:
     """
     ราคาต่อหีบที่ถือว่าถูกต้องของงวดนี้ — {sku: (ราคา, มาจากประวัติขายไหม)}
@@ -1307,13 +1337,20 @@ def _authoritative_price_map(
     except Exception as e:
         logger.warning("อ่านแคชสินค้าเพื่อเทียบราคาไม่ได้: %s", e)
         df_prod = None
+    col = (
+        "cash_unit_price"
+        if str(sales_type or "").strip().upper()[:1] == "C"
+        else "credit_unit_price"
+    )
     if df_prod is not None and not df_prod.empty and "credit_unit_price" in df_prod.columns:
         for _, r in df_prod.iterrows():
             sku = str(r.get("sku") or "").strip()
             if sku not in skus:
                 continue
             try:
-                price = float(r.get("credit_unit_price") or 0)
+                price = float(r.get(col) or 0)
+                if price <= 0 and col != "credit_unit_price":
+                    price = float(r.get("credit_unit_price") or 0)
             except (TypeError, ValueError):
                 continue
             if price > 0:
@@ -1456,6 +1493,10 @@ def reconcile_prices_across_payloads(
     if len(payloads) < 2:
         return []
 
+    # ราคาต่างกันข้ามหน่วยขายเป็นเรื่องถูกต้อง (รถเงินสดใช้ CASHUNITPRICE
+    # เครดิตใช้ CREDITUNITPRICE) จึงเทียบกันเฉพาะทีมที่หน่วยขายเดียวกันเท่านั้น
+    # ไม่งั้นจะไป "ซ่อม" ราคาที่ถูกอยู่แล้วให้กลายเป็นผิด
+    unit_by_sup = _sales_unit_by_sup()
     seen: dict[str, dict[str, float]] = {}
     for p in payloads:
         sid = str(p.get("_source_sup_id") or "").strip().upper()
@@ -1470,11 +1511,22 @@ def reconcile_prices_across_payloads(
             if price > 0:
                 seen.setdefault(sku, {})[sid] = price
 
-    conflicts = {k: v for k, v in seen.items() if len(set(v.values())) > 1}
+    # ขัดกันจริงต่อเมื่อทีม "หน่วยขายเดียวกัน" ถือราคาไม่ตรงกัน
+    conflicts: dict[str, dict[str, float]] = {}
+    for sku, by_sup in seen.items():
+        for unit in {unit_by_sup.get(sid, "") for sid in by_sup}:
+            same = {sid: pr for sid, pr in by_sup.items()
+                    if unit_by_sup.get(sid, "") == unit}
+            if len(set(same.values())) > 1:
+                conflicts.setdefault(sku, {}).update(same)
     if not conflicts:
         return []
 
-    truth = _authoritative_price_map(set(conflicts), target_month, target_year)
+    # หน่วยขายของกลุ่มที่ขัดกัน — ใช้เลือกคอลัมน์ราคาที่ถือว่าถูก
+    _units = {unit_by_sup.get(sid, "")
+              for by_sup in conflicts.values() for sid in by_sup}
+    _unit = next(iter(_units)) if len(_units) == 1 else ""
+    truth = _authoritative_price_map(set(conflicts), target_month, target_year, _unit)
     report: list[dict[str, str]] = []
     per_payload: dict[str, dict[str, tuple[float, float, bool]]] = {}
 
@@ -1894,12 +1946,21 @@ def load_live_targets_payload(
     if sku_union and df_product.empty:
         df_product = pd.DataFrame({"sku": sku_union})
 
+    # หน่วยขายของทีมตัดสินว่าใช้ราคาเครดิตหรือราคารถเงินสด — หาไม่ได้ก็ใช้เครดิต
+    # เหมือนเดิม (เส้นทางนี้แค่รีเฟรชเป้าหีบ ไม่ควรล้มเพราะหาหน่วยขายไม่เจอ)
+    _live_sales_type = ""
+    try:
+        _, _live_sales_type = targetsun_read.resolve_targetsun_scope(sid)
+    except Exception as e:
+        logger.warning("หาหน่วยขายของ %s ไม่ได้ (%s) — ใช้ราคาเครดิต", sid, e)
+
     df_sku, df_sun, emp_with_tga = _build_sku_and_sun_from_tga(
         df_tga,
         df_product,
         emp_list,
         list(sku_union),
         price_latest_by_sku=price_latest,
+        sales_type=_live_sales_type or "",
     )
 
     sun_map = {

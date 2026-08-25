@@ -622,24 +622,48 @@ SELECTCOLUMNS(
                                'Dim_Product'[ProductCode]
                              )
                            ),
-    "CreditUnitPrice",     VAR pc = 'Dim_Product'[ProductCode]
+    "CreditUnitPrice",      VAR pc = 'Dim_Product'[ProductCode]
                            VAR t = {asof}
-                           VAR cr =
-                             CALCULATE(
-                               MAX('cfm_product_characteristic'[CREDITUNITPRICE]),
-                               FILTER(
-                                 ALL('cfm_product_characteristic'),
-                                 TRIM(FORMAT('cfm_product_characteristic'[PRODUCTCODE], "0"))
-                                   = TRIM(FORMAT(pc, "0"))
-                                   && IFERROR(
-                                     VALUE(TRIM(FORMAT('cfm_product_characteristic'[PRODUCTSIZE], "0"))),
-                                     -1
-                                   ) = 0
-                                   && 'cfm_product_characteristic'[FROMDATE] <= t
-                                   && 'cfm_product_characteristic'[TODATE] >= t
-                               )
+                           VAR inwindow =
+                             FILTER(
+                               ALL('cfm_product_characteristic'),
+                               TRIM(FORMAT('cfm_product_characteristic'[PRODUCTCODE], "0"))
+                                 = TRIM(FORMAT(pc, "0"))
+                                 && IFERROR(
+                                   VALUE(TRIM(FORMAT('cfm_product_characteristic'[PRODUCTSIZE], "0"))),
+                                   -1
+                                 ) = 0
+                                 && 'cfm_product_characteristic'[FROMDATE] <= t
+                                 && 'cfm_product_characteristic'[TODATE] >= t
                              )
-                           RETURN COALESCE(cr, 0)
+                           VAR newest = MAXX(inwindow, 'cfm_product_characteristic'[FROMDATE])
+                           VAR val =
+                             MAXX(
+                               FILTER(inwindow, 'cfm_product_characteristic'[FROMDATE] = newest),
+                               'cfm_product_characteristic'[CREDITUNITPRICE]
+                             )
+                           RETURN COALESCE(val, 0),
+    "CashUnitPrice",        VAR pc = 'Dim_Product'[ProductCode]
+                           VAR t = {asof}
+                           VAR inwindow =
+                             FILTER(
+                               ALL('cfm_product_characteristic'),
+                               TRIM(FORMAT('cfm_product_characteristic'[PRODUCTCODE], "0"))
+                                 = TRIM(FORMAT(pc, "0"))
+                                 && IFERROR(
+                                   VALUE(TRIM(FORMAT('cfm_product_characteristic'[PRODUCTSIZE], "0"))),
+                                   -1
+                                 ) = 0
+                                 && 'cfm_product_characteristic'[FROMDATE] <= t
+                                 && 'cfm_product_characteristic'[TODATE] >= t
+                             )
+                           VAR newest = MAXX(inwindow, 'cfm_product_characteristic'[FROMDATE])
+                           VAR val =
+                             MAXX(
+                               FILTER(inwindow, 'cfm_product_characteristic'[FROMDATE] = newest),
+                               'cfm_product_characteristic'[CASHUNITPRICE]
+                             )
+                           RETURN COALESCE(val, 0)
 )
 """
         try:
@@ -671,24 +695,48 @@ SELECTCOLUMNS(
                                'Dim_Product'[ProductCode]
                              )
                            ),
-    "CreditUnitPrice",     VAR pc = 'Dim_Product'[ProductCode]
+    "CreditUnitPrice",      VAR pc = 'Dim_Product'[ProductCode]
                            VAR t = {asof}
-                           VAR cr =
-                             CALCULATE(
-                               MAX('cfm_product_characteristic'[CREDITUNITPRICE]),
-                               FILTER(
-                                 ALL('cfm_product_characteristic'),
-                                 TRIM(FORMAT('cfm_product_characteristic'[PRODUCTCODE], "0"))
-                                   = TRIM(FORMAT(pc, "0"))
-                                   && IFERROR(
-                                     VALUE(TRIM(FORMAT('cfm_product_characteristic'[PRODUCTSIZE], "0"))),
-                                     -1
-                                   ) = 0
-                                   && 'cfm_product_characteristic'[FROMDATE] <= t
-                                   && 'cfm_product_characteristic'[TODATE] >= t
-                               )
+                           VAR inwindow =
+                             FILTER(
+                               ALL('cfm_product_characteristic'),
+                               TRIM(FORMAT('cfm_product_characteristic'[PRODUCTCODE], "0"))
+                                 = TRIM(FORMAT(pc, "0"))
+                                 && IFERROR(
+                                   VALUE(TRIM(FORMAT('cfm_product_characteristic'[PRODUCTSIZE], "0"))),
+                                   -1
+                                 ) = 0
+                                 && 'cfm_product_characteristic'[FROMDATE] <= t
+                                 && 'cfm_product_characteristic'[TODATE] >= t
                              )
-                           RETURN COALESCE(cr, 0)
+                           VAR newest = MAXX(inwindow, 'cfm_product_characteristic'[FROMDATE])
+                           VAR val =
+                             MAXX(
+                               FILTER(inwindow, 'cfm_product_characteristic'[FROMDATE] = newest),
+                               'cfm_product_characteristic'[CREDITUNITPRICE]
+                             )
+                           RETURN COALESCE(val, 0),
+    "CashUnitPrice",        VAR pc = 'Dim_Product'[ProductCode]
+                           VAR t = {asof}
+                           VAR inwindow =
+                             FILTER(
+                               ALL('cfm_product_characteristic'),
+                               TRIM(FORMAT('cfm_product_characteristic'[PRODUCTCODE], "0"))
+                                 = TRIM(FORMAT(pc, "0"))
+                                 && IFERROR(
+                                   VALUE(TRIM(FORMAT('cfm_product_characteristic'[PRODUCTSIZE], "0"))),
+                                   -1
+                                 ) = 0
+                                 && 'cfm_product_characteristic'[FROMDATE] <= t
+                                 && 'cfm_product_characteristic'[TODATE] >= t
+                             )
+                           VAR newest = MAXX(inwindow, 'cfm_product_characteristic'[FROMDATE])
+                           VAR val =
+                             MAXX(
+                               FILTER(inwindow, 'cfm_product_characteristic'[FROMDATE] = newest),
+                               'cfm_product_characteristic'[CASHUNITPRICE]
+                             )
+                           RETURN COALESCE(val, 0)
 )
 """
             rows = self._execute_dax(dax_no_sec, debug=True)
@@ -722,15 +770,22 @@ SELECTCOLUMNS(
                 "cost_per_unit":      float(self._get(r,
                                           "[CostPerUnit]", "cfm_produc_master[COSTPERUNIT]",
                                           default=0) or 0),
+                # เก็บทั้งสองราคา แล้วค่อยเลือกตอนใช้ตามหน่วยขายของทีม —
+                # แคชสินค้าเป็นก้อนเดียวใช้ร่วมกันทุกทีม ถ้าฝังราคาเดียวลงไป
+                # ทีมรถเงินสดกับทีมเครดิตจะทับราคากันเองสลับไปมา
                 "credit_unit_price":  float(self._get(r,
                                           "[CreditUnitPrice]",
                                           "cfm_product_characteristic[CREDITUNITPRICE]",
+                                          default=0) or 0),
+                "cash_unit_price":    float(self._get(r,
+                                          "[CashUnitPrice]",
+                                          "cfm_product_characteristic[CASHUNITPRICE]",
                                           default=0) or 0),
             })
         df = pd.DataFrame(records) if records else pd.DataFrame(
             columns=["sku", "brand", "brand_name_thai", "brand_name_english", "section",
                      "product_name_thai", "product_name_english", "unit_cost", "cost_per_unit",
-                     "credit_unit_price"])
+                     "credit_unit_price", "cash_unit_price"])
         print(f"✅ ดึงข้อมูลสินค้า {len(df)} รายการ")
         return df
 

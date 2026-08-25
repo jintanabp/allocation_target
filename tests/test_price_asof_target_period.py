@@ -137,7 +137,8 @@ class TestStaleProductCacheIsDropped(unittest.TestCase):
         )
 
     def test_fresh_cache_round_trips(self):
-        df = pd.DataFrame([{"sku": "734046", "credit_unit_price": 352.0}])
+        df = pd.DataFrame([{"sku": "734046", "credit_unit_price": 352.0,
+                            "cash_unit_price": 300.0}])
         fc.write_product_info_df(2026, 9, df)
         got = fc.read_product_info_df(2026, 9)
         self.assertIsNotNone(got)

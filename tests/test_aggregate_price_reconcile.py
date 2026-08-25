@@ -94,7 +94,8 @@ class _TempDataDir(unittest.TestCase):
             json.dump({
                 "cached_at": "2026-08-25T00:00:00Z",
                 "price_asof": f"{YEAR}-{MONTH:02d}-01",
-                "rows": [{"sku": SKU, "credit_unit_price": price}],
+                "rows": [{"sku": SKU, "credit_unit_price": price,
+                          "cash_unit_price": price}],
                 "row_count": 1,
             }, f, ensure_ascii=False)
 

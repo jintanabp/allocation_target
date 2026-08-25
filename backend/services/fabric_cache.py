@@ -173,6 +173,13 @@ def read_product_info_df(
         return None
     if not rows:
         return pd.DataFrame()
+    # แคชที่เขียนไว้ก่อนเพิ่มราคารถเงินสด มีแต่ราคาเครดิต — ทีมรถเงินสดจะได้ราคาผิด
+    # ทิ้งแล้วดึงใหม่ ไม่ใช่รอ TTL (หลักเดียวกับ price_asof)
+    if "cash_unit_price" not in rows[0]:
+        logger.info(
+            "ทิ้งแคชสินค้า %d-%02d: ยังไม่มีราคารถเงินสด (แคชรุ่นเก่า)", year, month
+        )
+        return None
     return pd.DataFrame(rows)
 
 
