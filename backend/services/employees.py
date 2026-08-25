@@ -259,6 +259,70 @@ def _clean(df: pd.DataFrame) -> list:
     return df.where(pd.notna(df), None).to_dict(orient="records")
 
 
+_HIST_COLS = ["emp_id", "sku", "hist_boxes", "hist_amount"]
+
+
+def _read_hist_cache_file(path: str) -> pd.DataFrame:
+    """อ่านไฟล์ประวัติที่เคยดึงสำเร็จไว้ — ไฟล์หาย/เสีย ให้คืนตารางว่างแทนการโยน"""
+    if not os.path.exists(path):
+        return pd.DataFrame(columns=_HIST_COLS)
+    try:
+        df = pd.read_csv(path, dtype={"emp_id": str, "sku": str})
+    except Exception as e:
+        logger.warning("อ่านไฟล์ประวัติ %s ไม่ได้: %s", path, e)
+        return pd.DataFrame(columns=_HIST_COLS)
+    return df if not df.empty else pd.DataFrame(columns=_HIST_COLS)
+
+
+def _load_history(
+    label: str,
+    path: str,
+    fetch,
+    sku_links,
+    sup_id: str,
+) -> pd.DataFrame:
+    """
+    ดึงประวัติขายจาก Fabric — ดึงไม่ได้เมื่อไหร่ ให้ใช้ไฟล์ที่เคยเก็บไว้แทน
+
+    ยอดขายของเดือนที่ปิดไปแล้วเป็นค่าคงที่ ไฟล์ที่เคยดึงสำเร็จจึงยังใช้ได้เสมอ
+    ของเดิมพอ Fabric ล่มหรือคิวรีล้ม จะได้ตารางว่างแล้วเดินต่อเงียบ ๆ ทำให้
+    "ยอดขายเฉลี่ย 3 เดือน / ปีที่แล้ว" กลายเป็น 0 ทั้งทีมทั้งที่ไฟล์เดิมยังอยู่
+    ครบในเครื่อง · เป้าไม่ได้รับผลกระทบเพราะมาจาก Target Sun คนละเส้นทาง
+    อาการเลยออกมาเหมือน "ทีมนี้ไม่เคยขายอะไรเลย" ซึ่งไม่มีใครเดาถูก
+
+    เขียนทับไฟล์เฉพาะตอนดึงได้จริงเท่านั้น — ของเก่าจะไม่ถูกลบทิ้งเพราะรอบนี้ล่ม
+    """
+    try:
+        df = fetch()
+    except Exception as e:
+        cached = _read_hist_cache_file(path)
+        logger.warning(
+            "ประวัติ%s ของ %s ดึงจาก Fabric ไม่ได้ (%s) — %s",
+            label, sup_id, e,
+            f"ใช้ไฟล์ที่เก็บไว้เดิม {len(cached)} แถว" if not cached.empty else "ไม่มีไฟล์เดิมให้ใช้",
+        )
+        return cached
+
+    if df is not None and not df.empty:
+        df = collapse_hist_to_canonical(df, sku_links)
+        try:
+            df.to_csv(path, index=False)
+            logger.info("ประวัติ%s: เก็บไว้ %d แถว → %s", label, len(df), path)
+        except OSError as e:
+            logger.warning("เขียนไฟล์ประวัติ%s ไม่สำเร็จ: %s", label, e)
+        return df
+
+    cached = _read_hist_cache_file(path)
+    if not cached.empty:
+        logger.warning(
+            "ประวัติ%s ของ %s ดึงมาได้ 0 แถว — ใช้ไฟล์ที่เก็บไว้เดิม %d แถวแทน",
+            label, sup_id, len(cached),
+        )
+        return cached
+    logger.info("ประวัติ%s ของ %s: ไม่มีข้อมูลทั้งจาก Fabric และไฟล์เดิม", label, sup_id)
+    return pd.DataFrame(columns=_HIST_COLS)
+
+
 def _enrich_employee_allocation_flags(
     emp_records: list[dict[str, Any]],
     sup_id: str | None = None,
@@ -769,67 +833,38 @@ def load_employees_payload(
             len(sku_list),
             len(dax_sku_list),
         )
-    df_hist = pd.DataFrame(columns=["emp_id", "sku", "hist_boxes", "hist_amount"])
-    df_lysm = pd.DataFrame(columns=["emp_id", "sku", "hist_boxes", "hist_amount"])
-    try:
-        df_hist = fabric.get_historical_sales(
-            target_month,
-            target_year,
-            sku_list=dax_sku_list,
-            emp_list=emp_list,
-            n_months=3,
-        )
-        if df_hist is not None and not df_hist.empty:
-            df_hist = collapse_hist_to_canonical(df_hist, sku_links)
-            df_hist.to_csv(
-                hist_cache_path(sup_id, target_month, target_year, n_months=3),
-                index=False,
-            )
-            logger.info("historical 3M cache saved: %d rows", len(df_hist))
-    except Exception as e:
-        logger.warning("historical 3M skipped: %s", e)
-
-    try:
-        df_hist6 = fabric.get_historical_sales(
-            target_month,
-            target_year,
-            sku_list=dax_sku_list,
-            emp_list=emp_list,
-            n_months=6,
-        )
-        if df_hist6 is not None and not df_hist6.empty:
-            df_hist6 = collapse_hist_to_canonical(df_hist6, sku_links)
-            df_hist6.to_csv(
-                hist_cache_path(sup_id, target_month, target_year, n_months=6),
-                index=False,
-            )
-            logger.info("historical 6M cache saved: %d rows", len(df_hist6))
-    except Exception as e:
-        logger.warning("historical 6M skipped: %s", e)
-
-    try:
-        df_lysm = fabric.get_same_month_prior_year_by_emp_sku(
-            target_month, target_year, sku_list=dax_sku_list, emp_list=emp_list
-        )
-        if df_lysm is not None and not df_lysm.empty:
-            df_lysm = collapse_hist_to_canonical(df_lysm, sku_links)
-            p_lysm = hist_ly_same_month_cache_path(sup_id, target_month, target_year)
-            df_lysm.to_csv(p_lysm, index=False)
-            logger.info("historical LY same-month cache saved: %d rows → %s", len(df_lysm), p_lysm)
-    except Exception as e:
-        logger.warning("historical LY same month (emp×sku) skipped: %s", e)
-
-    try:
-        df_prev = fabric.get_prev_month_by_emp_sku(
-            target_month, target_year, sku_list=dax_sku_list, emp_list=emp_list
-        )
-        if df_prev is not None and not df_prev.empty:
-            df_prev = collapse_hist_to_canonical(df_prev, sku_links)
-            p_prev = hist_prev_month_cache_path(sup_id, target_month, target_year)
-            df_prev.to_csv(p_prev, index=False)
-            logger.info("historical prev-month cache saved: %d rows → %s", len(df_prev), p_prev)
-    except Exception as e:
-        logger.warning("historical prev month (emp×sku) skipped: %s", e)
+    df_hist = _load_history(
+        "3 เดือน", hist_cache_path(sup_id, target_month, target_year, n_months=3),
+        lambda: fabric.get_historical_sales(
+            target_month, target_year,
+            sku_list=dax_sku_list, emp_list=emp_list, n_months=3,
+        ),
+        sku_links, sup_id,
+    )
+    df_hist6 = _load_history(
+        "6 เดือน", hist_cache_path(sup_id, target_month, target_year, n_months=6),
+        lambda: fabric.get_historical_sales(
+            target_month, target_year,
+            sku_list=dax_sku_list, emp_list=emp_list, n_months=6,
+        ),
+        sku_links, sup_id,
+    )
+    df_lysm = _load_history(
+        "ปีที่แล้วเดือนเดียวกัน",
+        hist_ly_same_month_cache_path(sup_id, target_month, target_year),
+        lambda: fabric.get_same_month_prior_year_by_emp_sku(
+            target_month, target_year, sku_list=dax_sku_list, emp_list=emp_list,
+        ),
+        sku_links, sup_id,
+    )
+    df_prev = _load_history(
+        "เดือนที่แล้ว",
+        hist_prev_month_cache_path(sup_id, target_month, target_year),
+        lambda: fabric.get_prev_month_by_emp_sku(
+            target_month, target_year, sku_list=dax_sku_list, emp_list=emp_list,
+        ),
+        sku_links, sup_id,
+    )
 
     # ── Step 5c: calendar-year caches (CY + LY) — ใช้ตรวจสินค้าใหม่ตอน optimize ──
     try:
@@ -902,6 +937,44 @@ def load_employees_payload(
             df_emp["hist_avg_3m"] = pd.to_numeric(df_emp["hist_avg_3m"], errors="coerce").fillna(0.0)
     except Exception as e:
         logger.warning("compute hist_avg_3m failed: %s", e)
+
+    # ── ยอดขายย้อนหลังเป็น 0 ทั้งทีม = ต้องบอก ไม่ใช่ปล่อยให้เดาเอง ──────────
+    #
+    # เป้ามาจาก Target Sun แต่ "ยอดขายเฉลี่ย 3 เดือน / ปีที่แล้ว" ยังมาจาก Fabric
+    # สองเส้นทางนี้พังแยกกันได้ · ถ้าฝั่ง Fabric ล่มหรือกรองไม่ตรง ทุกช่องจะขึ้น 0
+    # เหมือนกันหมดทั้งทีม ซึ่งหน้าตาเหมือน "ทีมนี้ไม่เคยขายอะไรเลย" เป๊ะ ๆ
+    # ของเดิมเตือนเฉพาะตอนดึง 3 เดือนไม่ได้เลย (no_history) — แต่เคสที่ดึงมาได้
+    # แล้วจับคู่รหัสพนักงานไม่ติดสักคน กลับเงียบสนิท ทั้งที่ผลลัพธ์บนจอเหมือนกัน
+    try:
+        _ly_zero = float(pd.to_numeric(df_emp.get("ly_sales", 0), errors="coerce").fillna(0).sum()) <= 0
+        _avg_zero = float(pd.to_numeric(df_emp.get("hist_avg_3m", 0), errors="coerce").fillna(0).sum()) <= 0
+        _rows_3m = 0 if df_hist is None or df_hist.empty else len(df_hist)
+        _rows_ly = 0 if df_lysm is None or df_lysm.empty else len(df_lysm)
+        if len(df_emp) > 0 and _ly_zero and _avg_zero:
+            if _rows_3m or _rows_ly:
+                detail = (
+                    f"ดึงมาได้ {_rows_3m} แถว (3 เดือน) และ {_rows_ly} แถว (ปีที่แล้ว) "
+                    "แต่จับคู่กับรหัสพนักงานในทีมไม่ติดสักคน — รหัสพนักงานสองฝั่งไม่ตรงกัน"
+                )
+            else:
+                detail = "ดึงจาก Fabric ไม่ได้เลยสักแถว — เป้ายังถูกต้องเพราะมาจาก Target Sun คนละทาง"
+            logger.warning(
+                "ยอดขายย้อนหลังเป็น 0 ทั้งทีม %s %s-%02d: %s",
+                sup_id, target_year, target_month, detail,
+            )
+            sku_warnings.append(
+                {
+                    "type": "history_all_zero",
+                    "sku": "",
+                    "brand": "",
+                    "message": (
+                        f"⚠️ ยอดขายย้อนหลังเป็น 0 ทั้งทีม ({len(df_emp)} คน) — {detail} "
+                        "· การกระจายหีบจะเกลี่ยเท่า ๆ กันแทนการอิงประวัติขาย"
+                    ),
+                }
+            )
+    except Exception as e:                      # การเตือนต้องไม่ทำให้หน้าจอพัง
+        logger.warning("ตรวจยอดขายย้อนหลังเป็น 0 ไม่สำเร็จ: %s", e)
 
     # ── Step 6: Warehouse ─────────────────────────────────
     try:

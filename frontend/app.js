@@ -4472,6 +4472,7 @@ function _showSkuWarnings() {
   if (existing) existing.remove();
 
   const noHistory   = warnings.filter(w => w.type === "no_history");
+  const historyZero = warnings.filter(w => w.type === "history_all_zero");
   const noTarget    = warnings.filter(w => w.type === "no_target");
   const empMismatch = warnings.filter(w => w.type === "emp_mismatch");
   const noTgaEmp    = warnings.filter(w => w.type === "no_tga_employee");
@@ -4582,6 +4583,15 @@ function _showSkuWarnings() {
     html += `<li><strong style="color:var(--accent)">ℹ️ SKU ที่เคยขายแต่ไม่มีเป้างวดนี้</strong><br>`;
     html += _warningLinesHtml(soldOnlyExcluded);
     html += `</li>`;
+  }
+
+  // ยอดขายย้อนหลัง 0 ทั้งทีม — ต้องขึ้นก่อนเรื่องอื่น เพราะมันแปลว่าตัวเลขบนตาราง
+  // ขั้นที่ 1 ทั้งคอลัมน์เชื่อไม่ได้ ไม่ใช่แค่ SKU ใด SKU หนึ่ง
+  if (historyZero.length > 0) {
+    historyZero.forEach(w => {
+      const sup = w.sup_id ? ` <code>${escH(w.sup_id)}</code>` : "";
+      html += `<li><strong style="color:var(--amber)">${escH(w.message)}</strong>${sup}</li>`;
+    });
   }
 
   if (noHistory.length > 0) {
