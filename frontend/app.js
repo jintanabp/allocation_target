@@ -888,7 +888,29 @@ function _strategySummaryTh(codes) {
   return list.map(_strategyLabelTh).join(" · ");
 }
 
+/**
+ * error ของ fetch ที่ไม่ใช่คำตอบจาก server — ต้องแปลก่อน ไม่งั้นผู้ใช้เห็นภาษาอังกฤษดิบ
+ *
+ * เบราว์เซอร์คืนข้อความอย่าง "signal is aborted without reason" (Chrome ตัดสาย)
+ * หรือ "Failed to fetch" ซึ่งผู้ใช้อ่านแล้วเข้าใจว่าจอไม่มีสัญญาณ ทั้งที่จริงคือ
+ * รอผลนานเกินเวลาที่ตั้งไว้ หรือเน็ตหลุดระหว่างทาง
+ */
+function _networkErrorMsg(err) {
+  const name = String(err?.name || "");
+  const raw = String(err?.message || err || "");
+  if (name === "AbortError" || /\babort(ed)?\b/i.test(raw) || /signal is aborted/i.test(raw)) {
+    return "รอผลนานเกินเวลาที่ตั้งไว้ ระบบจึงตัดสายทิ้ง — เครื่องอาจยังคำนวณอยู่ "
+      + "ลองใหม่อีกครั้ง หรือลดขอบเขต/จำนวนวิธีกระจายลง";
+  }
+  if (name === "TypeError" && /failed to fetch|networkerror|load failed/i.test(raw)) {
+    return "ติดต่อเซิร์ฟเวอร์ไม่ได้ — ตรวจการเชื่อมต่อเน็ตแล้วลองใหม่";
+  }
+  return "";
+}
+
 function _userFacingError(err, fallback = "เกิดข้อผิดพลาด กรุณาลองอีกครั้ง") {
+  const net = _networkErrorMsg(err);
+  if (net) return net;
   const raw = (err && err.message) ? String(err.message) : String(err || "");
   const msg = _friendlyMsg(raw) || raw;
   if (/^HTTP\s*\d+$/i.test(msg.trim())) return fallback;
@@ -5479,6 +5501,72 @@ function _showOptimizeSuccessUi(strategyLabel) {
     `วิธี: ${strategyLabel || "—"} — ตรวจผล แก้ตัวเลข หรือดาวน์โหลด Excel ได้`;
 }
 
+/** ส่วนต่างระหว่างเป้าเหลืองรวมกับมูลค่าหีบรวม — คิดสด ไม่ใช้ค่าจากรอบก่อน */
+function _pendingRevenueScale() {
+  const totalPossible = (S.skus || []).reduce(
+    (a, s) => a + (Number(s.supervisor_target_boxes) || 0) * (Number(s.price_per_box) || 0),
+    0
+  );
+  const totalYellow = _allocEligibleEmployees().reduce(
+    (a, e) => a + (Number(S.yellow[_allocKey(e)]) || 0), 0
+  );
+  if (!(totalPossible > 0) || !(totalYellow > 0)) return null;
+  return { totalPossible, totalYellow, scale: totalPossible / totalYellow };
+}
+
+/**
+ * ถามก่อนกระจายเมื่อเป้าเหลืองรวมไม่เท่ามูลค่าหีบรวม
+ *
+ * หีบต้องกระจายให้ครบทุกใบ เป้าเงินรายคนจึงถูกดันตามสัดส่วนให้ผลรวมเท่ามูลค่าหีบ
+ * (OR_engine._revenue_scale_factor) ผลกระจายเลยห่างจากเป้าเหลืองที่ตั้งไว้ทุกคน
+ * ปกติสองยอดนี้ตรงกันเป๊ะเพราะมาจากเป้า Target Sun ก้อนเดียวกัน — ต่างกันเมื่อไหร่
+ * แปลว่ามีอะไรผิดอยู่ก่อนแล้ว (พบบ่อยสุด: บางทีมถือราคาเก่าค้างในโหมดรวมภาค)
+ */
+async function _confirmRevenueScaleBeforeRun() {
+  let info = null;
+  try {
+    info = _pendingRevenueScale();
+  } catch (e) {
+    console.warn("_pendingRevenueScale:", e);
+    return true;                       // ตรวจไม่ได้ก็อย่าไปขวางการทำงาน
+  }
+  if (!info || Math.abs(info.scale - 1) < 0.005) return true;
+
+  const pct = Math.abs((info.scale - 1) * 100);
+  const gap = info.totalPossible - info.totalYellow;
+  const word = gap > 0 ? "มากกว่า" : "น้อยกว่า";
+  const dir = gap > 0 ? "ดันขึ้น" : "ลดลง";
+  const conflict = (S.skuWarnings || []).find(w => w.type === "aggregate_price_conflict");
+
+  return new Promise((resolve) => {
+    _showInfoModal({
+      title: "เป้าเงินรายคนจะถูกปรับก่อนกระจาย",
+      bodyHtml:
+        `<p style="margin:0 0 10px;line-height:1.7;">`
+        + `มูลค่าหีบที่ต้องกระจาย <strong>${baht(info.totalPossible)}</strong> `
+        + `${word}ผลรวมเป้าเหลืองที่ตั้งไว้ <strong>${baht(info.totalYellow)}</strong> `
+        + `อยู่ <strong>${baht(Math.abs(gap))}</strong> (${pct.toFixed(1)}%)`
+        + `</p>`
+        + `<p style="margin:0 0 10px;line-height:1.7;">`
+        + `หีบต้องกระจายให้ครบทุกใบ ระบบจึง<strong>${dir}เป้าเงินของทุกคน ${pct.toFixed(1)}%</strong> `
+        + `ก่อนคำนวณ ผลที่ได้จะไม่ตรงกับเป้าเหลืองที่ตั้งไว้`
+        + `</p>`
+        + (conflict
+            ? `<p style="margin:0 0 10px;line-height:1.7;color:var(--amber);">`
+              + `${escapeHtml(conflict.message)}</p>`
+            : `<p style="margin:0 0 10px;font-size:12px;color:var(--text-3);line-height:1.6;">`
+              + `ปกติสองยอดนี้ตรงกันพอดี เพราะมาจากเป้า Target Sun ก้อนเดียวกัน — `
+              + `ต่างกันแปลว่ามีทีมที่ข้อมูลเก่าค้างอยู่ หรือเป้าเหลืองถูกแก้จนผลรวมเปลี่ยน</p>`)
+        + `<p style="margin:0;font-size:12px;color:var(--text-3);line-height:1.6;">`
+        + `กด「ยกเลิก」เพื่อไปโหลดข้อมูลทีมที่ค้างใหม่ก่อน แล้วค่อยกลับมากระจาย</p>`,
+      primaryLabel: "เข้าใจแล้ว คำนวณต่อ",
+      secondaryLabel: "ยกเลิก",
+      onPrimary: () => resolve(true),
+      onSecondary: () => resolve(false),
+    });
+  });
+}
+
 async function runOptimization() {
   const btn = qs("#runBtn");
   if (_aggregateBlocksWrite()) return;
@@ -5515,6 +5603,9 @@ async function runOptimization() {
     const ok = await openAllocScopeModal({ run: true });
     if (!ok) return;
   }
+  // เป้าเหลืองรวมไม่เท่ามูลค่าหีบรวม → เครื่องจะดันเป้าทุกคนตามสัดส่วนก่อนกระจาย
+  // ต้องถามก่อน ไม่ใช่ปล่อยให้เห็นตอนผลออกมาแล้วงงว่าเลขมาจากไหน
+  if (!(await _confirmRevenueScaleBeforeRun())) return;
 
   btn.classList.remove("pulse-warn");
   const lockedEdits = _collectLockedEdits();
@@ -5584,6 +5675,20 @@ async function runOptimization() {
 /* ══════════════════════════════════════════════
    CORE OPTIMIZE ENGINE (shared by runOptimization & runReAllocationKeepEdits)
 ══════════════════════════════════════════════ */
+/**
+ * เวลารอผลกระจายก่อนตัดสาย — ต้องยาวกว่าที่หน้าจอบอกผู้ใช้เสมอ
+ *
+ * ของเดิมตั้งตายตัวไว้ 3 นาที ขณะที่ estimateAllocateSeconds บอกผู้ใช้ว่า
+ * "ประมาณ 17–33 นาที" ตอนกระจายรวมทั้งภาค — คำขอจึงถูกตัดสายทุกครั้งโดยที่
+ * เครื่องยังคำนวณอยู่ แล้วโผล่เป็น error ของ AbortController ที่อ่านไม่รู้เรื่อง
+ * ผูกกับตัวประมาณเวลาตัวเดียวกับที่แสดงผล จะได้ไม่มีวันขัดกันอีก
+ */
+function _optimizeTimeoutMs() {
+  const est = estimateAllocateSeconds();
+  const high = Number(est?.high) || 0;
+  return Math.max(600000, Math.round(high * 1000 * 2));
+}
+
 async function _callOptimizeApi(supId, payload) {
   const url =
     `${API_BASE_URL}/optimize?sup_id=${encodeURIComponent(supId)}` +
@@ -5595,7 +5700,7 @@ async function _callOptimizeApi(supId, payload) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     },
-    180000
+    _optimizeTimeoutMs()
   );
   if (!res.ok) {
     const j = await res.json().catch(() => ({}));

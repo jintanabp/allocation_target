@@ -155,6 +155,9 @@ def get_employees_aggregate(
         target_year,
         aggregate_label=label,
         refresh=bool(refresh),
+        # ตรงกับ _managerAggregateWritable() ฝั่งหน้าเว็บ — รวมภาคแก้/กระจายได้
+        # ส่วนรวมทั้ง division เป็นมุมมองดูอย่างเดียว จึงต้องไม่ไปซ่อมไฟล์ของทีมอื่น
+        can_write=(view == "region"),
     )
 
 
@@ -194,6 +197,8 @@ def get_employees_region_peers(
         target_year,
         aggregate_label=label,
         refresh=bool(refresh),
+        # peer ในภาคเดียวกันแก้เป้า/กระจายได้ (_supervisorRegionAggregateView)
+        can_write=True,
     )
 
 
