@@ -21,6 +21,12 @@ python scripts/access/repair_user_access.py
 | `start_server.bat` | รัน uvicorn (ต้อง setup ก่อน) |
 | `test_powerbi_access.py` | ทดสอบ SP เห็น workspace/dataset (ไม่รัน DAX) |
 | `smoke_deploy.py` | หลัง deploy — `GET /health` + unittest ชุดหลัก (`--skip-http` ถ้าไม่มี server) |
+| `diagnose_supervisor.py` | ทีมหนึ่งไม่มีเป้าเลย — ไล่ดูตั้งแต่ Dim_Salesman ถึง TGA (ต่อ Fabric) |
+| `diagnose_target_total.py` | เป้ารวมของทีมต่ำกว่าความจริง — ชั่งทีละสาเหตุจากไฟล์แคช (ออฟไลน์) |
+
+```bash
+python scripts/dev/diagnose_target_total.py --sup SL359 --month 9 --year 2026 --expect 40949718.68
+```
 
 ## Build portable (`scripts/build/`)
 
