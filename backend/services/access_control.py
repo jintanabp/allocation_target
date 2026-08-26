@@ -814,6 +814,15 @@ def filter_managers_payload_for_user(full: dict, user: dict[str, Any]) -> dict:
                 if str(row.get("supervisor_code") or "").strip().upper() in allowed_set
             ]
 
+    # ผู้จัดการที่มีพนักงานขายสังกัดรหัสตัวเอง = ทีมจริง ห้ามถูกตัดออกจากทีมคนอื่น
+    # อ่านชื่อไฟล์รอบเดียวแล้วส่งต่อ — ไม่ใช่อ่านซ้ำทุกรหัสผู้จัดการในลูป
+    try:
+        from .manager_views import codes_with_own_salesmen
+
+        _mgr_with_staff = codes_with_own_salesmen()
+    except Exception:
+        _mgr_with_staff = set()
+
     by_manager_f: dict[str, list[str]] = {}
     for m in sorted(mgr_pick):
         team = sorted(_mgr_team(m))
@@ -822,13 +831,13 @@ def filter_managers_payload_for_user(full: dict, user: dict[str, Any]) -> dict:
         elif allowed_set:
             by_manager_f[m] = sorted(allowed_set)
         by_manager_f[m] = supervisor_team_for_manager(
-            by_manager_f.get(m, []), m, mgr_pick, sl_links
+            by_manager_f.get(m, []), m, mgr_pick, sl_links, keep_codes=_mgr_with_staff
         )
 
     by_manager_f = sync_by_manager_for_sl_links(by_manager_f, mgr_pick, sl_links)
     for m in sorted(mgr_pick):
         by_manager_f[m] = supervisor_team_for_manager(
-            by_manager_f.get(m, []), m, mgr_pick, sl_links
+            by_manager_f.get(m, []), m, mgr_pick, sl_links, keep_codes=_mgr_with_staff
         )
 
     pick_labels: list[str] = []

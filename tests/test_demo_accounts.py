@@ -329,6 +329,29 @@ class TestDemoDoesNotLeakToRealUsers(unittest.TestCase):
         sups = set(map(str, full.get("supervisors") or []))
         self.assertFalse(sups & set(demo_data.DEMO_SUP_IDS))
 
+    def test_rebuilding_the_hierarchy_never_writes_demo_teams(self):
+        """
+        ตัวซิงก์ลำดับสิทธิ์ทำงานเองทุกครั้งที่แอดมินแก้ผู้ใช้ และอ่าน user_access
+        ตรง ๆ ซึ่งมีแถวสาธิตอยู่ด้วย — ถ้าไม่กรอง ทีม SLDEMO จะถูกเขียนลงไฟล์ที่
+        ทุกคนใช้ร่วมกัน แล้วผู้ใช้จริงเห็นทีมสาธิตในรายการ
+        """
+        from backend.services.access_hierarchy import build_hierarchy_payload
+
+        rows = [
+            {"userpl": "SLDEMO1", "login_kind": "supervisor_acc",
+             "acc_division": "Div.B", "acc_region": "ภาคสาธิต"},
+            {"userpl": "SL346", "login_kind": "supervisor_acc",
+             "acc_division": "Div.S", "acc_region": "เหนือ"},
+            {"userpl": "SL372", "login_kind": "manager_acc", "manager_level": "regional",
+             "acc_division": "Div.S", "acc_region": "เหนือ",
+             "visible_supervisor_codes": ["SL346", "SLDEMO1"]},
+        ]
+        pay = build_hierarchy_payload(rows, keep_uncomputable_teams=False)
+        self.assertFalse(set(pay.get("supervisors") or []) & set(demo_data.DEMO_SUP_IDS))
+        for team in (pay.get("by_manager") or {}).values():
+            self.assertFalse(set(team) & set(demo_data.DEMO_SUP_IDS))
+        self.assertIn("SL346", pay.get("by_manager", {}).get("SL372") or [])
+
     def test_injection_does_not_mutate_the_shared_payload(self):
         """payload ตัวจริงถูกแคชใช้ร่วมกันทั้งระบบ — แก้ทับ = ผู้ใช้จริงเห็นทีมสาธิต"""
         from backend.services import managers as msvc

@@ -1546,9 +1546,12 @@ function _managerTeamFromLogin(mgrCode) {
 function _supervisorOnlyTeam(choices, mgrCode, keepOwn = false) {
   const mgr = String(mgrCode || "").trim().toUpperCase();
   const mgrSet = S._managerSet || new Set();
+  // ผู้จัดการที่มีพนักงานขายสังกัดรหัสตัวเอง = ทีมจริงทีมหนึ่ง ไม่ใช่แค่ "รหัสผู้จัดการ"
+  // ตัดทิ้งแล้วทีมทั้งทีมหายจากยอดรวมภาคและจากรายการให้เลือกเปิด (เจอกับ SL359)
+  const hasOwnStaff = (c) => !!S.managerViews?.[c]?.own_team_has_staff;
   return (choices || [])
     .map((c) => String(c).trim().toUpperCase())
-    .filter((c) => c && (c === mgr ? keepOwn : !mgrSet.has(c)));
+    .filter((c) => c && (c === mgr ? keepOwn : !mgrSet.has(c) || hasOwnStaff(c)));
 }
 
 /** Supervisor แรกสำหรับ Manager — ข้ามรหัส Manager (เช่น SL508) ที่ไม่มีพนักงานใน Fabric
@@ -1717,6 +1720,15 @@ function _scopedSupervisorChoices() {
   const all = (S.supervisorChoices || [])
     .map((c) => String(c).trim().toUpperCase())
     .filter(Boolean);
+  // อยู่ในมุมมองรวม: ใช้ขอบเขตที่ server กรองมาแล้วตรง ๆ
+  //
+  // กรองเองจาก salesUnitBySup ไม่ได้ เพราะแมพนั้นมีเฉพาะทีม "ในขอบเขตตอนนี้"
+  // ทีมนอกขอบเขตจึงอ่านได้ว่า "ไม่รู้หน่วย" แล้วติดมาด้วยตามกติกา — ตารางเลย
+  // ขึ้นครบทุกหน่วยเหมือนเดิมทั้งที่เลือกหน่วยเดียวไว้
+  const scope = (S.aggregateSupIds || [])
+    .map((c) => String(c).trim().toUpperCase())
+    .filter(Boolean);
+  if (S.aggregateMode && scope.length) return scope;
   const want = String(S.managerViewUnit || "").trim().toLowerCase();
   if (want !== "credit" && want !== "van") return all;
   const meta = S.salesUnitBySup || {};

@@ -1,6 +1,6 @@
 {
   "source": "excel_roster",
-  "synced_at": "2026-07-01T13:20:39+0700",
+  "synced_at": "2026-08-26T16:47:42+0700",
   "rows": [
     {
       "supervisor_code": "SL397",
@@ -43,6 +43,11 @@
       "manager_code": "SL372"
     },
     {
+      "supervisor_code": "SL359",
+      "depend_on": "SL372",
+      "manager_code": "SL372"
+    },
+    {
       "supervisor_code": "SL372",
       "depend_on": "SL372",
       "manager_code": "SL372"
@@ -74,6 +79,11 @@
     },
     {
       "supervisor_code": "SL362",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
+      "supervisor_code": "SL540",
       "depend_on": "",
       "manager_code": ""
     },
@@ -953,17 +963,7 @@
       "manager_code": ""
     },
     {
-      "supervisor_code": "SL351",
-      "depend_on": "SL359",
-      "manager_code": "SL359"
-    },
-    {
       "supervisor_code": "SL359",
-      "depend_on": "SL359",
-      "manager_code": "SL359"
-    },
-    {
-      "supervisor_code": "SL393",
       "depend_on": "SL359",
       "manager_code": "SL359"
     },
@@ -974,11 +974,6 @@
     },
     {
       "supervisor_code": "SL506",
-      "depend_on": "SL359",
-      "manager_code": "SL359"
-    },
-    {
-      "supervisor_code": "SL535",
       "depend_on": "SL359",
       "manager_code": "SL359"
     },
@@ -1613,6 +1608,21 @@
       "manager_code": "SL349"
     },
     {
+      "supervisor_code": "SL532",
+      "depend_on": "SL349",
+      "manager_code": "SL349"
+    },
+    {
+      "supervisor_code": "SL540",
+      "depend_on": "SL349",
+      "manager_code": "SL349"
+    },
+    {
+      "supervisor_code": "SL532",
+      "depend_on": "",
+      "manager_code": ""
+    },
+    {
       "supervisor_code": "SL309",
       "depend_on": "SL309",
       "manager_code": "SL309"
@@ -1739,11 +1749,6 @@
     },
     {
       "supervisor_code": "SL509",
-      "depend_on": "",
-      "manager_code": ""
-    },
-    {
-      "supervisor_code": "SL540",
       "depend_on": "",
       "manager_code": ""
     }
@@ -1888,7 +1893,9 @@
       "SL376",
       "SL406",
       "SL417",
-      "SL523"
+      "SL523",
+      "SL532",
+      "SL540"
     ],
     "SL352": [
       "SL352",
@@ -1909,12 +1916,9 @@
       "SL959"
     ],
     "SL359": [
-      "SL351",
       "SL359",
-      "SL393",
       "SL396",
-      "SL506",
-      "SL535"
+      "SL506"
     ],
     "SL360": [
       "SL330",
@@ -1959,6 +1963,7 @@
     ],
     "SL372": [
       "SL351",
+      "SL359",
       "SL372",
       "SL393",
       "SL396",
@@ -2272,6 +2277,7 @@
     "SL531 (Supervisor)",
     "SL535 (Supervisor)",
     "SL539 (Supervisor)",
+    "SL540 (Supervisor)",
     "SL958 (Supervisor)",
     "SL959 (Supervisor)",
     "SL105 (Manager)",

@@ -33,6 +33,7 @@ from backend.services.manager_views import (  # noqa: E402
     drop_manager_code_without_team,
     has_team_data_in_period,
 )
+from backend.services.sl_link_store import supervisor_team_for_manager  # noqa: E402
 
 logging.disable(logging.CRITICAL)
 
@@ -235,6 +236,54 @@ class TestManagerWithoutOwnTargetsIsNotATeam(unittest.TestCase):
             "SL351",
             drop_manager_code_without_team(self.TEAM, self.MGR, self.MONTH, self.YEAR),
         )
+
+
+class TestAManagerWithOwnStaffIsATeamToOtherManagers(unittest.TestCase):
+    """
+    ผู้จัดการที่มีพนักงานขายสังกัดรหัสตัวเอง = ทีมจริง ในสายตาผู้จัดการคนอื่นด้วย
+
+    ของจริง: S516 ถูกย้ายจาก SL372 ไปให้ SL359 (หน่วยเครดิต ภาคเหนือ ซึ่ง SL372
+    ดูแลอยู่) เกลี่ยเป้าให้ · แต่ SL372 เปิดรวมภาคเหนือแล้วไม่เห็นเขาเลย เพราะ
+    ตัวคัดทีมตัดรหัสผู้จัดการ "ทุกตัว" ออกจากทีม — ทีมของ SL359 ทั้งทีมหายไปด้วย
+    ไม่ใช่แค่คนที่ย้ายมา และยอดรวมภาคก็ขาดไปทั้งทีมโดยไม่มีอะไรฟ้อง
+
+    กติกานี้เคยแก้ไปครึ่งเดียว: team_supervisor_codes มี keep_own_code ให้ผู้จัดการ
+    นับทีมของตัวเองได้ (docstring อ้าง SL359 ตรง ๆ) แต่ฝั่งที่ประกอบ by_manager
+    ยังใช้กติกาเดิม — สองฝั่งตัดสินคนละแบบบนข้อมูลชุดเดียวกัน
+    """
+
+    TEAM = ["SL351", "SL359", "SL372", "SL396"]
+    PICKS = {"SL359", "SL372"}          # ทั้งคู่เป็นรหัสผู้จัดการ
+
+    def test_a_manager_code_with_staff_stays_in_the_team(self):
+        out = supervisor_team_for_manager(
+            self.TEAM, "SL372", self.PICKS, keep_codes={"SL359"}
+        )
+        self.assertIn("SL359", out)
+
+    def test_a_manager_code_without_staff_is_still_dropped(self):
+        out = supervisor_team_for_manager(self.TEAM, "SL372", self.PICKS, keep_codes=set())
+        self.assertNotIn("SL359", out)
+
+    def test_the_owner_code_is_always_dropped_from_their_own_team(self):
+        """รหัสตัวเองยังตัดเหมือนเดิม — ตรงนั้นมี keep_own_code คุมอยู่อีกชั้น"""
+        out = supervisor_team_for_manager(
+            self.TEAM, "SL372", self.PICKS, keep_codes={"SL359", "SL372"}
+        )
+        self.assertNotIn("SL372", out)
+
+    def test_real_supervisors_are_untouched(self):
+        out = supervisor_team_for_manager(
+            self.TEAM, "SL372", self.PICKS, keep_codes={"SL359"}
+        )
+        self.assertEqual(sorted(out), ["SL351", "SL359", "SL396"])
+
+    def test_the_screen_uses_the_same_rule(self):
+        """ไม่งั้นทีมนั้นอยู่ในยอดรวมแต่ไม่มีในรายการให้เลือกเปิด — คนละความจริงสองจอ"""
+        self.assertIn("own_team_has_staff", APP)
+        i = APP.index("function _supervisorOnlyTeam(")
+        block = APP[i: i + 900]
+        self.assertIn("hasOwnStaff", block)
 
 
 if __name__ == "__main__":

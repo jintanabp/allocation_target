@@ -282,10 +282,20 @@ class TestServerAllocationPanelFollowsTheUnit(unittest.TestCase):
         self.assertIn("_scopedSupervisorChoices()", block)
         self.assertIn("S.managerViewUnit", block)
 
-    def test_teams_without_a_unit_are_never_hidden(self):
-        """กติกาเดียวกับฝั่ง server — ข้อมูลไม่ครบต้องไม่ทำให้ทีมหายเงียบ ๆ"""
+    def test_the_scope_from_the_server_wins(self):
+        """
+        กรองเองจาก salesUnitBySup ไม่ได้ — แมพนั้นมีเฉพาะทีมในขอบเขตตอนนี้
+        ทีมนอกขอบเขตจึงอ่านได้ว่า "ไม่รู้หน่วย" แล้วติดมาด้วยตามกติกา
+        ตารางเลยขึ้นครบทุกหน่วยเหมือนเดิมทั้งที่เลือกหน่วยเดียวไว้
+        """
         i = self.app.index("function _scopedSupervisorChoices()")
-        block = self.app[i: i + 900]
+        block = self.app[i: i + 1600]
+        self.assertIn("if (S.aggregateMode && scope.length) return scope;", block)
+
+    def test_teams_without_a_unit_are_never_hidden(self):
+        """ทางถอย (ไม่ได้อยู่ในมุมมองรวม) ยังใช้กติกาเดียวกับฝั่ง server"""
+        i = self.app.index("function _scopedSupervisorChoices()")
+        block = self.app[i: i + 1600]
         self.assertIn("return !u || u === want;", block)
 
 

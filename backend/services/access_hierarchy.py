@@ -343,10 +343,19 @@ def build_hierarchy_payload(
     by_manager: dict[str, set[str]] = {}
     pair_rows: list[dict[str, str]] = []
 
+    from .demo_data import is_demo_supervisor
+
     for r in source:
         upl = real_userpl(r.get("userpl"))
         lk = str(r.get("login_kind") or "")
-        vis = [str(x).strip().upper() for x in (r.get("visible_supervisor_codes") or []) if x]
+        # ทีมสาธิตมีทางเข้าของตัวเอง (inject_into_managers_payload ต่อผู้ใช้)
+        # ห้ามลงไฟล์ที่ทุกคนใช้ร่วมกัน ไม่งั้นผู้ใช้จริงเห็นทีม SLDEMO
+        if is_demo_supervisor(upl):
+            continue
+        vis = [
+            c for c in (str(x).strip().upper() for x in (r.get("visible_supervisor_codes") or []) if x)
+            if not is_demo_supervisor(c)
+        ]
 
         if lk == "manager_acc" and upl:
             manager_codes.add(upl)

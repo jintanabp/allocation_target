@@ -16,6 +16,16 @@ MANAGERS_CACHE_FILE = "data/managers_cache.json"
 _CACHE_LOCK = threading.Lock()
 
 
+def _hierarchy_mtime() -> float:
+    """เวลาแก้ไขล่าสุดของไฟล์ต้นทาง (0 = ไม่มีไฟล์ ให้แคชใช้ต่อได้ตามเดิม)"""
+    try:
+        from .access_hierarchy import access_hierarchy_json_path
+
+        return os.path.getmtime(access_hierarchy_json_path())
+    except OSError:
+        return 0.0
+
+
 def load_full_managers_payload() -> dict:
     """
     โหลด hierarchy จาก config/access_hierarchy.json (หรือ rebuild จาก user_access)
@@ -26,8 +36,11 @@ def load_full_managers_payload() -> dict:
     ttl = int(os.environ.get("MANAGERS_CACHE_TTL_SEC", "86400"))
     if ttl > 0 and os.path.exists(cache_path):
         try:
-            age = time.time() - os.path.getmtime(cache_path)
-            if age < ttl:
+            cache_mtime = os.path.getmtime(cache_path)
+            age = time.time() - cache_mtime
+            # แคชต้องไม่เก่ากว่าไฟล์ต้นทาง — ไม่งั้น deploy ที่แก้ลำดับชั้นแล้ว
+            # หน้าจอยังเหมือนเดิมได้อีกเป็นวัน โดยไม่มีอะไรบอกว่าทำไม
+            if age < ttl and cache_mtime >= _hierarchy_mtime():
                 # ต้องถือ lock เดียวกับตอนเขียน ไม่งั้นบน Windows การ replace จะพัง
                 # เพราะ reader ถือ handle ค้าง (ดู docs/CONCURRENCY.md)
                 with read_locked(cache_path), open(cache_path, "r", encoding="utf-8") as f:

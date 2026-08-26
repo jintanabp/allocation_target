@@ -211,11 +211,32 @@ def supervisor_team_for_manager(
     manager_code: str,
     manager_pick: set[str] | list[str],
     links: list[dict[str, Any]] | None = None,
+    keep_codes: set[str] | None = None,
 ) -> list[str]:
-    """ทีม Supervisor จริง — ตัดเฉพาะรหัส Manager ที่เกี่ยวข้อง (ไม่รวม Sup ที่มีทีม)"""
+    """
+    ทีม Supervisor จริง — ตัดเฉพาะรหัส Manager ที่เกี่ยวข้อง (ไม่รวม Sup ที่มีทีม)
+
+    keep_codes: รหัสผู้จัดการที่มีพนักงานขายสังกัดตรง — ทีมของเขาเป็นทีมจริงที่ต้อง
+    เกลี่ยเป้าร่วมกัน จึงห้ามตัดออกจากทีมของผู้จัดการคนอื่น · เดิมตัดรหัสผู้จัดการ
+    ทุกตัวทิ้ง ทีมทั้งทีมเลยหายจากยอดรวมภาคแบบเงียบ ๆ (เจอกับ SL359 ในภาคเหนือ)
+    ไม่ส่งมา = ไปอ่านเองจากโฟลเดอร์ data · รหัสของผู้จัดการเจ้าของทีมและรหัสเก่า
+    ที่ผูก sl_links ยังถูกตัดเหมือนเดิม (ตรงนั้นมี keep_own_code คุมอยู่อีกชั้น)
+    """
     picks = {normalize_sl(c) for c in manager_pick if normalize_sl(c)}
     exclude = manager_codes_to_exclude_from_team(manager_code, picks, links)
-    exclude |= {normalize_sl(c) for c in team if normalize_sl(c) in picks}
+    if keep_codes is None:
+        try:
+            from .manager_views import codes_with_own_salesmen
+
+            keep_codes = codes_with_own_salesmen()
+        except Exception:                   # อ่านโฟลเดอร์ไม่ได้ = ไม่เก็บใครเพิ่ม
+            keep_codes = set()
+    keep = {normalize_sl(c) for c in (keep_codes or set()) if normalize_sl(c)}
+    exclude |= {
+        normalize_sl(c)
+        for c in team
+        if normalize_sl(c) in picks and normalize_sl(c) not in keep
+    }
     return sorted(
         {
             normalize_sl(c)
