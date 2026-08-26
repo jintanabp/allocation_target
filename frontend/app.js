@@ -2046,7 +2046,11 @@ function updateManagerViewControlsUI() {
   const unitSel = document.getElementById("managerViewUnitSelect");
   if (unitSel) {
     const units = _unitsInCurrentScope();
-    const show = S.aggregateMode && units.length > 1;
+    // ต้องโชว์ต่อเมื่อ "เลือกหน่วยไว้แล้ว" ด้วย — ไม่ใช่แค่ตอนขอบเขตมีหลายหน่วย
+    //
+    // พอเลือกเครดิต ขอบเขตก็เหลือแต่ทีมเครดิต จำนวนหน่วยกลายเป็น 1 ถ้าซ่อนช่องตรงนั้น
+    // ผู้ใช้จะกลับไปดูทุกหน่วยไม่ได้อีกเลย ต้องออกไปเปลี่ยนภาคหรือล็อกอินใหม่
+    const show = S.aggregateMode && (units.length > 1 || !!S.managerViewUnit);
     unitSel.style.display = show ? "" : "none";
     if (show) {
       unitSel.value = S.managerViewUnit || "";

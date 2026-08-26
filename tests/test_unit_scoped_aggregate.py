@@ -205,10 +205,27 @@ class TestUnitPickerIsWiredEndToEnd(unittest.TestCase):
         self.assertIn("data.sales_unit_by_sup", app)
         self.assertIn("S.salesUnitBySup", app)
 
-    def test_the_picker_only_shows_when_the_scope_mixes_units(self):
+    def test_the_picker_shows_when_the_scope_mixes_units(self):
         app = self._read("frontend/app.js")
         self.assertIn("function _unitsInCurrentScope", app)
-        self.assertIn("S.aggregateMode && units.length > 1", app)
+        self.assertIn("units.length > 1", app)
+
+    def test_the_picker_stays_after_a_unit_is_picked(self):
+        """
+        กับดัก: พอเลือกเครดิต ขอบเขตเหลือแต่ทีมเครดิต จำนวนหน่วยกลายเป็น 1
+        ถ้าเงื่อนไขโชว์เป็น "มากกว่า 1 หน่วย" อย่างเดียว ช่องจะหายไปทันที
+        แล้วผู้ใช้กลับไปดูทุกหน่วยไม่ได้อีกเลย ต้องออกไปเปลี่ยนภาคหรือล็อกอินใหม่
+        """
+        app = self._read("frontend/app.js")
+        self.assertIn(
+            "S.aggregateMode && (units.length > 1 || !!S.managerViewUnit)", app
+        )
+
+    def test_going_back_to_all_units_is_an_option(self):
+        html = self._read("frontend/index.html")
+        i = html.index('id="managerViewUnitSelect"')
+        block = html[i: i + 500]
+        self.assertIn('<option value="">', block, "ต้องมีตัวเลือกกลับไปดูทุกหน่วย")
 
     def test_picking_a_unit_reloads_with_it(self):
         app = self._read("frontend/app.js")
