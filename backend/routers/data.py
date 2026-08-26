@@ -182,8 +182,28 @@ def get_employees_region_peers(
             detail="โหลดรวมภาคได้เฉพาะจากรหัสทีมตัวเอง",
         )
     allowed = user.get("allowed_supervisor_codes")
+    if allowed is None:
+        # None = "ไม่จำกัดขอบเขต" (dev / ALLOCATION_ADMIN_EMAILS) ไม่ใช่ "ไม่มีสิทธิ์"
+        # แต่มุมมองรวมภาคต้องรู้ว่า "ภาคไหน" ถึงจะรวมได้ ซึ่งบัญชีที่ไม่จำกัดขอบเขต
+        # ตอบคำถามนั้นไม่ได้ · ทางที่ใช้ได้และมีเทสคุมอยู่แล้วคือโหมด "ดูในมุมของผู้ใช้"
+        # (X-View-As-Email) ซึ่งจะได้ home/peer ของซุปคนนั้นมาจริง ๆ
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "บัญชีนี้ไม่ได้ผูกกับภาคใดภาคหนึ่ง จึงรวมภาคให้ไม่ได้ — "
+                "ใช้โหมด “ดูในมุมของผู้ใช้” แล้วเลือกซุปในภาคที่ต้องการ "
+                "มุมมองรวมภาคจะใช้งานได้ตามสิทธิ์ของซุปคนนั้น"
+            ),
+        )
     if not allowed:
-        raise HTTPException(status_code=403, detail="ไม่มีสิทธิ์ดูภาคเดียวกัน")
+        # เซ็ตว่าง = บัญชีแอดมินอย่างเดียว (ไม่มีทีมของตัวเอง) — คนละเรื่องกับข้างบน
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "บัญชีนี้ยังไม่มีทีมในขอบเขต จึงรวมภาคให้ไม่ได้ — "
+                "ใช้โหมด “ดูในมุมของผู้ใช้” แล้วเลือกซุปในภาคที่ต้องการ"
+            ),
+        )
     sup_ids = sorted({str(x).strip().upper() for x in allowed if str(x).strip()})
     if len(sup_ids) <= 1:
         raise HTTPException(

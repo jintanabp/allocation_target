@@ -775,6 +775,10 @@ let S = {
   optimizationFallbackSups: [],
   /** ทีมที่กระจายไม่สำเร็จรอบล่าสุด (โหมดรวมภาค) */
   regionalFailedSups: [],
+  // ล็อกที่ server ตัดทิ้งรอบล่าสุด — ห้ามยัดกลับเข้าผลลัพธ์ ต้องบอกผู้ใช้แทน
+  droppedLocks: [],
+  // วิธีคิดประวัติที่ถูกถอยไปใช้ตัวอื่น เพราะไฟล์ของวิธีที่เลือกไม่มี (เช่น "LY→3M")
+  histFallbacks: [],
   rebalanceResiduals: [],
   /** ส่งเข้า Target Sun ได้หรือไม่ (จาก GET /managers → can_import_targetsun) */
   canImportTargetSun: true,
@@ -4507,6 +4511,8 @@ function _showSkuWarnings() {
   const lyNoTarget = warnings.filter(w => w.type === "employees_shown_ly_no_target");
   const vanExcluded = warnings.filter(w => w.type === "employees_excluded_van_code");
   const whSplitActive = warnings.filter(w => w.type === "wh_split_active");
+  const empListStale = warnings.filter(w => w.type === "emp_list_stale");
+  const mixedUnit = warnings.filter(w => w.type === "aggregate_mixed_sales_unit");
   const soldOnlyExcluded = warnings.filter(w => w.type === "sold_only_skus_excluded");
   const zeroTotal   = warnings.filter(w => w.type === "zero_total");
   const tgaNotUpdated = warnings.filter(w => w.type === "tga_period_not_updated");
@@ -4578,6 +4584,22 @@ function _showSkuWarnings() {
   if (whSplitActive.length > 0) {
     html += `<li><strong style="color:var(--accent)">📦 หลายคลัง (W/H)</strong><br>`;
     html += _warningLinesHtml(whSplitActive);
+    html += `</li>`;
+  }
+
+  // รายชื่อพนักงานที่ถอยไปใช้ของงวดอื่น — ต้องเด่นกว่าคำเตือนทั่วไป
+  // เพราะทุกตัวเลขบนหน้านี้คิดจากรายชื่อชุดนั้น
+  if (empListStale.length > 0) {
+    html += `<li><strong style="color:var(--danger, #c0392b)">⚠️ รายชื่อพนักงานไม่ใช่ของงวดนี้</strong><br>`;
+    html += _warningLinesHtml(empListStale);
+    html += `</li>`;
+  }
+
+  // ปนหน่วยขาย = กระจายรวมกันไม่ได้ ต้องบอกด้วยข้อความของมันเอง
+  // ไม่ใช่ไปโผล่เป็น "ราคาไม่ตรงกัน" ซึ่งกดโหลดใหม่กี่ครั้งก็ไม่หาย
+  if (mixedUnit.length > 0) {
+    html += `<li><strong style="color:var(--danger, #c0392b)">⚠️ ขอบเขตนี้มีทั้งเครดิตและรถเงินสด</strong><br>`;
+    html += _warningLinesHtml(mixedUnit);
     html += `</li>`;
   }
 
@@ -5533,8 +5555,11 @@ function _showOptimizeSuccessUi(strategyLabel) {
   }
   qs("#runEmoji").textContent = "✅";
   qs("#runTitle").textContent = "กระจายหีบสำเร็จ";
+  // ป้ายนี้เคยบอกแค่ "วิธีที่ติ๊กไว้" ไม่ใช่วิธีที่ระบบใช้จริง — พอไฟล์ประวัติของ
+  // วิธีนั้นไม่มีแล้วถอยไปใช้ 3 เดือน ผู้ใช้ก็ยังเห็นว่าได้ "ปีที่แล้ว" ตามที่เลือก
+  const fbTag = (S.histFallbacks || []).length ? " (ใช้ประวัติสำรองแทน — ดูหมายเหตุด้านล่าง)" : "";
   qs("#runSub").textContent =
-    `วิธี: ${strategyLabel || "—"} — ตรวจผล แก้ตัวเลข หรือดาวน์โหลด Excel ได้`;
+    `วิธี: ${strategyLabel || "—"}${fbTag} — ตรวจผล แก้ตัวเลข หรือดาวน์โหลด Excel ได้`;
 }
 
 /** ส่วนต่างระหว่างเป้าเหลืองรวมกับมูลค่าหีบรวม — คิดสด ไม่ใช้ค่าจากรอบก่อน */
@@ -5763,6 +5788,8 @@ function _applyOptimizeMetaFromJson(json) {
   const rs = Number(json.revenue_scale);
   S.revenueScale = Number.isFinite(rs) && rs > 0 ? rs : 1;
   S.optimizationFallback = !!json.optimization_fallback;
+  S.droppedLocks = Array.isArray(json.dropped_locks) ? json.dropped_locks : [];
+  S.histFallbacks = Array.isArray(json.hist_fallbacks) ? json.hist_fallbacks : [];
   // เส้นทางซุปเดียว — ไม่มีรายชื่อทีมให้ระบุ ล้างค่าจากรอบรวมภาคก่อนหน้าทิ้ง
   S.optimizationFallbackSups = [];
   S.regionalFailedSups = [];
@@ -5787,9 +5814,17 @@ function _applyOptimizeMetaFromSups(metaBySup) {
   let strictCount = 0;
   let evenMode = "off";
 
+  const droppedLocks = [];
+  const histFallbacks = new Set();
   for (const [supId, json] of entries) {
     if (!json) continue;
     if (json.optimization_fallback) fallbackSups.push(supId);
+    if (Array.isArray(json.dropped_locks)) {
+      json.dropped_locks.forEach((d) => droppedLocks.push({ ...d, supervisor_code: supId }));
+    }
+    if (Array.isArray(json.hist_fallbacks)) {
+      json.hist_fallbacks.forEach((f) => histFallbacks.add(`${supId}: ${f}`));
+    }
 
     const mw = Number(json.hist_window_months);
     if (mw === 1 || mw === 3 || mw === 6) months = Math.max(months, mw);
@@ -5827,11 +5862,22 @@ function _applyOptimizeMetaFromSups(metaBySup) {
   // ทีมไหนก็ได้ที่ตก fallback ต้องยังเตือน
   S.optimizationFallback = fallbackSups.length > 0;
   S.optimizationFallbackSups = fallbackSups;
+  S.droppedLocks = droppedLocks;
+  S.histFallbacks = [...histFallbacks];
 }
 
 function _mergeLockedEditsIntoAllocs(allocs, lockedEdits) {
   allocs.forEach((a) => { a.is_edited = false; });
+  // ล็อกที่ server บอกว่าใช้ไม่ได้ (พนักงานไม่เข้าเกณฑ์ / SKU ไม่อยู่ในเป้ารอบนี้)
+  // ต้องไม่ถูกยัดกลับเข้าผลลัพธ์ ไม่งั้นยอดต่อ SKU ฝั่งเบราว์เซอร์เกินเป้า แล้ว
+  // ตัวเกลี่ยอัตโนมัติไปหักจากคนอื่นแทน — ยอดรวมดูตรง แต่ตัวเลขรายคนไม่ใช่ของ server
+  const droppedKeys = new Set(
+    (S.droppedLocks || []).map(
+      (d) => `${_lockIdentityKey(d.orig_emp_id ?? d.emp_id, d.warehouse_code, d.supervisor_code)}|${d.sku}`
+    )
+  );
   lockedEdits.forEach((lock) => {
+    if (droppedKeys.has(`${_lockIdentityKeyForLock(lock)}|${lock.sku}`)) return;
     const found = allocs.find((a) => _allocMatchLock(a, lock));
     if (found) {
       found.allocated_boxes = lock.locked_boxes;
@@ -6668,7 +6714,38 @@ function syncStep3ReviewNotes() {
   if (failedSups.length) {
     lines.push(
       `ทีมที่กระจายไม่สำเร็จรอบล่าสุด: ${failedSups.map((f) => f.supId).join(", ")}`
-      + " — ผลของทีมเหล่านี้ยังเป็นค่าเดิม กดคำนวณใหม่เพื่อลองอีกครั้ง"
+      + " — ผลของทีมเหล่านี้ยังเป็นค่าเดิม และตัวเกลี่ยอัตโนมัติเทียบกับเป้าของ"
+      + "เฉพาะทีมที่สำเร็จเท่านั้น (ไม่ยกหีบของทีมที่ล้มไปให้ทีมอื่น)"
+      + " กดคำนวณใหม่เพื่อลองอีกครั้ง"
+    );
+  }
+  const histFb = Array.isArray(S.histFallbacks) ? S.histFallbacks : [];
+  if (histFb.length) {
+    // เดิมบอกไว้แค่ใน log ผู้ใช้เห็นป้าย "วิธี: ปีที่แล้ว" ทั้งที่ตัวเลขมาจากประวัติ
+    // 3 เดือน แล้วเอาไปอธิบายให้ทีมต่อไม่ได้ว่าทำไมเป้าออกมาแบบนี้
+    const human = histFb
+      .map((f) => f.replace("LY→3M", "ปีที่แล้ว → 3 เดือนล่าสุด")
+                   .replace("L6M→3M", "6 เดือนล่าสุด → 3 เดือนล่าสุด"))
+      .join(" · ");
+    lines.push(
+      `ไม่พบไฟล์ประวัติของวิธีที่เลือก ระบบใช้วิธีอื่นแทน (${human})`
+      + " — โหลดหน้า Dashboard ใหม่เพื่อสร้างไฟล์ประวัตินั้น แล้วกระจายอีกครั้งถ้าต้องการ"
+    );
+  }
+  const dropped = Array.isArray(S.droppedLocks) ? S.droppedLocks : [];
+  if (dropped.length) {
+    const why = {
+      employee_not_eligible: "พนักงานไม่เข้าเกณฑ์กระจายรอบนี้ (เป้าเงินเป็น 0 หรือถูกคัดออก)",
+      sku_not_in_target: "สินค้าไม่อยู่ในเป้าหีบรอบนี้",
+    };
+    const reasons = [...new Set(dropped.map((d) => why[d.reason] || d.reason))].join(" · ");
+    const sample = dropped
+      .slice(0, 6)
+      .map((d) => `${d.orig_emp_id ?? d.emp_id}/${d.sku}`)
+      .join(", ");
+    lines.push(
+      `หีบที่ล็อกไว้ ${dropped.length} ช่องใช้ไม่ได้รอบนี้ — ${reasons}`
+      + ` (${sample}${dropped.length > 6 ? " …" : ""}) ระบบไม่ได้นำค่าที่ล็อกมาใส่ผลลัพธ์`
     );
   }
   const residuals = Array.isArray(S.rebalanceResiduals) ? S.rebalanceResiduals : [];
@@ -7496,6 +7573,36 @@ function _syncResultTableAfterRebalance() {
   });
 }
 
+/**
+ * เป้าต่อ SKU ที่ตัวเกลี่ยอัตโนมัติควรใช้ เมื่อรอบล่าสุดมีทีมกระจายไม่สำเร็จ
+ *
+ * โหมดรวมภาคแบบ "แยกตามทีม" ยิง /optimize ทีละทีม ทีมไหนล้ม (409/timeout) จะถูกข้าม
+ * แล้ว S.allocations เหลือเฉพาะทีมที่สำเร็จ · แต่ S.skus[].supervisor_target_boxes
+ * เป็นเป้า "รวมทั้งภาค" ตัวเกลี่ยจึงเห็นว่ายอดขาดไปเท่ากับเป้าของทีมที่ล้มทั้งก้อน
+ * แล้วแจกหีบก้อนนั้นให้พนักงานของทีมที่เหลือ — บันทึกและส่งต่อได้โดยผู้ใช้เห็นแค่
+ * toast สีเหลืองว่า "สำเร็จ N ทีม" ไม่มีทางรู้เลยว่าตัวเลขเพี้ยนไปแล้ว
+ *
+ * คืน null เมื่อไม่ได้อยู่ในสภาพนั้น (ให้ใช้เป้าจาก S.skus ตามปกติ)
+ */
+function _rebalanceTargetOverride() {
+  const failed = Array.isArray(S.regionalFailedSups) ? S.regionalFailedSups : [];
+  if (!failed.length || !S.aggregateMode) return null;
+  const failedSet = new Set(
+    failed.map((f) => String(f && f.supId ? f.supId : f).trim().toUpperCase())
+  );
+  const okSups = _allocScopeSupOrder().filter((sid) => !failedSet.has(sid));
+  if (!okSups.length) return null;
+  const out = Object.create(null);
+  for (const sid of okSups) {
+    const targets = (S.targetBoxesBySup && S.targetBoxesBySup[sid]) || {};
+    for (const [sku, boxes] of Object.entries(targets)) {
+      const key = String(sku).trim();
+      out[key] = (out[key] || 0) + (Number(boxes) || 0);
+    }
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 function autoRebalance(silent = false, opts = {}) {
   const skipRender = !!(opts && opts.skipRender);
   if (!S.allocations || S.allocations.length === 0) return { changed: false, residuals: [] };
@@ -7509,6 +7616,8 @@ function autoRebalance(silent = false, opts = {}) {
   }
   const skuInfoByCode = new Map((S.skus || []).map(x => [x.sku, x]));
   const skus = [...allocsBySku.keys()];
+  // รอบที่มีทีมกระจายไม่สำเร็จ ต้องเทียบกับเป้าของ "เฉพาะทีมที่สำเร็จ" เท่านั้น
+  const targetOverride = _rebalanceTargetOverride();
   let changed = false;
   const residuals = [];
   const unknownSkus = [];
@@ -7522,7 +7631,18 @@ function autoRebalance(silent = false, opts = {}) {
       unknownSkus.push(sku);
       return;
     }
-    const target = Number(targetInfo.supervisor_target_boxes) || 0;
+    let target;
+    if (targetOverride) {
+      // SKU ที่ไม่มีในเป้าของทีมที่สำเร็จ = ไม่รู้เป้าของก้อนนี้ ห้ามตีเป็น 0
+      // (ตีเป็น 0 แล้วสาขาไล่เกลี่ยลงจะกวาดหีบทิ้งทั้ง SKU)
+      if (!(sku in targetOverride)) {
+        unknownSkus.push(sku);
+        return;
+      }
+      target = Number(targetOverride[sku]) || 0;
+    } else {
+      target = Number(targetInfo.supervisor_target_boxes) || 0;
+    }
     const allocs = allocsBySku.get(sku) || [];
     const currentSum = allocs.reduce((s, a) => s + (a.allocated_boxes || 0), 0);
 
@@ -8866,6 +8986,22 @@ function _formatApiErrorDetail(j) {
     const parts = [];
     if (typeof d.message === "string") parts.push(d.message);
     if (typeof d.hint_th === "string") parts.push(d.hint_th);
+    // คำตอบดิบจากปลายทางคือสิ่งเดียวที่บอกได้ว่าพังเพราะอะไร (หน้า error ของ IIS,
+    // 502 ของ reverse proxy, ฯลฯ) เดิมมีอยู่ใน response แต่ไม่เคยแสดง ผู้ใช้จึงต้อง
+    // ไปไล่ app.log บนเซิร์ฟเวอร์ทุกครั้งกว่าจะรู้ว่าเกิดอะไรขึ้น
+    if (d.upstream_status || d.content_type) {
+      parts.push(
+        `ปลายทางตอบ HTTP ${d.upstream_status || "?"}` +
+          (d.content_type ? ` (${d.content_type})` : "")
+      );
+    }
+    if (typeof d.import_url === "string" && d.import_url) {
+      parts.push(`ปลายทาง: ${d.import_url}`);
+    }
+    if (typeof d.body_preview === "string" && d.body_preview.trim()) {
+      const preview = d.body_preview.replace(/\s+/g, " ").trim().slice(0, 300);
+      parts.push(`คำตอบดิบ: ${preview}`);
+    }
     if (parts.length) return parts.join(" — ");
     if (typeof d.title === "string") parts.push(d.title);
     if (typeof d.resultMsg === "string") return d.resultMsg;
@@ -13368,6 +13504,20 @@ async function adminRefreshCache(layer) {
 }
 
 async function adminInvalidateCache(layer) {
+  // "ล้างแคชงวด" ลบทั้งแคชสินค้า ราคา และ payload ของทุกทีมในงวดนั้น
+  // ตอน Fabric ล่ม แคชราคาคือของชิ้นเดียวที่ทำให้ทั้งบริษัทยังเปิดงวดได้
+  // กดปุ่มนี้ตอนนั้นคือทำให้แย่ลง ไม่ใช่ดีขึ้น — ต้องถามก่อนเสมอ
+  if (String(layer) === "all") {
+    const okWipe = await _confirmDialog(
+      [
+        "จะลบแคชสินค้า ราคา และ payload ของทุกทีม ในงวดที่เลือก",
+        "ถ้าตอนนี้ Fabric ดึงข้อมูลไม่ได้ การล้างแคชราคาจะทำให้ทุกทีมเปิดงวดไม่ได้ จนกว่า Fabric จะกลับมาปกติ",
+        "ถ้าต้องการแค่ให้ระบบดึงรายชื่อ/เป้าใหม่ ให้ใช้ปุ่ม “ล้างเฉพาะ payload” แทน",
+      ].join(String.fromCharCode(10)),
+      { title: "ล้างแคชทั้งงวด?", okLabel: "ล้างทั้งงวด", cancelLabel: "ยกเลิก" }
+    );
+    if (!okWipe) return;
+  }
   const month = Number(document.getElementById("adminCacheMonth")?.value || S.targetMonth);
   const year = Number(document.getElementById("adminCacheYear")?.value || S.targetYear);
   const sup = (document.getElementById("adminCacheSupId")?.value || "").trim();

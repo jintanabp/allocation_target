@@ -8,6 +8,7 @@ import os
 import shutil
 import tempfile
 import threading
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -253,6 +254,54 @@ def write_tga_skus_csv(year: int, month: int, df: pd.DataFrame) -> None:
         _write_json_cache(path + ".meta.json", {"row_count": len(df)})
 
 
+def _payload_cache_status(year: int, month: int) -> dict[str, Any]:
+    """
+    สถานะแคช payload ของงวด (ทุกทีมรวมกัน)
+
+    เดิม cache_status คืนแต่ 3 layer ของ Fabric หน้าแอดมินจึงไม่มีการ์ด payload
+    ทางเดียวที่จะล้าง payload จาก UI คือปุ่ม "ล้างแคชงวด" ซึ่งลบแคชราคาไปด้วย —
+    ตอน Fabric ล่มการกดปุ่มนั้นทำให้ทั้งบริษัทเปิดงวดไม่ได้
+    """
+    from .employee_payload_cache import employee_payload_cache_ttl_sec
+
+    suffix = f"_{int(year)}_{int(month):02d}.json"
+    newest = None
+    count = 0
+    try:
+        for name in os.listdir("data"):
+            if name.startswith("payload_cache_") and name.endswith(suffix):
+                count += 1
+                try:
+                    mt = os.path.getmtime(os.path.join("data", name))
+                except OSError:
+                    continue
+                if newest is None or mt > newest:
+                    newest = mt
+    except OSError:
+        pass
+    cached_at = None
+    if newest is not None:
+        cached_at = (
+            datetime.fromtimestamp(newest, tz=timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+    ttl = employee_payload_cache_ttl_sec()
+    return {
+        "layer": "payload",
+        "label": "เป้า/รายชื่อรายทีม (payload)",
+        "path": f"data/payload_cache_*{suffix}",
+        "exists": count > 0,
+        "fresh": bool(
+            count and newest is not None and (time.time() - newest) <= ttl
+        ),
+        "cached_at": cached_at,
+        "row_count": count,
+        "ttl_sec": ttl,
+    }
+
+
 def cache_status(year: int, month: int) -> list[dict[str, Any]]:
     """สถานะแต่ละ layer สำหรับ Admin UI"""
     layers = [
@@ -262,6 +311,7 @@ def cache_status(year: int, month: int) -> list[dict[str, Any]]:
     ]
     out: list[dict[str, Any]] = []
     ttl = fabric_static_cache_ttl_sec()
+    out.append(_payload_cache_status(year, month))
     for layer_id, path, label in layers:
         meta_path = path if path.endswith(".json") else path + ".meta.json"
         exists = os.path.isfile(path)
@@ -298,7 +348,10 @@ def invalidate_period_cache(
     root = cache_dir()
     if not os.path.isdir(root):
         return 0
-    want = layers or {"product", "price", "tga_skus", "payload"}
+    # ไม่มี "payload" ในชุดนี้ — แคช payload อยู่ใน data/ ไม่ใช่ data/cache/
+    # และมีตัวลบของตัวเองที่ invalidate_employee_payload_cache
+    # (ของเดิมใส่ไว้ในค่าเริ่มต้นแต่ลูปข้างล่างไม่เคยจับ อ่านแล้วนึกว่าลบให้ด้วย)
+    want = layers or {"product", "price", "tga_skus"}
     removed = 0
     suffix = ""
     if year is not None and month is not None:

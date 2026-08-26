@@ -214,7 +214,7 @@ Supervisor และแอดมินพร้อมกันได้ ตำ�
 
 | ไฟล์ | เนื้อหา | git ติดตาม? |
 |------|---------|-------------|
-| `config/user_access.json` | ผู้ใช้ + สิทธิ์ที่แอดมินเพิ่มบนเว็บ | ✅ **ใช่** |
+| `config/user_access.json` | ผู้ใช้ + สิทธิ์ที่แอดมินเพิ่มบนเว็บ | ❌ ไม่ (ถอดออกแล้ว 26 ส.ค. 2026) |
 | `config/access_hierarchy.json` | ลำดับ Manager → Supervisor | ✅ ใช่ |
 | `config/sl_links.json`, `config/sku_links.json` | การผูกรหัส | ✅ ใช่ |
 | `config/no_target_employees.json` | พนักงานที่ไม่ต้องตั้งเป้า | ✅ ใช่ |
@@ -223,9 +223,16 @@ Supervisor และแอดมินพร้อมกันได้ ตำ�
 | `data/logs/*.jsonl` | บันทึกการใช้งาน | ❌ ไม่ |
 
 ทุกอย่างใน `data/` **ไม่มีทางหายจาก `git pull`** เพราะไม่เคยอยู่ใน git เลย
-แต่ 4 ไฟล์ใน `config/` ถูกติดตามอยู่ → 🔴 **ห้าม `git reset --hard` / `git checkout .` บน server
-เด็ดขาด** เพราะจะทับผู้ใช้ที่เพิ่มบนเว็บด้วยเวอร์ชันในโค้ดทันที
+`config/user_access.json` และ `config/app_runtime.json` ก็ถูกถอดออกจาก git แล้วเช่นกัน
+(ทั้งคู่เคยโดน pull เขียนทับจนข้อมูลที่ตั้งบนเว็บหายมาแล้ว)
+
+แต่อีก 3 ไฟล์ใน `config/` ยังถูกติดตามอยู่ → 🔴 **ห้าม `git reset --hard` / `git checkout .`
+บน server เด็ดขาด** เพราะจะทับค่าที่ตั้งบนเว็บด้วยเวอร์ชันในโค้ดทันที
 ถ้า `git pull` ฟ้อง "local changes would be overwritten" ให้ copy ไฟล์นั้นเก็บก่อนแล้วค่อยแก้ ไม่ใช่ reset
+
+> **การ pull ครั้งแรกหลังถอด `config/user_access.json` ออกจาก git จะลบไฟล์นี้ทิ้ง**
+> ต้องสำรองก่อน pull แล้ววางกลับทันที ไม่งั้นทุกคนที่ไม่ได้อยู่ใน `ALLOCATION_ADMIN_EMAILS`
+> จะล็อกอินไม่ได้ (ดู `docs/DEPLOY_QA_CHECKLIST.md` หมวด 10)
 
 ## Deploy checklist (server เครื่องเดียว)
 

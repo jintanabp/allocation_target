@@ -18,5 +18,42 @@
     "can_import_targetsun": false,
     "note": "ทีม Marketing — เข้าแอดมินแท็บทีมพนักงานเท่านั้น",
     "login_kind": "marketing"
+  },
+  {
+    "email": "demosuper@sahapat.co.th",
+    "userpl": "SLDEMO1",
+    "can_import_targetsun": false,
+    "note": "บัญชีสาธิต — ซุปธรรมดา ไม่มีสิทธิ์ดูแลระบบ",
+    "acc_region": "ภาคสาธิต",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc",
+    "acc_division": "Div.B",
+    "acc_unit": "credit",
+    "acc_scope": "credit"
+  },
+  {
+    "email": "demoadmin@sahapat.co.th",
+    "userpl": "",
+    "can_import_targetsun": false,
+    "note": "บัญชีสาธิต — แอดมินอย่างเดียว ไม่มีตำแหน่งงาน",
+    "login_kind": "standard",
+    "role": "admin",
+    "admin_scope": "all"
+  },
+  {
+    "email": "demosuperwithadmin@sahapat.co.th",
+    "userpl": "SLDEMO2",
+    "can_import_targetsun": false,
+    "note": "บัญชีสาธิต — Supervisor ที่มีสิทธิ์แอดมินซ้อน",
+    "acc_region": "ภาคสาธิต",
+    "acc_type": "NON",
+    "acc_joblevel": "1",
+    "login_kind": "supervisor_acc",
+    "acc_division": "Div.B",
+    "acc_unit": "credit",
+    "acc_scope": "credit",
+    "role": "admin",
+    "admin_scope": "division_region"
   }
 ]

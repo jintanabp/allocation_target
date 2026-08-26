@@ -17,9 +17,18 @@ docs/user-manual-th.pdf
 # ปลายทางที่จะส่ง Target Sun (test/uat/prod) — ตั้งจากหน้าแอดมิน ไม่ควรอยู่ใน git
 # ถ้ายัง track อยู่ บรรทัดนี้ไม่มีผล ต้องรันครั้งเดียว:
 #   git rm --cached config/app_runtime.json
+
+# รายชื่อผู้ใช้/สิทธิ์ — แอดมินเพิ่มคนบนเซิร์ฟเวอร์ผ่านหน้าเว็บ ข้อมูลจริงอยู่ที่นั่น
+# ตอน track อยู่ ทุกครั้งที่ pull git จะเขียนทับด้วยรุ่นใน repo แล้วคนที่เพิ่งเพิ่มก็หาย
+# (เจอจริง 26 ส.ค. 2026 — หายไป 1 คนหลัง deploy) · ต้นแบบอยู่ที่ config/user_access.example.json
+config/user_access.json
 # แล้วหลัง deploy ครั้งแรกให้เข้าหน้าแอดมิน > แหล่งข้อมูล ตั้ง preset ใหม่ 1 ครั้ง
 # (ดู docs/DEPLOY_QA_CHECKLIST.md) ต้นแบบอยู่ที่ config/app_runtime.example.json
 config/app_runtime.json
+
+# acorn ที่ CI ติดตั้งชั่วคราวเพื่อตรวจตัวแปรใน app.js (scripts/dev/check_js_undef.js)
+# ติดตั้งด้วย --no-save ทุกครั้ง ไม่ใช่ dependency ของโปรเจกต์
+node_modules/
 
 # Claude Code — ตั้งค่าเฉพาะเครื่อง + worktree ชั่วคราว ไม่ใช่ของโปรเจกต์
 .claude/

@@ -463,6 +463,8 @@ def load_employees_payload(
     fabric = None
     df_emp_fabric = pd.DataFrame()
     sup_name = ""
+    # งวดของรายชื่อพนักงานที่ถอยไปใช้ (ว่าง = ใช้ของงวดนี้ตามปกติ)
+    emp_list_stale_from = ""
     try:
         fabric = FabricDAXConnector()
         df_emp_fabric = fabric.get_employees_by_manager(sup_id)
@@ -476,7 +478,21 @@ def load_employees_payload(
             logger.warning("Fabric error → emp cache: %s", e)
             df_emp_fabric = pd.read_csv(cp, dtype={"emp_id": str})
         else:
-            raise HTTPException(503, detail=f"ไม่สามารถดึงพนักงานได้ และไม่มี cache: {e}")
+            # ไม่มีแคชของงวดนี้ — ถอยไปใช้รายชื่องวดล่าสุดของทีมเดียวกัน
+            # ดีกว่าปล่อยให้เปิดงวดไม่ได้เลยทั้งวันตอน Fabric ล่ม แต่ต้องติดธง
+            # ให้ผู้ใช้เห็นบนจอเสมอ เพราะคนเข้า/ออกระหว่างงวดได้
+            older = _newest_emp_cache_other_period(sup_id, target_month, target_year)
+            if older is None:
+                raise HTTPException(
+                    503, detail=f"ไม่สามารถดึงพนักงานได้ และไม่มี cache: {e}"
+                )
+            path, stamp = older
+            logger.warning(
+                "Fabric error + ไม่มี emp cache ของงวดนี้ → ใช้รายชื่องวด %s ของ %s: %s",
+                stamp, sup_id, e,
+            )
+            df_emp_fabric = pd.read_csv(path, dtype={"emp_id": str})
+            emp_list_stale_from = stamp
 
     if df_emp_fabric.empty:
         raise HTTPException(404, detail=f"ไม่พบพนักงานใต้ SuperCode '{sup_id}'")
@@ -1297,6 +1313,19 @@ def load_employees_payload(
         avg3_amount_by_emp_wh=avg3_amount_by_emp_wh,
     )
     emp_records = _enrich_employee_allocation_flags(emp_records, sup_id)
+    if emp_list_stale_from:
+        sku_warnings.append(
+            {
+                "type": "emp_list_stale",
+                "sku": "",
+                "brand": "",
+                "message": (
+                    f"ดึงรายชื่อพนักงานจาก Fabric ไม่ได้ — ใช้รายชื่อของงวด "
+                    f"{emp_list_stale_from} แทน ถ้ามีคนเข้า/ออกหลังจากนั้นจะยังไม่ตรง "
+                    "กรุณาโหลดใหม่อีกครั้งเมื่อระบบกลับมาปกติ"
+                ),
+            }
+        )
     if wh_split_emps:
         sku_warnings.append(
             {
@@ -1322,11 +1351,50 @@ def load_employees_payload(
         # หน่วยขายที่ใช้ตั้งราคาก้อนนี้จริง ๆ — โหมดรวมภาคใช้ตัวนี้ตัดสินว่า
         # ราคาที่ต่างกันระหว่างทีมเป็นเรื่องปกติ (คนละหน่วย) หรือของเก่าค้าง
         "sales_unit": sales_unit,
+        "emp_list_stale_from": emp_list_stale_from,
         "data_from_cache": False,
         "data_cached_at": None,
     }
     write_cached_employee_payload(sup_id, target_month, target_year, payload)
     return payload
+
+
+def _newest_emp_cache_other_period(
+    sup_id: str, target_month: int, target_year: int
+) -> tuple[str, str] | None:
+    """
+    ไฟล์รายชื่อพนักงานงวดล่าสุดของ "ทีมเดียวกัน" ที่ไม่ใช่งวดที่ขอ
+
+    คืน (path, "YYYY-MM") หรือ None · ค้นจากชื่อไฟล์ล้วน ไม่ยิงอะไรทั้งสิ้น
+
+    ทำไมต้องมี: emp_cache ผูกกับงวด พอ Fabric ล่มแล้วทีมนั้นยังไม่เคยเปิดงวดนี้
+    ก็ไม่มีแคชให้ถอยไปใช้ — ซุปเปิดหน้าไม่ได้เลยทั้งวัน ทั้งที่รายชื่อพนักงาน
+    แทบไม่เปลี่ยนข้ามงวด · ถอยข้ามงวดได้เฉพาะ "รหัสทีมเดียวกัน" เท่านั้น
+    (ข้ามทีมคือคนละทีมกันจริง ๆ ห้ามเด็ดขาด)
+    """
+    sid = str(sup_id or "").strip().upper()
+    if not sid:
+        return None
+    want = f"{int(target_year):04d}_{int(target_month):02d}"
+    prefix = f"emp_cache_{sid}_"
+    best: tuple[str, str] | None = None
+    best_key = ""
+    try:
+        names = os.listdir("data")
+    except OSError:
+        return None
+    for name in names:
+        if not name.startswith(prefix) or not name.endswith(".csv"):
+            continue
+        stamp = name[len(prefix):-len(".csv")]
+        if stamp == want or len(stamp) != 7 or stamp[4] != "_":
+            continue
+        if not (stamp[:4].isdigit() and stamp[5:].isdigit()):
+            continue
+        if stamp > best_key:
+            best_key = stamp
+            best = (os.path.join("data", name), f"{stamp[:4]}-{stamp[5:]}")
+    return best
 
 
 def _sales_unit_by_sup() -> dict[str, str]:

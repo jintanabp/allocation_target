@@ -247,24 +247,33 @@ def _hist_input_for_strategy(
     sup_id: str,
     target_month: int,
     target_year: int,
+    fallbacks: list[str] | None = None,
 ) -> tuple[pd.DataFrame, int]:
-    """เลือก cache ประวัติ + จำนวนเดือนสำหรับกลยุทธ์นั้น (แยก 3M / 6M / LY)."""
+    """
+    เลือก cache ประวัติ + จำนวนเดือนสำหรับกลยุทธ์นั้น (แยก 3M / 6M / LY)
+
+    fallbacks — ถ้าส่ง list มา จะเติมข้อความแบบ "LY→3M" ให้เมื่อไฟล์ประวัติของวิธี
+    ที่ผู้ใช้เลือกไม่มี แล้วต้องถอยไปใช้ตัวอื่น · เดิมบอกไว้แค่ใน log ผู้ใช้จึงเห็น
+    ป้าย "วิธี: ปีที่แล้ว" บนจอทั้งที่ตัวเลขมาจากประวัติ 3 เดือน แล้วเอาไปอธิบายต่อ
+    ให้ทีมไม่ได้ว่าทำไมเป้าออกมาแบบนี้
+    """
     strategy_u = strategy_u.upper()
     want_6m = strategy_u == "L6M"
-    cache_6 = hist_cache_path(sup_id, target_month, target_year, n_months=6)
+
+    def _note(msg: str) -> None:
+        if fallbacks is not None and msg not in fallbacks:
+            fallbacks.append(msg)
 
     if strategy_u == "LY":
         if not df_hist_lysm.empty:
             return df_hist_lysm.copy(), 1
+        # LY ถอยได้แค่ 3M เท่านั้น (want_6m เป็นเท็จเสมอในสาขานี้) — เขียนให้ตรงความจริง
         logger.warning(
-            "กลยุทธ์ LY: ไม่พบ cache เดือนเดียวกันปีที่แล้ว — ใช้ประวัติ 3M/6M แทน "
+            "กลยุทธ์ LY: ไม่พบ cache เดือนเดียวกันปีที่แล้ว — ใช้ประวัติ 3M แทน "
             "(แนะนำให้โหลดหน้า Dashboard ใหม่เพื่อสร้าง hist_lysm)"
         )
-        if want_6m and os.path.exists(cache_6) and not df_hist_6.empty:
-            return df_hist_6, 6
-        return (df_hist_3 if not df_hist_3.empty else df_hist_6), (
-            6 if (want_6m and os.path.exists(cache_6) and not df_hist_6.empty) else 3
-        )
+        _note("LY→3M")
+        return (df_hist_3 if not df_hist_3.empty else df_hist_6), 3
 
     if want_6m:
         if not df_hist_6.empty:
@@ -273,6 +282,7 @@ def _hist_input_for_strategy(
             logger.warning(
                 "ไม่พบ hist 6M cache — ใช้ cache 3M แทนสำหรับ L6M (โหลดหน้า Dashboard ใหม่เพื่อสร้าง 6M cache)"
             )
+            _note("L6M→3M")
             return df_hist_3, 3
         return pd.DataFrame(columns=["emp_id", "sku", "hist_boxes"]), 6
 
@@ -710,6 +720,7 @@ def run_optimization_service(
     df_hist_6 = _maybe_split_hist(df_hist_6, reverse_map, value_shares)
     df_hist_lysm = _maybe_split_hist(df_hist_lysm, reverse_map, value_shares)
 
+    hist_fallbacks: list[str] = []
     df_hist_input, hist_months = _hist_input_for_strategy(
         strategy_u,
         df_hist_3,
@@ -718,6 +729,7 @@ def run_optimization_service(
         sup_id=sup_id,
         target_month=target_month,
         target_year=target_year,
+        fallbacks=hist_fallbacks,
     )
     df_hist = df_hist_3 if not df_hist_3.empty else df_hist_6
 
@@ -741,15 +753,43 @@ def run_optimization_service(
         sup_id,
         len(emp_list),
     )
-    locked_edits_data = [
+    # ล็อกที่ถูกตัดทิ้งต้อง "บอกกลับไป" ไม่ใช่หายเงียบ ๆ
+    #
+    # หน้าจอ (_mergeLockedEditsIntoAllocs) เอาล็อกทุกตัวยัดกลับเข้าผลลัพธ์เสมอ
+    # ตัวไหนไม่มีแถวรองรับก็สร้างแถวใหม่ให้ · ล็อกที่เครื่องคำนวณไม่ได้ใช้จึงกลับเข้าไป
+    # ทำให้ยอดต่อ SKU เกินเป้าฝั่งเบราว์เซอร์ แล้วตัวเกลี่ยอัตโนมัติไปหักจากคนอื่นแทน
+    # ยอดรวมเลยดูตรงเป้า แต่ตัวเลขรายคนไม่ใช่สิ่งที่ server คำนวณ
+    _all_locks = [
         {
             "emp_id": _lock_or_emp_id(le.emp_id, le.warehouse_code),
             "sku": le.sku,
             "locked_boxes": le.locked_boxes,
+            "orig_emp_id": le.emp_id,
+            "warehouse_code": le.warehouse_code or "",
         }
         for le in req.locked_edits
-        if _lock_or_emp_id(le.emp_id, le.warehouse_code) in eligible_set
     ]
+    dropped_locks: list[dict] = []
+    locked_edits_data = []
+    _sku_in_target = {str(r["sku"]).strip() for _, r in df_sku.iterrows()}
+    for _le in _all_locks:
+        if _le["emp_id"] not in eligible_set:
+            dropped_locks.append({**_le, "reason": "employee_not_eligible"})
+            continue
+        if str(_le["sku"]).strip() not in _sku_in_target:
+            # SKU ถูกกรองออกไปแล้ว (เป้าหีบ 0 หรือรอบนี้เลือกกระจายเฉพาะบางตัว)
+            # เครื่องคำนวณข้ามล็อกพวกนี้อยู่แล้ว ตรงนี้แค่ทำให้มองเห็น
+            dropped_locks.append({**_le, "reason": "sku_not_in_target"})
+            continue
+        locked_edits_data.append(
+            {"emp_id": _le["emp_id"], "sku": _le["sku"], "locked_boxes": _le["locked_boxes"]}
+        )
+    if dropped_locks:
+        logger.warning(
+            "optimize: ล็อก %d รายการใช้ไม่ได้ (%s)",
+            len(dropped_locks),
+            ", ".join(sorted({d["reason"] for d in dropped_locks})),
+        )
     # ล็อกรวมต้องไม่เกินเป้าของ SKU — ตรวจตั้งแต่รับ request (I2)
     # ถ้าปล่อยเข้าเครื่องคำนวณ ของเดิมจะกลบส่วนเกินทิ้งแล้วปล่อยผลที่เกินเป้าออกไป
     # ส่วนฝั่ง LP จะกลายเป็นโจทย์ที่แก้ไม่ได้แล้วตกไป proportional เงียบ ๆ
@@ -876,6 +916,7 @@ def run_optimization_service(
                     sup_id=sup_id,
                     target_month=target_month,
                     target_year=target_year,
+                    fallbacks=hist_fallbacks,
                 )
                 hist_by_strategy[strat_key] = df_hist_grp
 
@@ -993,6 +1034,7 @@ def run_optimization_service(
                 sup_id=sup_id,
                 target_month=target_month,
                 target_year=target_year,
+                fallbacks=hist_fallbacks,
             )
             strat_months[strat_u] = months
             sub = df_hist_grp[df_hist_grp["sku"].astype(str).str.strip().isin(skus_for_strat)]
@@ -1160,4 +1202,6 @@ def run_optimization_service(
         # ใครถูกตัดเพราะอยู่ในรายชื่อ「ไม่ต้องตั้งเป้า」— หน้าเว็บเอาไปบอกผู้ใช้
         # ไม่งั้นจะเห็นแค่ว่าคนหายไปจากตาราง แล้วเข้าใจว่าเป็นบั๊กแบบเดียวกับ C442
         "no_target_excluded": dropped_no_target,
+        "dropped_locks": dropped_locks,
+        "hist_fallbacks": hist_fallbacks,
     }

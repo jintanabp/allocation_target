@@ -31,12 +31,31 @@ from backend.services import demo_data  # noqa: E402
 from backend.services import employees as emp_svc  # noqa: E402
 
 
+def _roster_path() -> str:
+    """
+    รายชื่อผู้ใช้ที่จะตรวจ — ไฟล์จริงถ้ามี ไม่มีก็ไฟล์ต้นแบบ
+
+    config/user_access.json ไม่อยู่ใน git แล้ว (แอดมินแก้บนเซิร์ฟเวอร์ผ่านหน้าเว็บ
+    การ track ไว้ทำให้ pull เขียนทับจนคนที่เพิ่งเพิ่มหายไป) · บนเครื่อง dev และ
+    เซิร์ฟเวอร์จะมีไฟล์จริง ส่วนบน CI ตรวจไฟล์ต้นแบบซึ่งเป็นที่มาของการติดตั้งใหม่
+    """
+    real = os.path.join(REPO, "config", "user_access.json")
+    if os.path.isfile(real):
+        return real
+    return os.path.join(REPO, "config", "user_access.example.json")
+
+
 class TestDemoRosterRows(unittest.TestCase):
-    """สามบัญชีต้องอยู่ในไฟล์จริงและตั้งค่าถูก"""
+    """สามบัญชีต้องอยู่ในรายชื่อผู้ใช้และตั้งค่าถูก"""
 
     @classmethod
     def setUpClass(cls):
-        with open(os.path.join(REPO, "config", "user_access.json"), encoding="utf-8") as fh:
+        # config/user_access.json ไม่อยู่ใน git แล้ว (แอดมินแก้บนเซิร์ฟเวอร์ผ่านหน้าเว็บ
+        # การ track ไว้ทำให้ pull เขียนทับจนคนที่เพิ่งเพิ่มหาย) — บนเครื่อง dev/เซิร์ฟเวอร์
+        # จะมีไฟล์จริงให้ตรวจ ส่วนบน CI ตรวจไฟล์ต้นแบบซึ่งเป็นที่มาของการติดตั้งใหม่
+        path = _roster_path()
+        cls.roster_path = path
+        with open(path, encoding="utf-8") as fh:
             cls.rows = json.load(fh)
         cls.by_email = {str(r.get("email", "")).lower(): r for r in cls.rows}
 
@@ -78,6 +97,25 @@ class TestDemoRosterRows(unittest.TestCase):
 
 
 class TestDemoAccessScope(unittest.TestCase):
+    """
+    ตรวจขอบเขตจริงผ่าน build_user_access_context — ต้องบังคับ path ให้ตรงกับ
+    _roster_path() ไม่งั้นบน CI (ไม่มีไฟล์จริง) จะพังด้วย PermissionError
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls._old_path = os.environ.get("USER_ACCESS_JSON_PATH")
+        os.environ["USER_ACCESS_JSON_PATH"] = _roster_path()
+        ac.invalidate_user_access_cache()
+
+    @classmethod
+    def tearDownClass(cls):
+        if cls._old_path is None:
+            os.environ.pop("USER_ACCESS_JSON_PATH", None)
+        else:
+            os.environ["USER_ACCESS_JSON_PATH"] = cls._old_path
+        ac.invalidate_user_access_cache()
+
     def test_demosuper_sees_all_three_demo_teams(self):
         ctx = ac.build_user_access_context("demosuper@sahapat.co.th")
         self.assertEqual(

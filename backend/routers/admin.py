@@ -1895,16 +1895,28 @@ def admin_cache_refresh(
             result["hint"] = "ระบุ sup_id เพื่อ warm product/price cache จาก DAX"
 
     if layer in ("payload", "all"):
-        sid = body.sup_id
-        invalidate_employee_payload_cache(sid, body.month, body.year)
+        sid = (body.sup_id or "").strip().upper()
         if sid:
-            load_employees_payload(
-                sup_id=sid.strip().upper(),
-                target_month=body.month,
-                target_year=body.year,
-                refresh=True,
-            )
-            result["refreshed_payload_sup"] = sid.strip().upper()
+            # เหตุผลเดียวกับสาขา product ข้างบน — ลบก่อนแล้วดึงใหม่ไม่ได้
+            # แอดมินจะเหลือ "ไม่มีอะไรเลย" แล้วทีมนั้นเปิดงวดไม่ได้จนกว่า Fabric จะกลับมา
+            try:
+                load_employees_payload(
+                    sup_id=sid,
+                    target_month=body.month,
+                    target_year=body.year,
+                    refresh=True,
+                )
+                result["refreshed_payload_sup"] = sid
+            except Exception as e:
+                logger.warning("refresh payload ไม่สำเร็จ: %s", e)
+                result["payload_error"] = str(e)
+                result["hint"] = (
+                    "ดึง payload ใหม่ไม่สำเร็จ — เก็บแคชเดิมไว้ให้ใช้งานต่อได้ "
+                    "ลองใหม่อีกครั้งเมื่อ Fabric กลับมาปกติ"
+                )
+        else:
+            # ไม่ระบุทีม = ล้างทั้งงวด ไม่มีอะไรให้ดึงคืนอยู่แล้ว
+            invalidate_employee_payload_cache(None, body.month, body.year)
 
     result["cache_status"] = fc.cache_status(body.year, body.month)
     return result

@@ -476,10 +476,14 @@ Swagger UI: `<URL แอปบน server>/docs`
 `config/.env` และ `data/` บน server **ไม่ถูกทับ** เมื่อ deploy โค้ดใหม่จาก Git
 (ผลการกระจาย เป้าตั้งต้น และบันทึกการใช้งานอยู่ใน `data/` ทั้งหมด จึงปลอดภัยเสมอ)
 
-⚠️ แต่ `config/user_access.json`, `access_hierarchy.json`, `sl_links.json`, `sku_links.json`
+⚠️ แต่ `config/access_hierarchy.json`, `sl_links.json`, `sku_links.json`
 **ถูก git ติดตามอยู่ และแอปเขียนทับตอนแอดมินแก้บนเว็บ** — ถ้า `git pull` ฟ้อง
 "local changes would be overwritten" ให้ copy ไฟล์เก็บก่อน **ห้าม `git reset --hard` บน server**
-เพราะจะลบผู้ใช้ที่เพิ่มบนเว็บทิ้งทันที (ดู `config/README.md` หัวข้อความปลอดภัย)
+เพราะจะลบค่าที่ตั้งบนเว็บทิ้งทันที (ดู `config/README.md` หัวข้อความปลอดภัย)
+
+`config/user_access.json` (รายชื่อผู้ใช้) ถูกถอดออกจาก git แล้วตั้งแต่ 26 ส.ค. 2026 เพราะ
+การ pull เคยเขียนทับจนคนที่แอดมินเพิ่งเพิ่มหายไป · **การ pull ครั้งแรกหลังจากนั้นจะลบไฟล์นี้
+ออกจากเซิร์ฟเวอร์** ต้องสำรองก่อนแล้ววางกลับ (ดู `docs/DEPLOY_QA_CHECKLIST.md` หมวด 10)
 
 ---
 

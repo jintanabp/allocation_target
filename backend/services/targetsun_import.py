@@ -374,6 +374,9 @@ def _post_targetsun_multipart(
                 "upstream_status": int(r.status_code),
                 "content_type": ct or None,
                 "body_preview": text_head[:800],
+                # ปลายทางที่ยิงจริง — ตั้งจากหน้าแอดมิน > แหล่งข้อมูล (test/uat/prod)
+                # ถ้าชี้ผิดสภาพแวดล้อม อาการจะออกมาเป็น 500/HTML แบบนี้พอดี
+                "import_url": url,
                 "hint_th": (
                     "มักเกิดเมื่อ URL ชี้ผิด หรือ reverse proxy คืนหน้า HTML/502 — "
                     "ลองเปิด URL เดียวกันจาก Postman และตรวจ backend/services/targetsun_endpoints.py"
