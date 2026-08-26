@@ -79,12 +79,22 @@ def skus_zero_team_hist_window(df_hist: pd.DataFrame, sku_list: list[str]) -> se
 
 
 def validate_allocation_vs_targets(df_alloc: pd.DataFrame, df_sku: pd.DataFrame) -> list[dict]:
-    """ตรวจว่าผลรวมหีบที่กระจายแล้วต่อ SKU ตรงกับ supervisor_target_boxes หรือไม่"""
-    if df_alloc.empty or df_sku is None or df_sku.empty:
+    """
+    ตรวจว่าผลรวมหีบที่กระจายแล้วต่อ SKU ตรงกับ supervisor_target_boxes หรือไม่
+
+    **ผลว่างเปล่าคือความผิดพลาดที่หนักที่สุด ไม่ใช่เคสที่ข้ามได้** — เดิมคืน [] ทันที
+    เมื่อ df_alloc ว่าง ประตูสุดท้ายจึงเปิดให้ผ่าน แล้วระบบเขียนทับไฟล์ผลของงวดและ
+    Excel ด้วยของว่าง แล้วตอบ 200 ตามปกติ · เกิดได้จริงตอนราคาทุกตัวเป็น 0
+    (Fabric ดึงราคาไม่ได้) เพราะสัดส่วนแบ่งกลุ่มกลายเป็น 0 ทุกกลุ่มจนไม่เหลือแถวไหนเลย
+    """
+    if df_sku is None or df_sku.empty:
         return []
-    df_a = df_alloc.copy()
-    df_a["sku"] = df_a["sku"].astype(str).str.strip()
-    sums = df_a.groupby("sku", as_index=True)["allocated_boxes"].sum()
+    if df_alloc is None or df_alloc.empty:
+        sums = pd.Series(dtype="float64")
+    else:
+        df_a = df_alloc.copy()
+        df_a["sku"] = df_a["sku"].astype(str).str.strip()
+        sums = df_a.groupby("sku", as_index=True)["allocated_boxes"].sum()
     out: list[dict] = []
     for _, row in df_sku.iterrows():
         sku = str(row["sku"]).strip()

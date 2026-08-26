@@ -33,6 +33,7 @@ from backend.routers.admin import (  # noqa: E402
     remove_user_access,
 )
 from backend.services import access_control as ac  # noqa: E402
+from backend.services import managers as mgrs  # noqa: E402
 
 logging.disable(logging.CRITICAL)
 
@@ -77,10 +78,14 @@ class _Base(unittest.TestCase):
         # persist_hierarchy เขียน data/managers_cache.json ด้วย path ของ repo จริง
         self._old_root = ah._repo_root
         ah._repo_root = lambda: d
+        # persist_managers_payload ใช้ path สัมพัทธ์ (cwd = repo ตอนรันเทสต์)
+        self._old_mgr_cache = mgrs.MANAGERS_CACHE_FILE
+        mgrs.MANAGERS_CACHE_FILE = os.path.join(d, "managers_cache.json")
         ac.invalidate_user_access_cache()
 
     def tearDown(self):
         ah._repo_root = self._old_root
+        mgrs.MANAGERS_CACHE_FILE = self._old_mgr_cache
         for k, v in self._old.items():
             if v is None:
                 os.environ.pop(k, None)

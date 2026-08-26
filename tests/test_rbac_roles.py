@@ -26,6 +26,8 @@ from fastapi import HTTPException  # noqa: E402
 
 from backend import deps  # noqa: E402
 from backend.services import access_control as ac  # noqa: E402
+from backend.services import access_hierarchy as ah  # noqa: E402
+from backend.services import managers as mgrs  # noqa: E402
 from backend.services import user_access_store as uas  # noqa: E402
 
 logging.disable(logging.CRITICAL)
@@ -79,14 +81,29 @@ class _RbacBase(unittest.TestCase):
             json.dump(ROWS, fh, ensure_ascii=False)
         self._old_path = os.environ.get("USER_ACCESS_JSON_PATH")
         self._old_admins = os.environ.get("ALLOCATION_ADMIN_EMAILS")
+        self._old_hier = os.environ.get("ACCESS_HIERARCHY_JSON_PATH")
         os.environ["USER_ACCESS_JSON_PATH"] = self._path
         os.environ["ALLOCATION_ADMIN_EMAILS"] = DEV_ENV
+        # การตั้ง role ทำให้ hierarchy ถูก sync ใหม่ (admin._sync_access_hierarchy)
+        # ซึ่งเขียนทั้ง config/access_hierarchy.json และ data/managers_cache.json
+        # ตัวหลังคิด path จาก _repo_root() ไม่มี env คุม จึงต้อง patch เพิ่ม
+        os.environ["ACCESS_HIERARCHY_JSON_PATH"] = os.path.join(
+            self._tmp.name, "access_hierarchy.json"
+        )
+        self._old_root = ah._repo_root
+        ah._repo_root = lambda: self._tmp.name
+        # managers.persist_managers_payload ใช้ path สัมพัทธ์กับ cwd (= repo ตอนรันเทสต์)
+        self._old_mgr_cache = mgrs.MANAGERS_CACHE_FILE
+        mgrs.MANAGERS_CACHE_FILE = os.path.join(self._tmp.name, "managers_cache.json")
         ac.invalidate_user_access_cache()
 
     def tearDown(self):
+        ah._repo_root = self._old_root
+        mgrs.MANAGERS_CACHE_FILE = self._old_mgr_cache
         for key, old in (
             ("USER_ACCESS_JSON_PATH", self._old_path),
             ("ALLOCATION_ADMIN_EMAILS", self._old_admins),
+            ("ACCESS_HIERARCHY_JSON_PATH", self._old_hier),
         ):
             if old is None:
                 os.environ.pop(key, None)

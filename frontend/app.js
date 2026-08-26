@@ -9654,6 +9654,24 @@ async function doLakehouseDownloadXlsxOnly() {
   }
 }
 
+/**
+ * ส่วนของชื่อไฟล์ Excel ที่บอก "ขอบเขตของผลกระจาย"
+ *
+ * ทีมเดียว → รหัสทีม · รวมทั้งภาคเป็นก้อนเดียว → รหัสทีมเจ้าของไฟล์ + จำนวนทีม
+ * (ใส่ทุกรหัสไม่ไหว ภาคหนึ่งมีได้หลายสิบทีม ชื่อไฟล์จะยาวเกินจนเซฟไม่ได้บน Windows)
+ */
+function _excelScopeTag() {
+  const own = String(S.supId || "").trim().toUpperCase();
+  const sups = _allocScopeSupOrder();
+  if (S.aggregateMode && _selectedAllocScope() === "unit" && sups.length > 1) {
+    return `รวมภาค_${own}_${sups.length}ทีม`;
+  }
+  if (S.aggregateMode && sups.length > 1) {
+    return `${own}_รวม${sups.length}ทีม`;
+  }
+  return own;
+}
+
 async function doExport() {
   const brand = document.querySelector('[name="exportBrand"]:checked')?.value || "ALL";
   closeExportModal();
@@ -9701,9 +9719,12 @@ async function doExport() {
     if (!dlRes.ok) throw new Error(_userFacingError(null, "ดาวน์โหลดไฟล์ไม่สำเร็จ"));
     const blob = await dlRes.blob();
 
+    // ผลกระจายรวมทั้งภาคมีพนักงานของทุกทีมในขอบเขตอยู่ในไฟล์เดียว — ชื่อไฟล์ต้อง
+    // บอกให้รู้ ไม่งั้นดูเหมือนไฟล์ของทีมเดียวแล้วเอาไปเทียบเป้าผิดตัว
+    const scopeTag = _excelScopeTag();
     const fname = brand === "ALL"
-      ? `Target_${S.supId}_${MONTH_TH[S.targetMonth]}${S.targetYear}_AllBrand.xlsx`
-      : `Target_${S.supId}_${brand}_${MONTH_TH[S.targetMonth]}${S.targetYear}.xlsx`;
+      ? `Target_${scopeTag}_${MONTH_TH[S.targetMonth]}${S.targetYear}_AllBrand.xlsx`
+      : `Target_${scopeTag}_${brand}_${MONTH_TH[S.targetMonth]}${S.targetYear}.xlsx`;
     dl(blob, fname);
     S._hasUnsaved = false;
     toast(`✅ ดาวน์โหลดสำเร็จ: ${fname}`, "green");

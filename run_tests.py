@@ -18,6 +18,20 @@ def repo_root() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def ensure_utf8_console() -> None:
+    """
+    โค้ดที่เทสต์เรียกมี print อีโมจิอยู่ (📡/✅) — คอนโซลไทย (cp874) เข้ารหัสไม่ได้
+    แล้วเทสต์ตกด้วย UnicodeEncodeError ทั้งที่ตรรกะถูก · แอปจริงตั้ง utf-8 ให้แล้ว
+    ใน backend/main.py แต่เทสต์ไม่ได้ผ่านทางนั้น
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
+
 def ensure_repo_on_path() -> None:
     root = repo_root()
     if root not in sys.path:
@@ -57,6 +71,9 @@ _PROTECTED_CONFIGS = (
     "config/sl_links.json",
     "config/sku_links.json",
     "config/access_hierarchy.json",
+    # persist_hierarchy เขียนคู่กับ access_hierarchy.json เสมอ แต่ path มาจาก
+    # _repo_root() ไม่มี env คุม — ถ้าเทสต์ลืม patch จะค้างข้อมูลปลอมจนกว่าจะ rebuild
+    "data/managers_cache.json",
 )
 
 
@@ -88,6 +105,7 @@ def _restore_protected(before: dict[str, bytes]) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    ensure_utf8_console()
     ensure_repo_on_path()
     parser = argparse.ArgumentParser(
         description="Run Target Allocation unit tests",

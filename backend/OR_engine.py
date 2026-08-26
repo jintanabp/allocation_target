@@ -906,7 +906,20 @@ def _greedy_revenue_balancer(
             return (min_box, max(min_box, _zero_baseline_cap(tgt, n_emps, cap_multiplier)))
         scale = _band_scale()
         if scale is None:
-            return None                    # ผ่อนเต็มที่ — เหลือแค่เป้าราย SKU คุมไว้
+            # ผ่อนเต็มที่ = เลิกใช้รั้ว "ตามประวัติ" แต่ไม่ใช่เลิกมีเพดานเลย
+            # ถ้าคืน None ที่นี่ ช่องหนึ่งช่องรับหีบได้ไม่จำกัด พนักงานคนเดียวจึงกิน
+            # SKU นั้นเกือบทั้งก้อนได้ทั้งที่ยอดรวมต่อ SKU ยังตรงเป้า (ด่านไหนก็ไม่จับ)
+            # ใช้เพดานสัมบูรณ์ชุดเดียวกับกรณี baseline 0 แทน — ฝั่ง LP ก็ใช้ตัวนี้ (I5)
+            if not _zero_baseline_cap_enabled():
+                return None
+            try:
+                tgt_free = int(round(float(target_boxes.get(sku, 0) or 0)))
+            except (TypeError, ValueError):
+                tgt_free = 0
+            return (
+                min_box,
+                max(min_box, _zero_baseline_cap(tgt_free, n_emps, cap_multiplier)),
+            )
         cell_band = _tier_cell_band_pct(
             sku_key,
             tiered_allocation=tiered_allocation,
@@ -1049,6 +1062,11 @@ def _greedy_revenue_balancer(
         d_poor = diffs[poor_emp]
         current_error = abs(d_rich) + abs(d_poor)
         alloc_rich = alloc[rich_emp]
+        # ข้ามได้ 4 เหตุ แต่มีเหตุเดียวที่ "ผ่อนรั้วแล้วช่วยได้" คือติดกรอบประวัติ
+        # ถ้าไม่แยกให้ออก เคสที่ช่องว่างเล็กกว่าราคากล่องถูกที่สุด (ย้ายยังไงก็ไม่ดีขึ้น)
+        # จะไล่ผ่อนจนสุดแล้วปลดล็อก SKU ที่ตั้งใจคุมไว้ทั้งกระดาน เพื่อไล่ตามเงิน
+        # ไม่กี่ร้อยบาทที่ไปไม่ถึงอยู่แล้ว — ทรงการกระจายของทีมที่ปกติดีก็เพี้ยนตาม
+        band_blocked = False
         for sku, price in candidates:
             # 🔴 ข้ามการสลับหีบที่คนพิมพ์แก้ไขไว้แล้ว (ห้ามยุ่งเด็ดขาด)
             if (rich_emp, sku) in locked_map or (poor_emp, sku) in locked_map:
@@ -1058,6 +1076,7 @@ def _greedy_revenue_balancer(
             if alloc_rich[sku] <= floors[sku]:
                 continue
             if not _can_move_box(rich_emp, poor_emp, sku):
+                band_blocked = True
                 continue
             new_error = abs(d_rich - price) + abs(d_poor + price)
 
@@ -1067,8 +1086,9 @@ def _greedy_revenue_balancer(
                 best_sku_to_move = sku
 
         if best_sku_to_move is None:
-            # ย้ายอะไรไม่ได้แล้วในกรอบนี้ — ผ่อนข้อจำกัดแล้วลองใหม่ ก่อนจะยอมแพ้
-            if _relax():
+            # ย้ายอะไรไม่ได้แล้ว — ผ่อนต่อเมื่อการผ่อนมีทางช่วยจริงเท่านั้น:
+            # ติดกรอบประวัติ (band_blocked) หรือยังมี SKU ที่ถูกกันออกจากรายการอยู่
+            if (band_blocked or _strict_locked) and _relax():
                 continue
             break
 

@@ -412,6 +412,72 @@ def _post_merge_revenue_balance(
     return df_out
 
 
+def _merge_partial_result(
+    result_csv_path: str, df_new: pd.DataFrame, only_skus: list[str]
+) -> pd.DataFrame:
+    """
+    รวมผลกระจายบางส่วนเข้ากับผลเดิมทั้งงวด — แทนที่เฉพาะ SKU ที่เพิ่งกระจายใหม่
+
+    อ่านไฟล์เดิมไม่ได้/ยังไม่มีไฟล์ ก็คืนของใหม่ไปตรง ๆ (พฤติกรรมเดิม)
+    """
+    try:
+        if not os.path.exists(result_csv_path):
+            return df_new
+        df_old = pd.read_csv(result_csv_path, dtype={"emp_id": str, "sku": str})
+    except Exception as e:
+        logger.warning("อ่านผลเดิมเพื่อรวมกับผลบางส่วนไม่ได้ (%s) — เขียนทับตามเดิม", e)
+        return df_new
+    if df_old.empty or "sku" not in df_old.columns:
+        return df_new
+    df_old["sku"] = df_old["sku"].astype(str).str.strip()
+    keep = df_old[~df_old["sku"].isin({str(x).strip() for x in only_skus})]
+    if keep.empty:
+        return df_new
+    merged = pd.concat([keep, df_new], ignore_index=True)
+    logger.info(
+        "กระจายเฉพาะ %d SKU — รวมกับผลเดิมอีก %d แถวก่อนเขียนไฟล์",
+        len(only_skus), len(keep),
+    )
+    return merged
+
+
+def reject_mixed_sales_units(
+    target_sup_ids: list[str], target_month: int, target_year: int
+) -> None:
+    """
+    กระจายรวมภาคที่ปนทั้งทีมเครดิตและทีมรถเงินสดไม่ได้ — ต้องกั้นก่อนคำนวณ
+
+    สองหน่วยขายใช้ราคาคนละชุด (CREDITUNITPRICE / CASHUNITPRICE) เอาเป้าหีบมาบวก
+    รวมกันแล้วกระจายด้วยกัน มูลค่าที่ได้จึงไม่มีความหมาย และ revenue_scale
+    (OR_engine._revenue_scale_factor) จะดันเป้าเงินรายคนทั้งภาคเพี้ยนตามส่วนต่างราคา
+    งานจริงก็ไม่เคยกระจายข้ามหน่วยขายอยู่แล้ว การเจอสภาพนี้แปลว่าขอบเขตถูกเลือกผิด
+
+    ทีมที่ยังไม่รู้หน่วยขาย (acc_unit ว่าง และยังไม่เคยสร้าง payload) ไม่นับเป็นหน่วย
+    — ข้อมูลไม่ครบต้องไม่กลายเป็นตัวบล็อกงานของผู้ใช้
+    """
+    from .employees import sales_units_of_sups
+
+    units = sales_units_of_sups(target_sup_ids, target_month, target_year)
+    if len({u for u in units.values() if u}) <= 1:
+        return
+    label = {"C": "รถเงินสด", "S": "เครดิต"}
+    by_unit: dict[str, list[str]] = {}
+    for sid, u in sorted(units.items()):
+        if u:
+            by_unit.setdefault(u, []).append(sid)
+    raise HTTPException(
+        400,
+        detail=(
+            "กระจายรวมทั้งภาคไม่ได้ — ขอบเขตนี้มีทั้งทีมเครดิตและทีมรถเงินสด ("
+            + " · ".join(
+                f"{label.get(u, u)}: {', '.join(sids)}"
+                for u, sids in sorted(by_unit.items())
+            )
+            + ") สองหน่วยขายใช้ราคาคนละชุด กรุณาเลือกขอบเขตให้เหลือหน่วยขายเดียว"
+        ),
+    )
+
+
 def _resolve_target_sup_ids(sup_id: str, raw: list[str] | None) -> list[str]:
     """
     ทีมที่เอาเป้ามาบวกรวมกัน — ทีมที่ยิง request ต้องอยู่ในกองเสมอและมาก่อน
@@ -480,6 +546,7 @@ def run_optimization_service(
     target_sup_ids = _resolve_target_sup_ids(sup_id, req.target_sup_ids)
     summed_target = len(target_sup_ids) > 1
     if summed_target:
+        reject_mixed_sales_units(target_sup_ids, target_month, target_year)
         df_sku, missing_target_sups = load_summed_target_boxes(
             target_sup_ids, target_month, target_year
         )
@@ -1049,7 +1116,14 @@ def run_optimization_service(
 
     # ผูกชื่อไฟล์กับงวด — กันสองงวดของซุปเดียวกันเขียนทับกันแล้ว Excel อ่านผิดงวด
     result_csv_path = result_path(sup_id, target_month, target_year)
-    atomic_write_csv(result_csv_path, df_final, index=False)
+    df_to_write = df_final
+    if only_skus:
+        # "กระจายเฉพาะสินค้าที่เป้าเปลี่ยน" — df_final มีเฉพาะ SKU ชุดนั้น
+        # ถ้าเขียนทับทั้งไฟล์ ผลของ SKU อื่นทั้งงวดหายไปจากไฟล์และจาก Excel ฝั่ง
+        # เซิร์ฟเวอร์ทันที (หน้าจอไม่ฟ้องเพราะ merge ฝั่งเบราว์เซอร์เอง) แล้วใครที่
+        # กดดาวน์โหลดทีหลังจะได้ไฟล์ที่มีสินค้าไม่กี่ตัว
+        df_to_write = _merge_partial_result(result_csv_path, df_final, only_skus)
+    atomic_write_csv(result_csv_path, df_to_write, index=False)
 
     yellow_map: dict[str, float] = {}
     for y in req.yellowTargets:

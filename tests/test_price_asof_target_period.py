@@ -84,6 +84,54 @@ class TestDaxUsesTheTargetPeriod(unittest.TestCase):
         self.assertIn("[TODATE] >= t", dax)
         self.assertIn("CREDITUNITPRICE", dax)
 
+    def test_picks_the_row_with_the_latest_fromdate(self):
+        """
+        หัวใจของการแก้ราคา: เลือก "แถวที่ FROMDATE ใหม่ที่สุด" ไม่ใช่ "ราคาสูงสุด"
+
+        ของเดิมใช้ CALCULATE(MAX([CREDITUNITPRICE]), ...) ซึ่งได้ราคาแพงสุดในบรรดา
+        แถวที่ยังมีผล ไม่ใช่ราคาปัจจุบัน · ถ้าใครเผลอ revert กลับไป เทสชุดเดิม
+        ผ่านหมดเพราะไม่เคยมีใครตรวจตรงนี้เลย
+        """
+        dax = self._capture(target_year=2026, target_month=9)[0]
+        self.assertIn("VAR newest = MAXX(", dax)
+        self.assertIn("[FROMDATE] = newest", dax)
+        self.assertNotIn("CALCULATE(MAX(", dax)
+
+    def test_ties_on_the_same_fromdate_are_broken_by_todate(self):
+        """สินค้าที่มีหลายแถวขึ้นราคาวันเดียวกัน ต้องตัดสินด้วยวันหมดอายุ ไม่ใช่ราคา"""
+        dax = self._capture(target_year=2026, target_month=9)[0]
+        self.assertIn("VAR sameday =", dax)
+        self.assertIn("VAR lastend = MAXX(sameday", dax)
+        self.assertIn("[TODATE] = lastend", dax)
+
+    def test_blank_todate_means_no_expiry(self):
+        """
+        แถวราคาที่ไม่กำหนดวันหมดอายุเป็นรูปแบบปกติของตารางราคา
+
+        ใน DAX นั้น BLANK() >= DATE(...) เป็นเท็จ แถวเปิดปลายจึงเคยหลุดหน้าต่างไป
+        เงียบ ๆ แล้วราคากลายเป็น 0 → SKU ติดธง "ไม่มีราคา" หรือถอยไปใช้ราคาเฉลี่ย
+        จากยอดขาย ทั้งที่ราคาจริงมีอยู่
+        """
+        dax = self._capture(target_year=2026, target_month=9)[0]
+        self.assertIn("ISBLANK('cfm_product_characteristic'[TODATE])", dax)
+
+    def test_both_price_columns_are_selected(self):
+        """แยกราคาตามหน่วยขายได้ต้องมีทั้งสองคอลัมน์ — เดิมเทสตรวจแต่เครดิต"""
+        dax = self._capture(target_year=2026, target_month=9)[0]
+        self.assertIn("CREDITUNITPRICE", dax)
+        self.assertIn("CASHUNITPRICE", dax)
+
+    def test_credit_and_cash_come_from_the_same_row(self):
+        """
+        สองคอลัมน์เคยหา MAXX แยกกันคนละนิพจน์ พอ FROMDATE เสมอกันจึงหยิบมาคนละแถว
+        กลายเป็นคู่ราคาที่ไม่เคยมีอยู่จริงในตาราง
+        """
+        dax = self._capture(target_year=2026, target_month=9)[0]
+        self.assertEqual(
+            dax.count("VAR val = MAXX(pick,"), 2,
+            "ทั้งเครดิตและเงินสดต้องอ่านจากชุดแถวที่เลือกไว้ชุดเดียวกัน",
+        )
+
     def test_without_a_period_it_is_the_old_behaviour(self):
         dax = self._capture()[0]
         self.assertIn("VAR t = TODAY()", dax)

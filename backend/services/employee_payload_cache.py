@@ -15,6 +15,17 @@ logger = logging.getLogger("target_allocation")
 
 _META_KEYS = frozenset({"data_from_cache", "data_cached_at"})
 
+# เวอร์ชันของ "วิธีคิดราคา" ที่ payload ก้อนนี้ถูกสร้างมา — ต้องบวกขึ้นทุกครั้งที่
+# ตรรกะราคาเปลี่ยน แล้วก้อนที่เขียนด้วยตรรกะเก่าจะถูกทิ้งทันทีที่อ่าน
+#
+# ทำไมต้องมี: แคชนี้เก็บ "ราคาที่คิดเสร็จแล้ว" (skus[].price_per_box และ
+# employees[].target_sun) ตอนแยกราคาตามหน่วยขาย แคชสินค้าถูกทิ้งด้วยการเช็ค schema
+# ทันที แต่แคชก้อนนี้ซึ่งถือตัวเลขที่ผิดจริง ๆ กลับรอ TTL — หลัง deploy อีกหนึ่งชั่วโมง
+# ทีมรถเงินสดจึงยังได้เป้าที่คิดด้วยราคาเครดิตอยู่
+#   1 = ก่อนแยกราคาตามหน่วยขาย
+#   2 = แยกราคาตามหน่วยขาย + ประทับ sales_unit ลง payload
+PRICE_LOGIC_VERSION = 2
+
 
 def employee_payload_cache_ttl_sec() -> int:
     """
@@ -57,6 +68,14 @@ def read_cached_employee_payload(
             doc = json.load(f)
     except (OSError, json.JSONDecodeError) as e:
         logger.warning("payload cache read failed %s: %s", path, e)
+        return None
+
+    doc_version = int(doc.get("price_logic_version") or 0)
+    if doc_version != PRICE_LOGIC_VERSION:
+        logger.info(
+            "payload cache ทิ้ง %s — สร้างด้วยตรรกะราคารุ่น %d (ปัจจุบัน %d)",
+            path, doc_version, PRICE_LOGIC_VERSION,
+        )
         return None
 
     cached_at_raw = str(doc.get("cached_at") or "").strip()
@@ -111,6 +130,7 @@ def write_cached_employee_payload(
     cached_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     doc = {
         "cached_at": cached_at,
+        "price_logic_version": PRICE_LOGIC_VERSION,
         "sup_id": str(sup_id).strip().upper(),
         "target_month": int(target_month),
         "target_year": int(target_year),

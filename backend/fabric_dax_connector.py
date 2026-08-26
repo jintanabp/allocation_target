@@ -634,14 +634,18 @@ SELECTCOLUMNS(
                                    -1
                                  ) = 0
                                  && 'cfm_product_characteristic'[FROMDATE] <= t
-                                 && 'cfm_product_characteristic'[TODATE] >= t
+                                 && (
+                                   ISBLANK('cfm_product_characteristic'[TODATE])
+                                   || 'cfm_product_characteristic'[TODATE] >= t
+                                 )
                              )
                            VAR newest = MAXX(inwindow, 'cfm_product_characteristic'[FROMDATE])
-                           VAR val =
-                             MAXX(
-                               FILTER(inwindow, 'cfm_product_characteristic'[FROMDATE] = newest),
-                               'cfm_product_characteristic'[CREDITUNITPRICE]
-                             )
+                           VAR sameday =
+                             FILTER(inwindow, 'cfm_product_characteristic'[FROMDATE] = newest)
+                           VAR lastend = MAXX(sameday, 'cfm_product_characteristic'[TODATE])
+                           VAR pick =
+                             FILTER(sameday, 'cfm_product_characteristic'[TODATE] = lastend)
+                           VAR val = MAXX(pick, 'cfm_product_characteristic'[CREDITUNITPRICE])
                            RETURN COALESCE(val, 0),
     "CashUnitPrice",        VAR pc = 'Dim_Product'[ProductCode]
                            VAR t = {asof}
@@ -655,14 +659,18 @@ SELECTCOLUMNS(
                                    -1
                                  ) = 0
                                  && 'cfm_product_characteristic'[FROMDATE] <= t
-                                 && 'cfm_product_characteristic'[TODATE] >= t
+                                 && (
+                                   ISBLANK('cfm_product_characteristic'[TODATE])
+                                   || 'cfm_product_characteristic'[TODATE] >= t
+                                 )
                              )
                            VAR newest = MAXX(inwindow, 'cfm_product_characteristic'[FROMDATE])
-                           VAR val =
-                             MAXX(
-                               FILTER(inwindow, 'cfm_product_characteristic'[FROMDATE] = newest),
-                               'cfm_product_characteristic'[CASHUNITPRICE]
-                             )
+                           VAR sameday =
+                             FILTER(inwindow, 'cfm_product_characteristic'[FROMDATE] = newest)
+                           VAR lastend = MAXX(sameday, 'cfm_product_characteristic'[TODATE])
+                           VAR pick =
+                             FILTER(sameday, 'cfm_product_characteristic'[TODATE] = lastend)
+                           VAR val = MAXX(pick, 'cfm_product_characteristic'[CASHUNITPRICE])
                            RETURN COALESCE(val, 0)
 )
 """
@@ -707,14 +715,18 @@ SELECTCOLUMNS(
                                    -1
                                  ) = 0
                                  && 'cfm_product_characteristic'[FROMDATE] <= t
-                                 && 'cfm_product_characteristic'[TODATE] >= t
+                                 && (
+                                   ISBLANK('cfm_product_characteristic'[TODATE])
+                                   || 'cfm_product_characteristic'[TODATE] >= t
+                                 )
                              )
                            VAR newest = MAXX(inwindow, 'cfm_product_characteristic'[FROMDATE])
-                           VAR val =
-                             MAXX(
-                               FILTER(inwindow, 'cfm_product_characteristic'[FROMDATE] = newest),
-                               'cfm_product_characteristic'[CREDITUNITPRICE]
-                             )
+                           VAR sameday =
+                             FILTER(inwindow, 'cfm_product_characteristic'[FROMDATE] = newest)
+                           VAR lastend = MAXX(sameday, 'cfm_product_characteristic'[TODATE])
+                           VAR pick =
+                             FILTER(sameday, 'cfm_product_characteristic'[TODATE] = lastend)
+                           VAR val = MAXX(pick, 'cfm_product_characteristic'[CREDITUNITPRICE])
                            RETURN COALESCE(val, 0),
     "CashUnitPrice",        VAR pc = 'Dim_Product'[ProductCode]
                            VAR t = {asof}
@@ -728,14 +740,18 @@ SELECTCOLUMNS(
                                    -1
                                  ) = 0
                                  && 'cfm_product_characteristic'[FROMDATE] <= t
-                                 && 'cfm_product_characteristic'[TODATE] >= t
+                                 && (
+                                   ISBLANK('cfm_product_characteristic'[TODATE])
+                                   || 'cfm_product_characteristic'[TODATE] >= t
+                                 )
                              )
                            VAR newest = MAXX(inwindow, 'cfm_product_characteristic'[FROMDATE])
-                           VAR val =
-                             MAXX(
-                               FILTER(inwindow, 'cfm_product_characteristic'[FROMDATE] = newest),
-                               'cfm_product_characteristic'[CASHUNITPRICE]
-                             )
+                           VAR sameday =
+                             FILTER(inwindow, 'cfm_product_characteristic'[FROMDATE] = newest)
+                           VAR lastend = MAXX(sameday, 'cfm_product_characteristic'[TODATE])
+                           VAR pick =
+                             FILTER(sameday, 'cfm_product_characteristic'[TODATE] = lastend)
+                           VAR val = MAXX(pick, 'cfm_product_characteristic'[CASHUNITPRICE])
                            RETURN COALESCE(val, 0)
 )
 """

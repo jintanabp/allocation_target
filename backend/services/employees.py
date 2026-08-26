@@ -509,6 +509,9 @@ def load_employees_payload(
     df_tga_granular: pd.DataFrame | None = None
     df_tga: pd.DataFrame | None = None
     sold_only_excluded = 0
+    # หน่วยขายของทีม ("C" รถเงินสด / "S" เครดิต / "" ไม่รู้) — ต้องมีค่าทุกเส้นทาง
+    # เพราะถูกประทับลง payload ตอนท้าย ไม่ว่าจะมาทางไฟล์ CSV เดิมหรือทาง Fabric
+    sales_unit = ""
 
     if use_legacy and df_sku_csv is not None and not regen_target:
         logger.info("ใช้ target_boxes.csv / target_sun.csv (USE_LEGACY_TARGET_CSV)")
@@ -546,8 +549,12 @@ def load_employees_payload(
                 )
         ts_div = ts_st = None
         ts_max_effective: dict | None = None
+        # หน่วยขายใช้เลือกคอลัมน์ราคา (เครดิต/รถเงินสด) — คนละเรื่องกับ pre-check
+        # ของ TargetSun ที่ล้มแล้วล้าง ts_st ทิ้ง จึงต้องเก็บแยกไม่ให้หายไปด้วย
+        sales_unit = sales_unit or _sales_unit_from_user_access(sup_id)
         if targetsun_read.is_enabled():
             ts_div, ts_st = targetsun_read.resolve_targetsun_scope(sup_id, fabric=fabric)
+            sales_unit = ts_st or sales_unit
             try:
                 ts_max_effective = targetsun_read.fetch_max_effective_date(ts_div, ts_st)
             except HTTPException:
@@ -757,26 +764,43 @@ def load_employees_payload(
                         )
                     )
                     price_latest = {**price_latest, **fetched}
-                    fc.write_price_map(target_year, target_month, price_latest)
+                    # แคชราคาเป็นไฟล์เดียวของทั้งงวด ใช้ร่วมกันทุกทีม — ถ้าแคชเดิม
+                    # หมดอายุไปแล้ว price_latest จะมีแต่ SKU ของทีมนี้ การเขียนทับ
+                    # จึงลบราคาของทีมอื่นทิ้งหมด แล้วตัวถอย "ใช้แคชหมดอายุ" ที่ทีมอื่น
+                    # ต้องพึ่งตอน Fabric ล่มก็ไม่เหลืออะไรให้ถอยไปใช้
+                    _prev = fc.read_price_map(
+                        target_year, target_month, allow_stale=True
+                    ) or {}
+                    fc.write_price_map(
+                        target_year, target_month, {**_prev, **price_latest}
+                    )
             except Exception as e:
                 logger.warning(
                     "get_latest_price_per_box_by_sku error: %s — จะลองใช้แคชที่หมดอายุแทน",
                     e,
                 )
-        if not price_latest:
-            price_latest = fc.read_price_map(
+        # ตัวถอยต้องทำงาน "ราย SKU" ไม่ใช่เฉพาะตอนแมพว่างสนิท — ทีมที่รีเฟรชทีหลัง
+        # ได้แมพที่ไม่ว่างแต่เป็นของทีมอื่นล้วน SKU ของตัวเองจึงกลายเป็นราคา 0 เงียบ ๆ
+        _need_stale = [s for s in sku_union if str(s) not in price_latest]
+        if _need_stale:
+            _stale = fc.read_price_map(
                 target_year, target_month, allow_stale=True
             ) or {}
-            if price_latest:
+            _filled = {
+                str(k): v for k, v in _stale.items()
+                if str(k) in {str(x) for x in _need_stale}
+            }
+            if _filled:
+                price_latest = {**_filled, **price_latest}
                 logger.warning(
                     "ใช้ราคาจากแคชที่หมดอายุ %d SKU — ดึงจาก Fabric ไม่ได้",
-                    len(price_latest),
+                    len(_filled),
                 )
 
         df_sku, df_sun_csv, emp_with_tga = _build_sku_and_sun_from_tga(
             df_tga, df_sku_base, emp_list, sku_union,
             price_latest_by_sku=price_latest,
-            sales_type=ts_st or "",
+            sales_type=sales_unit,
         )
         emp_with_tga_set = emp_with_tga
 
@@ -1295,6 +1319,9 @@ def load_employees_payload(
         "new_product_skus": new_product_skus,
         "new_products_detection_mode": new_products_detection_mode,
         "target_read_source": targetsun_read.get_target_read_source(),
+        # หน่วยขายที่ใช้ตั้งราคาก้อนนี้จริง ๆ — โหมดรวมภาคใช้ตัวนี้ตัดสินว่า
+        # ราคาที่ต่างกันระหว่างทีมเป็นเรื่องปกติ (คนละหน่วย) หรือของเก่าค้าง
+        "sales_unit": sales_unit,
         "data_from_cache": False,
         "data_cached_at": None,
     }
@@ -1303,7 +1330,13 @@ def load_employees_payload(
 
 
 def _sales_unit_by_sup() -> dict[str, str]:
-    """หน่วยขายของแต่ละรหัสทีมจาก user_access — อ่านไฟล์ล้วน ไม่ยิง Fabric"""
+    """
+    หน่วยขายของแต่ละรหัสทีมจาก user_access — อ่านไฟล์ล้วน ไม่ยิง Fabric
+
+    ใช้เป็น "ตัวสำรอง" เท่านั้น: acc_unit ในไฟล์ว่างได้ (ของจริงว่างเกือบครึ่ง)
+    ตัวที่เชื่อถือได้คือ sales_unit ที่ประทับไว้ใน payload ตอนสร้างเป้า
+    ซึ่งผ่าน resolve_targetsun_scope มาแล้ว (มีตัวถอย Fabric dim ให้ด้วย)
+    """
     from .targetsun_read import _acc_unit_to_sales_type
     from .user_access_store import read_rows
 
@@ -1313,6 +1346,129 @@ def _sales_unit_by_sup() -> dict[str, str]:
         st = _acc_unit_to_sales_type(str(row.get("acc_unit") or ""))
         if upl and st and upl not in out:
             out[upl] = st
+    return out
+
+
+def _sales_unit_from_user_access(sup_id: str) -> str:
+    """หน่วยขายของทีมเดียวจากไฟล์ user_access — ไม่ยิง Fabric เพิ่มแม้แต่ครั้งเดียว"""
+    return _sales_unit_by_sup().get(str(sup_id or "").strip().upper(), "")
+
+
+def _unit_by_sup_from_payloads(payloads: list[dict]) -> dict[str, str]:
+    """
+    หน่วยขายรายทีมสำหรับก้อนรวมภาค — เอาจากที่ประทับไว้ใน payload ก่อน
+
+    payload ที่สร้างก่อนรุ่นนี้ (แคชเก่า) ยังไม่มี sales_unit จึงถอยไปอ่าน
+    user_access ให้ · ทีมที่ยังหาไม่ได้จะได้ "" = ไม่รู้ ซึ่ง "ห้ามจับกลุ่ม"
+    กับใครทั้งสิ้น (เทียบราคาข้ามหน่วยขายแล้วไปแก้ของที่ถูกอยู่ให้ผิด)
+    """
+    fallback = _sales_unit_by_sup()
+    out: dict[str, str] = {}
+    for p in payloads:
+        sid = str(p.get("_source_sup_id") or "").strip().upper()
+        if not sid:
+            continue
+        unit = str(p.get("sales_unit") or "").strip().upper()[:1]
+        out[sid] = unit if unit in ("C", "S") else fallback.get(sid, "")
+    return out
+
+
+def sales_units_of_sups(
+    sup_ids: list[str], target_month: int, target_year: int
+) -> dict[str, str]:
+    """
+    หน่วยขายของแต่ละทีมสำหรับด่านกั้น — อ่านแคช payload ก่อน แล้วค่อยถอยไป user_access
+
+    ใช้ตอนกระจายรวมภาค: ทีมเครดิตกับทีมรถเงินสดใช้ราคาคนละชุด เอาหีบมาบวกรวม
+    แล้วกระจายด้วยกันไม่ได้ · ทีมที่ยังไม่รู้หน่วย (acc_unit ว่าง และยังไม่เคยสร้าง
+    payload) จะได้ "" ซึ่งด่านกั้นถือว่า "ไม่ขัดกับใคร" — กันข้อมูลไม่ครบไปบล็อกงาน
+    """
+    fallback = _sales_unit_by_sup()
+    out: dict[str, str] = {}
+    for raw in sup_ids or []:
+        sid = str(raw or "").strip().upper()
+        if not sid:
+            continue
+        unit = ""
+        try:
+            cached = read_cached_employee_payload(sid, target_month, target_year)
+        except Exception:
+            cached = None
+        if cached:
+            unit = str(cached.get("sales_unit") or "").strip().upper()[:1]
+        if unit not in ("C", "S"):
+            unit = fallback.get(sid, "")
+        out[sid] = unit if unit in ("C", "S") else ""
+    return out
+
+
+def _infer_sales_units_from_prices(
+    payloads: list[dict],
+    unit_by_sup: dict[str, str],
+    target_month: int,
+    target_year: int,
+) -> dict[str, str]:
+    """
+    เดาหน่วยขายของทีมที่ยังไม่รู้ จาก "ราคาที่ทีมนั้นถืออยู่จริง"
+
+    ทีมรถเงินสดที่ acc_unit ว่างเคยถูกเหมารวมเป็นเครดิต แล้วโดนเอาราคาเครดิต
+    ไปทับของที่ถูกอยู่แล้ว · ถ้าราคาที่ถืออยู่ตรงกับคอลัมน์ CASHUNITPRICE
+    มากกว่า CREDITUNITPRICE ก็สรุปได้เองว่าเป็นรถเงินสด ไม่ต้องรอให้ใครมากรอก
+    SKU ที่สองหน่วยราคาเท่ากันแยกไม่ออก จึงไม่นับคะแนนให้ฝั่งไหน
+    """
+    unknown = {sid for sid, u in unit_by_sup.items() if u not in ("C", "S")}
+    if not unknown:
+        return unit_by_sup
+    from . import fabric_cache as fc
+
+    try:
+        df_prod = fc.read_product_info_df(target_year, target_month)
+    except Exception as e:
+        logger.warning("เดาหน่วยขายจากราคาไม่ได้ (อ่านแคชสินค้าไม่ผ่าน): %s", e)
+        return unit_by_sup
+    if df_prod is None or df_prod.empty or "cash_unit_price" not in df_prod.columns:
+        return unit_by_sup
+
+    credit: dict[str, float] = {}
+    cash: dict[str, float] = {}
+    for _, r in df_prod.iterrows():
+        sku = str(r.get("sku") or "").strip()
+        if not sku:
+            continue
+        try:
+            credit[sku] = float(r.get("credit_unit_price") or 0)
+            cash[sku] = float(r.get("cash_unit_price") or 0)
+        except (TypeError, ValueError):
+            continue
+
+    out = dict(unit_by_sup)
+    for p in payloads:
+        sid = str(p.get("_source_sup_id") or "").strip().upper()
+        if sid not in unknown:
+            continue
+        n_credit = n_cash = 0
+        for sku_row in p.get("skus") or []:
+            sku = str(sku_row.get("sku") or "").strip()
+            try:
+                price = round(float(sku_row.get("price_per_box") or 0), 4)
+            except (TypeError, ValueError):
+                continue
+            if price <= 0:
+                continue
+            c = credit.get(sku) or 0.0
+            v = cash.get(sku) or 0.0
+            if not c or not v or abs(c - v) <= 0.005:
+                continue
+            if abs(price - c) <= 0.005:
+                n_credit += 1
+            if abs(price - v) <= 0.005:
+                n_cash += 1
+        if n_cash > n_credit:
+            out[sid] = "C"
+            logger.info("เดาหน่วยขายของ %s = รถเงินสด จากราคาที่ถืออยู่", sid)
+        elif n_credit > n_cash:
+            out[sid] = "S"
+            logger.info("เดาหน่วยขายของ %s = เครดิต จากราคาที่ถืออยู่", sid)
     return out
 
 
@@ -1410,10 +1566,45 @@ def _apply_price_fix_to_payload(
     เขียนไฟล์เป้าของทีมนั้นทับด้วย — ขั้นกระจายอ่านเป้าหีบจากไฟล์ ไม่ใช่จาก payload
     (core.targets.load_summed_target_boxes) ถ้าแก้แต่ในหน่วยความจำ ตอนกระจายจริง
     จะกลับไปใช้ราคาเก่าอีก แล้วเป้าเงินก็เพี้ยนเหมือนเดิม
+
+    **ต้องทำซ้ำได้โดยยอดไม่ขยับ** — เพราะ "บวกส่วนต่าง" ลงไฟล์นั้นทำซ้ำไม่ได้โดยธรรมชาติ
+    เดิมแคช payload (TTL 1 ชม.) ยังถือราคาเก่าอยู่ พอผู้ใช้กดเปิดหน้ารวมภาคอีกครั้ง
+    ระบบก็ตรวจเจอ "ราคาไม่ตรง" ชุดเดิมแล้วบวกส่วนต่างซ้ำลงไฟล์อีกรอบ เปิด 8 ครั้งใน
+    ชั่วโมงเดียว เป้าเงินรายคนก็บวมไป 8 เท่าของส่วนต่างโดยไม่มีใครเห็น · กันสองชั้น:
+      1. ข้าม SKU ที่ "ไฟล์เป้าถือราคาใหม่อยู่แล้ว" (แปลว่าเคยแก้ไปแล้ว)
+      2. เขียนแคช payload ที่แก้แล้วกลับไป ไม่ให้รอบหน้าหยิบราคาเก่ามาตรวจซ้ำ
     """
     sid = str(payload.get("_source_sup_id") or "").strip().upper()
     if not sid or not fixes:
         return False
+    all_fixes = dict(fixes)
+
+    # ชั้นที่ 1 — ไฟล์เป้าคือของจริงที่ขั้นกระจายอ่าน ถ้ามันถือราคาใหม่อยู่แล้ว
+    # แปลว่ารอบก่อนแก้ไปเรียบร้อย เหลือแค่ payload ในมือที่ยังเก่า ห้ามบวกซ้ำ
+    already_fixed: set[str] = set()
+    try:
+        _p_sku = target_boxes_cache_path(sid, target_month, target_year)
+        if os.path.exists(_p_sku):
+            _df_file = pd.read_csv(_p_sku, dtype={"sku": str})
+            if "price_per_box" in _df_file.columns:
+                for _, _r in _df_file.iterrows():
+                    _sku = str(_r.get("sku") or "").strip()
+                    if _sku not in fixes:
+                        continue
+                    try:
+                        _fp = round(float(_r.get("price_per_box") or 0), 4)
+                    except (TypeError, ValueError):
+                        continue
+                    if abs(_fp - round(float(fixes[_sku][1]), 4)) <= 0.005:
+                        already_fixed.add(_sku)
+    except Exception as e:
+        logger.warning("อ่านไฟล์เป้าเดิมของ %s เพื่อกันแก้ซ้ำไม่ได้: %s", sid, e)
+    if already_fixed:
+        logger.info(
+            "%s: ข้าม %d SKU ที่ไฟล์เป้าถือราคาใหม่อยู่แล้ว (กันบวกส่วนต่างซ้ำ)",
+            sid, len(already_fixed),
+        )
+        fixes = {k: v for k, v in fixes.items() if k not in already_fixed}
 
     grain = _tga_qty_by_emp_sku(sid, target_month, target_year)
     if grain is None:
@@ -1437,8 +1628,8 @@ def _apply_price_fix_to_payload(
 
     for s in payload.get("skus") or []:
         sku = str(s.get("sku") or "").strip()
-        if sku in fixes:
-            _old, new_price, from_history = fixes[sku]
+        if sku in fixes or sku in already_fixed:
+            _old, new_price, from_history = (fixes.get(sku) or all_fixes[sku])
             s["price_per_box"] = new_price
             s["price_missing"] = False
             s["price_from_sales_history"] = bool(from_history)
@@ -1446,7 +1637,14 @@ def _apply_price_fix_to_payload(
     for emp in payload.get("employees") or []:
         eid = str(emp.get("emp_id") or "").strip()
         wh = str(emp.get("warehouse_code") or "").strip()
-        d = delta_key.get((eid, wh)) if (wh and emp.get("wh_split")) else delta_emp.get(eid)
+        if wh and emp.get("wh_split"):
+            # หาคีย์ (คน, คลัง) ไม่เจอ = แถวเป้าดิบไม่มีคลังนั้น ต้องถอยมาใช้ยอดรวม
+            # ของคนนั้น ไม่งั้นในหน่วยความจำยังเป็นราคาเก่า ขณะที่ไฟล์ถูกแก้ไปแล้ว
+            d = delta_key.get((eid, wh))
+            if d is None:
+                d = delta_emp.get(eid)
+        else:
+            d = delta_emp.get(eid)
         if d:
             emp["target_sun"] = round(float(emp.get("target_sun") or 0) + float(d), 2)
 
@@ -1470,6 +1668,13 @@ def _apply_price_fix_to_payload(
             atomic_write_csv(p_sun, df_sun, index=False)
     except Exception as e:                      # แก้ในหน่วยความจำสำเร็จแล้ว อย่าให้ล้มทั้งคำขอ
         logger.warning("เขียนไฟล์เป้าที่แก้ราคาแล้วของ %s ไม่สำเร็จ: %s", sid, e)
+
+    # ชั้นที่ 2 — ไม่ให้รอบหน้าหยิบราคาเก่าจากแคชมาตรวจแล้วบวกส่วนต่างซ้ำ
+    try:
+        cached = {k: v for k, v in payload.items() if not k.startswith("_")}
+        write_cached_employee_payload(sid, target_month, target_year, cached)
+    except Exception as e:
+        logger.warning("อัปเดตแคช payload ที่แก้ราคาแล้วของ %s ไม่สำเร็จ: %s", sid, e)
     return True
 
 
@@ -1496,7 +1701,9 @@ def reconcile_prices_across_payloads(
     # ราคาต่างกันข้ามหน่วยขายเป็นเรื่องถูกต้อง (รถเงินสดใช้ CASHUNITPRICE
     # เครดิตใช้ CREDITUNITPRICE) จึงเทียบกันเฉพาะทีมที่หน่วยขายเดียวกันเท่านั้น
     # ไม่งั้นจะไป "ซ่อม" ราคาที่ถูกอยู่แล้วให้กลายเป็นผิด
-    unit_by_sup = _sales_unit_by_sup()
+    unit_by_sup = _infer_sales_units_from_prices(
+        payloads, _unit_by_sup_from_payloads(payloads), target_month, target_year
+    )
     seen: dict[str, dict[str, float]] = {}
     for p in payloads:
         sid = str(p.get("_source_sup_id") or "").strip().upper()
@@ -1512,21 +1719,22 @@ def reconcile_prices_across_payloads(
                 seen.setdefault(sku, {})[sid] = price
 
     # ขัดกันจริงต่อเมื่อทีม "หน่วยขายเดียวกัน" ถือราคาไม่ตรงกัน
-    conflicts: dict[str, dict[str, float]] = {}
+    # และต้องซ่อม "ทีละหน่วย" ด้วย — เดิมรวมทุกกลุ่มแล้วหาความจริงชุดเดียว
+    # พอกลุ่มปนหน่วยจึงตกไปใช้คอลัมน์เครดิต แล้วเอาไปทับทีมรถเงินสดที่ถูกอยู่แล้ว
+    conflicts_by_unit: dict[str, dict[str, dict[str, float]]] = {}
     for sku, by_sup in seen.items():
         for unit in {unit_by_sup.get(sid, "") for sid in by_sup}:
             same = {sid: pr for sid, pr in by_sup.items()
                     if unit_by_sup.get(sid, "") == unit}
             if len(set(same.values())) > 1:
-                conflicts.setdefault(sku, {}).update(same)
-    if not conflicts:
+                conflicts_by_unit.setdefault(unit, {}).setdefault(sku, {}).update(same)
+    if not conflicts_by_unit:
         return []
 
-    # หน่วยขายของกลุ่มที่ขัดกัน — ใช้เลือกคอลัมน์ราคาที่ถือว่าถูก
-    _units = {unit_by_sup.get(sid, "")
-              for by_sup in conflicts.values() for sid in by_sup}
-    _unit = next(iter(_units)) if len(_units) == 1 else ""
-    truth = _authoritative_price_map(set(conflicts), target_month, target_year, _unit)
+    truth_by_unit = {
+        unit: _authoritative_price_map(set(by_sku), target_month, target_year, unit)
+        for unit, by_sku in conflicts_by_unit.items()
+    }
     report: list[dict[str, str]] = []
     per_payload: dict[str, dict[str, tuple[float, float, bool]]] = {}
 
@@ -1546,32 +1754,36 @@ def reconcile_prices_across_payloads(
                 best, best_mtime = price, mt
         return best
 
-    for sku, by_sup in sorted(conflicts.items()):
-        entry = truth.get(sku)
-        if not entry:
-            newest = _newest_price(by_sup)
-            if newest is None:
-                report.append({
-                    "sku": sku,
-                    "status": "unresolved",
-                    "detail": " · ".join(f"{k} {v:,.2f}" for k, v in sorted(by_sup.items())),
-                })
+    for unit, by_sku in sorted(conflicts_by_unit.items()):
+        truth = truth_by_unit.get(unit) or {}
+        for sku, by_sup in sorted(by_sku.items()):
+            entry = truth.get(sku)
+            if not entry:
+                newest = _newest_price(by_sup)
+                if newest is None:
+                    report.append({
+                        "sku": sku,
+                        "status": "unresolved",
+                        "detail": " · ".join(
+                            f"{k} {v:,.2f}" for k, v in sorted(by_sup.items())
+                        ),
+                    })
+                    continue
+                entry = (newest, False)
+            correct, from_history = entry
+            stale = {k: v for k, v in by_sup.items() if abs(v - correct) > 0.005}
+            if not stale:
                 continue
-            entry = (newest, False)
-        correct, from_history = entry
-        stale = {k: v for k, v in by_sup.items() if abs(v - correct) > 0.005}
-        if not stale:
-            continue
-        for sid, old in stale.items():
-            per_payload.setdefault(sid, {})[sku] = (old, correct, from_history)
-        report.append({
-            "sku": sku,
-            "status": "fixed",
-            "detail": (
-                f"{correct:,.2f} · แก้ให้ "
-                + ", ".join(f"{k} ({v:,.2f})" for k, v in sorted(stale.items()))
-            ),
-        })
+            for sid, old in stale.items():
+                per_payload.setdefault(sid, {})[sku] = (old, correct, from_history)
+            report.append({
+                "sku": sku,
+                "status": "fixed",
+                "detail": (
+                    f"{correct:,.2f} · แก้ให้ "
+                    + ", ".join(f"{k} ({v:,.2f})" for k, v in sorted(stale.items()))
+                ),
+            })
 
     fixed_sups: list[str] = []
     for p in payloads:
@@ -1590,6 +1802,103 @@ def reconcile_prices_across_payloads(
     return report
 
 
+def _group_sku_rows_by_unit(
+    rows: list[tuple[str, str, dict[str, Any]]],
+) -> tuple[dict[str, Any], dict[str, float], dict[str, str]]:
+    """
+    รวมแถว SKU เดียวกันจากหลายทีมให้เหลือเท่าที่ควรมีจริง
+
+    rows = [(sup_id, หน่วยขาย, แถว sku ของทีมนั้น), ...] ของ SKU เดียวกัน
+    คืน (แถวที่รวมแล้ว, ราคาที่ขัดกันในหน่วยเดียวกัน, หน่วยขายรายทีมที่ปนกันอยู่)
+
+    กติกา — สามสถานการณ์ที่ต้องแยกออกจากกันให้ได้:
+      · หน่วยขายเดียวกัน ราคาต่างกัน = ไฟล์เป้าทีมใดทีมหนึ่งเก่าค้าง → เตือนให้ไปโหลดใหม่
+      · คนละหน่วยขาย ราคาต่างกัน = ถูกต้องตามธรรมชาติ ไม่ใช่ของค้าง → ห้ามเตือนแบบเดิม
+        แต่ "กระจายข้ามหน่วยขายไม่ได้" อยู่แล้ว ภาคที่ปนสองหน่วยจึงเป็นสภาพที่ผิด
+        ต้องฟ้องด้วยข้อความของมันเอง แล้วให้ด่านกระจายกั้นไว้ (ดู _sales_units_of_sups)
+      · หน่วยขายยังไม่รู้ = ดูดเข้ากลุ่มที่ราคาตรงกันก่อน (ส่วนใหญ่คือทีมปกติที่
+        acc_unit ยังไม่ได้กรอก) ไม่ใช่นับเป็นอีกหน่วยหนึ่ง
+
+    คืนแถวเดียวเสมอ — ตารางหน้าจอและตัวคิดเป้าทั้งระบบอ้าง SKU ด้วยรหัสเปล่า
+    ถ้าคืนสองแถวที่รหัสซ้ำกัน แต่ละจุดจะหยิบได้แถวเดียวแล้วเป้าหายไปครึ่งหนึ่งเงียบ ๆ
+    """
+    def _price_of(row: dict[str, Any]) -> float:
+        try:
+            return round(float(row.get("price_per_box") or 0), 4)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _boxes_of(row: dict[str, Any]) -> float:
+        try:
+            return float(row.get("supervisor_target_boxes") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    groups: list[dict[str, Any]] = []          # {unit, price, boxes, row, sups}
+    conflicts: dict[str, float] = {}
+
+    def _same_price(a: float, b: float) -> bool:
+        return a > 0 and b > 0 and abs(a - b) <= 0.005
+
+    def _absorb(g: dict[str, Any], sid: str, unit: str, row: dict[str, Any]) -> None:
+        price = _price_of(row)
+        if _price_of(g["row"]) > 0 and price > 0 and not _same_price(_price_of(g["row"]), price):
+            conflicts[sid or "?"] = price
+            conflicts.setdefault("_kept", _price_of(g["row"]))
+        # ราคา 0 ของทีมแรกที่เจอเคยชนะทั้งภาคเงียบ ๆ แล้วมูลค่ารวมหายไปทั้ง SKU
+        if _price_of(g["row"]) <= 0 < price:
+            g["row"]["price_per_box"] = price
+            for f in ("price_missing", "price_from_sales_history"):
+                if f in row:
+                    g["row"][f] = row.get(f)
+        if not g["unit"] and unit:
+            g["unit"] = unit
+        g["row"]["supervisor_target_boxes"] = _boxes_of(g["row"]) + _boxes_of(row)
+
+    for sid, unit, row in rows:
+        price = _price_of(row)
+        target = None
+        if unit:
+            target = next((g for g in groups if g["unit"] == unit), None)
+            if target is None:
+                target = next(
+                    (g for g in groups if not g["unit"] and _same_price(g["_price0"], price)),
+                    None,
+                )
+        else:
+            target = next((g for g in groups if _same_price(g["_price0"], price)), None)
+            if target is None and len(groups) == 1:
+                # มีกลุ่มเดียวให้เลือก = ทีมนี้ราคาเก่าค้าง ไม่ใช่คนละหน่วยขาย
+                target = groups[0]
+            if target is None:
+                target = next((g for g in groups if not g["unit"]), None)
+        if target is None:
+            new_row = dict(row)
+            new_row["sales_unit"] = unit
+            new_row["supervisor_target_boxes"] = _boxes_of(row)
+            groups.append({"unit": unit, "_price0": price, "row": new_row})
+        else:
+            _absorb(target, sid, unit, row)
+
+    # ยุบเหลือแถวเดียวเสมอ — หีบบวกกันทั้งหมด ราคายึดกลุ่มแรก
+    # (ถ้ามีมากกว่าหนึ่งหน่วยจริง ๆ ยอดเงินแถวนี้ไม่มีความหมาย เพราะเป็นสภาพที่
+    #  กระจายไม่ได้อยู่แล้ว — ตัวเรียกจะฟ้อง mixed_sales_unit แล้วด่านกระจายกั้นต่อ)
+    first = groups[0] if groups else {"row": {}, "unit": ""}
+    for g in groups[1:]:
+        first["row"]["supervisor_target_boxes"] = (
+            _boxes_of(first["row"]) + _boxes_of(g["row"])
+        )
+        if _price_of(first["row"]) <= 0 < _price_of(g["row"]):
+            first["row"]["price_per_box"] = _price_of(g["row"])
+    units_present = {sid: unit for sid, unit, _row in rows if unit}
+    if len({u for u in units_present.values()}) > 1:
+        first["row"]["sales_unit"] = ""
+        first["row"]["sales_unit_mixed"] = True
+    else:
+        first["row"]["sales_unit"] = first.get("unit") or ""
+    return first["row"], conflicts, units_present
+
+
 def merge_employees_payloads(
     payloads: list[dict[str, Any]],
     *,
@@ -1602,7 +1911,12 @@ def merge_employees_payloads(
         raise HTTPException(404, detail="ไม่มีข้อมูลจาก Supervisor ที่เลือก")
 
     employees: list[dict[str, Any]] = []
-    sku_map: dict[str, dict[str, Any]] = {}
+    # คีย์เป็น (sku, หน่วยขาย) ไม่ใช่ sku เปล่า — SKU เดียวกันมีสองราคาได้จริง
+    # (รถเงินสดใช้ CASHUNITPRICE เครดิตใช้ CREDITUNITPRICE) ถ้ายุบเหลือราคาเดียว
+    # เป้าเงินของก้อนรวมจะไม่เท่าผลบวกรายทีมโดยโครงสร้าง แล้ว revenue_scale
+    # ก็ดันเป้าเงินรายคนทั้งภาคเพี้ยนตาม — และยังฟ้อง "ราคาไม่ตรงกัน" ผิด ๆ ตลอด
+    unit_by_sup = _unit_by_sup_from_payloads(payloads)
+    rows_by_sku: dict[str, list[tuple[str, str, dict[str, Any]]]] = {}
     warnings: list[dict[str, Any]] = []
     new_products: set[str] = set()
     skipped: list[dict[str, str]] = []
@@ -1627,22 +1941,9 @@ def merge_employees_payloads(
             if boxes and sid:
                 per_sup = target_by_sup.setdefault(sid, {})
                 per_sup[sku] = int(per_sup.get(sku, 0) + round(boxes))
-            price = round(float(s.get("price_per_box") or 0), 4)
-            if sku in sku_map:
-                # ราคาต้องเท่ากันทุกทีมในงวดเดียวกัน — ถ้าไม่เท่า แปลว่าไฟล์เป้าของบางทีม
-                # ถูกสร้างไว้ก่อนราคาเปลี่ยน (หรือก่อนแก้บั๊กราคา) แล้วไม่เคยสร้างใหม่
-                # ตรงนี้บวกแต่หีบ ส่วนราคาใช้ของทีมแรกที่เจอ ผลรวมของก้อนรวมจึงไม่เท่ากับ
-                # ผลบวกรายทีม → revenue_scale เพี้ยน → เป้าเงินรายคนถูกสเกลผิดไปทั้งภาค
-                kept = round(float(sku_map[sku].get("price_per_box") or 0), 4)
-                if price > 0 and kept > 0 and abs(price - kept) > 0.005:
-                    price_conflicts.setdefault(sku, {})[sid or "?"] = price
-                    price_conflicts[sku].setdefault("_kept", kept)
-                sku_map[sku]["supervisor_target_boxes"] = (
-                    float(sku_map[sku].get("supervisor_target_boxes") or 0) + boxes
-                )
-            else:
-                sku_map[sku] = dict(s)
-                sku_map[sku]["supervisor_target_boxes"] = boxes
+            rows_by_sku.setdefault(sku, []).append(
+                (sid, unit_by_sup.get(sid, ""), dict(s))
+            )
         for w in p.get("sku_warnings") or []:
             row = dict(w)
             if sid and str(row.get("type") or "") != "aggregate_view":
@@ -1653,7 +1954,35 @@ def merge_employees_payloads(
 
     employees.sort(key=lambda e: (str(e.get("supervisor_code") or ""), str(e.get("emp_id") or "")))
     employees = _enrich_employee_allocation_flags(employees)
-    skus = sorted(sku_map.values(), key=lambda s: str(s.get("sku") or ""))
+    skus = []
+    mixed_units: dict[str, str] = {}
+    for sku in sorted(rows_by_sku):
+        row, conflicts, units_present = _group_sku_rows_by_unit(rows_by_sku[sku])
+        if conflicts:
+            price_conflicts.setdefault(sku, {}).update(conflicts)
+        if len({u for u in units_present.values()}) > 1:
+            mixed_units.update(units_present)
+        skus.append(row)
+
+    if mixed_units:
+        _label = {"C": "รถเงินสด", "S": "เครดิต"}
+        _by_unit: dict[str, list[str]] = {}
+        for _sid, _u in sorted(mixed_units.items()):
+            _by_unit.setdefault(_u, []).append(_sid)
+        warnings.append({
+            "type": "aggregate_mixed_sales_unit",
+            "sku": "",
+            "brand": "",
+            "message": (
+                "ก้อนรวมนี้มีทั้งทีมเครดิตและทีมรถเงินสด ("
+                + " · ".join(
+                    f"{_label.get(u, u)}: {', '.join(sids)}"
+                    for u, sids in sorted(_by_unit.items())
+                )
+                + ") — สองหน่วยขายใช้ราคาคนละชุด กระจายรวมกันไม่ได้ "
+                "กรุณาเลือกขอบเขตให้เหลือหน่วยขายเดียวก่อนกระจาย"
+            ),
+        })
 
     if price_conflicts:
         # ถึงตรงนี้แปลว่า reconcile_prices_across_payloads ซ่อมไม่ได้ (ไม่มีราคาในแคช

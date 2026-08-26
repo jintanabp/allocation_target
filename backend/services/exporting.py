@@ -13,8 +13,14 @@ from ..core.paths import (
     latest_excel_path_for_sup,
     safe_id,
     target_boxes_cache_path,
+    target_boxes_union_cache_path,
 )
-from ..core.targets import load_target_csv, load_target_csv_for, target_boxes_source_path
+from ..core.targets import (
+    _read_sku_csv,
+    load_target_csv,
+    load_target_csv_for,
+    target_boxes_source_path,
+)
 from ..generate_excel import create_target_excel
 from ..schemas import ExportRequest
 
@@ -32,8 +38,15 @@ def export_excel_service(
     df_final = pd.DataFrame([a.model_dump() for a in req.allocations])
 
     # เติม price_per_box ถ้าไม่ครบ
+    #
+    # รอบกระจายรวมทั้งภาค/ทั้งหน่วยขาย: แถวที่ส่งมามีพนักงานของทุกทีมในขอบเขต
+    # ถ้าเติมราคา/ชื่อสินค้าจากไฟล์เป้าของทีมเดียว SKU ที่ทีมนั้นไม่มีจะได้ราคา 0
+    # และชื่อว่าง — Excel ที่ได้จึงมีมูลค่ารวมต่ำกว่าจริงเป็นก้อน
     if target_month and target_year:
-        df_sku_tmp, _ = load_target_csv_for(sup_id, target_month, target_year)
+        _src = _export_target_boxes_path(sup_id, target_month, target_year)
+        df_sku_tmp = _read_sku_csv(_src)
+        if df_sku_tmp is None:
+            df_sku_tmp, _ = load_target_csv_for(sup_id, target_month, target_year)
     else:
         df_sku_tmp, _ = load_target_csv()
     if df_sku_tmp is not None:
@@ -99,7 +112,12 @@ def export_excel_service(
     ep = export_result_path(sup_id, brand_filter)
     atomic_write_csv(ep, df_export, index=False)
 
-    yellow_map = {y.emp_id: y.yellow_target for y in req.yellow_targets}
+    # ต้อง "บวก" ไม่ใช่ dict comprehension — พนักงานที่แยกตามคลัง (wh_split) ส่งมา
+    # หลายแถวต่อคน ของเดิมแถวหลังทับแถวหน้า เป้าเงินของคนนั้นใน Excel จึงเหลือคลังเดียว
+    yellow_map: dict[str, float] = {}
+    for y in req.yellow_targets:
+        em = str(y.emp_id).strip()
+        yellow_map[em] = yellow_map.get(em, 0.0) + float(y.yellow_target or 0)
 
     create_target_excel(
         result_csv=ep,
@@ -107,7 +125,7 @@ def export_excel_service(
         brand_filter=brand_filter,
         yellow_map=yellow_map,
         sup_id=sup_id,
-        target_boxes_csv=target_boxes_source_path(sup_id, target_month, target_year),
+        target_boxes_csv=_export_target_boxes_path(sup_id, target_month, target_year),
     )
 
     # cleanup export artifacts: keep only latest per sup_id (avoid data/ growth)
@@ -115,6 +133,31 @@ def export_excel_service(
 
     logger.info("Export excel: sup=%s brand=%s rows=%d", sup_id, brand_filter, len(df_export))
     return {"status": "ok", "brand_filter": brand_filter, "rows": len(df_export)}
+
+
+def _export_target_boxes_path(sup_id: str, target_month: int, target_year: int) -> str:
+    """
+    แหล่งของแถว "เป้าหีบ (หัวหน้า)" สำหรับปุ่มดาวน์โหลด Excel
+
+    ขั้นกระจายแก้ไปแล้วว่าโหมดรวมภาคต้องใช้ไฟล์เป้ารวม (ดู optimize._excel_target_boxes_path)
+    แต่ปุ่มดาวน์โหลดยังชี้ไฟล์ของทีมเดียวเสมอ — พอรอบล่าสุดเป็นการกระจายรวมภาค
+    Excel สองไฟล์ของรอบเดียวกันจึงไม่ตรงกัน และไฟล์จากปุ่มนี้ดูเหมือนกระจายเกินเป้ามหาศาล
+
+    เลือกไฟล์ที่ใหม่กว่าเสมอ — ถ้าผู้ใช้กลับมากระจายทีมเดียวทีหลัง ไฟล์รวมภาคเก่าค้าง
+    ต้องไม่ถูกหยิบมาใช้อีก
+    """
+    own = target_boxes_source_path(sup_id, target_month, target_year)
+    if not (target_month and target_year):
+        return own
+    union = target_boxes_union_cache_path(sup_id, target_month, target_year)
+    try:
+        if not os.path.exists(union):
+            return own
+        if not os.path.exists(own):
+            return union
+        return union if os.path.getmtime(union) >= os.path.getmtime(own) else own
+    except OSError:
+        return own
 
 
 def download_excel_response(sup_id: str, brand: str) -> FileResponse:
