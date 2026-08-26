@@ -14,9 +14,11 @@ route ที่มีผลทั้งระบบต้องใช้ require
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import Any, Literal
 
+import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -58,7 +60,7 @@ from ..services.user_access_store import (
     upsert_row,
     write_rows,
 )
-from ..services import no_target_store
+from ..services import emp_assignment_store, no_target_store
 from ..services.admin_team import list_supervisor_codes, load_supervisor_team
 from ..services.admin_inventory import build_data_inventory
 from ..services.sku_link_store import (
@@ -1807,6 +1809,169 @@ def admin_post_usage_log(
         detail=body.detail,
     )
     return row
+
+
+class EmpAssignmentBody(BaseModel):
+    emp_id: str
+    """รหัสทีมปลายทางที่จะไปเกลี่ยเป้าด้วย — ว่าง = ปลดการย้าย กลับไปทีมจริง"""
+    to_sup: str = ""
+    from_sup: str = ""
+    emp_name: str = ""
+    note: str = ""
+
+
+def _sup_attrs() -> dict[str, dict[str, str]]:
+    """ดิวิชัน / ภาค / หน่วยขาย ของแต่ละรหัสทีม จาก user_access (อ่านไฟล์ล้วน)"""
+    from ..services.user_access_store import read_rows as read_access
+
+    out: dict[str, dict[str, str]] = {}
+    for r in read_access():
+        code = str(r.get("userpl") or "").strip().upper()
+        if not code or code in out:
+            continue
+        out[code] = {
+            "division": str(r.get("acc_division") or "").strip(),
+            "region": str(r.get("acc_region") or "").strip(),
+            "unit": str(r.get("acc_unit") or "").strip(),
+            "login_kind": str(r.get("login_kind") or "").strip(),
+        }
+    return out
+
+
+def _employee_directory() -> list[dict]:
+    """
+    พนักงานทุกคนที่ระบบเคยเห็น พร้อมทีมที่สังกัดจริง — อ่านจากไฟล์แคชรายชื่อในเครื่อง
+
+    ไม่ยิง Fabric เพราะหน้านี้ต้องเปิดได้แม้ตอน Fabric ล่ม (ซึ่งเป็นตอนที่คนอยาก
+    เข้ามาดูว่าใครอยู่ทีมไหนพอดี) · แคชรายชื่อเก็บ "โครงสร้างจริง" ไว้เสมอ
+    การย้ายไม่เคยถูกเขียนทับลงไป จึงยังบอกได้ว่าต้นทางคือใคร
+    """
+    import re
+
+    pat = re.compile(r"^emp_cache_(.+)_(\d{4})_(\d{2})\.csv$")
+    newest: dict[str, tuple[str, str]] = {}          # emp_id -> (stamp, sup)
+    names: dict[str, str] = {}
+    try:
+        files = sorted(os.listdir("data"))
+    except OSError:
+        files = []
+    for name in files:
+        m = pat.match(name)
+        if not m:
+            continue
+        sup, year, month = m.group(1).strip().upper(), m.group(2), m.group(3)
+        stamp = f"{year}-{month}"
+        try:
+            df = pd.read_csv(os.path.join("data", name), dtype=str, keep_default_na=False)
+        except Exception:
+            continue
+        if df.empty or "emp_id" not in df.columns:
+            continue
+        for _, row in df.iterrows():
+            emp = str(row.get("emp_id") or "").strip().upper()
+            if not emp:
+                continue
+            nm = str(row.get("emp_name") or "").strip()
+            if nm:
+                names.setdefault(emp, nm)
+            cur = newest.get(emp)
+            if cur is None or stamp > cur[0]:
+                newest[emp] = (stamp, sup)
+
+    attrs = _sup_attrs()
+    moves = {r["emp_id"]: r for r in emp_assignment_store.read_rows()}
+    out: list[dict] = []
+    for emp, (stamp, sup) in sorted(newest.items()):
+        a = attrs.get(sup, {})
+        mv = moves.get(emp)
+        to_sup = mv["to_sup"] if mv else ""
+        b = attrs.get(to_sup, {}) if to_sup else {}
+        out.append({
+            "emp_id": emp,
+            "emp_name": names.get(emp, ""),
+            "home_sup": sup,
+            "home_division": a.get("division", ""),
+            "home_region": a.get("region", ""),
+            "home_unit": a.get("unit", ""),
+            "seen_period": stamp,
+            "to_sup": to_sup,
+            "to_division": b.get("division", ""),
+            "to_region": b.get("region", ""),
+            "to_unit": b.get("unit", ""),
+            "note": mv["note"] if mv else "",
+        })
+    return out
+
+
+@router.get("/emp-assignments")
+def admin_emp_assignments(_admin: dict = Depends(require_admin_user)):
+    """รายชื่อพนักงาน + ทีมที่สังกัดจริง + ทีมที่ย้ายไปเกลี่ยเป้าด้วย (ถ้ามี)"""
+    sups = _sup_attrs()
+    return {
+        "employees": _employee_directory(),
+        "assignments": emp_assignment_store.read_rows(),
+        "supervisors": [
+            {"code": c, **v}
+            for c, v in sorted(sups.items())
+            if v.get("login_kind") in ("supervisor_acc", "manager_acc")
+        ],
+    }
+
+
+@router.post("/emp-assignments")
+def admin_set_emp_assignment(
+    body: EmpAssignmentBody,
+    admin: dict = Depends(require_admin_user),
+):
+    """
+    ย้ายพนักงานไปให้ทีมอื่นเกลี่ยเป้า (หรือปลดการย้ายเมื่อ to_sup ว่าง)
+
+    ล้างแคช payload ของทั้งทีมต้นทางและปลายทางทุกงวดที่มีอยู่ — ถ้าไม่ล้าง
+    ทีมที่ยังหยิบของเก่าจะเห็นพนักงานคนนี้พร้อมกับอีกทีม แล้วเป้าถูกนับสองรอบ
+    """
+    emp = emp_assignment_store.norm_emp(body.emp_id)
+    if not emp:
+        raise HTTPException(400, detail="ต้องระบุรหัสพนักงาน")
+    to_sup = emp_assignment_store.norm_sup(body.to_sup)
+    prev = emp_assignment_store.assignment_for_emp(emp)
+    from_sup = emp_assignment_store.norm_sup(body.from_sup) or (
+        prev.get("from_sup") if prev else ""
+    )
+    if to_sup and to_sup == from_sup:
+        raise HTTPException(400, detail="ทีมปลายทางเป็นทีมเดิมอยู่แล้ว")
+
+    try:
+        rows = emp_assignment_store.set_assignment(
+            emp,
+            to_sup,
+            from_sup=from_sup,
+            emp_name=body.emp_name,
+            note=body.note,
+            updated_by=str(admin.get("email") or ""),
+        )
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e)) from e
+
+    touched = {c for c in (from_sup, to_sup, (prev or {}).get("to_sup")) if c}
+    cleared = 0
+    for sid in touched:
+        try:
+            cleared += invalidate_employee_payload_cache(sid, None, None)
+        except Exception as e:
+            logger.warning("ล้างแคช payload ของ %s หลังย้ายพนักงานไม่ได้: %s", sid, e)
+
+    logger.info(
+        "ย้ายพนักงาน %s → %s (เดิม %s) โดย %s · ล้างแคช %d ไฟล์",
+        emp, to_sup or "(ปลดการย้าย)", from_sup or "-",
+        admin.get("email"), cleared,
+    )
+    return {
+        "status": "ok",
+        "emp_id": emp,
+        "to_sup": to_sup,
+        "assignments": rows,
+        "payload_cache_cleared": cleared,
+    }
 
 
 class CacheRefreshBody(BaseModel):

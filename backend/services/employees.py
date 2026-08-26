@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from ..core.allocation_checks import detect_new_product_skus
 from ..core.atomic_io import atomic_write_csv
 from ..core.constants import PRICE_FALLBACK
-from . import demo_data, no_target_store
+from . import demo_data, emp_assignment_store, no_target_store
 from ..core.paths import (
     emp_cache_path,
     hist_cache_path,
@@ -493,6 +493,29 @@ def load_employees_payload(
             )
             df_emp_fabric = pd.read_csv(path, dtype={"emp_id": str})
             emp_list_stale_from = stamp
+
+    # ── ย้ายพนักงานตามที่แอดมินตั้งไว้ (กรณีพิเศษ เช่น ขายชายแดน) ──
+    #
+    # ทำตรงนี้เพราะทุกอย่างหลังจากนี้อ้างจากรายชื่อทีม: เป้า TGA ดึงตามรายชื่อ
+    # แคช grain เขียนตามรายชื่อ และการกระจายก็วนตามรายชื่อ — ย้ายที่จุดเดียวจึงพอ
+    #
+    # อยู่หลังตัวถอยแคชโดยตั้งใจ: แคชเก็บ "รายชื่อดิบตามโครงสร้างจริง" ไว้เสมอ
+    # การย้ายจึงมีผลทันทีที่แอดมินกดบันทึก ไม่ต้องรอล้างแคชรายชื่อ
+    emp_moves = {"removed": 0, "added": 0}
+    try:
+        _rows_before = df_emp_fabric.to_dict(orient="records")
+        _rows_after, emp_moves = emp_assignment_store.apply_to_employee_list(
+            sup_id, _rows_before
+        )
+        if emp_moves["removed"] or emp_moves["added"]:
+            df_emp_fabric = pd.DataFrame(_rows_after)
+            logger.info(
+                "ย้ายพนักงานตามที่ตั้งไว้ (%s): ออก %d คน เข้า %d คน",
+                sup_id, emp_moves["removed"], emp_moves["added"],
+            )
+    except Exception as e:                  # การย้ายพังต้องไม่ทำให้เปิดงวดไม่ได้
+        logger.warning("ใช้รายการย้ายพนักงานไม่ได้ (%s): %s", sup_id, e)
+        emp_moves = {"removed": 0, "added": 0}
 
     if df_emp_fabric.empty:
         raise HTTPException(404, detail=f"ไม่พบพนักงานใต้ SuperCode '{sup_id}'")
@@ -1313,6 +1336,22 @@ def load_employees_payload(
         avg3_amount_by_emp_wh=avg3_amount_by_emp_wh,
     )
     emp_records = _enrich_employee_allocation_flags(emp_records, sup_id)
+    if emp_moves.get("removed") or emp_moves.get("added"):
+        _parts = []
+        if emp_moves.get("added"):
+            _parts.append(f"รับมา {emp_moves['added']} คน")
+        if emp_moves.get("removed"):
+            _parts.append(f"ย้ายออก {emp_moves['removed']} คน")
+        sku_warnings.append({
+            "type": "emp_reassigned",
+            "sku": "",
+            "brand": "",
+            "message": (
+                "รายชื่อทีมนี้ถูกปรับตามการย้ายพนักงานที่ตั้งไว้ — "
+                + " · ".join(_parts)
+                + " (ตั้งได้ที่หน้าแอดมิน > ย้ายพนักงาน)"
+            ),
+        })
     if emp_list_stale_from:
         sku_warnings.append(
             {

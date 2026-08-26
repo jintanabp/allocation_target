@@ -1002,6 +1002,7 @@
         <div class="admin-nav-group">
           <div class="admin-nav-group__label">ทีม</div>
           <button type="button" class="admin-nav-item" role="tab" data-tab="team" aria-selected="false" onclick="adminSwitchTab('team')">ทีมพนักงาน</button>
+          <button type="button" class="admin-nav-item" role="tab" data-tab="empMoves" aria-selected="false" onclick="adminSwitchTab('empMoves')">ย้ายพนักงาน</button>
         </div>
       </nav>
 
@@ -1249,6 +1250,31 @@
               </tbody>
             </table>
           </div>
+        </section>
+      </div>
+
+      <div id="adminPanelEmpMoves" class="admin-panel" data-panel="empMoves" style="display:none;">
+        <section class="admin-card">
+          <div class="admin-card-header">
+            <h2 class="admin-card__title">ย้ายพนักงานไปเกลี่ยเป้ากับทีมอื่น</h2>
+            <div class="admin-period-bar admin-period-bar--inline">
+              <input type="text" id="empMoveSearch" class="field-input field-input--sm"
+                     placeholder="ค้นหา รหัส / ชื่อ / ทีม / ภาค" oninput="renderEmpMoves()" />
+              <label class="admin-period-bar__field" style="gap:6px;">
+                <input type="checkbox" id="empMoveOnlyMoved" onchange="renderEmpMoves()" />
+                เฉพาะที่ย้ายแล้ว
+              </label>
+              <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="loadEmpMoves()">โหลดใหม่</button>
+            </div>
+          </div>
+          <p class="admin-card__note">
+            ใช้กับกรณีพิเศษ เช่น พนักงานขายชายแดนที่สังกัดทีมหนึ่งตามโครงสร้างจริง
+            แต่ต้องไปเกลี่ยเป้าร่วมกับอีกภาค/หน่วยหนึ่ง ·
+            <strong>ย้ายเฉพาะ “ใครเกลี่ยเป้าให้” เท่านั้น</strong> —
+            เขต ดิวิชัน และหน่วยขายในแถวเป้าของพนักงานยังเป็นของเขาเองทุกประการ
+            ตอนส่งกลับ Target Sun จึงลงแถวเดิม ไม่ผิดเขต
+          </p>
+          <div id="empMovesBody" class="admin-inventory"></div>
         </section>
       </div>
 

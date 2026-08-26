@@ -74,6 +74,8 @@ _PROTECTED_CONFIGS = (
     # persist_hierarchy เขียนคู่กับ access_hierarchy.json เสมอ แต่ path มาจาก
     # _repo_root() ไม่มี env คุม — ถ้าเทสต์ลืม patch จะค้างข้อมูลปลอมจนกว่าจะ rebuild
     "data/managers_cache.json",
+    # ย้ายพนักงานข้ามทีม — เทสที่ลืมตั้ง env จะทำให้ของจริงเปลี่ยนสังกัดเงียบ ๆ
+    "config/emp_assignments.json",
 )
 
 

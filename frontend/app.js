@@ -11924,6 +11924,131 @@ async function runReAllocationKeepEdits() {
  * และตอนส่ง Target Sun จะมีตัวเลือก "ส่งเฉพาะผลกระจายใหม่"
  */
 /* ══════════════════════════════════════════════
+   ย้ายพนักงานไปเกลี่ยเป้ากับทีมอื่น (หน้าแอดมิน)
+══════════════════════════════════════════════ */
+let _empMoveData = null;
+
+async function loadEmpMoves() {
+  const body = document.getElementById("empMovesBody");
+  if (body) body.innerHTML = `<div class="admin-empty">กำลังโหลด…</div>`;
+  try {
+    const res = await fetchWithTimeout(`${API_BASE_URL}/admin/emp-assignments`, {}, 60000);
+    if (!res.ok) throw new Error(_userFacingError(null, "โหลดรายชื่อพนักงานไม่สำเร็จ"));
+    _empMoveData = await res.json();
+    renderEmpMoves();
+  } catch (e) {
+    if (body) body.innerHTML = `<div class="admin-empty">❌ ${escH(_userFacingError(e))}</div>`;
+  }
+}
+
+function _empMoveScopeText(div, region, unit) {
+  const unitTh = unit === "van" ? "รถเงินสด" : unit === "credit" ? "เครดิต" : "";
+  return [div, region, unitTh].filter(Boolean).join(" · ") || "—";
+}
+
+function renderEmpMoves() {
+  const body = document.getElementById("empMovesBody");
+  if (!body || !_empMoveData) return;
+  const q = (document.getElementById("empMoveSearch")?.value || "").trim().toLowerCase();
+  const onlyMoved = !!document.getElementById("empMoveOnlyMoved")?.checked;
+  const sups = _empMoveData.supervisors || [];
+  let rows = _empMoveData.employees || [];
+  if (onlyMoved) rows = rows.filter((r) => r.to_sup);
+  if (q) {
+    rows = rows.filter((r) =>
+      [r.emp_id, r.emp_name, r.home_sup, r.home_division, r.home_region, r.to_sup]
+        .join(" ").toLowerCase().includes(q)
+    );
+  }
+  if (!rows.length) {
+    body.innerHTML = `<div class="admin-empty">ไม่พบพนักงานตามที่ค้นหา</div>`;
+    return;
+  }
+  const opts = (cur) =>
+    `<option value="">— อยู่ทีมจริง —</option>` +
+    sups
+      .map((sv) => {
+        const label = `${sv.code} · ${_empMoveScopeText(sv.division, sv.region, sv.unit)}`;
+        return `<option value="${escH(sv.code)}"${sv.code === cur ? " selected" : ""}>${escH(label)}</option>`;
+      })
+      .join("");
+
+  const MAX = 300;
+  const shown = rows.slice(0, MAX);
+  body.innerHTML =
+    `<div class="admin-table-wrap"><table class="admin-table">
+      <thead><tr>
+        <th>พนักงาน</th><th>ทีมจริง</th><th>ดิวิชัน · ภาค · หน่วย</th>
+        <th>ให้ทีมนี้เกลี่ยเป้าแทน</th><th>หมายเหตุ</th><th></th>
+      </tr></thead>
+      <tbody>` +
+    shown
+      .map((r) => {
+        const moved = !!r.to_sup;
+        return `<tr${moved ? ' class="row-moved"' : ""}>
+          <td><code>${escH(r.emp_id)}</code><br><span class="admin-muted">${escH(r.emp_name || "")}</span></td>
+          <td><code>${escH(r.home_sup)}</code></td>
+          <td class="admin-muted">${escH(_empMoveScopeText(r.home_division, r.home_region, r.home_unit))}</td>
+          <td>
+            <select class="field-input field-input--sm" id="empMoveTo_${escH(r.emp_id)}">${opts(r.to_sup)}</select>
+            ${moved ? `<div class="admin-muted" style="margin-top:4px;">→ ${escH(_empMoveScopeText(r.to_division, r.to_region, r.to_unit))}</div>` : ""}
+          </td>
+          <td><input type="text" class="field-input field-input--sm" id="empMoveNote_${escH(r.emp_id)}"
+                     value="${escH(r.note || "")}" placeholder="เช่น ขายชายแดน" /></td>
+          <td><button type="button" class="admin-btn-primary admin-btn-primary--sm"
+                      onclick="saveEmpMove('${escH(r.emp_id)}')">บันทึก</button></td>
+        </tr>`;
+      })
+      .join("") +
+    `</tbody></table></div>` +
+    (rows.length > MAX
+      ? `<div class="admin-muted" style="margin-top:8px;">แสดง ${MAX} จาก ${rows.length} คน — พิมพ์ค้นหาเพื่อแคบลง</div>`
+      : "");
+}
+
+async function saveEmpMove(empId) {
+  const emp = String(empId || "").trim();
+  const row = (_empMoveData?.employees || []).find((r) => r.emp_id === emp);
+  const toSup = document.getElementById(`empMoveTo_${emp}`)?.value || "";
+  const note = document.getElementById(`empMoveNote_${emp}`)?.value || "";
+  if (row && toSup && toSup === row.home_sup) {
+    toast("ทีมปลายทางเป็นทีมเดิมอยู่แล้ว", "amber");
+    return;
+  }
+  try {
+    const res = await fetchWithTimeout(
+      `${API_BASE_URL}/admin/emp-assignments`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          emp_id: emp,
+          to_sup: toSup,
+          from_sup: row?.home_sup || "",
+          emp_name: row?.emp_name || "",
+          note,
+        }),
+      },
+      60000
+    );
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(_formatApiErrorDetail(j) || "บันทึกไม่สำเร็จ");
+    }
+    const j = await res.json();
+    toast(
+      toSup
+        ? `✅ ${emp} จะไปเกลี่ยเป้ากับทีม ${toSup} — ล้างแคชให้แล้ว ${j.payload_cache_cleared || 0} ไฟล์`
+        : `✅ ปลดการย้ายของ ${emp} แล้ว — กลับไปอยู่ทีมจริง`,
+      "green"
+    );
+    await loadEmpMoves();
+  } catch (e) {
+    toast("❌ " + _userFacingError(e, "บันทึกการย้ายไม่สำเร็จ"), "red");
+  }
+}
+
+/* ══════════════════════════════════════════════
    เป้าใน Target Sun เปลี่ยนหลังโหลดข้อมูล
 ══════════════════════════════════════════════ */
 /**
@@ -13409,6 +13534,9 @@ function _canManageLinks() {
    ส่วนแอดมินธรรมดาเข้าไม่ได้ — backend กันซ้ำอีกชั้นด้วย require_role_manager */
 const ADMIN_TABS_MARKETING = ["team", "skuLinks", "slLinks"];
 const ADMIN_TABS_ADMIN = ["users", "slLinks", "skuLinks", "allocations", "usageLogs", "team"];
+// แท็บ "ย้ายพนักงาน" ไม่อยู่ในสองชุดนี้โดยตั้งใจ — endpoint ใช้ require_admin_user
+// ซึ่งเป็น dev เท่านั้น (dev ได้ทุกแท็บอยู่แล้ว) · ถ้าโชว์ให้แอดมินจะกดแล้วเจอ 403
+// และการย้ายคนข้ามทีมกระทบยอดรวมของทั้งสองภาค ควรอยู่ในมือ dev จริง ๆ
 const ADMIN_TABS_HEAD_ADMIN = ["users", "roles", "slLinks", "skuLinks", "allocations", "usageLogs", "team"];
 
 function _adminAllowedTabs(teamOnly) {
@@ -13482,6 +13610,11 @@ const ADMIN_TAB_META = {
   usageLogs: { group: "ผลการดำเนินงาน", title: "บันทึกการใช้งาน", sub: "ใครส่ง Target Sun / ข้อผิดพลาด — เก็บถาวร ไม่มีการลบ" },
   allocations: { group: "ผลการดำเนินงาน", title: "ผลการกระจาย", sub: "snapshot บน server ต่อ SL × งวด" },
   team: { group: "ทีม", title: "ทีมพนักงาน", sub: "รายชื่อพนักงานใต้ Supervisor จาก Fabric / cache" },
+  empMoves: {
+    group: "ทีม",
+    title: "ย้ายพนักงาน",
+    sub: "กรณีพิเศษ เช่น ขายชายแดน — ให้ทีมอื่นเกลี่ยเป้าให้แทน โดยเขต/หน่วยของพนักงานยังเป็นของเดิม",
+  },
 };
 
 let _adminSkuLinkRows = [];
@@ -13532,6 +13665,7 @@ function adminSwitchTab(tab) {
   if (_adminActiveTab === "allocations") adminInitAllocationsPanel();
   if (_adminActiveTab === "slLinks") adminInitSlLinksPanel();
   if (_adminActiveTab === "skuLinks") adminInitSkuLinksPanel();
+  if (_adminActiveTab === "empMoves") loadEmpMoves();
 }
 
 function adminInitCachePanel() {
