@@ -779,6 +779,8 @@ let S = {
   droppedLocks: [],
   // วิธีคิดประวัติที่ถูกถอยไปใช้ตัวอื่น เพราะไฟล์ของวิธีที่เลือกไม่มี (เช่น "LY→3M")
   histFallbacks: [],
+  // ผลตรวจ "เป้าใน Target Sun เปลี่ยนหลังโหลดข้อมูล" — null = ยังไม่เคยตรวจรอบนี้
+  targetDrift: null,
   rebalanceResiduals: [],
   /** ส่งเข้า Target Sun ได้หรือไม่ (จาก GET /managers → can_import_targetsun) */
   canImportTargetSun: true,
@@ -1830,8 +1832,15 @@ async function _finalizeDashboardAfterLoad(gen) {
   _updateNegGrowthReasonState();
   _renderBrandStrategyPanel();
   syncAllocScopeUi();
+  syncAllocExtraButtons();
   _showSkuWarnings();
   _setUndoEnabled();
+  // เป้าใน Target Sun เปลี่ยนได้ตลอดระหว่างที่เปิดหน้าค้างไว้ — ตรวจให้ตอนเปิดหน้า
+  // (เงียบ ๆ ไม่มี toast) ส่วนตรวจซ้ำระหว่างวันให้ผู้ใช้กดปุ่มเอง เพราะแต่ละครั้ง
+  // ต้องอ่าน Target Sun ทีละทีม ภาคหนึ่งมีได้ถึงสิบกว่าทีม
+  S.targetDrift = null;
+  syncTargetDriftNotice();
+  checkTargetSunDrift({ silent: true }).catch((e) => console.warn("drift check:", e));
   updateDashboardSupBadge();
   _updateDashboardRefreshBtn();
   if (document.getElementById("allocationSummaryBody")?.style.display !== "none") {
@@ -2212,7 +2221,7 @@ async function onManagerViewRegionChange() {
   await refreshManagerDashboardData();
 }
 
-async function refreshManagerDashboardData() {
+async function refreshManagerDashboardData(opts = {}) {
   const supRegion = _supervisorRegionPeersView();
   if (S.loginRole === "manager") {
     if (!S.managerCode) return;
@@ -2239,14 +2248,16 @@ async function refreshManagerDashboardData() {
     if (S.managerViewMode === "individual") {
       S.supId = _resolveIndividualSupId();
       _populateSupervisorSwitchSelect();
-      ok = await loadData(S.supId, S.targetMonth, S.targetYear);
+      ok = await loadData(S.supId, S.targetMonth, S.targetYear, !!opts.refresh);
     } else if (S.loginRole === "supervisor" && supRegion) {
-      ok = await loadSupervisorRegionAggregate();
+      ok = await loadSupervisorRegionAggregate({ refresh: !!opts.refresh });
     } else if (S.managerViewMode === "region" && S.managerViewOptions?.scope_kind === "division" && !S.managerViewRegion) {
       toast("กรุณาเลือกภาค", "amber");
       return;
     } else {
-      ok = await loadAggregateData(S.managerViewMode, S.managerViewRegion);
+      ok = await loadAggregateData(S.managerViewMode, S.managerViewRegion, {
+        refresh: !!opts.refresh,
+      });
     }
     if (_isDashboardLoadStale(gen)) return;
     if (!ok) {
@@ -4285,7 +4296,7 @@ function applyDataPayload(data) {
   return true;
 }
 
-async function loadSupervisorRegionAggregate() {
+async function loadSupervisorRegionAggregate(opts = {}) {
   const home = String(
     (S.homeSupervisorCodes && S.homeSupervisorCodes[0]) || S.supId || ""
   ).trim().toUpperCase();
@@ -4293,7 +4304,8 @@ async function loadSupervisorRegionAggregate() {
   try {
     const url =
       `${API_BASE_URL}/data/employees/region-peers?sup_id=${encodeURIComponent(home)}` +
-      `&target_month=${S.targetMonth}&target_year=${S.targetYear}`;
+      `&target_month=${S.targetMonth}&target_year=${S.targetYear}` +
+      (opts.refresh ? "&refresh=1" : "");
     const res = await fetchWithTimeout(url, {}, 300000);
     if (!res.ok) {
       let detail = "โหลดข้อมูลรวมภาคไม่สำเร็จ";
@@ -4314,7 +4326,7 @@ async function loadSupervisorRegionAggregate() {
   }
 }
 
-async function loadAggregateData(viewMode, regionKey) {
+async function loadAggregateData(viewMode, regionKey, opts = {}) {
   const mgr = String(S.managerCode || "").trim().toUpperCase();
   if (!mgr) return false;
   const view = viewMode === "all" ? "all" : "region";
@@ -4326,7 +4338,8 @@ async function loadAggregateData(viewMode, regionKey) {
       `${API_BASE_URL}/data/employees/aggregate?manager_code=${encodeURIComponent(mgr)}` +
       `&view=${encodeURIComponent(view)}&region=${encodeURIComponent(region)}` +
       `&team=${encodeURIComponent(team)}` +
-      `&target_month=${S.targetMonth}&target_year=${S.targetYear}`;
+      `&target_month=${S.targetMonth}&target_year=${S.targetYear}` +
+      (opts.refresh ? "&refresh=1" : "");
     const res = await fetchWithTimeout(url, {}, 300000);
     if (!res.ok) {
       let detail = "โหลดข้อมูลรวมไม่สำเร็จ";
@@ -11910,11 +11923,283 @@ async function runReAllocationKeepEdits() {
  * ผลกลับเข้าตารางเดิม จากนั้นเน้นคอลัมน์ที่เพิ่งกระจาย (S.recentReallocSkus)
  * และตอนส่ง Target Sun จะมีตัวเลือก "ส่งเฉพาะผลกระจายใหม่"
  */
+/* ══════════════════════════════════════════════
+   เป้าใน Target Sun เปลี่ยนหลังโหลดข้อมูล
+══════════════════════════════════════════════ */
+/**
+ * ทีมที่อยู่ในขอบเขตของหน้านี้ — ใช้ทั้งตรวจเป้าเปลี่ยนและเลือกสินค้า
+ * ทีมเดียวก็คืนรหัสตัวเอง (ตัวตรวจใช้ได้ทั้งสองหน้า)
+ */
+function _driftScopeSupIds() {
+  const ids = S.aggregateMode ? _allocScopeSupOrder() : [];
+  if (ids.length) return ids;
+  const own = String(S.supId || "").trim().toUpperCase();
+  return own ? [own] : [];
+}
+
+/** แปลงผลตรวจเป็นรูปแบบเดียวกับการ์ด "เป้าเปลี่ยน" ที่มีอยู่ จะได้ใช้ซ้ำได้ทั้งใบ */
+function _driftChanges(rows) {
+  return (rows || []).map((r) => {
+    const was = Number(r.loaded_boxes) || 0;
+    const now = Number(r.current_boxes) || 0;
+    const diff = now - was;
+    const kind = was === 0 ? "new_sku" : now === 0 ? "sku_removed" : "box_change";
+    const info = (S.skus || []).find((x) => String(x.sku).trim() === String(r.sku).trim()) || {};
+    const name = _skuDisplayName(info);
+    return {
+      kind,
+      sku: String(r.sku || ""),
+      html:
+        `<code>${escH(String(r.sku || ""))}</code>` +
+        (name ? ` ${escH(name)}` : "") +
+        ` <span class="tchange-brand">· ${escH(String(r.sup_id || ""))}</span>` +
+        ` — เป้าหีบ ${was.toLocaleString("th-TH")} → <strong>${now.toLocaleString("th-TH")}</strong>` +
+        ` <strong class="${diff > 0 ? "rx-up" : "rx-down"}">(${diff > 0 ? "+" : ""}${diff.toLocaleString("th-TH")})</strong>`,
+    };
+  });
+}
+
+/**
+ * ตรวจว่าเป้าใน Target Sun เปลี่ยนไปจากตอนโหลดขั้นที่ 1 หรือยัง
+ *
+ * เรียกตอนเปิดหน้ารวมภาค (เงียบ ๆ) และตอนผู้ใช้กดปุ่มเอง — ไม่ยิงเป็นรอบอัตโนมัติ
+ * เพราะแต่ละครั้งต้องอ่าน Target Sun ทีละทีม (ภาคหนึ่งมีได้ถึงสิบกว่าทีม)
+ *
+ * คนที่เกลี่ยเป้าทั้งภาคเปิดหน้าค้างไว้ทีละหลายชั่วโมง ของเดิมจะรู้ว่าเป้าเปลี่ยน
+ * ก็ตอนกดส่งแล้วโดน 409 ซึ่งตอนนั้นเกลี่ยหีบข้ามซุปไปหมดแล้ว
+ */
+async function checkTargetSunDrift(opts = {}) {
+  const silent = !!opts.silent;
+  const ids = _driftScopeSupIds();
+  if (!ids.length) return null;
+  const btn = document.getElementById("targetDriftBtn");
+  if (btn && !silent) { btn.disabled = true; btn.textContent = "กำลังตรวจ…"; }
+  try {
+    const res = await fetchWithTimeout(
+      `${API_BASE_URL}/data/targets/drift?sup_ids=${encodeURIComponent(ids.join(","))}` +
+        `&target_month=${S.targetMonth}&target_year=${S.targetYear}`,
+      {},
+      60000
+    );
+    if (!res.ok) throw new Error(_userFacingError(null, "ตรวจเป้าล่าสุดไม่สำเร็จ"));
+    const j = await res.json();
+    S.targetDrift = j;
+    syncTargetDriftNotice();
+    if (!silent) {
+      const n = Number(j.drift_count) || 0;
+      if (n > 0) {
+        toast(`⚠️ เป้าใน Target Sun เปลี่ยนไป ${n.toLocaleString("th-TH")} รายการ`, "amber");
+      } else if ((j.unavailable || []).length) {
+        toast(`ตรวจได้ ${(j.checked_sup_ids || []).length} ทีม · อีก ${(j.unavailable || []).length} ทีมตรวจไม่ได้`, "amber");
+      } else {
+        toast("✅ เป้ายังตรงกับตอนโหลดข้อมูล", "green");
+      }
+    }
+    return j;
+  } catch (e) {
+    console.warn("checkTargetSunDrift:", e);
+    if (!silent) toast("❌ " + _userFacingError(e, "ตรวจเป้าล่าสุดไม่สำเร็จ"), "red");
+    return null;
+  } finally {
+    if (btn && !silent) { btn.disabled = false; btn.textContent = "ตรวจเป้าล่าสุด"; }
+  }
+}
+
+function syncTargetDriftNotice() {
+  const el = document.getElementById("targetDriftNotice");
+  if (!el) return;
+  const d = S.targetDrift;
+  const rows = d && Array.isArray(d.drifted) ? d.drifted : [];
+  if (!rows.length) {
+    el.style.display = "none";
+    el.innerHTML = "";
+    return;
+  }
+  const changes = _driftChanges(rows);
+  const perSup = Object.entries(d.by_sup || {})
+    .map(([sid, v]) => {
+      const n = Number(v.sku_count) || 0;
+      const b = Number(v.diff_boxes) || 0;
+      return `${escH(sid)} · ${n} SKU (${b > 0 ? "+" : ""}${b.toLocaleString("th-TH")} หีบ)`;
+    })
+    .join(" · ");
+  const skus = Array.isArray(d.changed_skus) ? d.changed_skus : [];
+  const canRun = !S.compositeAllocView && !_isAllocReadOnlyView();
+  const actions =
+    (canRun && skus.length
+      ? `<button type="button" class="btn-realloc btn-realloc--partial" onclick="runReAllocationForSkus(${_snapshotEsc(JSON.stringify(skus))})">` +
+        `⚡ กระจายใหม่เฉพาะ ${skus.length} สินค้าที่เป้าเปลี่ยน</button>`
+      : "") +
+    `<button type="button" class="btn-realloc btn-realloc--ghost" onclick="reloadDataThenReview()">🔄 โหลดข้อมูลใหม่ทั้งภาค</button>` +
+    `<button type="button" class="btn-banner-close" onclick="dismissTargetDriftNotice()">ไว้ก่อน</button>`;
+  const unavail = (d.unavailable || []).length
+    ? ` · ตรวจไม่ได้ ${(d.unavailable || []).length} ทีม`
+    : "";
+  el.innerHTML = _targetChangeCardHtml({
+    title: "เป้าใน Target Sun เปลี่ยนไปหลังจากคุณโหลดข้อมูล",
+    subtitle:
+      `${perSup}${unavail} — ตารางด้านล่างยังเป็นผลกระจายจากเป้าชุดเดิม ` +
+      "ถ้าจะยึดเป้าใหม่ ต้องกระจายหีบใหม่",
+    changes,
+    actionsHtml: actions,
+  });
+  el.style.display = "block";
+}
+
+/**
+ * โหลดข้อมูลใหม่เพราะเป้าเปลี่ยน — ต้องดึงของสดจริง (ข้ามแคช payload)
+ *
+ * ใช้ตัวสลับมุมมองตัวเดิมที่รู้อยู่แล้วว่าหน้านี้เป็นรวมภาคของซุป รวมของผู้จัดการ
+ * หรือทีมเดียว — แค่บอกให้ดึงสด · หลังโหลดเสร็จตรวจเป้าซ้ำให้เลย จะได้เห็นว่าตรงแล้ว
+ */
+async function reloadDataThenReview() {
+  const wasAggregate = !!S.aggregateMode;
+  try {
+    if (wasAggregate) {
+      await refreshManagerDashboardData({ refresh: true });
+    } else {
+      await refreshDashboardData(true);
+    }
+  } catch (e) {
+    console.warn("reloadDataThenReview:", e);
+    toast("❌ " + _userFacingError(e, "โหลดข้อมูลใหม่ไม่สำเร็จ"), "red");
+    return;
+  }
+  S.targetDrift = null;
+  syncTargetDriftNotice();
+  await checkTargetSunDrift({ silent: true });
+  toast("โหลดเป้าล่าสุดแล้ว — กระจายหีบใหม่ได้เลย", "green");
+}
+
+function dismissTargetDriftNotice() {
+  const el = document.getElementById("targetDriftNotice");
+  if (el) { el.style.display = "none"; el.innerHTML = ""; }
+  // ไม่ล้าง S.targetDrift ทิ้ง — ด่านตอนส่ง (409 send_target_stale) ยังต้องทำงานเหมือนเดิม
+  toast("ซ่อนแจ้งเตือนแล้ว — ตอนกดส่งระบบยังเตือนอีกครั้งถ้าเป้ายังไม่ตรง", "amber");
+}
+
+/* ══════════════════════════════════════════════
+   เลือกแบรนด์ / สินค้าที่จะกระจายเอง
+══════════════════════════════════════════════ */
+/** แบรนด์ทั้งหมดในตารางเป้า พร้อมจำนวน SKU */
+function _brandsFromSkus() {
+  const m = new Map();
+  for (const x of S.skus || []) {
+    const b = String(x.brand_name_thai || x.brand_name_english || "").trim() || "(ไม่ระบุแบรนด์)";
+    const cur = m.get(b) || { brand: b, skus: [] };
+    cur.skus.push(String(x.sku).trim());
+    m.set(b, cur);
+  }
+  return [...m.values()].sort((a, b) => a.brand.localeCompare(b.brand, "th"));
+}
+
+/**
+ * เลือกแบรนด์/สินค้าที่จะกระจายใหม่เอง
+ *
+ * ฝั่ง server รับ only_skus อิสระอยู่แล้ว (ไม่ได้ผูกกับ "เฉพาะที่เป้าเปลี่ยน")
+ * ที่ขาดคือทางให้ผู้ใช้เลือกเท่านั้น
+ */
+function openAllocPickModal() {
+  if (S.compositeAllocView || _isAllocReadOnlyView()) {
+    toast("มุมมองนี้แก้ผลกระจายไม่ได้", "amber");
+    return;
+  }
+  const brands = _brandsFromSkus();
+  if (!brands.length) {
+    toast("ยังไม่มีรายการสินค้าให้เลือก — โหลดข้อมูลขั้นที่ 1 ก่อน", "amber");
+    return;
+  }
+  const rows = brands
+    .map(
+      (b) => `
+      <label class="scope-opt" style="align-items:center;">
+        <input type="checkbox" name="allocPickBrand" value="${escH(b.brand)}" />
+        <span class="scope-opt__body">
+          <span class="scope-opt__title">${escH(b.brand)}</span>
+          <span class="scope-opt__desc">${b.skus.length.toLocaleString("th-TH")} สินค้า</span>
+        </span>
+      </label>`
+    )
+    .join("");
+  _showInfoModal({
+    title: "เลือกสินค้าที่จะกระจายใหม่",
+    bodyHtml:
+      `<p style="margin:0 0 10px;text-align:left;line-height:1.6;">ติ๊กแบรนด์ที่ต้องการ หรือพิมพ์รหัสสินค้าเองก็ได้ — <strong>สินค้าที่ไม่ได้เลือกจะไม่ถูกแตะ</strong></p>` +
+      `<div style="max-height:260px;overflow:auto;text-align:left;">${rows}</div>` +
+      `<label style="display:block;text-align:left;margin-top:12px;">รหัสสินค้า (คั่นด้วยเว้นวรรคหรือจุลภาค)` +
+      `<input type="text" id="allocPickSkuInput" class="field-input" style="width:100%;margin-top:6px;" placeholder="เช่น 734046 111294" /></label>`,
+    primaryLabel: "กระจายเฉพาะที่เลือก",
+    onPrimary: () => {
+      const picked = new Set();
+      const byBrand = new Map(_brandsFromSkus().map((b) => [b.brand, b.skus]));
+      document
+        .querySelectorAll('#infoModal input[name="allocPickBrand"]:checked')
+        .forEach((el) => (byBrand.get(el.value) || []).forEach((sk) => picked.add(sk)));
+      const raw = (document.getElementById("allocPickSkuInput")?.value || "").trim();
+      if (raw) {
+        const known = new Set((S.skus || []).map((x) => String(x.sku).trim()));
+        const unknown = [];
+        raw.split(/[\s,]+/).forEach((t) => {
+          const sk = String(t).trim();
+          if (!sk) return;
+          if (known.has(sk)) picked.add(sk);
+          else unknown.push(sk);
+        });
+        if (unknown.length) {
+          toast(`ไม่พบสินค้าในตารางเป้า: ${unknown.slice(0, 5).join(", ")}`, "amber");
+        }
+      }
+      const list = [...picked];
+      if (!list.length) {
+        toast("ยังไม่ได้เลือกสินค้า", "amber");
+        return;
+      }
+      runReAllocationForSkus(list, {
+        doneTitle: "กระจายเฉพาะสินค้าที่เลือกสำเร็จ",
+        restoreLabel: `⚡ กระจายเฉพาะสินค้าที่เลือก (${list.length} SKU)`,
+      });
+    },
+    secondaryLabel: "ยกเลิก",
+  });
+}
+
+/** ปุ่มสองตัวบนการ์ดคำนวณ — โชว์เมื่อมีรายการสินค้าแล้วและมุมมองนี้แก้ได้ */
+function syncAllocExtraButtons() {
+  const editable = !S.compositeAllocView && !_isAllocReadOnlyView();
+  const pick = document.getElementById("allocPickBtn");
+  if (pick) {
+    pick.style.display = editable && (S.skus || []).length ? "" : "none";
+  }
+  const drift = document.getElementById("targetDriftBtn");
+  if (drift) {
+    drift.style.display = (S.skus || []).length ? "" : "none";
+  }
+}
+
 async function runReAllocationOnlyChanged() {
-  if (S.compositeAllocView || _isAllocReadOnlyView()) return;
   const changed = _snapshotChangedSkuList();
   if (!changed.length) {
     toast("ไม่พบสินค้าที่เป้าเพิ่งเปลี่ยน — ใช้「กระจายใหม่ทั้งหมด」แทนได้", "amber");
+    return;
+  }
+  await runReAllocationForSkus(changed, {
+    doneTitle: "กระจายเฉพาะสินค้าที่เป้าเปลี่ยนสำเร็จ",
+    restoreLabel: `⚡ กระจายเฉพาะสินค้าที่เป้าเพิ่ม/เปลี่ยน (${changed.length} SKU)`,
+  });
+}
+
+/**
+ * กระจายใหม่เฉพาะ SKU ที่ระบุ — สินค้าอื่นในตารางไม่ถูกแตะ
+ *
+ * ใช้ร่วมกันสองทาง: "เฉพาะสินค้าที่เป้าเปลี่ยน" (รายการมาจาก snapshot/Target Sun)
+ * และ "เลือกแบรนด์/สินค้าเอง" (รายการมาจากที่ผู้ใช้ติ๊ก) — ตรรกะ merge ผลกลับเข้า
+ * ตารางเป็นเรื่องเดียวกัน จึงต้องอยู่ที่เดียว ไม่งั้นแก้ที่หนึ่งลืมอีกที่
+ */
+async function runReAllocationForSkus(skus, opts = {}) {
+  if (S.compositeAllocView || _isAllocReadOnlyView()) return;
+  const changed = [...new Set((skus || []).map((x) => String(x).trim()).filter(Boolean))];
+  if (!changed.length) {
+    toast("ยังไม่ได้เลือกสินค้าที่จะกระจาย", "amber");
     return;
   }
   const btn = document.querySelector(".btn-realloc--partial");
@@ -11931,7 +12216,8 @@ async function runReAllocationOnlyChanged() {
   if (!part || !part.length) {
     if (btn && document.body.contains(btn)) {
       btn.disabled = false;
-      btn.textContent = `⚡ กระจายเฉพาะสินค้าที่เป้าเพิ่ม/เปลี่ยน (${changed.length} SKU)`;
+      btn.textContent =
+        opts.restoreLabel || `⚡ กระจายเฉพาะสินค้าที่เลือก (${changed.length} SKU)`;
     }
     return;
   }
@@ -11946,7 +12232,7 @@ async function runReAllocationOnlyChanged() {
   S.recentReallocSkus = [...changedSet];
 
   qs("#runEmoji").textContent = "✅";
-  qs("#runTitle").textContent = "กระจายเฉพาะสินค้าที่เป้าเปลี่ยนสำเร็จ";
+  qs("#runTitle").textContent = opts.doneTitle || "กระจายเฉพาะสินค้าที่เลือกสำเร็จ";
   qs("#runSub").textContent = `กระจายใหม่ ${changedSet.size} SKU — สินค้าอื่นในตารางไม่ถูกแตะ`;
   qs("#runBtn").textContent = "คำนวณใหม่";
   qs("#runBtn").disabled = false;

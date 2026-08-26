@@ -4,6 +4,7 @@ import os
 import time
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import msal
@@ -1086,6 +1087,73 @@ def team_emp_codes_from_grain(sup_id: str, month: int, year: int) -> list[str]:
     if dg.empty or "emp_id" not in dg.columns:
         return []
     return sorted({str(e).strip() for e in dg["emp_id"] if str(e).strip()})
+
+
+def target_drift_for_sups(
+    sup_ids: list[str], month: int, year: int
+) -> dict[str, Any]:
+    """
+    เป้าใน Target Sun เปลี่ยนไปจากตอนโหลดขั้นที่ 1 หรือยัง — ของหลายทีมพร้อมกัน
+
+    ทำไมต้องมี: คนที่เกลี่ยเป้าทั้งภาคเปิดหน้าค้างไว้ทีละหลายชั่วโมง ระหว่างนั้น
+    ฝั่ง Target Sun อัปเดตเป้าได้ตลอด · ของเดิมรู้ได้สองทางและสายเกินไปทั้งคู่ —
+    ตอนกด "คำนวณ" (เทียบ snapshot ในเบราว์เซอร์) กับตอนกด "ส่ง" (409) ซึ่งกว่าจะรู้
+    ก็เกลี่ยหีบข้ามซุปไปหมดแล้ว
+
+    อ่านอย่างเดียว ไม่เขียนอะไรกลับ และไม่โยน exception — ทีมไหนอ่านไม่ได้ก็บอกว่า
+    ตรวจไม่ได้ ไม่ใช่ทำให้ทั้งหน้าพัง
+    """
+    ids: list[str] = []
+    for raw in sup_ids or []:
+        sid = str(raw or "").strip().upper()
+        if sid and sid not in ids:
+            ids.append(sid)
+
+    drifted: list[dict[str, Any]] = []
+    unavailable: list[dict[str, str]] = []
+    checked: list[str] = []
+    for sid in ids:
+        snapshot = _sup_target_boxes_by_sku(sid, month, year)
+        if not snapshot:
+            unavailable.append({"sup_id": sid, "reason": "ยังไม่มีไฟล์เป้าของทีมนี้"})
+            continue
+        try:
+            codes = team_emp_codes_from_grain(sid, month, year)
+            live = _live_target_boxes_by_sku(sid, month, year, codes)
+        except Exception as e:                      # อ่านไม่ได้ต้องไม่ทำให้ทั้งหน้าพัง
+            logger.warning("ตรวจเป้าเปลี่ยนของ %s ไม่ได้: %s", sid, e)
+            live = None
+        if live is None:
+            unavailable.append({"sup_id": sid, "reason": "อ่านเป้าจาก Target Sun ไม่ได้"})
+            continue
+        checked.append(sid)
+        for sku in sorted(set(snapshot) | set(live)):
+            was = int(snapshot.get(sku, 0))
+            now = int(live.get(sku, 0))
+            if was != now:
+                drifted.append({
+                    "sup_id": sid,
+                    "sku": sku,
+                    "loaded_boxes": was,
+                    "current_boxes": now,
+                    "diff": now - was,
+                })
+
+    by_sup: dict[str, dict[str, int]] = {}
+    for d in drifted:
+        cur = by_sup.setdefault(d["sup_id"], {"sku_count": 0, "diff_boxes": 0})
+        cur["sku_count"] += 1
+        cur["diff_boxes"] += int(d["diff"])
+
+    return {
+        "checked_sup_ids": checked,
+        "unavailable": unavailable,
+        "drifted": drifted[:200],
+        "drift_count": len(drifted),
+        "drift_boxes": sum(int(d["diff"]) for d in drifted),
+        "by_sup": by_sup,
+        "changed_skus": sorted({str(d["sku"]) for d in drifted}),
+    }
 
 
 def assert_target_snapshot_is_fresh(

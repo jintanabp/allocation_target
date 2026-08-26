@@ -757,9 +757,15 @@
               <div class="run-sub" id="runSub">ตรวจสอบยอดรวมเป้าเงินก่อนกดเริ่มคำนวณ</div>
             </div>
           </div>
-          <button class="btn-run" id="runBtn" onclick="runOptimization()" disabled>
-            เริ่มคำนวณ
-          </button>
+          <div class="run-actions">
+            <button type="button" class="alloc-scope__change" id="allocPickBtn"
+                    onclick="openAllocPickModal()" style="display:none;">เลือกสินค้าที่จะกระจาย</button>
+            <button type="button" class="alloc-scope__change" id="targetDriftBtn"
+                    onclick="checkTargetSunDrift()" style="display:none;">ตรวจเป้าล่าสุด</button>
+            <button class="btn-run" id="runBtn" onclick="runOptimization()" disabled>
+              เริ่มคำนวณ
+            </button>
+          </div>
         </div>
 
         <div class="prog-list" id="progList" style="display:none">
@@ -842,6 +848,9 @@
           <div id="step3TieredNote" class="tiered-result-note" style="display:none;margin-bottom:12px;" aria-live="polite"></div>
 
           <div id="step3RevenueScaleNote" class="revenue-scale-note-wrap" style="display:none;margin-bottom:12px;" aria-live="polite"></div>
+          <!-- เป้าใน Target Sun เปลี่ยนหลังโหลดข้อมูล — ตรวจตอนเปิดหน้ารวมภาคและตอนกดปุ่มเอง
+               แยก container จาก fabricChangeStep3Notice เพื่อให้ทั้งสองใบอยู่พร้อมกันได้ -->
+          <div id="targetDriftNotice" style="display:none;margin-bottom:12px;" aria-live="polite"></div>
           <div id="step3ReviewNotes" class="step3-review-notes" style="display:none;margin-bottom:12px;" aria-live="polite"></div>
 
           <!-- brand summary bar (แสดงเมื่อ filter) -->

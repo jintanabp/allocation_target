@@ -161,6 +161,31 @@ def get_employees_aggregate(
     )
 
 
+@router.get("/data/targets/drift")
+def get_target_drift(
+    user: dict = Depends(require_authenticated_user),
+    sup_ids: str = Query(..., description="รหัสทีม คั่นด้วยจุลภาค"),
+    target_month: int = Query(..., ge=1, le=12),
+    target_year: int = Query(..., ge=2020, le=2100),
+):
+    """
+    เป้าใน Target Sun เปลี่ยนไปจากตอนโหลดขั้นที่ 1 หรือยัง (อ่านอย่างเดียว)
+
+    หน้ารวมภาคเรียกตอนเปิดหน้าและตอนผู้ใช้กดปุ่มตรวจเอง — ไม่ยิงเป็นรอบอัตโนมัติ
+    เพราะแต่ละครั้งต้องอ่าน Target Sun ทีละทีม (ภาคหนึ่งมีได้ถึงสิบกว่าทีม)
+    """
+    from ..services.lakehouse import target_drift_for_sups
+
+    ids = [x.strip().upper() for x in (sup_ids or "").split(",") if x.strip()]
+    if not ids:
+        raise HTTPException(status_code=400, detail="ต้องระบุรหัสทีมอย่างน้อยหนึ่งรหัส")
+    if len(ids) > 40:
+        raise HTTPException(status_code=400, detail="ระบุรหัสทีมได้ไม่เกิน 40 รหัสต่อครั้ง")
+    for sid in ids:
+        ensure_supervisor_allowed(user, sid)
+    return target_drift_for_sups(ids, target_month, target_year)
+
+
 @router.get("/data/employees/region-peers")
 def get_employees_region_peers(
     user: dict = Depends(require_authenticated_user),
