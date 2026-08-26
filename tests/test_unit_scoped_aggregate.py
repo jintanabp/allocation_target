@@ -243,5 +243,51 @@ class TestUnitPickerIsWiredEndToEnd(unittest.TestCase):
                 self.assertIn(value, html)
 
 
+class TestServerAllocationPanelFollowsTheUnit(unittest.TestCase):
+    """
+    "ผลกระจายหีบล่าสุด (server)" ต้องตามหน่วยขายที่เลือกดูอยู่
+
+    ของเดิมส่งรายชื่อทีมทั้งหมดไปเสมอ — เลือกดูเฉพาะเครดิต แต่ตารางสรุปยังขึ้น
+    ทีมรถเงินสดครบ · สองมุมมองที่ไม่ตรงกันบนหน้าจอเดียว แล้วไม่มีอะไรฟ้อง
+    เพราะตัวเลขแต่ละแถวถูกของมันเอง
+    """
+
+    def setUp(self):
+        with open(os.path.join(REPO, "frontend", "app.js"), encoding="utf-8") as fh:
+            self.app = fh.read()
+
+    def test_there_is_one_place_that_narrows_the_team_list(self):
+        self.assertIn("function _scopedSupervisorChoices()", self.app)
+
+    def test_every_path_to_the_summary_uses_it(self):
+        """
+        สามทางดึงสรุปเหมือนกันและใช้แคชก้อนเดียวกัน — แก้ทางเดียวไม่พอ
+        ตัว prefetch เบื้องหลังจะเติมแคชด้วยรายชื่อทั้งหมดก่อน แล้วตารางอ่านก้อนนั้น
+        """
+        hits, at = [], 0
+        while True:
+            i = self.app.find("/data/allocations/summary", at)
+            if i < 0:
+                break
+            hits.append(self.app[i - 600: i])
+            at = i + 1
+        self.assertEqual(len(hits), 3, "จำนวนทางเรียกเปลี่ยน — ต้องไล่กรองให้ครบใหม่")
+        for k, before in enumerate(hits):
+            self.assertIn("_scopedSupervisorChoices()", before, f"ทางที่ {k + 1} ยังไม่กรอง")
+
+    def test_the_cache_key_separates_the_units(self):
+        """ไม่งั้นสลับหน่วยแล้วได้ตารางเดิมจากแคช"""
+        i = self.app.index("function _allocSummaryCacheKey()")
+        block = self.app[i: i + 600]
+        self.assertIn("_scopedSupervisorChoices()", block)
+        self.assertIn("S.managerViewUnit", block)
+
+    def test_teams_without_a_unit_are_never_hidden(self):
+        """กติกาเดียวกับฝั่ง server — ข้อมูลไม่ครบต้องไม่ทำให้ทีมหายเงียบ ๆ"""
+        i = self.app.index("function _scopedSupervisorChoices()")
+        block = self.app[i: i + 900]
+        self.assertIn("return !u || u === want;", block)
+
+
 if __name__ == "__main__":
     unittest.main()

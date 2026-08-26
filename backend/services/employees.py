@@ -501,13 +501,16 @@ def load_employees_payload(
     #
     # อยู่หลังตัวถอยแคชโดยตั้งใจ: แคชเก็บ "รายชื่อดิบตามโครงสร้างจริง" ไว้เสมอ
     # การย้ายจึงมีผลทันทีที่แอดมินกดบันทึก ไม่ต้องรอล้างแคชรายชื่อ
-    emp_moves = {"removed": 0, "added": 0}
+    emp_moves = {"removed": 0, "added": 0, "flagged": 0}
+    df_emp_raw = df_emp_fabric.copy()          # ไว้เขียนแคช — ก่อนย้าย
     try:
         _rows_before = df_emp_fabric.to_dict(orient="records")
         _rows_after, emp_moves = emp_assignment_store.apply_to_employee_list(
             sup_id, _rows_before
         )
-        if emp_moves["removed"] or emp_moves["added"]:
+        # flagged ด้วย: จำนวนคนเท่าเดิมแต่แถวถูกติดธง "ย้ายมา" — ถ้าไม่เอารายชื่อ
+        # ใหม่ไปใช้ ธงจะหายตั้งแต่บรรทัดนี้ แล้วไม่มีจอไหนขึ้นป้ายเลย
+        if emp_moves["removed"] or emp_moves["added"] or emp_moves.get("flagged"):
             df_emp_fabric = pd.DataFrame(_rows_after)
             logger.info(
                 "ย้ายพนักงานตามที่ตั้งไว้ (%s): ออก %d คน เข้า %d คน",
@@ -515,7 +518,7 @@ def load_employees_payload(
             )
     except Exception as e:                  # การย้ายพังต้องไม่ทำให้เปิดงวดไม่ได้
         logger.warning("ใช้รายการย้ายพนักงานไม่ได้ (%s): %s", sup_id, e)
-        emp_moves = {"removed": 0, "added": 0}
+        emp_moves = {"removed": 0, "added": 0, "flagged": 0}
 
     if df_emp_fabric.empty:
         raise HTTPException(404, detail=f"ไม่พบพนักงานใต้ SuperCode '{sup_id}'")
@@ -534,7 +537,18 @@ def load_employees_payload(
         )
 
     emp_list = df_emp_fabric["emp_id"].tolist()
-    df_emp_fabric.to_csv(emp_cache_path(sup_id, target_month, target_year), index=False)
+    # แคชเก็บ "รายชื่อดิบตามโครงสร้างจริง" ไม่ใช่รายชื่อหลังย้าย — ตามที่สัญญาไว้
+    # ตอนย้ายด้านบน · ถ้าเขียนรายชื่อหลังย้ายลงไป จะเกิดสามอย่างพร้อมกัน:
+    # ปลดการย้ายแล้วคนนั้นค้างอยู่ทีมปลายทางตลอดไป (เป้าถูกนับสองรอบ),
+    # ป้าย "ย้ายมา" หายเพราะรอบหน้าตัวย้ายเห็นว่าอยู่ในลิสต์อยู่แล้ว,
+    # และรหัสที่ไม่เคยมีลูกทีมกลายเป็น "ทีม" ในสายตาตัวจัดขอบเขต
+    try:
+        _raw_to_cache, _ = drop_van_employees(df_emp_raw)
+        _raw_to_cache.to_csv(
+            emp_cache_path(sup_id, target_month, target_year), index=False
+        )
+    except Exception as e:                     # เขียนแคชพังต้องไม่ทำให้เปิดงวดไม่ได้
+        logger.warning("เขียนแคชรายชื่อของ %s ไม่สำเร็จ: %s", sup_id, e)
     logger.info("Employees: %d คน %s", len(emp_list), emp_list)
 
     # ── Step 2: เป้าหมาย — ค่าเริ่มต้นจาก Fabric (tga_target_salesman_next) ─────

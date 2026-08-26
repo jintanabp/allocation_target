@@ -172,17 +172,30 @@ def apply_to_employee_list(sup_id: str, rows: list[dict[str, Any]]) -> tuple[lis
     """
     ปรับรายชื่อพนักงานของทีมหนึ่งตามการย้ายที่ตั้งไว้
 
-    คืน (รายชื่อใหม่, สรุปว่าเอาออกกี่คน เพิ่มกี่คน) — ผู้เรียกเอาไปบอกผู้ใช้บนจอ
+    คืน (รายชื่อใหม่, สรุปว่าเอาออกกี่คน เพิ่มกี่คน ติดธงให้กี่คน)
+    ผู้เรียกเอา removed/added ไปบอกผู้ใช้บนจอ ส่วน flagged บอกว่า "แถวเปลี่ยนแล้ว"
+    ทั้งที่จำนวนคนเท่าเดิม — ต้องเอารายชื่อใหม่ไปใช้ ไม่ใช่ของเดิม
     """
     sid = norm_sup(sup_id)
     away = moved_away_from(sid)
     kept = [r for r in rows if norm_emp(r.get("emp_id")) not in away]
     removed = len(rows) - len(kept)
+    flagged = 0
 
-    have = {norm_emp(r.get("emp_id")) for r in kept}
+    by_id = {norm_emp(r.get("emp_id")): r for r in kept}
+    have = set(by_id)
     added = 0
     for a in moved_into(sid):
         if a["emp_id"] in have:
+            # อยู่ในลิสต์อยู่แล้ว — ยังต้องติดธงให้ ไม่ใช่ข้ามเงียบ ๆ
+            #
+            # เกิดได้สองทาง: แคชรายชื่อเก่าที่เคยถูกเขียนทับด้วยรายชื่อหลังย้าย
+            # และกรณีที่ต้นทางรายงานคนนี้ไว้ใต้ทีมปลายทางอยู่ก่อนแล้ว
+            # ถ้าข้ามไป ป้าย "ย้ายมา" จะไม่ขึ้นสักจอ ทั้งที่เป้าถูกเกลี่ยรวมไปแล้ว
+            cur = by_id.get(a["emp_id"])
+            if cur is not None and not str(cur.get("reassigned_from") or "").strip():
+                cur["reassigned_from"] = a.get("from_sup") or ""
+                flagged += 1
             continue
         row = {
             "emp_id": a["emp_id"],
@@ -195,6 +208,7 @@ def apply_to_employee_list(sup_id: str, rows: list[dict[str, Any]]) -> tuple[lis
         if a.get("emp_name"):
             row["emp_name"] = a["emp_name"]
         kept.append(row)
+        by_id[a["emp_id"]] = row
         have.add(a["emp_id"])
         added += 1
-    return kept, {"removed": removed, "added": added}
+    return kept, {"removed": removed, "added": added, "flagged": flagged}

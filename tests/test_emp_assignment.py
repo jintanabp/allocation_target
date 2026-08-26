@@ -56,7 +56,7 @@ class TestStoreBasics(_TempStore):
         self.assertEqual(store.read_rows(), [])
         rows, moves = store.apply_to_employee_list(VAN_SUP, self._team("S1", "S2"))
         self.assertEqual(len(rows), 2)
-        self.assertEqual(moves, {"removed": 0, "added": 0})
+        self.assertEqual(moves, {"removed": 0, "added": 0, "flagged": 0})
 
     def test_set_and_read_back(self):
         store.set_assignment(BORDER_EMP, CREDIT_SUP, from_sup=VAN_SUP,
@@ -161,7 +161,7 @@ class TestApplyToTeamList(_TempStore):
         before = self._team("S1", "S2", "S3")
         rows, moves = store.apply_to_employee_list("SL999", before)
         self.assertEqual([r["emp_id"] for r in rows], ["S1", "S2", "S3"])
-        self.assertEqual(moves, {"removed": 0, "added": 0})
+        self.assertEqual(moves, {"removed": 0, "added": 0, "flagged": 0})
 
 
 class TestMovedFlagReachesEveryStep(_TempStore):
@@ -355,6 +355,92 @@ class TestNewPeriodSendIsClean(unittest.TestCase):
         key = ["PRODUCTCODE", "SALESTYPE", "DIVISIONCODE", "SALESMANCODE",
                "AREACODE", "PROVINCECODE"]
         self.assertEqual(int(out.duplicated(subset=key).sum()), 0)
+
+
+class TestTheMovedFlagSurvivesEveryPath(_TempStore):
+    """
+    ป้าย "ย้ายมา" ต้องขึ้นทุกจอ — รวมตอนผู้จัดการดูก้อนรวมภาค
+
+    ของจริงที่เจอ (S516 → SL359): แคชรายชื่อของทีมปลายทางถูกเขียนทับด้วย
+    "รายชื่อหลังย้าย" ไปแล้ว รอบถัดมาตัวย้ายจึงเห็นว่าคนนี้อยู่ในลิสต์อยู่แล้ว
+    แล้วข้ามไปเงียบ ๆ · ธงไม่ถูกติด ป้ายไม่ขึ้นสักจอ ทั้งที่เป้าถูกเกลี่ยรวมไปแล้ว
+    ไม่มีอะไรฟ้อง เพราะยอดรวมยังถูก — บั๊กตระกูลเดียวกับที่ไล่แก้มาทั้งวัน
+    """
+
+    def setUp(self):
+        super().setUp()
+        store.set_assignment(BORDER_EMP, CREDIT_SUP, from_sup=VAN_SUP,
+                             emp_name="สมชาย ชายแดน", updated_by="admin")
+
+    def _dest(self, *emp_ids: str) -> list[dict]:
+        return [{"emp_id": e, "emp_name": f"ชื่อ {e}", "super_code": CREDIT_SUP}
+                for e in emp_ids]
+
+    def test_a_newly_added_row_carries_the_flag(self):
+        rows, _ = store.apply_to_employee_list(CREDIT_SUP, self._dest("S9"))
+        moved = next(r for r in rows if r["emp_id"] == BORDER_EMP)
+        self.assertEqual(moved["reassigned_from"], VAN_SUP)
+
+    def test_a_row_already_in_the_list_gets_flagged_too(self):
+        """เคสของจริง — คนนี้อยู่ในรายชื่อดิบอยู่แล้ว แต่ยังต้องมีป้าย"""
+        rows, moves = store.apply_to_employee_list(
+            CREDIT_SUP, self._dest("S9", BORDER_EMP)
+        )
+        moved = next(r for r in rows if r["emp_id"] == BORDER_EMP)
+        self.assertEqual(moved["reassigned_from"], VAN_SUP)
+        self.assertEqual(moves["added"], 0, "ห้ามซ้ำคน")
+        self.assertEqual(moves["flagged"], 1, "ต้องบอกผู้เรียกว่าแถวเปลี่ยนแล้ว")
+
+    def test_a_flag_already_there_is_left_alone(self):
+        rows, moves = store.apply_to_employee_list(
+            CREDIT_SUP,
+            [{"emp_id": BORDER_EMP, "super_code": CREDIT_SUP, "reassigned_from": "SL999"}],
+        )
+        self.assertEqual(rows[0]["reassigned_from"], "SL999")
+        self.assertEqual(moves["flagged"], 0)
+
+    def test_teams_not_involved_see_no_flags(self):
+        rows, moves = store.apply_to_employee_list(THIRD_SUP, self._dest("S8"))
+        self.assertEqual(moves, {"removed": 0, "added": 0, "flagged": 0})
+        self.assertFalse(any(r.get("reassigned_from") for r in rows))
+
+
+class TestTheRosterCacheKeepsTheRealStructure(unittest.TestCase):
+    """
+    แคชรายชื่อต้องเก็บ "โครงสร้างจริง" ไม่ใช่รายชื่อหลังย้าย
+
+    เขียนรายชื่อหลังย้ายลงแคชแล้วเสียสามอย่างพร้อมกัน:
+      1. ปลดการย้ายแล้วคนนั้นค้างอยู่ทีมปลายทางตลอดไป → เป้าถูกนับสองรอบ
+      2. ป้าย "ย้ายมา" หาย เพราะรอบหน้าตัวย้ายเห็นว่าอยู่ในลิสต์อยู่แล้ว
+      3. รหัสที่ไม่เคยมีลูกทีม กลายเป็น "ทีม" ในสายตาตัวจัดขอบเขตรวมภาค
+
+    หน้าที่นี้อยู่กลาง load_employees_payload ซึ่งต้องต่อ Fabric จึงรันในเทสไม่ได้
+    ตรวจจากโครงของโค้ดแทน — เหมือนที่ทำกับเส้นทางล็อกอินของผู้จัดการ
+    """
+
+    SRC = os.path.join(REPO, "backend", "services", "employees.py")
+
+    def setUp(self):
+        with open(self.SRC, encoding="utf-8") as fh:
+            self.src = fh.read()
+
+    def test_the_raw_roster_is_captured_before_the_move(self):
+        i = self.src.index("df_emp_raw = df_emp_fabric.copy()")
+        j = self.src.index("emp_assignment_store.apply_to_employee_list")
+        self.assertLess(i, j, "ต้องเก็บรายชื่อดิบไว้ก่อนย้าย")
+
+    def test_the_cache_is_written_from_the_raw_roster(self):
+        i = self.src.index("emp_cache_path(sup_id, target_month, target_year), index=False")
+        before = self.src[i - 400: i]
+        self.assertIn("df_emp_raw", before)
+        self.assertNotIn("df_emp_fabric.to_csv(", self.src)
+
+    def test_flags_alone_still_replace_the_working_roster(self):
+        """ธงอย่างเดียวก็ต้องเอารายชื่อใหม่ไปใช้ ไม่งั้นธงหายตั้งแต่บรรทัดนั้น"""
+        self.assertIn(
+            'if emp_moves["removed"] or emp_moves["added"] or emp_moves.get("flagged"):',
+            self.src,
+        )
 
 
 if __name__ == "__main__":

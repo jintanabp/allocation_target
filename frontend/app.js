@@ -1224,9 +1224,7 @@ async function loadRegionalCompositeAllocationView(gen = null) {
 async function _getAllocSummaryItems() {
   const cached = _readAllocSummaryCache();
   if (cached) return cached;
-  const team = (S.supervisorChoices || [])
-    .map((c) => String(c).trim().toUpperCase())
-    .filter(Boolean);
+  const team = _scopedSupervisorChoices();
   if (!team.length && !(S.aggregateSupIds || []).length) return [];
   const supIds = team.length ? team : [...(S.aggregateSupIds || [])];
   try {
@@ -1708,14 +1706,38 @@ function _isDashboardLoadStale(gen) {
 
 const _ALLOC_SUMMARY_CACHE_TTL_MS = 120000;
 
+/**
+ * รายชื่อทีมที่หน้าจอกำลังดูอยู่ — กรองตามหน่วยขายที่เลือกไว้
+ *
+ * ใช้กติกาเดียวกับฝั่ง server (manager_views.filter_codes_by_unit):
+ * ทีมที่ยังไม่ระบุหน่วยติดมาด้วยเสมอ ไม่ว่าเลือกหน่วยไหน — ข้อมูลไม่ครบต้องไม่ทำให้
+ * ทีมหายจากมุมมองเงียบ ๆ · ถ้าสองฝั่งกรองคนละแบบ ตัวเลขบนหน้าจอจะไม่ตรงกันเอง
+ */
+function _scopedSupervisorChoices() {
+  const all = (S.supervisorChoices || [])
+    .map((c) => String(c).trim().toUpperCase())
+    .filter(Boolean);
+  const want = String(S.managerViewUnit || "").trim().toLowerCase();
+  if (want !== "credit" && want !== "van") return all;
+  const meta = S.salesUnitBySup || {};
+  const norm = (u) => {
+    const v = String(u || "").trim().toLowerCase();
+    if (v === "credit" || v === "s") return "credit";
+    if (v === "van" || v === "c") return "van";
+    return "";
+  };
+  return all.filter((c) => {
+    const u = norm(meta[c]);
+    return !u || u === want;
+  });
+}
+
 function _allocSummaryCacheKey() {
   if (!S.targetMonth || !S.targetYear) return "";
-  const team = (S.supervisorChoices || [])
-    .map((c) => String(c).trim().toUpperCase())
-    .filter(Boolean)
-    .sort()
-    .join(",");
-  return `allocSummary_${S.targetYear}_${S.targetMonth}_${team}`;
+  // คีย์ต้องมีหน่วยที่เลือกด้วย ไม่งั้นสลับหน่วยแล้วได้ของเดิมจากแคช
+  const team = _scopedSupervisorChoices().sort().join(",");
+  const unit = String(S.managerViewUnit || "all");
+  return `allocSummary_${S.targetYear}_${S.targetMonth}_${unit}_${team}`;
 }
 
 function _readAllocSummaryCache() {
@@ -11097,9 +11119,7 @@ function _renderAllocationSummaryRows(items) {
 
 async function prefetchAllocationSummary() {
   if (!S.targetMonth || !S.targetYear) return;
-  const team = (S.supervisorChoices || [])
-    .map((c) => String(c).trim().toUpperCase())
-    .filter(Boolean);
+  const team = _scopedSupervisorChoices();
   if (team.length < 2 && !(S.peerSupervisorCodes || []).length) return;
   if (_readAllocSummaryCache()) return;
   try {
@@ -11180,10 +11200,7 @@ async function loadAllocationSummary(forceRefresh = false) {
       target_month: String(S.targetMonth),
       target_year: String(S.targetYear),
     });
-    const team = (S.supervisorChoices || [])
-      .map(c => String(c).trim().toUpperCase())
-      .filter(Boolean)
-      .join(",");
+    const team = _scopedSupervisorChoices().join(",");
     if (team) q.set("team", team);
     const res = await fetchWithTimeout(`${API_BASE_URL}/data/allocations/summary?${q}`, {}, 20000);
     if (!res.ok) {
