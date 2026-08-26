@@ -3473,7 +3473,23 @@ async function handleLogin() {
     S.targetMonth = tm;
     S.targetYear = ty;
 
-    const ok = await loadData(S.supId, S.targetMonth, S.targetYear);
+    // ผู้จัดการที่ตั้งมุมมองรวมไว้ ต้องโหลด "ก้อนรวม" ตั้งแต่แรก ไม่ใช่ทีมเดียว
+    //
+    // ของเดิมเรียก loadData(S.supId) เสมอ = โหลดรหัสของผู้จัดการเอง ซึ่งส่วนใหญ่
+    // ไม่มีพนักงานสังกัดตรงจึงไม่มีเป้า → คืน false → ล็อกอินหยุดตรงนี้ ไม่เข้า
+    // Dashboard เลย ทั้งที่ทีมซุปใต้สังกัดมีเป้าครบ (เจอจริงกับ SL372)
+    let ok;
+    if (S.loginRole === "manager" && S.managerViewMode !== "individual") {
+      ok = await loadAggregateData(S.managerViewMode, S.managerViewRegion);
+      if (!ok) {
+        // ก้อนรวมโหลดไม่ได้ (เช่นทุกทีมในภาคยังไม่มีเป้า) — ถอยไปทีมเดียวให้เห็น
+        // สาเหตุที่ชัดกว่า แทนที่จะค้างอยู่หน้าล็อกอินโดยไม่รู้ว่าเพราะอะไร
+        S.managerViewMode = "individual";
+        ok = await loadData(S.supId, S.targetMonth, S.targetYear);
+      }
+    } else {
+      ok = await loadData(S.supId, S.targetMonth, S.targetYear);
+    }
 
     if (!ok) {
       loginBtn.textContent = "เข้าสู่ระบบ Dashboard";
