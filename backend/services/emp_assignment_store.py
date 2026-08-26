@@ -184,7 +184,14 @@ def apply_to_employee_list(sup_id: str, rows: list[dict[str, Any]]) -> tuple[lis
     for a in moved_into(sid):
         if a["emp_id"] in have:
             continue
-        row = {"emp_id": a["emp_id"], "super_code": sid}
+        row = {
+            "emp_id": a["emp_id"],
+            "super_code": sid,
+            # ติดไว้กับตัวแถว เพื่อให้ทุกขั้นของการกระจายบอกได้ว่าคนนี้ถูกย้ายมา
+            # (เขต/หน่วยขายของเขายังเป็นของเดิม ตัวเลขบางอย่างจึงดูแปลกเมื่อเทียบ
+            #  กับเพื่อนร่วมทีม — ต้องรู้ตั้งแต่แรกว่าทำไม)
+            "reassigned_from": a.get("from_sup") or "",
+        }
         if a.get("emp_name"):
             row["emp_name"] = a["emp_name"]
         kept.append(row)

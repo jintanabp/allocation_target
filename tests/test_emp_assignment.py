@@ -164,6 +164,54 @@ class TestApplyToTeamList(_TempStore):
         self.assertEqual(moves, {"removed": 0, "added": 0})
 
 
+class TestMovedFlagReachesEveryStep(_TempStore):
+    """
+    พนักงานที่ถูกย้ายมาต้องมีป้ายบอกทุกขั้นของการกระจาย
+
+    เขต ดิวิชัน และหน่วยขายของเขายังเป็นของทีมเดิม ตัวเลขบางอย่างจึงดูแปลกเมื่อเทียบ
+    กับเพื่อนร่วมทีม (เช่นประวัติขายคนละเขต) — คนที่เกลี่ยเป้าต้องรู้ตั้งแต่แรกว่าทำไม
+    ไม่ใช่มานั่งสงสัยว่าข้อมูลผิดหรือเปล่า
+    """
+
+    def setUp(self):
+        super().setUp()
+        store.set_assignment(BORDER_EMP, CREDIT_SUP, from_sup=VAN_SUP, emp_name="ชายแดน")
+
+    def test_the_added_row_carries_where_it_came_from(self):
+        rows, _ = store.apply_to_employee_list(CREDIT_SUP, self._team("C001"))
+        moved = next(r for r in rows if r["emp_id"] == BORDER_EMP)
+        self.assertEqual(moved["reassigned_from"], VAN_SUP)
+
+    def test_teammates_are_not_marked(self):
+        rows, _ = store.apply_to_employee_list(CREDIT_SUP, self._team("C001"))
+        mate = next(r for r in rows if r["emp_id"] == "C001")
+        self.assertFalse(mate.get("reassigned_from"))
+
+    def test_the_flag_survives_the_warehouse_expansion(self):
+        """
+        แถวพนักงานผ่านตัวขยายตามคลังก่อนถึงหน้าจอ — ถ้าฟิลด์หายตรงนั้น
+        ป้ายจะไม่ขึ้นเลยโดยที่ไม่มีอะไรฟ้อง
+        """
+        from backend.services.wh_split import expand_employee_rows
+
+        rows, _ = store.apply_to_employee_list(CREDIT_SUP, self._team("C001"))
+        df = pd.DataFrame(rows)
+        clean = df.where(pd.notna(df), None).to_dict(orient="records")
+        out = expand_employee_rows(clean, None, {})
+        moved = next(r for r in out if r["emp_id"] == BORDER_EMP)
+        self.assertEqual(moved.get("reassigned_from"), VAN_SUP)
+
+    def test_the_screen_shows_it_in_all_three_steps(self):
+        """หน้าเว็บรันในเทสไม่ได้ — ตรวจว่าตัวสร้างป้ายถูกเรียกครบทั้งสามตาราง"""
+        with open(os.path.join(REPO, "frontend", "app.js"), encoding="utf-8") as fh:
+            app = fh.read()
+        self.assertIn("function _empMovedBadgeHtml", app)
+        self.assertGreaterEqual(
+            app.count("_empMovedBadgeHtml("), 5,
+            "ต้องถูกเรียกทั้งขั้นที่ 1 (รายชื่อ) ขั้นที่ 2 (เป้าเงิน) และขั้นที่ 3 (ผลกระจาย)",
+        )
+
+
 class TestSendDoesNotDoubleWrite(_TempStore):
     """
     แผนกระจายที่บันทึกไว้ "ก่อน" ย้าย ยังมีคนที่ย้ายไปแล้วอยู่

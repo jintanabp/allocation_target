@@ -102,7 +102,10 @@ def canonicalize_user_access_row(row: dict[str, Any]) -> dict[str, Any]:
     _unit_allowed = lk == "supervisor_acc" or (
         lk == "manager_acc" and ml_out == "regional"
     )
-    if _unit_allowed and unit_raw in ("van", "credit"):
+    # "all" = ตั้งใจให้ดูทั้งสองหน่วย · เว้นว่าง = ยังไม่ได้กรอก
+    # ผลกับการมองเห็นเหมือนกัน (เห็นทั้งคู่) แต่แยกกันได้ว่าอันไหนตั้งใจ
+    # อันที่ยังไม่ได้กรอกจะติดธง "ต้องตรวจสอบ" ในหน้าแอดมิน
+    if _unit_allowed and unit_raw in ("van", "credit", "all"):
         unit_out = unit_raw
     else:
         unit_out = NONE_SENTINEL

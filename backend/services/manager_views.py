@@ -237,6 +237,7 @@ def units_of_codes(codes: list[str]) -> dict[str, str]:
         if not c:
             continue
         unit = str((roster.get(c) or {}).get("acc_unit") or "").strip().lower()
+        # "all" ถือเหมือนไม่ระบุ — ติดไปกับทุกหน่วยที่เลือก และไม่นับเป็นหน่วยของตัวเอง
         out[c] = unit if unit in ("credit", "van") else ""
     return out
 

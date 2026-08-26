@@ -4260,6 +4260,58 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
   margin-top: 2px;
 }
 
+/* พนักงานที่ถูกย้ายมาจากทีมอื่น — ต้องเห็นทุกขั้นของการกระจาย
+   เพราะเขต/หน่วยขายของเขายังเป็นของทีมเดิม ตัวเลขจึงเทียบกับเพื่อนร่วมทีมตรง ๆ ไม่ได้ */
+.emp-moved-chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: nowrap;
+  background: var(--amber-bg);
+  color: var(--amber);
+  border: 1px solid var(--amber-brd);
+}
+
+.emp-moved-star {
+  margin-left: 3px;
+  font-weight: 700;
+  color: var(--amber);
+  cursor: help;
+}
+
+/* ── หน้าแอดมิน > ย้ายพนักงาน ──
+   ตารางนี้มี select + input อยู่ในเซลล์ ต่างจากตารางแอดมินอื่นที่มีแต่ข้อความ
+   ถ้าไม่กำหนดความกว้างขั้นต่ำ คอลัมน์จะบีบกันจนตัวควบคุมทับกัน */
+.admin-table--moves { min-width: 62rem; }
+.admin-table--moves th,
+.admin-table--moves td {
+  vertical-align: top;
+  padding: 10px 12px;
+}
+.admin-table--moves td .field-input { width: 100%; }
+.admin-table--moves col.c-emp { width: 15%; }
+.admin-table--moves col.c-home { width: 9%; }
+.admin-table--moves col.c-scope { width: 20%; }
+.admin-table--moves col.c-to { width: 26%; }
+.admin-table--moves col.c-note { width: 20%; }
+.admin-table--moves col.c-act { width: 10%; }
+.admin-table--moves .row-moved td { background: var(--amber-bg); }
+.admin-table--moves .moves-emp-name {
+  display: block;
+  font-size: 12px;
+  color: var(--text-3);
+  margin-top: 2px;
+}
+.admin-table--moves .moves-to-scope {
+  display: block;
+  font-size: 11px;
+  color: var(--text-3);
+  margin-top: 4px;
+}
+
 .brand-chip {
   display: inline-block;
   background: var(--bg-main);

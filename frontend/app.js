@@ -4166,6 +4166,23 @@ function _noTargetSpareBaht() {
   return _noTargetEmployees().reduce((a, e) => a + (Number(e.target_sun) || 0), 0);
 }
 
+/**
+ * ป้ายบอกว่าพนักงานคนนี้ถูกย้ายมาจากทีมอื่น
+ *
+ * ต้องเห็นทุกขั้น ไม่ใช่แค่หน้าแอดมิน — เขต ดิวิชัน และหน่วยขายของเขายังเป็นของ
+ * ทีมเดิม ตัวเลขบางอย่างจึงดูแปลกเมื่อเทียบกับเพื่อนร่วมทีม (เช่นประวัติขายคนละเขต)
+ * คนที่เกลี่ยเป้าต้องรู้ตั้งแต่แรกว่าทำไม ไม่ใช่มานั่งสงสัยว่าข้อมูลผิดหรือเปล่า
+ */
+function _empMovedBadgeHtml(e, opts = {}) {
+  const from = String(e?.reassigned_from || "").trim();
+  if (!from) return "";
+  const title = `ย้ายมาจากทีม ${from} — เกลี่ยเป้ากับทีมนี้ แต่เขต/หน่วยขายยังเป็นของเดิม`;
+  if (opts.compact) {
+    return `<span class="emp-moved-star" title="${escH(title)}" aria-label="${escH(title)}">*</span>`;
+  }
+  return `<span class="emp-moved-chip" title="${escH(title)}">ย้ายมาจาก ${escH(from)}</span>`;
+}
+
 function _empViewOnlyNoteHtml(e) {
   if (_isNoTargetEmp(e)) {
     return `<div class="emp-no-target-note">ไม่ต้องตั้งเป้า</div>`;
@@ -4883,6 +4900,7 @@ function _renderEmpStep1() {
       ${supCell(e)}
       <td class="sticky-left-col"${empPad}>
         ${opts.child ? "" : `<span class="emp-tag">${escH(e.emp_id)}</span>`}
+        ${!opts.child ? _empMovedBadgeHtml(e) : ""}
         ${!opts.child && e.emp_name ? `<div class="emp-name-sub">${escH(e.emp_name)}</div>` : ""}
         ${opts.child && !showWh ? `<span class="emp-wh-badge">W/H ${escH(e.warehouse_code || "—")}</span>` : ""}
         ${_empViewOnlyNoteHtml(e)}
@@ -5256,6 +5274,7 @@ function _yellowNoTargetRowHtml(e, opts = {}) {
     : `<td class="sticky-left-col">
         <span class="emp-tag">${escH(e.emp_id)}</span>
         ${e.emp_name ? `<span style="font-size:11px;color:var(--text-3);margin-left:4px;">${escH(e.emp_name)}</span>` : ""}
+        ${_empMovedBadgeHtml(e, { compact: true })}
         <span class="emp-no-target-chip">ไม่ต้องตั้งเป้า</span>
       </td>`;
   return `<tr class="${cls}">
@@ -5313,6 +5332,7 @@ function _yellowRowHtml(e, opts = {}) {
         <button type="button" class="emp-wh-toggle" onclick="toggleWhGroup('${escH(opts.groupKey || e.emp_id)}')">${_whGroupExpanded(opts.groupKey || e.emp_id) ? "▼" : "▶"}</button>
         <span class="emp-tag">${escH(e.emp_id)}</span>
         ${e.emp_name ? `<span style="font-size:11px;color:var(--text-3);margin-left:4px;">${escH(e.emp_name)}</span>` : ""}
+        ${_empMovedBadgeHtml(e, { compact: true })}
         <span class="emp-wh-group-meta">${opts.childCount || ""} คลัง</span>
       </td>`
     : opts.child
@@ -5320,6 +5340,7 @@ function _yellowRowHtml(e, opts = {}) {
       : `<td class="sticky-left-col">
         <span class="emp-tag">${escH(e.emp_id)}</span>
         ${e.emp_name ? `<span style="font-size:11px;color:var(--text-3);margin-left:4px;">${escH(e.emp_name)}</span>` : ""}
+        ${_empMovedBadgeHtml(e, { compact: true })}
         ${lockIcon}
       </td>`;
   const yellowInput = opts.groupHeader || readOnly
@@ -6476,7 +6497,7 @@ function renderResult(allocs) {
 
     const empSearchHay = escH(`${empId} ${empName} ${whDisplay}`.toLowerCase());
     let rowHtml = `<tr class="${rowCls}"${rowStyle} data-emp-search="${empSearchHay}">
-      <td class="result-sticky-left result-sticky-left--sm"><span class="emp-tag">${escH(empId)}</span>${supBadge}${empName ? `<div style="font-size:10px;margin-top:2px;">${escH(empName)}</div>` : ""}</td>
+      <td class="result-sticky-left result-sticky-left--sm"><span class="emp-tag">${escH(empId)}</span>${supBadge}${_empMovedBadgeHtml(empInfo, { compact: true })}${empName ? `<div style="font-size:10px;margin-top:2px;">${escH(empName)}</div>` : ""}</td>
       <td class="result-sticky-left result-sticky-left--wh mono" style="color:var(--text-3);font-size:12px;">${escH(whDisplay)}</td>`;
 
     skus.forEach((s, i) => {
@@ -12030,8 +12051,16 @@ function renderEmpMoves() {
 
   const MAX = 300;
   const shown = rows.slice(0, MAX);
+  const movedCount = (_empMoveData.employees || []).filter((r) => r.to_sup).length;
   body.innerHTML =
-    `<div class="admin-table-wrap"><table class="admin-table">
+    (movedCount
+      ? `<div class="admin-card__note" style="margin-bottom:10px;">ตอนนี้ย้ายไว้ <strong>${movedCount}</strong> คน — แถวที่ไฮไลต์คือคนที่ถูกย้าย</div>`
+      : "") +
+    `<div class="admin-table-wrap"><table class="admin-table admin-table--moves">
+      <colgroup>
+        <col class="c-emp" /><col class="c-home" /><col class="c-scope" />
+        <col class="c-to" /><col class="c-note" /><col class="c-act" />
+      </colgroup>
       <thead><tr>
         <th>พนักงาน</th><th>ทีมจริง</th><th>ดิวิชัน · ภาค · หน่วย</th>
         <th>ให้ทีมนี้เกลี่ยเป้าแทน</th><th>หมายเหตุ</th><th></th>
@@ -12041,15 +12070,20 @@ function renderEmpMoves() {
       .map((r) => {
         const moved = !!r.to_sup;
         return `<tr${moved ? ' class="row-moved"' : ""}>
-          <td><code>${escH(r.emp_id)}</code><br><span class="admin-muted">${escH(r.emp_name || "")}</span></td>
+          <td>
+            <code>${escH(r.emp_id)}</code>
+            <span class="moves-emp-name">${escH(r.emp_name || "—")}</span>
+          </td>
           <td><code>${escH(r.home_sup)}</code></td>
           <td class="admin-muted">${escH(_empMoveScopeText(r.home_division, r.home_region, r.home_unit))}</td>
           <td>
-            <select class="field-input field-input--sm" id="empMoveTo_${escH(r.emp_id)}">${opts(r.to_sup)}</select>
-            ${moved ? `<div class="admin-muted" style="margin-top:4px;">→ ${escH(_empMoveScopeText(r.to_division, r.to_region, r.to_unit))}</div>` : ""}
+            <select class="field-input field-input--sm" id="empMoveTo_${escH(r.emp_id)}"
+                    aria-label="ทีมที่จะเกลี่ยเป้าแทนสำหรับ ${escH(r.emp_id)}">${opts(r.to_sup)}</select>
+            ${moved ? `<span class="moves-to-scope">→ ${escH(_empMoveScopeText(r.to_division, r.to_region, r.to_unit))}</span>` : ""}
           </td>
           <td><input type="text" class="field-input field-input--sm" id="empMoveNote_${escH(r.emp_id)}"
-                     value="${escH(r.note || "")}" placeholder="เช่น ขายชายแดน" /></td>
+                     value="${escH(r.note || "")}" placeholder="เช่น ขายชายแดน"
+                     aria-label="หมายเหตุของ ${escH(r.emp_id)}" /></td>
           <td><button type="button" class="admin-btn-primary admin-btn-primary--sm"
                       onclick="saveEmpMove('${escH(r.emp_id)}')">บันทึก</button></td>
         </tr>`;
@@ -13404,7 +13438,14 @@ function _adminValidateAccessDraft(draft) {
 }
 
 const ADMIN_DIVISION_OPTS = ["", "Div.B", "Div.E", "Div.S"];
-const ADMIN_UNIT_OPTS = ["", "van", "credit"];
+// "" = ยังไม่ได้กรอก (ติดธงต้องตรวจสอบ) · all = ตั้งใจให้ดูทั้งสองหน่วย
+const ADMIN_UNIT_OPTS = ["", "van", "credit", "all"];
+const ADMIN_UNIT_LABELS = {
+  "": "— ยังไม่ระบุ",
+  van: "รถเงินสด (van)",
+  credit: "เครดิต (credit)",
+  all: "ทั้งสองหน่วย (all)",
+};
 
 // ขอบเขตของผู้ดูแล — แก้ผู้ใช้คนไหนได้บ้าง (ต้องตรงกับ ASSIGNABLE_ADMIN_SCOPES ฝั่ง backend)
 // เรียงแคบ → กว้าง ให้ค่าที่ปลอดภัยสุดอยู่บนสุดของรายการ
@@ -15662,7 +15703,7 @@ function _adminSyncInlineManagerLevelRow(tr) {
     if (_adminUnitFieldAllowed(lk, ml)) {
       if (!unitTd.querySelector('[data-f="acc_unit"]')) {
         const curUnit = _adminInlineEdit?.draft?.acc_unit || "";
-        const unitOpts = ADMIN_UNIT_OPTS.map((v) => [v, v || "—"]);
+        const unitOpts = ADMIN_UNIT_OPTS.map((v) => [v, ADMIN_UNIT_LABELS[v] || v]);
         unitTd.innerHTML = _adminSelectHtml("adminInlineUnit", unitOpts, curUnit, "acc_unit");
         unitTd.querySelector('[data-f="acc_unit"]')?.addEventListener("change", () => {
           _adminScheduleInlineVisiblePreview(tr);
@@ -15867,6 +15908,7 @@ function _adminIncompleteReasons(r) {
   // ไม่ระบุหน่วยขาย = ระบบให้ดูทั้งเครดิตและรถเงินสดไปก่อน (ไม่งั้นเปิดอะไรไม่ได้เลย)
   // แต่ต้องมาระบุให้ถูกจริง ๆ เพราะหน่วยขายเป็นตัวตัดสินว่าใช้ราคาชุดไหน
   // และกระจายรวมกับใครได้บ้าง — ปล่อยว่างไว้จะกระจายรวมภาคไม่ได้เมื่อขอบเขตปนหน่วย
+  // เลือก "ทั้งสองหน่วย" แล้วถือว่าตั้งใจ ไม่ต้องตามมาตรวจอีก
   if ((lk === "supervisor_acc" || lk === "manager_acc") && !String(r.acc_unit || "").trim()) {
     out.push("ไม่ระบุหน่วยขาย (ดูได้ทั้งสองหน่วยไปก่อน)");
   }
@@ -16414,7 +16456,7 @@ function _adminRenderTableRowEdit(tr, edit) {
   const lkOpts = ADMIN_LOGIN_KIND_OPTS;
   const mgrLevelOpts = _adminManagerLevelOpts(d.acc_division);
   const divOpts = ADMIN_DIVISION_OPTS.map((v) => [v, v || "—"]);
-  const unitOpts = ADMIN_UNIT_OPTS.map((v) => [v, v || "—"]);
+  const unitOpts = ADMIN_UNIT_OPTS.map((v) => [v, ADMIN_UNIT_LABELS[v] || v]);
   const showMgrLevel = d.login_kind === "manager_acc";
   const showUnit = _adminUnitFieldAllowed(d.login_kind, d.manager_level);
   const roleStack = [
