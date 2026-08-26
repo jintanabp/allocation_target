@@ -132,6 +132,24 @@ def is_div_s_division_manager_region_raw(region_raw: str | None) -> bool:
     return str(region_raw or "").strip().upper() in ("DIV.S", "DIV.S.")
 
 
+def _unit_matches(want: str, have: str) -> bool:
+    """
+    หน่วยขายของทีมหนึ่ง เข้ากับหน่วยที่ผู้ดูกำกับอยู่ไหม
+
+    "all" คือทีมที่คร่อมทั้งสองหน่วย — ทั้งฝั่งเครดิตและฝั่งรถเงินสดต้องเห็น
+    เหมือนกัน · เดิมเทียบตรง ๆ ทีม all เลยไม่เข้าเงื่อนไขของใครเลย แล้วการ
+    มองเห็นกลายเป็นทางเดียว: คนที่กำกับ all เห็นเขา แต่เขาไม่เห็นคนนั้นกลับ
+
+    หน่วยว่าง (ยังไม่กรอก) ยังไม่เห็นเหมือนเดิม — "ไม่รู้" ไม่ใช่ "ทั้งสองหน่วย"
+    ทีมกลุ่มนั้นต้องไปกรอกหน่วยให้ถูกก่อน ไม่ใช่ให้ระบบเดาแทน
+    """
+    w = str(want or "").strip().lower()
+    h = str(have or "").strip().lower()
+    if w not in ("credit", "van"):
+        return True
+    return h == w or h == "all"
+
+
 def _build_division_supervisor_index(
     rows: list[dict[str, Any]],
 ) -> dict[tuple[str, str], set[str]]:
@@ -222,7 +240,8 @@ def compute_visible_supervisors_for_row(
 
         def _limit_to_unit(codes: set[str]) -> set[str]:
             """
-            ผู้จัดการที่ระบุหน่วย (credit/van) เห็นเฉพาะซุปหน่วยเดียวกัน — กติกาเดียวกับซุป
+            ผู้จัดการที่ระบุหน่วย (credit/van) เห็นซุปหน่วยเดียวกัน + ทีมที่กำกับ all
+            — กติกาเดียวกับซุป (ดู _unit_matches)
 
             ไม่กรองรหัสของตัวเอง: _mgr_team เติมทีหลังเพื่อให้ผู้จัดการโหลด
             หน้าตัวเองได้ ถ้ากรองทิ้งจะล็อกอินเข้ามาแล้วไม่เห็นอะไรเลย
@@ -230,7 +249,7 @@ def compute_visible_supervisors_for_row(
             if unit not in ("credit", "van"):
                 return codes
             units = _unit_by_upl()
-            return {c for c in codes if units.get(c) == unit}
+            return {c for c in codes if _unit_matches(unit, units.get(c, ""))}
 
         if not mgr_level and div == "Div.S" and not region:
             mgr_level = "division"
@@ -259,7 +278,7 @@ def compute_visible_supervisors_for_row(
             peers = set(division_index.get((div, region), set()))
             if scope in ("credit", "van"):
                 units = _unit_by_upl()
-                peers = {c for c in peers if units.get(c) == scope}
+                peers = {c for c in peers if _unit_matches(scope, units.get(c, ""))}
             if peers:
                 return sorted(peers)
         return [upl] if upl else []

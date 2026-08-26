@@ -259,20 +259,37 @@ def drop_manager_code_without_team(
     codes: list[str], manager_code: str, month: int, year: int
 ) -> list[str]:
     """
-    เอารหัสของผู้จัดการออกจากขอบเขต ถ้างวดนี้เขาไม่มีพนักงานสังกัดตรง
+    เอารหัสผู้จัดการที่งวดนี้ไม่มีพนักงานสังกัดตรง ออกจากขอบเขต
+
+    ไม่ใช่แค่รหัสของคนที่กำลังเปิดดู — ผู้จัดการภาคเดียวกันเห็นกันและกันได้แล้ว
+    รหัสของอีกฝ่ายจึงเข้ามาอยู่ในขอบเขตด้วย ถ้างวดนั้นเขาไม่มีเป้า ทีมนั้นจะ
+    โหลดไม่ได้แล้วกลายเป็น "ทีมที่ถูกข้าม" พร้อมคำเตือนทุกครั้งที่เปิดหน้า
 
     ผู้จัดการที่มีพนักงานสังกัดตรงยังนับเป็นทีมหนึ่งเหมือนซุปคนหนึ่ง — เป้าของ
-    พนักงานกลุ่มนั้นต้องอยู่ในยอดรวมภาคด้วย
+    พนักงานกลุ่มนั้นต้องอยู่ในยอดรวมภาคด้วย · ทีมซุปจริงที่ยังไม่มีข้อมูลไม่ถูกตัด
     """
     mgr = str(manager_code or "").strip().upper()
-    if not mgr:
-        return list(codes or [])
-    out = [c for c in (codes or []) if str(c).strip().upper() != mgr]
-    if len(out) == len(codes or []):
-        return list(codes or [])                  # ไม่ได้อยู่ในขอบเขตอยู่แล้ว
-    if has_team_data_in_period(mgr, month, year):
-        return list(codes or [])                  # มีทีมจริงในงวดนี้ — เก็บไว้
-    return out
+    try:
+        roster = _row_by_userpl()
+    except Exception:                             # อ่าน user_access ไม่ได้ = ตัดสินจากรหัสที่ส่งมา
+        roster = {}
+
+    def _is_manager(code: str) -> bool:
+        if code == mgr:
+            return True
+        row = roster.get(code) or {}
+        return str(row.get("login_kind") or "") == "manager_acc"
+
+    out: list[str] = []
+    for raw in codes or []:
+        c = str(raw or "").strip().upper()
+        if not c:
+            continue
+        if _is_manager(c) and not has_team_data_in_period(c, month, year):
+            continue
+        out.append(c)
+    # ตัดจนไม่เหลืออะไรเลย = ตัดสินผิดแน่ ๆ — คืนของเดิมให้ด่านถัดไปว่ากันต่อ
+    return out or list(codes or [])
 
 
 def units_of_codes(codes: list[str]) -> dict[str, str]:

@@ -1,6 +1,6 @@
 {
   "source": "excel_roster",
-  "synced_at": "2026-08-26T16:47:42+0700",
+  "synced_at": "2026-08-26T16:55:02+0700",
   "rows": [
     {
       "supervisor_code": "SL397",
@@ -968,6 +968,11 @@
       "manager_code": "SL359"
     },
     {
+      "supervisor_code": "SL372",
+      "depend_on": "SL359",
+      "manager_code": "SL359"
+    },
+    {
       "supervisor_code": "SL396",
       "depend_on": "SL359",
       "manager_code": "SL359"
@@ -1917,6 +1922,7 @@
     ],
     "SL359": [
       "SL359",
+      "SL372",
       "SL396",
       "SL506"
     ],

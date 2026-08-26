@@ -286,5 +286,163 @@ class TestAManagerWithOwnStaffIsATeamToOtherManagers(unittest.TestCase):
         self.assertIn("hasOwnStaff", block)
 
 
+class TestManagersInTheSameRegionSeeEachOther(unittest.TestCase):
+    """
+    ผู้จัดการภาคเดียวกัน หน่วยเดียวกันหรือ "all" ต้องเห็นกันและกัน
+    (เมื่อมีพนักงานขายสังกัดรหัสตัวเอง)
+
+    เดิมเทียบหน่วยตรง ๆ ทีมที่กำกับ "all" จึงไม่เข้าเงื่อนไขของใครเลย
+    การมองเห็นกลายเป็นทางเดียว: SL372 (all) เห็น SL359 (เครดิต) แต่ SL359
+    ไม่เห็น SL372 กลับ ทั้งที่อยู่ภาคเดียวกันและมีพนักงานสังกัดตรงทั้งคู่
+    """
+
+    ALL_MGR, CREDIT_MGR, VAN_MGR = "SL372", "SL359", "SL351"
+    CREDIT_SUP, BLANK_SUP = "SL396", "SL533"
+
+    def setUp(self):
+        self._cwd = os.getcwd()
+        self._tmpdir = tempfile.mkdtemp(prefix="unit_vis_")
+        os.chdir(self._tmpdir)
+        os.makedirs("data", exist_ok=True)
+        # ผู้จัดการนับเป็นทีมได้ต่อเมื่อมีพนักงานสังกัดรหัสตัวเอง
+        for code in (self.ALL_MGR, self.CREDIT_MGR, self.VAN_MGR):
+            with open(f"data/emp_cache_{code}_2026_09.csv", "w", encoding="utf-8") as fh:
+                fh.write("emp_id,emp_name,super_code\n")
+                fh.write(f"E1,ชื่อ,{code}\n")
+
+    def tearDown(self):
+        os.chdir(self._cwd)
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def _rows(self):
+        def mgr(code, unit):
+            return {"email": f"{code.lower()}@x.co.th", "userpl": code,
+                    "login_kind": "manager_acc", "manager_level": "regional",
+                    "acc_division": "Div.S", "acc_region": "เหนือ", "acc_unit": unit}
+
+        def sup(code, unit):
+            return {"email": f"{code.lower()}@x.co.th", "userpl": code,
+                    "login_kind": "supervisor_acc", "acc_division": "Div.S",
+                    "acc_region": "เหนือ", "acc_unit": unit, "acc_scope": "credit"}
+
+        return [
+            mgr(self.ALL_MGR, "all"),
+            mgr(self.CREDIT_MGR, "credit"),
+            mgr(self.VAN_MGR, "van"),
+            sup(self.CREDIT_SUP, "credit"),
+            sup(self.BLANK_SUP, ""),
+        ]
+
+    def _visible(self):
+        from backend.services.access_hierarchy import enrich_rows_with_visibility
+
+        return {
+            str(r["userpl"]): set(r.get("visible_supervisor_codes") or [])
+            for r in enrich_rows_with_visibility(self._rows())
+        }
+
+    def test_a_credit_manager_sees_the_all_manager(self):
+        """ตัวที่ผู้ใช้รายงาน — ทีม all คร่อมทั้งสองหน่วย ต้องเห็นจากฝั่งเครดิต"""
+        self.assertIn(self.ALL_MGR, self._visible()[self.CREDIT_MGR])
+
+    def test_a_van_manager_sees_the_all_manager_too(self):
+        self.assertIn(self.ALL_MGR, self._visible()[self.VAN_MGR])
+
+    def test_the_all_manager_still_sees_both_units(self):
+        vis = self._visible()[self.ALL_MGR]
+        self.assertIn(self.CREDIT_MGR, vis)
+        self.assertIn(self.VAN_MGR, vis)
+
+    def test_credit_and_van_still_do_not_see_each_other(self):
+        vis = self._visible()
+        self.assertNotIn(self.VAN_MGR, vis[self.CREDIT_MGR])
+        self.assertNotIn(self.CREDIT_MGR, vis[self.VAN_MGR])
+
+    def test_a_team_with_no_unit_set_is_still_not_shared(self):
+        """"ไม่รู้หน่วย" ไม่ใช่ "ทั้งสองหน่วย" — ต้องไปกรอกให้ถูก ไม่ใช่ให้ระบบเดา"""
+        self.assertNotIn(self.BLANK_SUP, self._visible()[self.CREDIT_MGR])
+
+    def test_a_supervisor_sees_the_all_team_among_their_peers(self):
+        """ซุปใช้กติกาเดียวกัน ไม่งั้นสองฝั่งเห็นคนละยอดบนหน้าจอเดียวกัน"""
+        self.assertIn(self.ALL_MGR, self._visible()[self.CREDIT_SUP])
+
+
+class TestEmptyManagerCodesLeaveTheScope(unittest.TestCase):
+    """
+    พอเปิดให้เห็นกันและกันแล้ว รหัสของอีกฝ่ายเข้ามาอยู่ในขอบเขตด้วย — ถ้างวดนั้น
+    เขาไม่มีเป้า ทีมนั้นจะโหลดไม่ได้ กลายเป็น "ทีมที่ถูกข้าม" พร้อมคำเตือนทุกครั้ง
+    """
+
+    MONTH, YEAR = 9, 2026
+
+    def setUp(self):
+        self._cwd = os.getcwd()
+        self._tmpdir = tempfile.mkdtemp(prefix="empty_mgr_")
+        os.chdir(self._tmpdir)
+        os.makedirs("data", exist_ok=True)
+        self._acc = os.path.join(self._tmpdir, "user_access.json")
+        with open(self._acc, "w", encoding="utf-8") as fh:
+            json.dump([
+                {"email": "a@x.co.th", "userpl": "SL372", "login_kind": "manager_acc"},
+                {"email": "b@x.co.th", "userpl": "SL359", "login_kind": "manager_acc"},
+                {"email": "c@x.co.th", "userpl": "SL396", "login_kind": "supervisor_acc"},
+            ], fh, ensure_ascii=False)
+        self._old = os.environ.get("USER_ACCESS_JSON_PATH")
+        os.environ["USER_ACCESS_JSON_PATH"] = self._acc
+
+    def tearDown(self):
+        if self._old is None:
+            os.environ.pop("USER_ACCESS_JSON_PATH", None)
+        else:
+            os.environ["USER_ACCESS_JSON_PATH"] = self._old
+        os.chdir(self._cwd)
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def _grain(self, sup: str, rows: int) -> None:
+        with open(f"data/tga_lines_{sup}_{self.YEAR}_{self.MONTH:02d}.csv",
+                  "w", encoding="utf-8") as fh:
+            fh.write("emp_id,sku,qty,salestype,divisioncode,areacode,provincecode,warehouse_code\n")
+            for i in range(rows):
+                fh.write(f"E{i},A,5,S,B,10,P1,\n")
+
+    def test_another_manager_without_targets_is_dropped(self):
+        self._grain("SL359", 3)
+        self._grain("SL396", 3)          # SL372 ไม่มีเป้าเลย
+        self.assertEqual(
+            drop_manager_code_without_team(
+                ["SL359", "SL372", "SL396"], "SL359", self.MONTH, self.YEAR
+            ),
+            ["SL359", "SL396"],
+        )
+
+    def test_another_manager_with_targets_stays(self):
+        for c in ("SL359", "SL372", "SL396"):
+            self._grain(c, 3)
+        self.assertEqual(
+            drop_manager_code_without_team(
+                ["SL359", "SL372", "SL396"], "SL359", self.MONTH, self.YEAR
+            ),
+            ["SL359", "SL372", "SL396"],
+        )
+
+    def test_a_supervisor_without_targets_is_never_dropped(self):
+        self._grain("SL359", 3)
+        self.assertIn(
+            "SL396",
+            drop_manager_code_without_team(
+                ["SL359", "SL396"], "SL359", self.MONTH, self.YEAR
+            ),
+        )
+
+    def test_dropping_everything_falls_back_to_the_original(self):
+        """ตัดจนไม่เหลือ = ตัดสินผิดแน่ ๆ ปล่อยให้ด่านถัดไปว่ากันต่อ"""
+        self.assertEqual(
+            drop_manager_code_without_team(
+                ["SL359", "SL372"], "SL359", self.MONTH, self.YEAR
+            ),
+            ["SL359", "SL372"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
