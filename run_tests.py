@@ -79,26 +79,48 @@ _PROTECTED_CONFIGS = (
 )
 
 
-def _snapshot_protected() -> dict[str, bytes]:
-    out: dict[str, bytes] = {}
+def _snapshot_protected() -> dict[str, bytes | None]:
+    """
+    เก็บสภาพไฟล์ก่อนรัน — None = "ตอนเริ่มยังไม่มีไฟล์นี้"
+
+    ต้องจำกรณี "ยังไม่มี" ด้วย ไม่งั้นเทสต์ที่ **สร้าง** ไฟล์ขึ้นมาใหม่จะรอดตัวกันชน
+    ไปได้ทั้งหมด แล้วไฟล์ที่มีข้อมูลปลอมค้างอยู่ในเครื่องจริง ทำให้เทสต์รอบถัดไป
+    ล้มด้วยเหตุที่ไม่เกี่ยวกับโค้ดเลย (เจอจริง: data/managers_cache.json ถูกเทสต์
+    สร้างขึ้นพร้อมทีมสาธิต แล้วเทสต์ที่ตรวจว่า "ทีมสาธิตต้องไม่รั่วไปหาผู้ใช้จริง"
+    ก็แดงตั้งแต่รอบถัดไป)
+    """
+    out: dict[str, bytes | None] = {}
     for rel in _PROTECTED_CONFIGS:
         p = os.path.join(repo_root(), rel)
+        out[rel] = None
         if os.path.isfile(p):
             with open(p, "rb") as f:
                 out[rel] = f.read()
     return out
 
 
-def _restore_protected(before: dict[str, bytes]) -> list[str]:
-    """คืนค่าไฟล์ที่ถูกแก้ คืนรายชื่อไฟล์ที่โดน"""
+def _restore_protected(before: dict[str, bytes | None]) -> list[str]:
+    """คืนค่าไฟล์ที่ถูกแก้/ถูกสร้างใหม่ คืนรายชื่อไฟล์ที่โดน"""
     dirty: list[str] = []
     for rel, data in before.items():
         p = os.path.join(repo_root(), rel)
-        try:
-            with open(p, "rb") as f:
-                now = f.read()
-        except OSError:
+        exists = os.path.isfile(p)
+        if data is None:
+            # ตอนเริ่มไม่มีไฟล์นี้ — เทสต์สร้างขึ้นมาเอง ต้องลบทิ้ง
+            if exists:
+                dirty.append(rel)
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
             continue
+        if not exists:
+            dirty.append(rel)
+            with open(p, "wb") as f:
+                f.write(data)
+            continue
+        with open(p, "rb") as f:
+            now = f.read()
         if now != data:
             dirty.append(rel)
             with open(p, "wb") as f:

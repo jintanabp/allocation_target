@@ -1892,6 +1892,41 @@ function _syncManagerViewOptionsFromLogin() {
   if (!S.managerViewOptions) {
     S.managerViewMode = "individual";
     S.managerViewRegion = "";
+    return;
+  }
+  _applyDefaultManagerViewMode();
+}
+
+/**
+ * มุมมองเริ่มต้นของผู้จัดการ — เปิดมาที่ "รวม" ของภาคตัวเอง ไม่ใช่ทีมเดียว
+ *
+ * งานของผู้จัดการคือดูข้ามทีมอยู่แล้ว และผู้จัดการจำนวนมากไม่มีพนักงานสังกัด
+ * รหัสตัวเองเลย — เปิดหน้า "ทีมตัวเอง" ให้เขาจึงเจอ "ไม่มีข้อมูลเป้างวดนี้"
+ * ทั้งที่ทีมซุปใต้สังกัดมีเป้าครบ (เจอจริงกับ SL372)
+ *
+ * เลือกดูทีละทีมได้ตลอดจากช่องเดิม — ไม่ได้ปิดทางไหน
+ */
+function _applyDefaultManagerViewMode() {
+  const opts = S.managerViewOptions;
+  if (!opts) {
+    S.managerViewMode = "individual";
+    S.managerViewRegion = "";
+    return;
+  }
+  const modes = Array.isArray(opts.modes) ? opts.modes : [];
+  if (modes.includes("region")) {
+    S.managerViewMode = "region";
+    if (!S.managerViewRegion) {
+      S.managerViewRegion = opts.scope_kind === "region"
+        ? String(opts.manager_region || "")
+        : String(opts.regions?.[0]?.id || "");
+    }
+  } else if (modes.includes("all")) {
+    S.managerViewMode = "all";
+    S.managerViewRegion = "";
+  } else {
+    S.managerViewMode = "individual";
+    S.managerViewRegion = "";
   }
 }
 
@@ -3404,14 +3439,16 @@ async function handleLogin() {
         showLoginError(`❌ ไม่พบ Supervisor ภายใต้ Manager "${mgrCode}" — ตรวจสอบสิทธิ์ใน user_access / hierarchy`);
         return;
       }
-      S.managerViewMode = "individual";
-      S.managerViewRegion = "";
+      // ทีมที่จะเปิดเมื่อสลับไปมุมมองรายคน — เตรียมไว้ก่อน แต่ไม่ใช่หน้าแรก
       S.supId = _firstSupervisorForManager(mgrCode, S.supervisorChoices);
       S._lastIndividualSupId = S.supId;
       if (!S.managerViewOptions) {
         await loadManagers(true);
         _syncManagerViewOptionsFromLogin();
       }
+      // ต้องอยู่ท้ายสุด — ของเดิมตั้ง "individual" ตรงนี้ทับค่าที่เลือกไว้แล้ว
+      // ผู้จัดการที่ไม่มีพนักงานสังกัดรหัสตัวเองจึงถูกพาไปเปิดทีมตัวเองที่ไม่มีเป้า
+      _applyDefaultManagerViewMode();
     } else {
       S.loginRole = "supervisor";
       S.managerCode = null;
@@ -4309,6 +4346,26 @@ function applyDataPayload(data) {
     (a, s) => a + (Number(s.price_per_box) || 0) * (Number(s.supervisor_target_boxes) || 0), 0
   );
   S.skuWarnings = data.sku_warnings || [];
+  // ทีมที่โหลดไม่สำเร็จถูกข้ามไปเงียบ ๆ — เป้าของทีมนั้นหายไปจากยอดรวมทั้งก้อน
+  // โดยไม่มีอะไรบนจอบอกเลย · เป็นช่องเดียวกับบั๊ก "ยอดรวมไม่ฟ้อง" อื่น ๆ
+  const _skipped = Array.isArray(data.skipped_supervisors) ? data.skipped_supervisors : [];
+  if (_skipped.length) {
+    S.skuWarnings = [
+      {
+        type: "aggregate_team_skipped",
+        sku: "",
+        brand: "",
+        message:
+          `โหลดข้อมูลไม่สำเร็จ ${_skipped.length} ทีม — เป้าของทีมเหล่านี้ไม่ได้อยู่ในยอดรวม: ` +
+          _skipped
+            .slice(0, 8)
+            .map((x) => `${x.sup_id}${x.detail ? ` (${String(x.detail).slice(0, 60)})` : ""}`)
+            .join(" · ") +
+          (_skipped.length > 8 ? ` และอีก ${_skipped.length - 8} ทีม` : ""),
+      },
+      ...S.skuWarnings,
+    ];
+  }
   S.tgaPeriodStatus = data.tga_period_status || "ok";
 
   if (S.totalTarget === 0) {
@@ -4598,6 +4655,7 @@ function _showSkuWarnings() {
   const whSplitActive = warnings.filter(w => w.type === "wh_split_active");
   const empListStale = warnings.filter(w => w.type === "emp_list_stale");
   const mixedUnit = warnings.filter(w => w.type === "aggregate_mixed_sales_unit");
+  const teamSkipped = warnings.filter(w => w.type === "aggregate_team_skipped");
   const soldOnlyExcluded = warnings.filter(w => w.type === "sold_only_skus_excluded");
   const zeroTotal   = warnings.filter(w => w.type === "zero_total");
   const tgaNotUpdated = warnings.filter(w => w.type === "tga_period_not_updated");
@@ -4677,6 +4735,13 @@ function _showSkuWarnings() {
   if (empListStale.length > 0) {
     html += `<li><strong style="color:var(--danger, #c0392b)">⚠️ รายชื่อพนักงานไม่ใช่ของงวดนี้</strong><br>`;
     html += _warningLinesHtml(empListStale);
+    html += `</li>`;
+  }
+
+  // ทีมที่โหลดไม่ได้ = เป้าหายจากยอดรวม ต้องเด่นที่สุดในบรรดาคำเตือน
+  if (teamSkipped.length > 0) {
+    html += `<li><strong style="color:var(--danger, #c0392b)">⚠️ บางทีมไม่ได้อยู่ในยอดรวม</strong><br>`;
+    html += _warningLinesHtml(teamSkipped);
     html += `</li>`;
   }
 
