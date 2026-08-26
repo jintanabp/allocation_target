@@ -771,6 +771,7 @@ let S = {
   optimizationFallback: false,
   /** {sup_id: {sku: เป้าหีบของทีมนั้น}} — โหมดรวมภาคเท่านั้น */
   targetBoxesBySup: {},
+  salesUnitBySup: {},
   /** รหัสทีมที่ตก fallback (โหมดรวมภาค) — ว่างแปลว่าไม่มี */
   optimizationFallbackSups: [],
   /** ทีมที่กระจายไม่สำเร็จรอบล่าสุด (โหมดรวมภาค) */
@@ -781,6 +782,8 @@ let S = {
   histFallbacks: [],
   // ผลตรวจ "เป้าใน Target Sun เปลี่ยนหลังโหลดข้อมูล" — null = ยังไม่เคยตรวจรอบนี้
   targetDrift: null,
+  // หน่วยขายที่เลือกดูอยู่ ("" = ทุกหน่วย ซึ่งกระจายรวมกันไม่ได้)
+  managerViewUnit: "",
   rebalanceResiduals: [],
   /** ส่งเข้า Target Sun ได้หรือไม่ (จาก GET /managers → can_import_targetsun) */
   canImportTargetSun: true,
@@ -1876,6 +1879,11 @@ function _bindManagerViewControlsOnce() {
     regSel._mgrViewBound = true;
     regSel.addEventListener("change", () => onManagerViewRegionChange());
   }
+  const unitSel = document.getElementById("managerViewUnitSelect");
+  if (unitSel && !unitSel.dataset.bound) {
+    unitSel.dataset.bound = "1";
+    unitSel.addEventListener("change", () => onManagerViewUnitChange());
+  }
 }
 
 function _syncManagerViewOptionsFromLogin() {
@@ -1960,8 +1968,49 @@ function _populateManagerViewRegionSelect() {
   }
 }
 
+/**
+ * หน่วยขายที่มีอยู่ในขอบเขตตอนนี้ — ใช้ตัดสินว่าต้องโชว์ตัวเลือกหน่วยไหม
+ *
+ * โชว์เฉพาะตอนที่ขอบเขตมีทั้งเครดิตและรถเงินสด · ภาคที่มีหน่วยเดียวไม่ต้องมี
+ * ตัวเลือกอะไรให้กดเลย (หน้าจอเดิมสำหรับคนส่วนใหญ่)
+ */
+function _unitsInCurrentScope() {
+  const meta = S.salesUnitBySup || {};
+  const codes = _allocScopeSupOrder();
+  const src = codes.length ? codes : Object.keys(meta);
+  return [...new Set(src.map((c) => meta[c]).filter((u) => u === "credit" || u === "van"))].sort();
+}
+
+/**
+ * เปลี่ยนหน่วยขายที่ดูอยู่ — โหลดข้อมูลใหม่ทั้งก้อน
+ *
+ * "ทุกหน่วย" ดูได้แต่กระจายไม่ได้ (ราคาคนละชุด ด่านตอนกระจายจะกั้นไว้)
+ * เลือกหน่วยใดหน่วยหนึ่งแล้วจึงกระจายรวมภาคได้
+ */
+async function onManagerViewUnitChange() {
+  const sel = document.getElementById("managerViewUnitSelect");
+  const next = sel ? String(sel.value || "") : "";
+  if (next === S.managerViewUnit) return;
+  S.managerViewUnit = next;
+  await refreshManagerDashboardData();
+  if (!next) {
+    toast("ดูทุกหน่วยได้ แต่กระจายรวมกันไม่ได้ — เลือกหน่วยก่อนกระจาย", "amber");
+  }
+}
+
 function updateManagerViewControlsUI() {
   _bindManagerViewControlsOnce();
+  const unitSel = document.getElementById("managerViewUnitSelect");
+  if (unitSel) {
+    const units = _unitsInCurrentScope();
+    const show = S.aggregateMode && units.length > 1;
+    unitSel.style.display = show ? "" : "none";
+    if (show) {
+      unitSel.value = S.managerViewUnit || "";
+    } else if (S.managerViewUnit) {
+      S.managerViewUnit = "";     // ขอบเขตเปลี่ยนจนไม่มีให้เลือกแล้ว
+    }
+  }
   const modeSel = document.getElementById("managerViewModeSelect");
   const regSel = document.getElementById("managerViewRegionSelect");
   const regLabel = document.getElementById("managerViewRegionLabel");
@@ -4224,6 +4273,10 @@ function applyDataPayload(data) {
   S.targetBoxesBySup = (data.target_boxes_by_sup && typeof data.target_boxes_by_sup === "object")
     ? data.target_boxes_by_sup
     : {};
+  // หน่วยขายรายทีม — ใช้ตัดสินว่าต้องโชว์ตัวเลือกหน่วยไหม
+  S.salesUnitBySup = (data.sales_unit_by_sup && typeof data.sales_unit_by_sup === "object")
+    ? data.sales_unit_by_sup
+    : {};
   S.yellowLocked = {};
   S.histWindowMonths = 3;
   S.skus = data.skus;
@@ -4305,6 +4358,7 @@ async function loadSupervisorRegionAggregate(opts = {}) {
     const url =
       `${API_BASE_URL}/data/employees/region-peers?sup_id=${encodeURIComponent(home)}` +
       `&target_month=${S.targetMonth}&target_year=${S.targetYear}` +
+      (S.managerViewUnit ? `&unit=${encodeURIComponent(S.managerViewUnit)}` : "") +
       (opts.refresh ? "&refresh=1" : "");
     const res = await fetchWithTimeout(url, {}, 300000);
     if (!res.ok) {
@@ -4339,6 +4393,7 @@ async function loadAggregateData(viewMode, regionKey, opts = {}) {
       `&view=${encodeURIComponent(view)}&region=${encodeURIComponent(region)}` +
       `&team=${encodeURIComponent(team)}` +
       `&target_month=${S.targetMonth}&target_year=${S.targetYear}` +
+      (S.managerViewUnit ? `&unit=${encodeURIComponent(S.managerViewUnit)}` : "") +
       (opts.refresh ? "&refresh=1" : "");
     const res = await fetchWithTimeout(url, {}, 300000);
     if (!res.ok) {
@@ -15804,6 +15859,13 @@ function _adminIncompleteReasons(r) {
     else if (level === "regional" && !region) out.push("Manager ระดับภาค แต่ไม่มีภาค");
   } else if (lk === "supervisor_acc" && !region) {
     out.push("ไม่มีภาค");
+  }
+
+  // ไม่ระบุหน่วยขาย = ระบบให้ดูทั้งเครดิตและรถเงินสดไปก่อน (ไม่งั้นเปิดอะไรไม่ได้เลย)
+  // แต่ต้องมาระบุให้ถูกจริง ๆ เพราะหน่วยขายเป็นตัวตัดสินว่าใช้ราคาชุดไหน
+  // และกระจายรวมกับใครได้บ้าง — ปล่อยว่างไว้จะกระจายรวมภาคไม่ได้เมื่อขอบเขตปนหน่วย
+  if ((lk === "supervisor_acc" || lk === "manager_acc") && !String(r.acc_unit || "").trim()) {
+    out.push("ไม่ระบุหน่วยขาย (ดูได้ทั้งสองหน่วยไปก่อน)");
   }
   return out;
 }

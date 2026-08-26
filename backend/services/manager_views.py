@@ -135,8 +135,16 @@ def build_manager_view_options(
     own_has_staff = bool(mgr) and mgr in known
     roster = _row_by_userpl()
     mgr_row = roster.get(mgr)
-    # ทีมซุปจริง ๆ ใต้ผู้จัดการ — ใช้กับการรวมเป้า (ยอดรวมต้องไม่ขยับจากของเดิม)
-    team_only = team_supervisor_codes(team_codes, mgr, exclude_manager_codes)
+    # ทีมที่เอาไปรวมเป้า — รวมรหัสของผู้จัดการเองด้วย "เมื่อเขามีพนักงานสังกัดตรง"
+    #
+    # เดิมตัดรหัสผู้จัดการออกเสมอเพื่อให้ยอดรวมไม่ขยับจากของเดิม แต่ผลคือเป้าของ
+    # พนักงานที่สังกัดผู้จัดการโดยตรงหายไปจากยอดรวมภาคทั้งก้อน ทีมของเขาจึงไม่เคย
+    # ถูกเกลี่ยร่วมกับใคร ทั้งที่เป็นทีมในภาคเดียวกันแท้ ๆ
+    #
+    # ผู้จัดการที่ไม่มีพนักงานสังกัดตรงยังถูกตัดเหมือนเดิม ยอดของเขาจึงไม่ขยับ
+    team_only = team_supervisor_codes(
+        team_codes, mgr, exclude_manager_codes, keep_own_code=own_has_staff
+    )
     # รายการให้ "เลือกเปิดทีละทีม" มีรหัสตัวเองด้วย เผื่อมีพนักงานขายสังกัดตรง
     # (ดู team_supervisor_codes) ไม่มีพนักงานก็เปิดแล้วเจอทีมว่าง ซึ่งเป็นความจริง
     supers = sorted({*team_only, mgr}) if mgr else list(team_only)
@@ -151,6 +159,7 @@ def build_manager_view_options(
 
     if mgr and mgr not in meta:
         meta[mgr] = {"region": supervisor_region_for_code(mgr, roster)}
+        # อยู่ในรายการให้เลือกเปิดทีละทีมได้ แต่ไม่ถูกนับรวมเป้า (ไม่มีพนักงานสังกัดตรง)
 
     for reg in by_region:
         by_region[reg] = sorted(by_region[reg])
@@ -219,21 +228,67 @@ def build_manager_views_map(
     return out
 
 
+def units_of_codes(codes: list[str]) -> dict[str, str]:
+    """หน่วยขายของแต่ละรหัสทีมจาก user_access — "" = ไม่ได้ระบุ"""
+    roster = _row_by_userpl()
+    out: dict[str, str] = {}
+    for raw in codes or []:
+        c = str(raw or "").strip().upper()
+        if not c:
+            continue
+        unit = str((roster.get(c) or {}).get("acc_unit") or "").strip().lower()
+        out[c] = unit if unit in ("credit", "van") else ""
+    return out
+
+
+def filter_codes_by_unit(codes: list[str], unit: str | None) -> list[str]:
+    """
+    เหลือเฉพาะทีมของหน่วยขายที่เลือก — unit ว่าง/ไม่รู้จัก = ไม่กรอง
+
+    ทีมที่ยังไม่ได้ระบุหน่วยจะติดมาด้วยเสมอ ไม่ว่าเลือกหน่วยไหน (ถือว่าเป็น all
+    ไปก่อน) · ข้อมูลไม่ครบ
+    ต้องไม่ทำให้ทีมหายไปจากมุมมองเงียบ ๆ (ของจริง acc_unit ว่างเกือบครึ่ง)
+    ด่านกันกระจายข้ามหน่วยก็ไม่นับทีมที่ไม่รู้หน่วยเหมือนกัน สองที่จึงสอดคล้องกัน
+    """
+    # "all" / ว่าง / ค่าที่ไม่รู้จัก = ดูทั้งสองหน่วย — ทีมที่ยังไม่ระบุหน่วยก็ใช้ทางนี้
+    # เพื่อไม่ให้เปิดอะไรไม่ได้เลย (ติดธง "ต้องตรวจสอบ" ในหน้าแอดมินแทน)
+    want = str(unit or "").strip().lower()
+    if want not in ("credit", "van"):
+        return list(codes or [])
+    units = units_of_codes(list(codes or []))
+    return [c for c in (codes or []) if units.get(str(c).strip().upper(), "") in (want, "")]
+
+
+def units_present_in(codes: list[str]) -> list[str]:
+    """หน่วยขายที่มีจริงในชุดรหัสนี้ — หน้าเว็บใช้ตัดสินว่าต้องโชว์ตัวเลือกหน่วยไหม"""
+    return sorted({u for u in units_of_codes(list(codes or [])).values() if u})
+
+
 def resolve_aggregate_supervisor_codes(
     manager_code: str,
     team_codes: list[str],
     view: str,
     region: str | None = None,
+    *,
+    own_salesmen_codes: set[str] | None = None,
 ) -> list[str]:
-    opts = build_manager_view_options(manager_code, team_codes)
+    opts = build_manager_view_options(
+        manager_code, team_codes, own_salesmen_codes=own_salesmen_codes
+    )
     mgr = manager_code.strip().upper()
     view = (view or "").strip().lower()
     if view == "all":
         if "all" not in opts["modes"]:
             raise ValueError("ไม่มีสิทธิ์ดูแบบรวมทั้งหมด")
         # supervisor_codes มีรหัสของผู้จัดการเองรวมอยู่ด้วย (ไว้ให้เลือกเปิดทีละทีม)
-        # แต่การรวมเป้ายังนับเฉพาะทีมซุปเหมือนเดิม ยอดรวมจึงไม่ขยับจากของเก่า
-        return [c for c in opts["supervisor_codes"] if c != mgr]
+        # แต่การรวมเป้านับเฉพาะทีมที่ build_manager_view_options ตัดสินแล้วว่าควรนับ
+        # — ซึ่งรวมรหัสผู้จัดการเมื่อเขามีพนักงานสังกัดตรง (ดู keep_own_code ที่นั่น)
+        countable = set()
+        for entry in opts.get("regions") or []:
+            countable.update(entry.get("supervisor_codes") or [])
+        if not countable:
+            countable = {c for c in opts["supervisor_codes"] if c != mgr}
+        return sorted(countable)
 
     if view == "region":
         if "region" not in opts["modes"]:

@@ -135,17 +135,37 @@ def is_div_s_division_manager_region_raw(region_raw: str | None) -> bool:
 def _build_division_supervisor_index(
     rows: list[dict[str, Any]],
 ) -> dict[tuple[str, str], set[str]]:
+    """
+    ทีมที่ถือว่าเป็น "เพื่อนร่วมภาค" ของกันและกัน — ใช้หาว่าซุปคนหนึ่งเห็นทีมไหนบ้าง
+
+    รวมผู้จัดการที่มีพนักงานขายสังกัดรหัสตัวเองด้วย เพราะทีมของเขาเป็นทีมที่ต้อง
+    เกลี่ยเป้าร่วมกันจริง ๆ · เดิมนับเฉพาะ supervisor_acc ซุปในภาคเดียวกันจึงเปิด
+    หน้ารวมภาคแล้วไม่เห็นทีมนั้นเลย ทั้งที่ฝั่งผู้จัดการเองนับทีมตัวเองเข้ารวมภาค
+    — สองฝั่งเห็นคนละยอดบนหน้าจอเดียวกัน
+
+    ผู้จัดการที่ไม่มีลูกน้องตรงยังไม่โผล่เหมือนเดิม (ทีมว่าง ไม่มีอะไรให้เกลี่ย)
+    """
+    from .manager_views import codes_with_own_salesmen
+
+    try:
+        with_staff = codes_with_own_salesmen()
+    except Exception:                       # อ่านโฟลเดอร์ไม่ได้ = ไม่เพิ่มใคร
+        with_staff = set()
+
     idx: dict[tuple[str, str], set[str]] = {}
     for r in rows:
-        if str(r.get("login_kind") or "") != "supervisor_acc":
+        kind = str(r.get("login_kind") or "")
+        upl = real_userpl(r.get("userpl"))
+        if not upl:
             continue
+        if kind != "supervisor_acc":
+            if not (kind == "manager_acc" and upl in with_staff):
+                continue
         div = str(r.get("acc_division") or "").strip()
         if not div:
             continue
         region = str(r.get("acc_region") or "").strip()
-        upl = real_userpl(r.get("userpl"))
-        if upl:
-            idx.setdefault((div, region), set()).add(upl)
+        idx.setdefault((div, region), set()).add(upl)
     return idx
 
 

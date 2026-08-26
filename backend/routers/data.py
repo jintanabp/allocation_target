@@ -22,7 +22,10 @@ from ..services.employees import (
     load_live_targets_payload,
 )
 from ..services.access_control import resolve_summary_supervisor_codes
-from ..services.manager_views import resolve_aggregate_supervisor_codes
+from ..services.manager_views import (
+    filter_codes_by_unit,
+    resolve_aggregate_supervisor_codes,
+)
 from ..services.usage_log_store import read_logs
 
 router = APIRouter(tags=["data"])
@@ -124,6 +127,7 @@ def get_employees_aggregate(
         False,
         description="บังคับดึงจาก Fabric ใหม่ (ข้าม payload cache)",
     ),
+    unit: str = Query("", description="กรองเฉพาะหน่วยขาย: credit | van (ว่าง = ทุกหน่วย)"),
 ):
     mgr = manager_code.strip().upper()
     ensure_supervisor_allowed(user, mgr)
@@ -140,14 +144,25 @@ def get_employees_aggregate(
     if not sup_ids:
         raise HTTPException(status_code=404, detail="ไม่มี Supervisor ในขอบเขตที่เลือก")
 
+    # ผู้จัดการที่ไม่มีหน่วยกำกับเห็นทั้งเครดิตและรถเงินสด แต่กระจายรวมกันไม่ได้
+    # (ราคาคนละชุด) — เลือกหน่วยได้จึงเป็นทางเดียวที่จะกระจายรวมภาคได้จริง
+    if unit:
+        sup_ids = filter_codes_by_unit(sup_ids, unit)
+        if not sup_ids:
+            raise HTTPException(
+                status_code=404,
+                detail=f"ไม่มีทีมหน่วย{'เครดิต' if unit == 'credit' else 'รถเงินสด'}ในขอบเขตที่เลือก",
+            )
+
     for sid in sup_ids:
         ensure_supervisor_allowed(user, sid)
 
+    unit_label = {"credit": " · เครดิต", "van": " · รถเงินสด"}.get(unit, "")
     if view == "all":
-        label = f"รวมทั้งหมด ({mgr})"
+        label = f"รวมทั้งหมด ({mgr}){unit_label}"
     else:
         reg_label = (region or "").strip() or "ทั้งภาค"
-        label = f"รวม{reg_label} ({mgr})"
+        label = f"รวม{reg_label} ({mgr}){unit_label}"
 
     return load_employees_bulk(
         sup_ids,
@@ -196,6 +211,7 @@ def get_employees_region_peers(
         False,
         description="บังคับดึงจาก Fabric ใหม่ (ข้าม payload cache)",
     ),
+    unit: str = Query("", description="กรองเฉพาะหน่วยขาย: credit | van (ว่าง = ทุกหน่วย)"),
 ):
     """รวมข้อมูลทุกซุปในภาคเดียวกัน — สำหรับ supervisor_acc + region_peers (แก้/กระจายได้)"""
     sid = sup_id.strip().upper()
@@ -230,12 +246,14 @@ def get_employees_region_peers(
             ),
         )
     sup_ids = sorted({str(x).strip().upper() for x in allowed if str(x).strip()})
+    if unit:
+        sup_ids = filter_codes_by_unit(sup_ids, unit)
     if len(sup_ids) <= 1:
         raise HTTPException(
             status_code=400,
             detail="มีเพียงทีมเดียวในภาค — ใช้มุมมองรายคน",
         )
-    label = f"รวมภาค ({sid})"
+    label = f"รวมภาค ({sid})" + {"credit": " · เครดิต", "van": " · รถเงินสด"}.get(unit, "")
     return load_employees_bulk(
         sup_ids,
         target_month,

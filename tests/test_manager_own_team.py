@@ -81,15 +81,55 @@ class TestOwnCodeIsSelectable(_Base):
         self.assertEqual(opts["supervisor_meta"]["SL359"]["region"], "เหนือ")
 
 
-class TestAggregateTotalsDoNotMove(_Base):
-    def test_region_aggregate_still_counts_only_supervisor_teams(self):
-        codes = resolve_aggregate_supervisor_codes("SL359", TEAM, "region", "เหนือ")
-        self.assertEqual(sorted(codes), ["SL396", "SL506"])
-        self.assertNotIn("SL359", codes)
+class TestManagerOwnTeamCountsInAggregate(_Base):
+    """
+    ผู้จัดการที่มีพนักงานสังกัดตรง ต้องถูกนับรวมในการกระจายรวมภาคด้วย
 
-    def test_region_entry_excludes_the_manager_code(self):
-        opts = build_manager_view_options("SL359", TEAM)
-        self.assertEqual(sorted(opts["regions"][0]["supervisor_codes"]), ["SL396", "SL506"])
+    เดิมรหัสผู้จัดการถูกตัดออกเสมอ เพื่อให้ยอดรวมไม่ขยับจากของเก่า — ผลคือเป้าของ
+    พนักงานที่สังกัดผู้จัดการโดยตรงหายไปจากยอดรวมภาคทั้งก้อน ทีมของเขาจึงไม่เคย
+    ถูกเกลี่ยร่วมกับใคร ทั้งที่อยู่ภาคเดียวกันแท้ ๆ (ของจริง 5 คน เช่น SL359
+    ที่เป้าทีมตัวเองเป็นก้อนใหญ่เมื่อเทียบกับทีมซุปใต้สังกัด)
+
+    ส่งรายชื่อ own_salesmen_codes เข้าไปตรง ๆ ทุกเทส — ไม่งั้นตัวฟังก์ชันจะไปอ่าน
+    โฟลเดอร์ data จริง แล้วผลเทสเปลี่ยนไปตามว่าเครื่องนั้นเคยเปิดทีมไหนมาบ้าง
+    """
+
+    WITH_STAFF = {"SL359"}
+    NO_STAFF: set[str] = set()
+
+    def test_region_aggregate_includes_the_manager_team(self):
+        codes = resolve_aggregate_supervisor_codes(
+            "SL359", TEAM, "region", "เหนือ", own_salesmen_codes=self.WITH_STAFF
+        )
+        self.assertEqual(sorted(codes), ["SL359", "SL396", "SL506"])
+
+    def test_region_entry_includes_the_manager_code(self):
+        opts = build_manager_view_options(
+            "SL359", TEAM, own_salesmen_codes=self.WITH_STAFF
+        )
+        self.assertEqual(
+            sorted(opts["regions"][0]["supervisor_codes"]),
+            ["SL359", "SL396", "SL506"],
+        )
+
+    def test_a_manager_without_own_salesmen_is_still_excluded(self):
+        """ยอดของผู้จัดการที่ไม่มีพนักงานสังกัดตรง ต้องไม่ขยับจากของเดิม"""
+        opts = build_manager_view_options(
+            "SL359", TEAM, own_salesmen_codes=self.NO_STAFF
+        )
+        self.assertEqual(
+            sorted(opts["regions"][0]["supervisor_codes"]), ["SL396", "SL506"]
+        )
+        codes = resolve_aggregate_supervisor_codes(
+            "SL359", TEAM, "region", "เหนือ", own_salesmen_codes=self.NO_STAFF
+        )
+        self.assertEqual(sorted(codes), ["SL396", "SL506"])
+
+    def test_the_manager_code_is_still_selectable_either_way(self):
+        """เปิดดูทีมตัวเองทีละทีมได้เสมอ ไม่ว่าจะถูกนับรวมเป้าหรือไม่"""
+        for known in (self.WITH_STAFF, self.NO_STAFF):
+            opts = build_manager_view_options("SL359", TEAM, own_salesmen_codes=known)
+            self.assertIn("SL359", opts["supervisor_codes"])
 
 
 class TestOtherManagerCodesStillDropped(unittest.TestCase):

@@ -2161,6 +2161,9 @@ def merge_employees_payloads(
         "skipped_supervisors": skipped,
         # {sup_id: {sku: เป้าหีบของทีมนั้น}} — ใช้แสดงแถวรวมรายทีมในตารางรวมภาค
         "target_boxes_by_sup": target_by_sup,
+        # หน่วยขายของแต่ละทีมในก้อนนี้ — หน้าเว็บใช้ตัดสินว่าต้องโชว์ตัวเลือกหน่วยไหม
+        # (โชว์เฉพาะตอนที่ขอบเขตมีทั้งเครดิตและรถเงินสด ซึ่งกระจายรวมกันไม่ได้)
+        "sales_unit_by_sup": {k: v for k, v in unit_by_sup.items() if v},
     }
 
 

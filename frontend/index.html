@@ -243,6 +243,13 @@
                   </select>
                   <span id="managerViewRegionLabel" class="sup-switch__region-label" style="display:none;">ภาค</span>
                   <select id="managerViewRegionSelect" class="sup-switch__select sup-switch__select--region" aria-label="เลือกภาค" style="display:none;"></select>
+                  <!-- หน่วยขาย: โผล่เฉพาะตอนที่ขอบเขตมีทั้งเครดิตและรถเงินสด
+                       เพราะสองหน่วยใช้ราคาคนละชุด กระจายรวมกันไม่ได้ -->
+                  <select id="managerViewUnitSelect" class="sup-switch__select sup-switch__select--region" aria-label="เลือกหน่วยขาย" style="display:none;">
+                    <option value="">ทุกหน่วย (ดูอย่างเดียว)</option>
+                    <option value="credit">เครดิต</option>
+                    <option value="van">รถเงินสด</option>
+                  </select>
                   <select id="supervisorSwitchSelect" class="sup-switch__select" aria-label="เลือกรหัส Supervisor"></select>
                 </div>
               </div>
