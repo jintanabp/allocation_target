@@ -15,8 +15,11 @@ import json
 import logging
 import os
 import sys
+import shutil
 import tempfile
 import unittest
+
+import pandas as pd
 
 REPO = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, REPO)
@@ -210,6 +213,100 @@ class TestSendDoesNotDoubleWrite(_TempStore):
         )
         self.assertEqual(kept, [])
         self.assertEqual(dropped, {BORDER_EMP})
+
+
+class TestNewPeriodSendIsClean(unittest.TestCase):
+    """
+    งวดใหม่หลังย้าย S516 (ทีมหน่วยรถ) ไปให้ทีมหน่วยเครดิตเกลี่ยเป้า
+
+    ข้อที่ต้องจริงพร้อมกันทั้งหมด — ผิดข้อใดข้อหนึ่งคือเป้าใน Target Sun เพี้ยน:
+      · ทีมต้นทางไม่มีแถวของเขาเลย (ไม่งั้นเป้าถูกเขียนทับสองรอบ)
+      · ทีมปลายทางมีแถวของเขา พร้อมหีบครบ
+      · แถวนั้นใช้ "หน่วยขาย เขต จังหวัด ของตัวเขาเอง" ไม่ใช่ของทีมปลายทาง
+        (สามค่านี้เป็นส่วนหนึ่งของคีย์ upsert ถ้าเปลี่ยนจะไปสร้างแถวใหม่ผิดเขต
+         แทนที่จะทับแถวเดิมของเขา)
+    """
+
+    VAN_SUP, CREDIT_SUP = "SL372", "SL341"
+    MONTH, YEAR = 10, 2026
+
+    def setUp(self):
+        self._cwd = os.getcwd()
+        self._tmpdir = tempfile.mkdtemp(prefix="newperiod_send_")
+        os.chdir(self._tmpdir)
+        os.makedirs("data", exist_ok=True)
+        self._old = os.environ.get("EMP_ASSIGNMENTS_JSON_PATH")
+        os.environ["EMP_ASSIGNMENTS_JSON_PATH"] = os.path.join(
+            self._tmpdir, "emp_assignments.json"
+        )
+        store.set_assignment(BORDER_EMP, self.CREDIT_SUP, from_sup=self.VAN_SUP)
+
+        def g(emp, st, area, prov):
+            return {"emp_id": emp, "sku": "A", "qty": 10, "salestype": st,
+                    "divisioncode": "S", "areacode": area, "provincecode": prov,
+                    "warehouse_code": ""}
+
+        # งวดใหม่: ทีมต้นทางไม่มี S516 แล้ว · ทีมปลายทางมี พร้อม dim ของตัวเขาเอง
+        pd.DataFrame([g("V001", "C", "10", "P1")]).to_csv(
+            f"data/tga_lines_{self.VAN_SUP}_{self.YEAR}_{self.MONTH:02d}.csv", index=False)
+        pd.DataFrame([
+            g("C001", "S", "20", "P2"),
+            g(BORDER_EMP, "C", "30", "P3"),
+        ]).to_csv(
+            f"data/tga_lines_{self.CREDIT_SUP}_{self.YEAR}_{self.MONTH:02d}.csv", index=False)
+        for sup, boxes in ((self.VAN_SUP, 10), (self.CREDIT_SUP, 20)):
+            pd.DataFrame([
+                {"sku": "A", "supervisor_target_boxes": boxes, "price_per_box": 1.0},
+            ]).to_csv(
+                f"data/target_boxes_{sup}_{self.YEAR}_{self.MONTH:02d}.csv", index=False)
+
+    def tearDown(self):
+        os.chdir(self._cwd)
+        if self._old is None:
+            os.environ.pop("EMP_ASSIGNMENTS_JSON_PATH", None)
+        else:
+            os.environ["EMP_ASSIGNMENTS_JSON_PATH"] = self._old
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def _send(self, sup, allocs):
+        from backend.schemas import LakehouseUploadRequest
+
+        req = LakehouseUploadRequest(
+            sup_id=sup, target_month=self.MONTH, target_year=self.YEAR,
+            upload_user_code="T",
+            allocations=[
+                {"emp_id": e, "sku": "A", "allocated_boxes": b} for e, b in allocs
+            ],
+            allow_new_targetsun_rows=True,
+        )
+        return lh._build_tga_upload_dataframe(req, drop_incomplete_rows=True)
+
+    def test_source_team_file_has_no_trace_of_them(self):
+        out, dropped, _p, shortfall = self._send(self.VAN_SUP, [("V001", 10)])
+        self.assertNotIn(BORDER_EMP, set(out["SALESMANCODE"]))
+        self.assertEqual(int(out["QUANTITYCASE"].sum()), 10)
+        self.assertEqual(dropped, 0)
+        self.assertEqual(shortfall, [])
+
+    def test_destination_team_sends_them_with_their_own_territory(self):
+        out, dropped, _p, shortfall = self._send(
+            self.CREDIT_SUP, [("C001", 12), (BORDER_EMP, 8)]
+        )
+        self.assertEqual(dropped, 0)
+        self.assertEqual(shortfall, [])
+        row = out[out["SALESMANCODE"] == BORDER_EMP]
+        self.assertEqual(len(row), 1)
+        self.assertEqual(int(row["QUANTITYCASE"].iloc[0]), 8)
+        self.assertEqual(row["SALESTYPE"].iloc[0], "C", "ต้องเป็นหน่วยขายของตัวเขาเอง")
+        self.assertEqual(str(row["AREACODE"].iloc[0]), "30", "ต้องเป็นเขตของตัวเขาเอง")
+        self.assertEqual(row["PROVINCECODE"].iloc[0], "P3")
+
+    def test_totals_and_upsert_key_stay_sound(self):
+        out, _d, _p, _s = self._send(self.CREDIT_SUP, [("C001", 12), (BORDER_EMP, 8)])
+        self.assertEqual(int(out["QUANTITYCASE"].sum()), 20)
+        key = ["PRODUCTCODE", "SALESTYPE", "DIVISIONCODE", "SALESMANCODE",
+               "AREACODE", "PROVINCECODE"]
+        self.assertEqual(int(out.duplicated(subset=key).sum()), 0)
 
 
 if __name__ == "__main__":
