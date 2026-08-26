@@ -107,5 +107,62 @@ class TestInferenceOnlyFromTheSameEmployee(unittest.TestCase):
         self.assertEqual(dims["E2"]["areacode"], "09")
 
 
+class TestBlankColumnIsNotAConflict(unittest.TestCase):
+    """
+    คอลัมน์ที่ว่างทุกแถว = "ไม่มีค่า" ไม่ใช่ "ขัดกัน"
+
+    เจอของจริง (งวด 09/2026): พนักงานทั้ง 65 คนมี PROVINCECODE ว่าง ตัวเดา dim จึง
+    ทิ้งทุกคน = ฟีเจอร์นี้ตายสนิทมาตลอดโดยไม่มีใครรู้ · ผลคือ 409 คู่พนักงานxสินค้า
+    ถูกตัดตอนส่งรวมภาค ทั้งที่ salestype/divisioncode/areacode ตรงกันหมดทุกแถว
+    """
+
+    def _dg(self, rows: list[dict]) -> pd.DataFrame:
+        return pd.DataFrame(rows)
+
+    def test_blank_province_does_not_throw_the_employee_away(self):
+        dg = self._dg([
+            {"emp_id": "S302", "sku": "A", "salestype": "S", "divisioncode": "S",
+             "areacode": "3", "provincecode": ""},
+            {"emp_id": "S302", "sku": "B", "salestype": "S", "divisioncode": "S",
+             "areacode": "3", "provincecode": ""},
+        ])
+        dims = lh.emp_dims_from_own_grain(dg)
+        self.assertIn("S302", dims, "province ว่างไม่ใช่เหตุให้ทิ้งทั้งคน")
+        self.assertEqual(dims["S302"]["areacode"], "3")
+        self.assertEqual(dims["S302"]["provincecode"], "")
+
+    def test_a_real_disagreement_is_still_a_conflict(self):
+        dg = self._dg([
+            {"emp_id": "S302", "sku": "A", "salestype": "S", "divisioncode": "S",
+             "areacode": "3", "provincecode": "P1"},
+            {"emp_id": "S302", "sku": "B", "salestype": "S", "divisioncode": "S",
+             "areacode": "3", "provincecode": "P2"},
+        ])
+        self.assertNotIn(
+            "S302", lh.emp_dims_from_own_grain(dg),
+            "ค่าต่างกันจริงยังต้องถือว่าขัดกัน ห้ามเดา",
+        )
+
+    def test_some_rows_blank_and_some_filled_is_not_a_conflict(self):
+        """แถวเก่าไม่ได้กรอกจังหวัด แถวใหม่กรอก — ไม่ใช่ความขัดแย้ง"""
+        dg = self._dg([
+            {"emp_id": "S302", "sku": "A", "salestype": "S", "divisioncode": "S",
+             "areacode": "3", "provincecode": ""},
+            {"emp_id": "S302", "sku": "B", "salestype": "S", "divisioncode": "S",
+             "areacode": "3", "provincecode": "P1"},
+        ])
+        dims = lh.emp_dims_from_own_grain(dg)
+        self.assertEqual(dims["S302"]["provincecode"], "P1")
+
+    def test_a_missing_key_column_still_disqualifies(self):
+        """SALESTYPE/DIVISIONCODE/AREACODE เป็นคีย์ upsert — ขาดตัวใดก็ส่งไม่ได้อยู่ดี"""
+        for missing in ("salestype", "divisioncode", "areacode"):
+            row = {"emp_id": "S302", "sku": "A", "salestype": "S",
+                   "divisioncode": "S", "areacode": "3", "provincecode": "P1"}
+            row[missing] = ""
+            with self.subTest(missing=missing):
+                self.assertNotIn("S302", lh.emp_dims_from_own_grain(self._dg([row])))
+
+
 if __name__ == "__main__":
     unittest.main()

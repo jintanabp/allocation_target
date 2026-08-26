@@ -302,6 +302,10 @@ def emp_dims_from_own_grain(dg: pd.DataFrame) -> dict[str, dict[str, str]]:
     **อนุมานเฉพาะเมื่อทุกแถวของคนนั้นตรงกันหมด** ถ้าขัดกันเอง (เช่นขายหลายเขต)
     จะไม่เดา — ปล่อยให้ SKU นั้นถูกตัดตามนโยบายเดิมดีกว่าสร้างแถวผิดเขตใน Oracle
 
+    คอลัมน์ที่ว่างทุกแถวถือว่า "ไม่มีค่า" ไม่ใช่ "ขัดกัน" — PROVINCECODE ว่างเป็นเรื่อง
+    ปกติและไม่ได้อยู่ในคีย์ upsert · ส่วน SALESTYPE / DIVISIONCODE / AREACODE ต้องมีครบ
+    ไม่งั้นเดาไปก็ส่งไม่ได้อยู่ดี
+
     ใช้ตอนกระจายรวมทั้งหน่วย: พนักงานทีมอื่นที่ไม่เคยมีเป้าสินค้าตัวนี้จะได้แถวใหม่
     (Target Sun รองรับ insert — ดู targetsun-importTargetSalesmanNextFromExcel.md)
     """
@@ -321,11 +325,18 @@ def emp_dims_from_own_grain(dg: pd.DataFrame) -> dict[str, dict[str, str]]:
                 for v in grp.get(c, pd.Series(dtype=str))
             }
             vals.discard("")
-            if len(vals) != 1:
+            # ว่างทุกแถว = "ไม่มีค่า" ไม่ใช่ "ขัดกัน" — ของเดิมนับเป็นขัดกันแล้วทิ้ง
+            # พนักงานทั้งคน ทั้งที่ PROVINCECODE ว่างเป็นเรื่องปกติและไม่ได้อยู่ใน
+            # เงื่อนไขบังคับของการส่งด้วยซ้ำ
+            if len(vals) > 1:
                 conflicted = True
                 break
-            dims[c] = next(iter(vals))
-        if conflicted or len(dims) != len(cols):
+            dims[c] = next(iter(vals)) if vals else ""
+        if conflicted:
+            continue
+        # สามตัวนี้เป็นคีย์ upsert ของ Target Sun — ขาดตัวใดตัวหนึ่งก็ส่งไม่ได้อยู่ดี
+        # (ดู _import_key_mask) เดาไปก็ไม่มีประโยชน์
+        if not all(dims.get(k) for k in ("salestype", "divisioncode", "areacode")):
             continue
         out[emp_key] = dims
     return out
