@@ -331,6 +331,73 @@ def emp_dims_from_own_grain(dg: pd.DataFrame) -> dict[str, dict[str, str]]:
     return out
 
 
+def _read_tga_grain_across_teams(
+    month: int, year: int, emp_ids: set[str] | list[str]
+) -> pd.DataFrame:
+    """
+    grain ของพนักงานชุดที่ระบุ จากไฟล์ของ "ทุกทีม" ในงวดนั้น
+
+    grain ถูกเก็บแยกไฟล์ต่อทีม (data/tga_lines_{SL}_{Y}_{MM}.csv) เพราะสร้างตอน
+    โหลดข้อมูลขั้นที่ 1 ของแต่ละทีม · แต่ผลกระจายรวมภาค/รวมหน่วยมีพนักงานของหลายทีม
+    อยู่ในคำขอเดียว ถ้าอ่านแต่ไฟล์ของทีมเจ้าของ พนักงานทีมอื่นจะไม่มี SALESTYPE /
+    DIVISIONCODE / AREACODE ให้ใช้เลย แล้วแถวของเขาถูกตัดทิ้งทั้งหมด
+
+    dim พวกนี้เป็นคุณสมบัติของ "พนักงาน" ไม่ได้ผูกกับว่าใครเป็นหัวหน้า การหยิบจาก
+    ไฟล์ทีมไหนจึงให้ผลเดียวกัน · กรองเฉพาะรหัสที่อยู่ในคำขอ ไม่ลากทั้งบริษัทมา
+    """
+    want = {norm_emp_code(e) for e in (emp_ids or []) if str(e).strip()}
+    if not want:
+        return pd.DataFrame()
+    prefix = "tga_lines_"
+    suffix = f"_{int(year):04d}_{int(month):02d}.csv"
+    frames: list[pd.DataFrame] = []
+    try:
+        names = os.listdir("data")
+    except OSError:
+        return pd.DataFrame()
+    for name in names:
+        if not (name.startswith(prefix) and name.endswith(suffix)):
+            continue
+        path = os.path.join("data", name)
+        try:
+            dg = pd.read_csv(path, dtype=str, keep_default_na=False)
+        except Exception as e:
+            logger.warning("อ่าน grain ข้ามทีมไม่ได้ %s: %s", name, e)
+            continue
+        if dg.empty or "emp_id" not in dg.columns:
+            continue
+        dg = _normalize_grain_dtype(dg)
+        dg = dg[dg["emp_id"].isin(want)]
+        if dg.empty:
+            continue
+        try:
+            dg = dg.assign(_src_mtime=os.path.getmtime(path))
+        except OSError:
+            dg = dg.assign(_src_mtime=0.0)
+        frames.append(dg)
+    if not frames:
+        return pd.DataFrame()
+    out = pd.concat(frames, ignore_index=True)
+
+    # พนักงานย้ายซุปกลางงวดได้ (ในหน่วยเดียวกันก็ย้ายกันบ่อย) แล้วโผล่ทั้งไฟล์ทีมเก่า
+    # และทีมใหม่ · ถ้าเอามารวมกันดื้อ ๆ คนนั้นจะได้แถวเป้าสองแถว (เขตเก่า + เขตใหม่)
+    # แล้วหีบถูกแบ่งครึ่งไปลงทั้งคู่ — ครึ่งหนึ่งไปเขียนทับแถวของเขตที่เขาย้ายออกมาแล้ว
+    # ยอดรวมยังครบ ด่านไหนจึงไม่จับ
+    #
+    # ใช้ไฟล์ที่ "ใหม่ที่สุด" ของคนนั้นชุดเดียว — ไฟล์ถูกเขียนตอนโหลดข้อมูลขั้นที่ 1
+    # ของแต่ละทีม ไฟล์ล่าสุดจึงสะท้อนว่าตอนนี้เขาอยู่ทีมไหน (วิธีเดียวกับที่ใช้ตัดสิน
+    # ราคาที่ขัดกันข้ามทีมใน employees._newest_price)
+    newest = out.groupby("emp_id")["_src_mtime"].transform("max")
+    picked = out[out["_src_mtime"] == newest].drop(columns=["_src_mtime"])
+    dropped_stale = len(out) - len(picked)
+    if dropped_stale:
+        logger.info(
+            "grain ข้ามทีม: ข้าม %d แถวจากไฟล์ทีมเก่า (พนักงานย้ายทีมกลางงวด)",
+            dropped_stale,
+        )
+    return picked.drop_duplicates().reset_index(drop=True)
+
+
 def _grain_by_pair(dg: pd.DataFrame) -> dict[tuple[str, str], pd.DataFrame]:
     if dg.empty:
         return {}
@@ -1750,6 +1817,31 @@ def _build_tga_upload_dataframe(
     zero_pairs_full = _zero_sum_emp_sku_pairs(df)
 
     grain_dg = _read_tga_grain_cache(req.sup_id, int(req.target_month), int(req.target_year))
+    # ผลกระจายรวมภาค/รวมหน่วยมีพนักงานของหลายทีมในคำขอเดียว — เติม grain ของคนที่
+    # ไม่ได้อยู่ในไฟล์ของทีมเจ้าของ จากไฟล์ของทีมอื่นในงวดเดียวกัน
+    # ไม่ทำแบบนี้ แถวของเขาจะไม่มี dim แล้วถูกตัดทิ้งทั้งหมด (SKU ก็ถูกตัดตามไปด้วย)
+    _req_emps = {
+        norm_emp_code(a.emp_id) for a in (req.allocations or []) if str(a.emp_id).strip()
+    }
+    _have = (
+        set(grain_dg["emp_id"].tolist())
+        if not grain_dg.empty and "emp_id" in grain_dg.columns
+        else set()
+    )
+    _missing_emps = _req_emps - _have
+    if _missing_emps:
+        _extra = _read_tga_grain_across_teams(
+            int(req.target_month), int(req.target_year), _missing_emps
+        )
+        if not _extra.empty:
+            logger.info(
+                "เติม grain ข้ามทีม %d แถว ให้พนักงาน %d คนที่ไม่ได้อยู่ในไฟล์ของ %s",
+                len(_extra), _extra["emp_id"].nunique(), str(req.sup_id or "").upper(),
+            )
+            grain_dg = (
+                _extra if grain_dg.empty
+                else pd.concat([grain_dg, _extra], ignore_index=True)
+            )
     grain_lookup = _grain_by_pair(grain_dg)
     t_grain = time.perf_counter()
 
