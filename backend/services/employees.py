@@ -1436,6 +1436,11 @@ def _newest_emp_cache_other_period(
     return best
 
 
+# รหัสหน่วยขายภายใน (มาจาก TargetSun) ↔ คำที่ผู้ใช้และหน้าเว็บใช้
+# S = เครดิต · C = รถเงินสด (ดู targetsun_read._acc_unit_to_sales_type)
+_SALES_TYPE_TO_ACC_UNIT = {"S": "credit", "C": "van"}
+
+
 def _sales_unit_by_sup() -> dict[str, str]:
     """
     หน่วยขายของแต่ละรหัสทีมจาก user_access — อ่านไฟล์ล้วน ไม่ยิง Fabric
@@ -2163,7 +2168,15 @@ def merge_employees_payloads(
         "target_boxes_by_sup": target_by_sup,
         # หน่วยขายของแต่ละทีมในก้อนนี้ — หน้าเว็บใช้ตัดสินว่าต้องโชว์ตัวเลือกหน่วยไหม
         # (โชว์เฉพาะตอนที่ขอบเขตมีทั้งเครดิตและรถเงินสด ซึ่งกระจายรวมกันไม่ได้)
-        "sales_unit_by_sup": {k: v for k, v in unit_by_sup.items() if v},
+        #
+        # ต้องส่งเป็นคำที่หน้าเว็บใช้ (credit/van) ไม่ใช่รหัสภายใน (S/C) —
+        # ตัวกรองหน่วย ค่าใน dropdown และพารามิเตอร์ที่ยิงกลับมา ใช้ credit/van หมด
+        # ส่ง S/C ไปแล้วหน้าเว็บจับคู่ไม่ติด ช่องเลือกหน่วยจึงไม่มีวันโผล่โดยไม่มีอะไรฟ้อง
+        "sales_unit_by_sup": {
+            k: _SALES_TYPE_TO_ACC_UNIT[v]
+            for k, v in unit_by_sup.items()
+            if v in _SALES_TYPE_TO_ACC_UNIT
+        },
     }
 
 

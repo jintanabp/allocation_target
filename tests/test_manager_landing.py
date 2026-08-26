@@ -26,7 +26,13 @@ import unittest
 REPO = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, REPO)
 
-from backend.services.manager_views import build_manager_view_options  # noqa: E402
+import shutil  # noqa: E402
+
+from backend.services.manager_views import (  # noqa: E402
+    build_manager_view_options,
+    drop_manager_code_without_team,
+    has_team_data_in_period,
+)
 
 logging.disable(logging.CRITICAL)
 
@@ -145,6 +151,90 @@ class TestSkippedTeamsAreVisible(unittest.TestCase):
     def test_it_becomes_a_warning_the_banner_renders(self):
         self.assertIn('type: "aggregate_team_skipped"', APP)
         self.assertIn('w.type === "aggregate_team_skipped"', APP)
+
+
+class TestManagerWithoutOwnTargetsIsNotATeam(unittest.TestCase):
+    """
+    ผู้จัดการที่งวดนี้ไม่มีเป้าของตัวเอง ต้องไม่ถูกนับเป็นทีมหนึ่งในขอบเขตรวมภาค
+
+    ของจริง (SL372 งวด 09/2026): มีพนักงาน 3 คน แต่ทั้งสามไม่มีแถวเป้าสักแถว
+    ทีมนั้นจึงเปิดไม่ได้ พอติดอยู่ในขอบเขตก็กลายเป็นทีมที่ถูกข้ามพร้อมคำเตือนทุกครั้ง
+
+    ตัดสินจาก "แถวเป้า" ไม่ใช่ "มีพนักงานไหม" — ทีมที่มีคนแต่ไม่มีเป้าเลย
+    เอาไปรวมก็ไม่มีอะไรให้รวม และกระจายไม่ได้
+    """
+
+    MGR, MONTH, YEAR = "SL372", 9, 2026
+    TEAM = ["SL351", "SL372", "SL396"]
+
+    def setUp(self):
+        self._cwd = os.getcwd()
+        self._tmpdir = tempfile.mkdtemp(prefix="mgr_noteam_")
+        os.chdir(self._tmpdir)
+        os.makedirs("data", exist_ok=True)
+
+    def tearDown(self):
+        os.chdir(self._cwd)
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def _grain(self, sup: str, rows: int) -> None:
+        with open(f"data/tga_lines_{sup}_{self.YEAR}_{self.MONTH:02d}.csv",
+                  "w", encoding="utf-8") as fh:
+            fh.write("emp_id,sku,qty,salestype,divisioncode,areacode,provincecode,warehouse_code\n")
+            for i in range(rows):
+                fh.write(f"E{i},A,5,S,B,10,P1,\n")
+
+    def _employees_only(self, sup: str) -> None:
+        """มีพนักงาน แต่ไม่มีแถวเป้าเลย — เคสของ SL372"""
+        with open(f"data/emp_cache_{sup}_{self.YEAR}_{self.MONTH:02d}.csv",
+                  "w", encoding="utf-8") as fh:
+            fh.write("emp_id,emp_name,super_code\n")
+            fh.write(f"E1,ชื่อ,{sup}\n")
+        self._grain(sup, 0)
+
+    def test_a_team_with_targets_counts(self):
+        self._grain("SL396", 5)
+        self.assertTrue(has_team_data_in_period("SL396", self.MONTH, self.YEAR))
+
+    def test_employees_without_targets_do_not_count(self):
+        self._employees_only(self.MGR)
+        self.assertFalse(
+            has_team_data_in_period(self.MGR, self.MONTH, self.YEAR),
+            "มีคนแต่ไม่มีเป้า = ไม่มีอะไรให้รวม",
+        )
+
+    def test_no_file_at_all_does_not_count(self):
+        self.assertFalse(has_team_data_in_period("SL999", self.MONTH, self.YEAR))
+
+    def test_the_manager_code_is_dropped_from_the_scope(self):
+        self._employees_only(self.MGR)
+        self._grain("SL351", 3)
+        self._grain("SL396", 3)
+        self.assertEqual(
+            drop_manager_code_without_team(self.TEAM, self.MGR, self.MONTH, self.YEAR),
+            ["SL351", "SL396"],
+        )
+
+    def test_a_manager_with_their_own_targets_stays(self):
+        """ผู้จัดการที่มีพนักงานสังกัดตรงจริง ยังนับเป็นทีมหนึ่งเหมือนซุปคนหนึ่ง"""
+        self._grain(self.MGR, 4)
+        self._grain("SL351", 3)
+        self._grain("SL396", 3)
+        self.assertEqual(
+            sorted(drop_manager_code_without_team(self.TEAM, self.MGR, self.MONTH, self.YEAR)),
+            ["SL351", "SL372", "SL396"],
+        )
+
+    def test_real_supervisors_without_data_are_never_dropped(self):
+        """
+        ทีมซุปจริงที่ยังไม่มีข้อมูลต้องยังโผล่ แล้วถูกรายงานว่าโหลดไม่ได้
+        ไม่งั้นเป้าของทีมนั้นหายจากยอดรวมโดยไม่มีใครรู้
+        """
+        self._grain(self.MGR, 4)
+        self.assertIn(
+            "SL351",
+            drop_manager_code_without_team(self.TEAM, self.MGR, self.MONTH, self.YEAR),
+        )
 
 
 if __name__ == "__main__":

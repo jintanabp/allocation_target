@@ -23,6 +23,7 @@ from ..services.employees import (
 )
 from ..services.access_control import resolve_summary_supervisor_codes
 from ..services.manager_views import (
+    drop_manager_code_without_team,
     filter_codes_by_unit,
     resolve_aggregate_supervisor_codes,
 )
@@ -140,6 +141,11 @@ def get_employees_aggregate(
         sup_ids = resolve_aggregate_supervisor_codes(mgr, team_codes, view, region or None)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+    # ผู้จัดการที่งวดนี้ไม่มีพนักงานสังกัดตรง ไม่ต้องนับเป็นทีมหนึ่ง — ไม่งั้นทีมของเขา
+    # ติดอยู่ในขอบเขตแล้วโหลดไม่ได้ กลายเป็นทีมที่ถูกข้ามพร้อมคำเตือนทุกครั้ง
+    # (ตัดเฉพาะรหัสผู้จัดการ · ทีมซุปจริงที่ยังไม่มีข้อมูลต้องยังโผล่และถูกรายงาน)
+    sup_ids = drop_manager_code_without_team(sup_ids, mgr, target_month, target_year)
 
     if not sup_ids:
         raise HTTPException(status_code=404, detail="ไม่มี Supervisor ในขอบเขตที่เลือก")

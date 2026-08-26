@@ -2013,7 +2013,15 @@ function _unitsInCurrentScope() {
   const meta = S.salesUnitBySup || {};
   const codes = _allocScopeSupOrder();
   const src = codes.length ? codes : Object.keys(meta);
-  return [...new Set(src.map((c) => meta[c]).filter((u) => u === "credit" || u === "van"))].sort();
+  // รับได้ทั้งคำที่ผู้ใช้ใช้ (credit/van) และรหัสภายใน (S/C) — เคยพลาดมาแล้วเพราะ
+  // backend ส่งรหัสภายในมา แล้วช่องเลือกหน่วยไม่โผล่เลยโดยไม่มีอะไรฟ้อง
+  const norm = (u) => {
+    const v = String(u || "").trim().toLowerCase();
+    if (v === "credit" || v === "s") return "credit";
+    if (v === "van" || v === "c") return "van";
+    return "";
+  };
+  return [...new Set(src.map((c) => norm(meta[c])).filter(Boolean))].sort();
 }
 
 /**

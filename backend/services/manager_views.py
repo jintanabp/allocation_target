@@ -228,6 +228,53 @@ def build_manager_views_map(
     return out
 
 
+def has_team_data_in_period(
+    code: str, month: int, year: int, data_dir: str = "data"
+) -> bool:
+    """
+    รหัสนี้มีพนักงาน/แถวเป้าของงวดที่ระบุไหม — ดูจากไฟล์ในเครื่อง ไม่ยิงอะไร
+
+    ต่างจาก codes_with_own_salesmen() ตรงที่ "ผูกกับงวด" · ตัวนั้นตอบว่าเคยมีไหม
+    (ใช้ตอนล็อกอินซึ่งยังไม่รู้งวด) ตัวนี้ตอบว่างวดนี้มีไหม
+
+    ดูจาก **แถวเป้า** ไม่ใช่รายชื่อพนักงาน — ทีมที่มีคนแต่ไม่มีเป้าเลยเอาไปรวมก็ไม่มี
+    อะไรให้รวม และกระจายไม่ได้ (ของจริง: ผู้จัดการคนหนึ่งมีพนักงาน 3 คนในงวดนี้
+    แต่ทั้งสามไม่มีแถวเป้าสักแถว ทีมนั้นจึงเปิดไม่ได้และไม่ควรนับเป็นทีมหนึ่ง)
+    """
+    c = str(code or "").strip().upper()
+    if not c:
+        return False
+    path = os.path.join(
+        data_dir, f"tga_lines_{c}_{int(year):04d}_{int(month):02d}.csv"
+    )
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            f.readline()                          # header
+            return bool(f.readline().strip())     # มีอย่างน้อยหนึ่งแถวเป้า
+    except OSError:
+        return False
+
+
+def drop_manager_code_without_team(
+    codes: list[str], manager_code: str, month: int, year: int
+) -> list[str]:
+    """
+    เอารหัสของผู้จัดการออกจากขอบเขต ถ้างวดนี้เขาไม่มีพนักงานสังกัดตรง
+
+    ผู้จัดการที่มีพนักงานสังกัดตรงยังนับเป็นทีมหนึ่งเหมือนซุปคนหนึ่ง — เป้าของ
+    พนักงานกลุ่มนั้นต้องอยู่ในยอดรวมภาคด้วย
+    """
+    mgr = str(manager_code or "").strip().upper()
+    if not mgr:
+        return list(codes or [])
+    out = [c for c in (codes or []) if str(c).strip().upper() != mgr]
+    if len(out) == len(codes or []):
+        return list(codes or [])                  # ไม่ได้อยู่ในขอบเขตอยู่แล้ว
+    if has_team_data_in_period(mgr, month, year):
+        return list(codes or [])                  # มีทีมจริงในงวดนี้ — เก็บไว้
+    return out
+
+
 def units_of_codes(codes: list[str]) -> dict[str, str]:
     """หน่วยขายของแต่ละรหัสทีมจาก user_access — "" = ไม่ได้ระบุ"""
     roster = _row_by_userpl()

@@ -126,6 +126,58 @@ class TestPickingAUnitUnblocksAllocation(_Base):
                 self.assertEqual(units_present_in(picked), [unit])
 
 
+class TestUnitVocabularyMatchesBothSides(_Base):
+    """
+    ระบบใช้คำเรียกหน่วยขายสองชุด แล้วเคยส่งผิดชุดข้ามฝั่งจนช่องเลือกไม่โผล่เลย
+
+      รหัสภายใน (จาก TargetSun): S = เครดิต · C = รถเงินสด
+      คำที่ผู้ใช้/หน้าเว็บใช้     : credit / van
+
+    ตัวกรองหน่วย ค่าใน dropdown และพารามิเตอร์ที่ยิงกลับ ใช้ credit/van หมด
+    ถ้า backend ส่ง S/C ไป หน้าเว็บจับคู่ไม่ติด — ช่องเลือกหน่วยไม่มีวันโผล่
+    และไม่มีอะไรฟ้องเลยสักอย่าง
+    """
+
+    def _merged(self):
+        from backend.services.employees import merge_employees_payloads
+
+        def pay(sid, unit):
+            return {
+                "_source_sup_id": sid,
+                "sales_unit": unit,
+                "employees": [{"emp_id": "E" + sid, "target_sun": 100}],
+                "skus": [{"sku": "A", "price_per_box": 10, "supervisor_target_boxes": 5}],
+                "sku_warnings": [],
+                "new_product_skus": [],
+            }
+
+        return merge_employees_payloads(
+            [pay("SL396", "S"), pay("SL372", "C")],
+            aggregate_label="รวม",
+            aggregate_sup_ids=["SL396", "SL372"],
+        )
+
+    def test_the_payload_speaks_the_screen_s_words(self):
+        out = self._merged()
+        self.assertEqual(
+            out.get("sales_unit_by_sup"), {"SL396": "credit", "SL372": "van"}
+        )
+
+    def test_internal_codes_never_leak_to_the_screen(self):
+        out = self._merged()
+        self.assertNotIn(
+            "S", set(out.get("sales_unit_by_sup", {}).values()),
+            "S/C เป็นรหัสภายใน ห้ามหลุดไปหน้าเว็บ",
+        )
+
+    def test_the_screen_tolerates_both_spellings(self):
+        """กันพลาดซ้ำ — หน้าเว็บต้องรับได้ทั้งสองแบบถึงจะไม่เงียบอีก"""
+        with open(os.path.join(REPO, "frontend", "app.js"), encoding="utf-8") as fh:
+            app = fh.read()
+        self.assertIn('if (v === "credit" || v === "s") return "credit";', app)
+        self.assertIn('if (v === "van" || v === "c") return "van";', app)
+
+
 class TestUnitPickerIsWiredEndToEnd(unittest.TestCase):
     """
     ตัวเลือกหน่วยต่อกันสี่ทอด ถ้าขาดทอดใดทอดหนึ่งก็ไม่มีช่องให้กด โดยไม่มีอะไรฟ้อง:
