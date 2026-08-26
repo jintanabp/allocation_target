@@ -1106,6 +1106,16 @@
                     <option value="marketing">Marketing (MKT)</option>
                     <option value="unknown">ไม่ระบุบทบาท</option>
                   </select>
+                  <!-- สิทธิ์ดูแลระบบเป็นคนละแกนกับตำแหน่ง — ซ้อนทับกันได้
+                       (Supervisor ที่เป็นแอดมินภาคด้วย ยังเป็น Supervisor เต็มตัว) -->
+                  <select id="adminFSysRole" class="admin-col-filter admin-col-filter--select" onchange="adminFilterRows()" aria-label="กรองตามสิทธิ์ดูแลระบบ">
+                    <option value="">สิทธิ์ดูแล: ทั้งหมด</option>
+                    <option value="__any__">มีสิทธิ์ดูแล (ทุกระดับ)</option>
+                    <option value="admin">แอดมิน</option>
+                    <option value="head_admin">หัวหน้าแอดมิน</option>
+                    <option value="dev">Dev</option>
+                    <option value="__none__">ไม่มีสิทธิ์ดูแล</option>
+                  </select>
                 </th>
                 <th class="admin-th-stack admin-th-stack--narrow">
                   <button type="button" class="admin-sort-btn" onclick="adminToggleSort('division')">

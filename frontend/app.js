@@ -13505,6 +13505,7 @@ function _adminClearFilterInputs() {
     "adminFEmail",
     "adminFUserpl",
     "adminFRole",
+    "adminFSysRole",
     "adminFDivision",
     "adminFRegion",
     "adminFUnit",
@@ -15307,6 +15308,7 @@ function adminSyncFilterVisuals() {
     ["adminFEmail", (v) => !!v],
     ["adminFUserpl", (v) => !!v],
     ["adminFRole", (v) => !!v],
+    ["adminFSysRole", (v) => !!v],
     ["adminFDivision", (v) => !!v],
     ["adminFRegion", (v) => !!v],
     ["adminFUnit", (v) => !!v],
@@ -15358,6 +15360,7 @@ function adminResetTableFilters() {
     "adminFEmail",
     "adminFUserpl",
     "adminFRole",
+    "adminFSysRole",
     "adminFDivision",
     "adminFRegion",
     "adminFUnit",
@@ -15897,6 +15900,7 @@ function adminFilterRows() {
   const emailQ = (document.getElementById("adminFEmail")?.value || "").trim().toLowerCase();
   const userplQ = (document.getElementById("adminFUserpl")?.value || "").trim().toUpperCase();
   const roleFilter = document.getElementById("adminFRole")?.value || "";
+  const sysRoleFilter = document.getElementById("adminFSysRole")?.value || "";
   const divisionFilter = document.getElementById("adminFDivision")?.value || "";
   const regionFilter = document.getElementById("adminFRegion")?.value || "";
   const unitFilter = document.getElementById("adminFUnit")?.value || "";
@@ -15911,6 +15915,14 @@ function adminFilterRows() {
   }
   if (roleFilter) {
     filtered = filtered.filter((r) => _adminRowMatchesRoleFilter(r.role || "", roleFilter, r));
+  }
+  if (sysRoleFilter) {
+    filtered = filtered.filter((r) => {
+      const sr = String(r.system_role || "").trim().toLowerCase();
+      if (sysRoleFilter === "__any__") return !!sr;
+      if (sysRoleFilter === "__none__") return !sr;
+      return sr === sysRoleFilter;
+    });
   }
   if (divisionFilter) {
     filtered = filtered.filter((r) => {
