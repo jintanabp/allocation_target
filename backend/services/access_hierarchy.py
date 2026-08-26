@@ -140,14 +140,16 @@ def _unit_matches(want: str, have: str) -> bool:
     เหมือนกัน · เดิมเทียบตรง ๆ ทีม all เลยไม่เข้าเงื่อนไขของใครเลย แล้วการ
     มองเห็นกลายเป็นทางเดียว: คนที่กำกับ all เห็นเขา แต่เขาไม่เห็นคนนั้นกลับ
 
-    หน่วยว่าง (ยังไม่กรอก) ยังไม่เห็นเหมือนเดิม — "ไม่รู้" ไม่ใช่ "ทั้งสองหน่วย"
-    ทีมกลุ่มนั้นต้องไปกรอกหน่วยให้ถูกก่อน ไม่ใช่ให้ระบบเดาแทน
+    หน่วยว่าง (ยังไม่กรอก) นับเหมือน all ไปก่อน — ครึ่งหนึ่งของตารางสิทธิ์ยังไม่ได้
+    กรอกหน่วย ถ้าถือว่า "ไม่รู้ = ไม่เห็น" ทีมกลุ่มนั้นจะหายจากยอดรวมภาคทั้งที่มี
+    อยู่จริง และตัวกรองขอบเขต (filter_codes_by_unit) ก็นับพวกเขาอยู่แล้ว
+    สองฝั่งต้องใช้กติกาชุดเดียวกัน ไม่งั้นเห็นคนละยอดบนหน้าจอเดียวกัน
     """
     w = str(want or "").strip().lower()
     h = str(have or "").strip().lower()
     if w not in ("credit", "van"):
         return True
-    return h == w or h == "all"
+    return h == w or h in ("all", "")
 
 
 def _build_division_supervisor_index(
@@ -188,15 +190,31 @@ def _build_division_supervisor_index(
 
 
 def _all_div_s_supervisors(rows: list[dict[str, Any]]) -> set[str]:
+    """
+    ทุกทีมใน Div.S — ใช้กับผู้จัดการระดับ division ที่เห็นทั้ง division
+
+    รวมผู้จัดการที่มีพนักงานขายสังกัดรหัสตัวเองด้วย กติกาเดียวกับ
+    _build_division_supervisor_index · เดิมนับเฉพาะ supervisor_acc ผู้จัดการ
+    ระดับ division จึงไม่เห็นทีมของผู้จัดการภาค ทั้งที่ผู้จัดการภาคเห็นกันเองอยู่แล้ว
+    """
+    from .manager_views import codes_with_own_salesmen
+
+    try:
+        with_staff = codes_with_own_salesmen()
+    except Exception:                       # อ่านโฟลเดอร์ไม่ได้ = ไม่เพิ่มใคร
+        with_staff = set()
+
     out: set[str] = set()
     for r in rows:
         if str(r.get("acc_division") or "") != "Div.S":
             continue
-        if str(r.get("login_kind") or "") != "supervisor_acc":
-            continue
         upl = real_userpl(r.get("userpl"))
-        if upl:
-            out.add(upl)
+        if not upl:
+            continue
+        kind = str(r.get("login_kind") or "")
+        if kind != "supervisor_acc" and not (kind == "manager_acc" and upl in with_staff):
+            continue
+        out.add(upl)
     return out
 
 
@@ -241,7 +259,10 @@ def compute_visible_supervisors_for_row(
         def _limit_to_unit(codes: set[str]) -> set[str]:
             """
             ผู้จัดการที่ระบุหน่วย (credit/van) เห็นซุปหน่วยเดียวกัน + ทีมที่กำกับ all
-            — กติกาเดียวกับซุป (ดู _unit_matches)
+            + ทีมที่ยังไม่ได้กรอกหน่วย — กติกาเดียวกับซุป (ดู _unit_matches)
+
+            ผู้จัดการระดับ division ไม่ต้องกรอกหน่วยก็เห็นทั้ง division ทุกภาค
+            (หน่วยว่าง = ไม่กรอง) แล้วค่อยกดเลือกดูแยกภาค/แยกหน่วยเอาบนหน้าจอ
 
             ไม่กรองรหัสของตัวเอง: _mgr_team เติมทีหลังเพื่อให้ผู้จัดการโหลด
             หน้าตัวเองได้ ถ้ากรองทิ้งจะล็อกอินเข้ามาแล้วไม่เห็นอะไรเลย

@@ -37,6 +37,8 @@ from backend.services.sl_link_store import supervisor_team_for_manager  # noqa: 
 
 logging.disable(logging.CRITICAL)
 
+NL = chr(10)          # ขึ้นบรรทัดจริง — codes_with_own_salesmen ต้องอ่านเจอแถวที่สอง
+
 
 def _read(rel: str) -> str:
     with open(os.path.join(REPO, rel), encoding="utf-8") as fh:
@@ -358,9 +360,15 @@ class TestManagersInTheSameRegionSeeEachOther(unittest.TestCase):
         self.assertNotIn(self.VAN_MGR, vis[self.CREDIT_MGR])
         self.assertNotIn(self.CREDIT_MGR, vis[self.VAN_MGR])
 
-    def test_a_team_with_no_unit_set_is_still_not_shared(self):
-        """"ไม่รู้หน่วย" ไม่ใช่ "ทั้งสองหน่วย" — ต้องไปกรอกให้ถูก ไม่ใช่ให้ระบบเดา"""
-        self.assertNotIn(self.BLANK_SUP, self._visible()[self.CREDIT_MGR])
+    def test_a_team_with_no_unit_set_counts_as_both(self):
+        """
+        ครึ่งหนึ่งของตารางสิทธิ์ยังไม่ได้กรอกหน่วย · ถ้าถือว่า "ไม่รู้ = ไม่เห็น"
+        ทีมกลุ่มนั้นหายจากยอดรวมภาคทั้งที่มีอยู่จริง — และตัวกรองขอบเขต
+        (filter_codes_by_unit) ก็นับพวกเขาอยู่แล้ว สองฝั่งต้องใช้กติกาชุดเดียวกัน
+        """
+        vis = self._visible()
+        self.assertIn(self.BLANK_SUP, vis[self.CREDIT_MGR])
+        self.assertIn(self.BLANK_SUP, vis[self.VAN_MGR])
 
     def test_a_supervisor_sees_the_all_team_among_their_peers(self):
         """ซุปใช้กติกาเดียวกัน ไม่งั้นสองฝั่งเห็นคนละยอดบนหน้าจอเดียวกัน"""
@@ -442,6 +450,70 @@ class TestEmptyManagerCodesLeaveTheScope(unittest.TestCase):
             ),
             ["SL359", "SL372"],
         )
+
+
+class TestDivisionManagersSeeManagerOwnedTeams(unittest.TestCase):
+    """
+    ผู้จัดการระดับ division เห็นทุกทีมใน division ของตัวเอง — รวมทีมของผู้จัดการภาค
+    ที่มีพนักงานขายสังกัดรหัสตัวเอง
+
+    กติกา "ผู้จัดการที่มีลูกน้องตรง = ทีมจริงทีมหนึ่ง" ใส่ให้เส้นทางผู้จัดการภาค
+    ไปแล้ว แต่เส้นทางระดับ division ยังนับเฉพาะ supervisor_acc — SL301 จึงไม่เห็น
+    ทั้ง SL372 และ SL359 ทั้งที่เป็นทีมในภาคเหนือของ Div.S แท้ ๆ
+    และผู้จัดการภาคเห็นกันเองอยู่แล้ว
+
+    ไม่ต้องกรอกหน่วยให้ผู้จัดการระดับ division — หน่วยว่างแปลว่าไม่กรอง
+    แล้วค่อยกดเลือกดูแยกภาค/แยกหน่วยบนหน้าจอ
+    """
+
+    def setUp(self):
+        self._cwd = os.getcwd()
+        self._tmpdir = tempfile.mkdtemp(prefix="div_mgr_")
+        os.chdir(self._tmpdir)
+        os.makedirs("data", exist_ok=True)
+        with open("data/emp_cache_SL372_2026_09.csv", "w", encoding="utf-8") as fh:
+            fh.write("emp_id,emp_name,super_code%s" % NL)
+            fh.write("E1,x,SL372%s" % NL)
+
+    def tearDown(self):
+        os.chdir(self._cwd)
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    ROWS = [
+        {"email": "d@x.co.th", "userpl": "SL301", "login_kind": "manager_acc",
+         "manager_level": "division", "acc_division": "Div.S"},
+        {"email": "m@x.co.th", "userpl": "SL372", "login_kind": "manager_acc",
+         "manager_level": "regional", "acc_division": "Div.S", "acc_region": "เหนือ"},
+        {"email": "s@x.co.th", "userpl": "SL396", "login_kind": "supervisor_acc",
+         "acc_division": "Div.S", "acc_region": "เหนือ", "acc_unit": "credit"},
+        {"email": "n@x.co.th", "userpl": "SL900", "login_kind": "manager_acc",
+         "manager_level": "regional", "acc_division": "Div.S", "acc_region": "ใต้"},
+    ]
+
+    def _visible(self):
+        from backend.services.access_hierarchy import enrich_rows_with_visibility
+
+        return {
+            str(r["userpl"]): set(r.get("visible_supervisor_codes") or [])
+            for r in enrich_rows_with_visibility(self.ROWS)
+        }
+
+    def test_the_division_manager_sees_a_regional_manager_with_staff(self):
+        self.assertIn("SL372", self._visible()["SL301"])
+
+    def test_they_still_see_the_ordinary_supervisors(self):
+        self.assertIn("SL396", self._visible()["SL301"])
+
+    def test_a_manager_code_without_staff_is_not_a_team(self):
+        """ทีมว่าง ไม่มีอะไรให้เกลี่ย — ไม่ต้องโผล่"""
+        self.assertNotIn("SL900", self._visible()["SL301"])
+
+    def test_no_unit_on_the_division_manager_means_no_filter(self):
+        """ผู้จัดการระดับ division ไม่ต้องกรอกหน่วย — เห็นทุกหน่วยในทุกภาค"""
+        from backend.services.access_hierarchy import _unit_matches
+
+        self.assertTrue(_unit_matches("", "credit"))
+        self.assertTrue(_unit_matches("", "van"))
 
 
 if __name__ == "__main__":
