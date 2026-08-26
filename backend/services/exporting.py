@@ -126,6 +126,7 @@ def export_excel_service(
         yellow_map=yellow_map,
         sup_id=sup_id,
         target_boxes_csv=_export_target_boxes_path(sup_id, target_month, target_year),
+        scope_sup_ids=list(req.scope_sup_ids or []),
     )
 
     # cleanup export artifacts: keep only latest per sup_id (avoid data/ growth)

@@ -9696,6 +9696,9 @@ async function doExport() {
       })),
       brand_filter: brand,
       yellow_targets: Object.entries(S.yellow).map(([emp_id, v]) => ({ emp_id, yellow_target: v })),
+      // ทีมที่อยู่ในผลกระจายก้อนนี้ — โหมดรวมภาคมีพนักงานหลายทีมในไฟล์เดียว
+      // ส่งไปให้หัวชีต Excel กำกับได้ว่าไฟล์นี้ครอบคลุมทีมไหนบ้าง
+      scope_sup_ids: S.aggregateMode ? _allocScopeSupOrder() : [],
     };
 
     // ส่งงวดไปด้วย เพื่อให้ server อ่านเป้าของทีมนี้ ไม่ใช่ไฟล์ global ที่ทีมอื่นอาจเขียนทับ

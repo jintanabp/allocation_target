@@ -1142,6 +1142,7 @@ def run_optimization_service(
         target_boxes_csv=_excel_target_boxes_path(
             sup_id, target_month, target_year, df_sku if summed_target else None
         ),
+        scope_sup_ids=target_sup_ids if summed_target else [],
     )
 
     return {

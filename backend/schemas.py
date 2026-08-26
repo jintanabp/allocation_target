@@ -120,6 +120,9 @@ class ExportRequest(BaseModel):
     allocations: list[AllocationRow]
     brand_filter: str = "ALL"
     yellow_targets: list[YellowTargetInput] = []
+    # ทีมที่อยู่ในผลกระจายก้อนนี้ — โหมดรวมภาคมีพนักงานของหลายทีมในไฟล์เดียว
+    # หัว Excel ต้องบอกให้รู้ ไม่งั้นอ่านแล้วนึกว่าเป็นเป้าของทีมเดียว
+    scope_sup_ids: list[str] = []
 
 
 class LakehouseUploadRow(BaseModel):

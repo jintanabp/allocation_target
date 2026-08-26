@@ -129,6 +129,7 @@ def _write_allocation_sheet(
     sup_id: str,
     sku_official: dict[str, int],
     use_yellow_title_total: bool,
+    scope_note: str = "",
 ) -> None:
     """เขียนรูปแบบกระจายเป้าลง worksheet เดียว (df ต้องเป็น view แบรนด์เดียวหรือที่ต้องการแล้ว)"""
     # ── เรียง SKU ให้แบรนด์เดียวกันอยู่ติดกัน ───────────────────────────
@@ -186,7 +187,7 @@ def _write_allocation_sheet(
             for sku in skus
         )
     title_text = (
-        f"ปรับปรุงเป้าหมายพนักงานขายเดือนหน้า  |  Supervisor: {sup_id}  |  "
+        f"ปรับปรุงเป้าหมายพนักงานขายเดือนหน้า  |  Supervisor: {sup_id}{scope_note}  |  "
         f"แบรนด์: {brand_label}  |  เป้ารวม: {header_total_baht:,.0f} บาท"
     )
     t = ws.cell(row=1, column=1, value=title_text)
@@ -355,6 +356,7 @@ def create_target_excel(
     yellow_map:  dict | None = None,  # emp_id → yellow_target
     sup_id:      str = "",
     target_boxes_csv: str | None = "data/target_boxes.csv",
+    scope_sup_ids: list[str] | None = None,
 ) -> str | None:
     """
     สร้างไฟล์ Excel จาก result_csv
@@ -362,7 +364,14 @@ def create_target_excel(
     yellow_map   = {emp_id: yellow_target_baht} สำหรับแสดงใน header และ validate deviation
     target_boxes_csv — ถ้ามีไฟล์ จะอ่าน supervisor_target_boxes มาแสดงเป็นแถว "เป้าหีบ (หัวหน้า)"
     แถวถัดไปเป็น "ผลรวมกระจาย" เพื่อให้เทียบกับผลคำนวณได้
+    scope_sup_ids — ทีมทั้งหมดที่อยู่ในผลกระจายก้อนนี้ (โหมดรวมภาคมีหลายทีมในไฟล์เดียว)
+    ใช้เขียนกำกับบนหัวชีตเท่านั้น ไม่มีผลกับตัวเลข
     """
+    scope_note = ""
+    _scope = [str(x).strip().upper() for x in (scope_sup_ids or []) if str(x).strip()]
+    if len(_scope) > 1:
+        _shown = ", ".join(_scope[:6]) + (" …" if len(_scope) > 6 else "")
+        scope_note = f"  |  รวม {len(_scope)} ทีม: {_shown}"
     if not os.path.exists(result_csv):
         print(f"❌ ไม่พบ {result_csv}")
         return None
@@ -419,6 +428,7 @@ def create_target_excel(
             sup_id=sup_id,
             sku_official=sku_off_all,
             use_yellow_title_total=True,
+            scope_note=scope_note,
         )
 
         for b in brands:
@@ -442,6 +452,7 @@ def create_target_excel(
                 sup_id=sup_id,
                 sku_official=sku_off,
                 use_yellow_title_total=False,
+                scope_note=scope_note,
             )
         wb.save(output_path)
         print(f"✅ Excel saved: {output_path} (brand=ALL, sheets={len(used_sheet_names)})")
@@ -460,6 +471,7 @@ def create_target_excel(
         sku_official=sku_off,
         # export แบรนด์เดียว: ให้ "เป้ารวม" เป็นยอดของแบรนด์นี้ (ไม่ใช่ยอดเหลืองรวมทุกแบรนด์)
         use_yellow_title_total=False,
+        scope_note=scope_note,
     )
     wb.save(output_path)
     n_emp = df["emp_id"].nunique()
