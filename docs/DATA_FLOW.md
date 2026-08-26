@@ -148,7 +148,7 @@ Methods: `get_tga_max_effective_raw`, `get_tga_target_salesman_granular`, `get_t
 
 | แหล่ง | ไฟล์ | ใช้สำหรับ |
 |-------|------|-----------|
-| สิทธิผู้ใช้ | `config/user_access.json` | อีเมล → USERPL, division, scope, `can_import_targetsun` · **ไม่อยู่ใน git** (แอดมินแก้บนเว็บ) ต้นแบบ: `config/user_access.example.json` |
+| สิทธิผู้ใช้ | `config/user_access.json` | อีเมล → USERPL, division, scope, `can_import_targetsun` · อยู่ใน git (ช่องทางเดียวที่ส่งรายชื่อขึ้นเซิร์ฟเวอร์ได้) ต้นแบบ: `config/user_access.example.json` |
 | ลำดับชั้น | `config/access_hierarchy.json` | Manager → Supervisor |
 | Cache managers | `data/managers_cache.json` | เร่ง `/managers` |
 | Legacy CSV | `USE_LEGACY_TARGET_CSV=1` | ข้าม Fabric ใช้ `data/target_boxes.csv` |
