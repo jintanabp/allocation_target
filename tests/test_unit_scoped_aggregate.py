@@ -126,5 +126,53 @@ class TestPickingAUnitUnblocksAllocation(_Base):
                 self.assertEqual(units_present_in(picked), [unit])
 
 
+class TestUnitPickerIsWiredEndToEnd(unittest.TestCase):
+    """
+    ตัวเลือกหน่วยต่อกันสี่ทอด ถ้าขาดทอดใดทอดหนึ่งก็ไม่มีช่องให้กด โดยไม่มีอะไรฟ้อง:
+      backend ส่งหน่วยรายทีม → หน้าจอเก็บไว้ → ตัดสินว่าโชว์ช่องไหม → ส่งค่ากลับไป
+    """
+
+    def _read(self, rel: str) -> str:
+        with open(os.path.join(REPO, rel), encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_backend_sends_the_unit_of_each_team(self):
+        emp = self._read("backend/services/employees.py")
+        self.assertIn('"sales_unit_by_sup"', emp)
+
+    def test_the_endpoints_accept_a_unit(self):
+        data = self._read("backend/routers/data.py")
+        self.assertEqual(
+            data.count('unit: str = Query("", description='), 2,
+            "ต้องรับได้ทั้งรวมของผู้จัดการและรวมภาคของซุป",
+        )
+        self.assertIn("filter_codes_by_unit(sup_ids, unit)", data)
+
+    def test_the_screen_keeps_what_backend_sent(self):
+        app = self._read("frontend/app.js")
+        self.assertIn("data.sales_unit_by_sup", app)
+        self.assertIn("S.salesUnitBySup", app)
+
+    def test_the_picker_only_shows_when_the_scope_mixes_units(self):
+        app = self._read("frontend/app.js")
+        self.assertIn("function _unitsInCurrentScope", app)
+        self.assertIn("S.aggregateMode && units.length > 1", app)
+
+    def test_picking_a_unit_reloads_with_it(self):
+        app = self._read("frontend/app.js")
+        self.assertIn("function onManagerViewUnitChange", app)
+        self.assertIn(
+            '(S.managerViewUnit ? `&unit=${encodeURIComponent(S.managerViewUnit)}` : "")',
+            app,
+        )
+
+    def test_the_control_exists_on_the_page(self):
+        html = self._read("frontend/index.html")
+        self.assertIn('id="managerViewUnitSelect"', html)
+        for value in ('value=""', 'value="credit"', 'value="van"'):
+            with self.subTest(value=value):
+                self.assertIn(value, html)
+
+
 if __name__ == "__main__":
     unittest.main()
