@@ -1848,7 +1848,12 @@ def _employee_directory() -> list[dict]:
     """
     import re
 
-    pat = re.compile(r"^emp_cache_(.+)_(\d{4})_(\d{2})\.csv$")
+    # อ่านสองแหล่ง: แคชรายชื่อ (มีชื่อคน) และแคชแถวเป้า (ครอบคลุมกว่ามาก)
+    #
+    # ทีมที่เคยดึงเป้ามาแล้วแต่ยังไม่เคยเปิดหน้า Dashboard จะมีแต่ tga_lines
+    # ไม่มี emp_cache — ถ้าอ่านแหล่งเดียว พนักงานของทีมเหล่านั้นหายไปจากหน้านี้
+    # ทั้งที่เป็นกลุ่มที่ต้องมาย้ายบ่อยที่สุด (ของจริง: emp_cache 17 ไฟล์ / grain 90)
+    pat = re.compile(r"^(?:emp_cache|tga_lines)_(.+)_(\d{4})_(\d{2})\.csv$")
     newest: dict[str, tuple[str, str]] = {}          # emp_id -> (stamp, sup)
     names: dict[str, str] = {}
     try:
@@ -1867,10 +1872,12 @@ def _employee_directory() -> list[dict]:
             continue
         if df.empty or "emp_id" not in df.columns:
             continue
+        seen_here: set[str] = set()
         for _, row in df.iterrows():
             emp = str(row.get("emp_id") or "").strip().upper()
-            if not emp:
+            if not emp or emp in seen_here:
                 continue
+            seen_here.add(emp)              # แคชแถวเป้ามีหลายแถวต่อคน
             nm = str(row.get("emp_name") or "").strip()
             if nm:
                 names.setdefault(emp, nm)
