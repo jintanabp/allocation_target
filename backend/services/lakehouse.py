@@ -343,6 +343,48 @@ def emp_dims_from_own_grain(dg: pd.DataFrame) -> dict[str, dict[str, str]]:
     return out
 
 
+def _drop_rows_of_reassigned_employees(
+    rows: list[dict], sup_id: str
+) -> tuple[list[dict], set[str]]:
+    """
+    ตัดแถวของพนักงานที่ถูกย้ายไปให้ทีมอื่นเกลี่ยเป้าแล้ว ออกจากแผนของทีมนี้
+
+    แผนกระจายที่บันทึกไว้ "ก่อน" การย้ายยังมีคนคนนั้นอยู่ · ถ้าปล่อยให้ส่ง
+    เป้าของเขาจะถูกเขียนทับด้วยตัวเลขจากแผนเก่า แล้วแต่ว่าใครกดส่งทีหลัง —
+    ทั้งสองรอบส่งสำเร็จเหมือนกันหมด ไม่มีอะไรฟ้อง เพราะปลายทางรับ upsert
+
+    ตัดที่ตัวสร้างไฟล์เพราะทั้งการส่งจริงและการดาวน์โหลด Excel ผ่านทางนี้ทางเดียว
+    ตัวไหนที่หายไปจะทำให้ยอดไม่ตรงเป้าทีม แล้วด่านเทียบเป้า (S1) ฟ้องเองอยู่แล้ว
+    ผู้ใช้จึงถูกบังคับให้โหลดใหม่ ซึ่งเป็นสิ่งที่ควรทำพอดี
+    """
+    sid = str(sup_id or "").strip().upper()
+    if not rows:
+        return rows, set()
+    try:
+        from .emp_assignment_store import moved_away_from
+
+        away = moved_away_from(sid)
+    except Exception as e:
+        logger.warning("อ่านรายการย้ายพนักงานตอนส่งไม่ได้ (%s): %s", sid, e)
+        return rows, set()
+    if not away:
+        return rows, set()
+    kept: list[dict] = []
+    dropped: set[str] = set()
+    for r in rows:
+        emp = norm_emp_code(r.get("emp_id"))
+        if emp in away:
+            dropped.add(emp)
+            continue
+        kept.append(r)
+    if dropped:
+        logger.warning(
+            "ไม่ส่งแถวของพนักงานที่ย้ายไปทีมอื่นแล้ว %d คน จากแผนของ %s: %s",
+            len(dropped), sid, sorted(dropped)[:10],
+        )
+    return kept, dropped
+
+
 def _read_tga_grain_across_teams(
     month: int, year: int, emp_ids: set[str] | list[str]
 ) -> pd.DataFrame:
@@ -1816,10 +1858,22 @@ def _build_tga_upload_dataframe(
     """
     t0 = time.perf_counter()
     rows_raw = [a.model_dump() for a in req.allocations]
+    rows_raw, moved_out = _drop_rows_of_reassigned_employees(rows_raw, req.sup_id)
     df = pd.DataFrame(rows_raw)
-    df["allocated_boxes"] = pd.to_numeric(df["allocated_boxes"], errors="coerce").fillna(0).astype(int)
     if df.empty:
+        if moved_out:
+            raise HTTPException(
+                400,
+                detail={
+                    "message": (
+                        "ทุกคนในแผนนี้ถูกย้ายไปให้ทีมอื่นเกลี่ยเป้าแล้ว จึงไม่มีอะไรให้ส่ง"
+                    ),
+                    "reassigned_employees": sorted(moved_out),
+                    "hint_th": "โหลดข้อมูลขั้นที่ 1 ใหม่แล้วกระจายอีกครั้ง",
+                },
+            )
         raise HTTPException(400, detail="ไม่มีข้อมูล allocations สำหรับส่งออก")
+    df["allocated_boxes"] = pd.to_numeric(df["allocated_boxes"], errors="coerce").fillna(0).astype(int)
 
     # รหัสพนักงานต้องผ่านตัว normalize ตัวเดียวกับฝั่ง grain — ถ้ารูปต่างกัน
     # จะจับคู่ไม่ติดแล้ว SKU นั้นถูกตัดทั้งตัวโดยที่ข้อมูลไม่ได้ผิดอะไร

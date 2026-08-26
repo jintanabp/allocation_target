@@ -22,6 +22,7 @@ REPO = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, REPO)
 
 from backend.services import emp_assignment_store as store  # noqa: E402
+from backend.services import lakehouse as lh  # noqa: E402
 
 logging.disable(logging.CRITICAL)
 
@@ -158,6 +159,57 @@ class TestApplyToTeamList(_TempStore):
         rows, moves = store.apply_to_employee_list("SL999", before)
         self.assertEqual([r["emp_id"] for r in rows], ["S1", "S2", "S3"])
         self.assertEqual(moves, {"removed": 0, "added": 0})
+
+
+class TestSendDoesNotDoubleWrite(_TempStore):
+    """
+    แผนกระจายที่บันทึกไว้ "ก่อน" ย้าย ยังมีคนที่ย้ายไปแล้วอยู่
+
+    ถ้าปล่อยให้ส่ง เป้าของเขาจะถูกเขียนทับด้วยตัวเลขจากแผนเก่า แล้วแต่ว่าใครกดส่ง
+    ทีหลัง — ทั้งสองรอบส่งสำเร็จเหมือนกันหมด ไม่มีอะไรฟ้อง เพราะปลายทางรับ upsert
+    """
+
+    def setUp(self):
+        super().setUp()
+        store.set_assignment(BORDER_EMP, CREDIT_SUP, from_sup=VAN_SUP)
+
+    def _alloc(self, *emp_ids: str) -> list[dict]:
+        return [{"emp_id": e, "sku": "A", "allocated_boxes": 5} for e in emp_ids]
+
+    def test_source_team_plan_loses_the_moved_employee(self):
+        kept, dropped = lh._drop_rows_of_reassigned_employees(
+            self._alloc("S1", BORDER_EMP, "S2"), VAN_SUP
+        )
+        self.assertEqual([r["emp_id"] for r in kept], ["S1", "S2"])
+        self.assertEqual(dropped, {BORDER_EMP})
+
+    def test_destination_team_keeps_them(self):
+        kept, dropped = lh._drop_rows_of_reassigned_employees(
+            self._alloc("S9", BORDER_EMP), CREDIT_SUP
+        )
+        self.assertEqual([r["emp_id"] for r in kept], ["S9", BORDER_EMP])
+        self.assertEqual(dropped, set())
+
+    def test_a_third_team_also_loses_them(self):
+        kept, dropped = lh._drop_rows_of_reassigned_employees(
+            self._alloc(BORDER_EMP, "S8"), THIRD_SUP
+        )
+        self.assertEqual([r["emp_id"] for r in kept], ["S8"])
+        self.assertEqual(dropped, {BORDER_EMP})
+
+    def test_teams_with_no_moves_are_untouched(self):
+        rows = self._alloc("S1", "S2")
+        kept, dropped = lh._drop_rows_of_reassigned_employees(rows, "SL999")
+        self.assertEqual(len(kept), 2)
+        self.assertEqual(dropped, set())
+
+    def test_employee_codes_are_matched_the_same_way_as_the_grain(self):
+        """รหัสรูปต่างกันต้องยังจับได้ ไม่งั้นด่านนี้หลุดแบบเงียบ ๆ"""
+        kept, dropped = lh._drop_rows_of_reassigned_employees(
+            [{"emp_id": BORDER_EMP.lower(), "sku": "A", "allocated_boxes": 5}], VAN_SUP
+        )
+        self.assertEqual(kept, [])
+        self.assertEqual(dropped, {BORDER_EMP})
 
 
 if __name__ == "__main__":
