@@ -27,6 +27,11 @@ from backend.services import usage_summary as us  # noqa: E402
 M, Y = 9, 2026
 
 
+def _read_file(rel):
+    with open(os.path.join(REPO, rel), encoding="utf-8") as fh:
+        return fh.read()
+
+
 def _ua(userpl, kind="supervisor_acc", region="เหนือ", **kw):
     row = {
         "email": f"{userpl.lower()}@x.com", "userpl": userpl, "login_kind": kind,
@@ -56,6 +61,7 @@ ROSTER = [
     {"emp_id": "E4", "emp_name": "สี่", "super_code": "SL300"},
     {"emp_id": "E5", "emp_name": "ห้า", "super_code": "SL400"},
     {"emp_id": "E8", "emp_name": "แปด", "super_code": "SL999"},   # รหัสที่กระจายไม่ได้
+    {"emp_id": "E0", "emp_name": "ศูนย์", "super_code": ""},        # ไม่ระบุทีมเลย
 ]
 
 
@@ -202,6 +208,46 @@ class TestEmployeeCounts(_Base):
                 self.assertLessEqual(r["allocated_pct"], 100.0)
 
 
+class TestReconcilesWithDimSalesman(_Base):
+    """
+    ทุกคนใน Dim_Salesman ต้องอยู่ในช่องใดช่องหนึ่ง ไม่มีใครหายกลางทาง
+
+    เดิมคนที่ SuperCode ว่างหายไปเฉย ๆ — ไม่อยู่ทั้งตัวหารและกอง "สังกัดรหัสที่
+    กระจายไม่ได้" ทำให้เลข "N คนทั้งบริษัท" ที่โชว์ข้างการ์ดกระทบยอดไม่ได้
+    ทั้งที่หน้าจอกับ Excel โฆษณาไว้ว่ากระทบได้
+    """
+
+    def test_three_buckets_add_up_to_the_roster(self):
+        e = self.summary()["employees"]
+        self.assertEqual(e["total"], 7)
+        self.assertEqual(e["not_under_allocating_team"], 1)   # E8 ใต้ SL999
+        self.assertEqual(e["no_super_code"], 1)               # E0 ไม่ระบุทีม
+        self.assertEqual(e["in_dim_salesman"], 9)             # V9 ถูกตัดตั้งแต่ต้น
+        self.assertEqual(
+            e["total"] + e["not_under_allocating_team"] + e["no_super_code"],
+            e["in_dim_salesman"],
+        )
+
+    def test_identity_holds_for_a_scoped_admin_too(self):
+        e = self.summary(sl_codes={"SL100"})["employees"]
+        self.assertEqual(e["total"], 3)
+        self.assertEqual(
+            e["total"] + e["not_under_allocating_team"] + e["no_super_code"],
+            e["in_dim_salesman"],
+        )
+
+    def test_excel_shows_the_reconciliation_row(self):
+        kv = {r["topic"]: r["value"] for r in us.summary_kv_rows(self.summary())}
+        self.assertEqual(kv["พนักงานที่ไม่ระบุทีมใน Dim_Salesman"], 1)
+        self.assertEqual(kv["รวมพนักงานใน Dim_Salesman"], 9)
+
+    def test_unknown_when_there_is_no_roster(self):
+        os.unlink(fc._roster_path())
+        e = self.summary()["employees"]
+        for k in ("total", "not_under_allocating_team", "no_super_code", "in_dim_salesman"):
+            self.assertIsNone(e[k], k)
+
+
 class TestSentMethod(_Base):
     def test_team_approx_when_no_per_person_log(self):
         s = self.summary()
@@ -341,6 +387,27 @@ class TestExcelRows(_Base):
         self.assertEqual(by["SL400"]["allocated"], 0)
         self.assertEqual(by["SL300"]["login_kind"], "Manager")
         self.assertEqual(by["SL400"]["acc_region"], us.NO_REGION_LABEL)
+
+
+class TestRegionTableStyling(unittest.TestCase):
+    """
+    กฎกลาง ".admin-table td { text-align: left }" มี specificity สูงกว่า class เดี่ยว
+    เขียน ".usage-num { text-align: right }" เฉย ๆ จึงไม่มีผลเลยแบบเงียบ ๆ
+    """
+
+    def test_number_columns_win_the_alignment_rule(self):
+        css = _read_file("frontend/style.css")
+        self.assertIn(".admin-table td.usage-num", css)
+        self.assertIn(".admin-table th.usage-num", css)
+        bare = [ln for ln in css.splitlines() if ln.strip().startswith(".usage-num")]
+        self.assertEqual(bare, [], "selector เดี่ยวแพ้กฎกลาง ต้องนำหน้าด้วย .admin-table")
+
+    def test_percent_sits_on_its_own_line(self):
+        js = _read_file("frontend/app.js")
+        head = js.index("function _usageCell(")
+        block = js[head:js.index("function _usageTile(", head)]
+        self.assertIn("alloc-sub", block)
+        self.assertIn("<div>", block)
 
 
 if __name__ == "__main__":

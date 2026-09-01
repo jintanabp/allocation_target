@@ -14612,6 +14612,19 @@ function _usagePct(v) {
   return (v === null || v === undefined) ? "" : `${Number(v).toFixed(1)}%`;
 }
 
+/**
+ * ช่องตัวเลขในตารางรายภาค — ยอดบรรทัดบน เปอร์เซ็นต์บรรทัดล่าง
+ *
+ * เดิมต่อกันในบรรทัดเดียว ("6 40.0%") ตาต้องแยกเองว่าตรงไหนคือยอดตรงไหนคือสัดส่วน
+ * ซึ่งอ่านยากเมื่อมีสี่คอลัมน์แบบนี้เรียงกัน — ใช้ท่าเดียวกับตารางผลการกระจาย
+ */
+function _usageCell(value, pct) {
+  const p = _usagePct(pct);
+  return `<td class="usage-num"><div>${_usageNum(value)}</div>${
+    p ? `<div class="alloc-sub">${p}</div>` : ""
+  }</td>`;
+}
+
 function _usageTile(label, value, pct, sub) {
   const hasPct = pct !== null && pct !== undefined;
   const width = Math.max(0, Math.min(100, Number(pct) || 0)).toFixed(0);
@@ -14623,6 +14636,18 @@ function _usageTile(label, value, pct, sub) {
     ${hasPct ? `<span class="usage-kpi__meter"><span class="usage-kpi__meter-fill" style="width:${width}%"></span></span>` : ""}
     <span class="usage-kpi__sub">${escapeHtml(sub || "")}</span>
   </div>`;
+}
+
+/** บรรทัดล่างของการ์ด "พนักงานทั้งหมด" — บอกว่าใครอยู่นอกตัวหารบ้าง */
+function _usageOutsideSub(e) {
+  const parts = [];
+  if (e.not_under_allocating_team) {
+    parts.push(`${_usageNum(e.not_under_allocating_team)} คนสังกัดรหัสที่กระจายเป้าไม่ได้`);
+  }
+  if (e.no_super_code) {
+    parts.push(`${_usageNum(e.no_super_code)} คนไม่ระบุทีม`);
+  }
+  return parts.length ? `นอกตัวหารอีก ${parts.join(" · ")}` : "ในทีมที่กระจายเป้าได้";
 }
 
 const _USAGE_METHOD_TH = {
@@ -14682,10 +14707,7 @@ function _adminRenderUsageSummary(d) {
         ${_usageTile("ส่ง Target Sun", t.sent, t.sent_pct, "เคยส่งสำเร็จในงวดนี้")}
       </div>
       <div class="usage-kpi">
-        ${_usageTile("พนักงานทั้งหมด", e.total, null,
-          e.not_under_allocating_team
-            ? `อีก ${_usageNum(e.not_under_allocating_team)} คนสังกัดรหัสที่กระจายเป้าไม่ได้`
-            : "ในทีมที่กระจายเป้าได้")}
+        ${_usageTile("พนักงานทั้งหมด", e.total, null, _usageOutsideSub(e))}
         ${_usageTile("ถูกกระจายเป้า", e.allocated, e.allocated_pct,
           e.duplicate_emp_ids_across_teams
             ? `มีรหัสซ้ำข้ามทีม ${_usageNum(e.duplicate_emp_ids_across_teams)} รหัส — นับแยกทีม`
@@ -14719,11 +14741,11 @@ function _adminRenderUsageSummary(d) {
       ? rows.map((r) => `<tr>
           <td>${escapeHtml(r.region)}</td>
           <td class="usage-num">${_usageNum(r.teams)}</td>
-          <td class="usage-num">${_usageNum(r.used)} <span class="alloc-sub">${_usagePct(r.used_pct)}</span></td>
-          <td class="usage-num">${_usageNum(r.sent_teams)} <span class="alloc-sub">${_usagePct(r.sent_teams_pct)}</span></td>
+          ${_usageCell(r.used, r.used_pct)}
+          ${_usageCell(r.sent_teams, r.sent_teams_pct)}
           <td class="usage-num">${_usageNum(r.employees)}</td>
-          <td class="usage-num">${_usageNum(r.allocated)} <span class="alloc-sub">${_usagePct(r.allocated_pct)}</span></td>
-          <td class="usage-num">${_usageNum(r.sent)} <span class="alloc-sub">${_usagePct(r.sent_pct)}</span></td>
+          ${_usageCell(r.allocated, r.allocated_pct)}
+          ${_usageCell(r.sent, r.sent_pct)}
         </tr>`).join("") + totalRow
       : `<tr><td colspan="7" class="admin-empty">ไม่มีทีมในขอบเขตที่ดูแล</td></tr>`;
   }

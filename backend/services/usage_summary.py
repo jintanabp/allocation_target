@@ -394,6 +394,15 @@ def build_usage_summary(
     # บอกไว้ ไม่งั้นยอดรวมกับ Dim_Salesman ไม่กระทบกันแล้วหาสาเหตุไม่เจอ
     outside = sum(len(v) for k, v in by_team.items() if k not in code_set)
 
+    # คนที่ SuperCode ว่าง/NONE/(BLANK) ใน Dim_Salesman — ไม่มีทีมให้สังกัด
+    # roster_by_team ข้ามไป จึงไม่อยู่ทั้งในตัวหารและในกอง outside ถ้าไม่นับไว้
+    # ตรงนี้ คนกลุ่มนี้จะหายไปเฉย ๆ แล้ว "N คนทั้งบริษัท" ที่โชว์ข้างการ์ด
+    # จะไม่เท่ากับผลบวกของช่องอื่น — กระทบยอดไม่ได้ทั้งที่โฆษณาไว้ว่ากระทบได้
+    no_team = sum(
+        1 for r in (roster.get("rows") or [])
+        if not str(r.get("super_code") or "").strip()
+    )
+
     # รหัสพนักงานที่โผล่ในหลายทีม — เหตุผลที่ต้องนับเป็นคู่ (ทีม, รหัส)
     seen: dict[str, int] = {}
     for code in code_set:
@@ -443,7 +452,10 @@ def build_usage_summary(
             "sent": totals["sent"],
             "sent_pct": totals["sent_pct"] if roster.get("available") else None,
             "method": _overall_method(rows),
-            "not_under_allocating_team": outside,
+            # ทั้งสามช่องนี้เป็น None พร้อมกันเมื่อยังไม่มีทะเบียน = "ไม่รู้" ไม่ใช่ "ศูนย์"
+            "not_under_allocating_team": outside if roster_ok else None,
+            "no_super_code": no_team if roster_ok else None,
+            "in_dim_salesman": roster.get("row_count") if roster_ok else None,
             "allocated_not_in_roster": sum(r["allocated_not_in_roster"] for r in rows),
             "duplicate_emp_ids_across_teams": duplicates,
         },
@@ -521,8 +533,13 @@ def summary_kv_rows(s: dict[str, Any]) -> list[dict[str, Any]]:
          "(ทีมไหนส่งแล้ว ถือว่าคนที่ได้หีบในทีมนั้นถูกส่งทั้งหมด) อาจสูงกว่าจริงเล็กน้อย"),
         ("% พนักงานที่กระจาย+ส่ง", _fmt_pct(e["sent_pct"]), ""),
         ("วิธีนับ 'กระจาย+ส่ง'", _METHOD_TH.get(e["method"], e["method"] or "—"), ""),
-        ("พนักงานที่สังกัดรหัสซึ่งกระจายเป้าไม่ได้", e["not_under_allocating_team"],
-         "ไม่อยู่ในตัวหาร — แสดงไว้ให้กระทบยอดกับ Dim_Salesman ได้"),
+        ("พนักงานที่สังกัดรหัสซึ่งกระจายเป้าไม่ได้", _fmt_int(e["not_under_allocating_team"]),
+         "ไม่อยู่ในตัวหาร เช่น สังกัดรหัสที่ไม่มีบัญชีในระบบ หรือทีมสาธิต"),
+        ("พนักงานที่ไม่ระบุทีมใน Dim_Salesman", _fmt_int(e["no_super_code"]),
+         "SuperCode ว่างหรือเป็น NONE — ไม่มีทีมให้สังกัด จึงไม่อยู่ในตัวหาร"),
+        ("รวมพนักงานใน Dim_Salesman", _fmt_int(e["in_dim_salesman"]),
+         "= พนักงานทั้งหมด + สังกัดรหัสที่กระจายไม่ได้ + ไม่ระบุทีม "
+         "(ตัดรหัสขึ้นต้น V ออกแล้ว) — ใช้กระทบยอดว่าไม่มีใครหายไประหว่างทาง"),
         ("พนักงานที่ได้เป้าแต่ไม่อยู่ในทีมตามทะเบียน", e["allocated_not_in_roster"],
          "มักเป็นคนที่ถูกย้ายข้ามทีมเพื่อเกลี่ยเป้า"),
         ("รหัสพนักงานที่ซ้ำข้ามทีม", e["duplicate_emp_ids_across_teams"],

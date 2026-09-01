@@ -9235,12 +9235,15 @@ tr.emp-row--no-target .emp-tag {
   margin-top: 6px;
   line-height: 1.5;
 }
-.usage-num {
+/* ต้องระบุ .admin-table นำหน้า — กฎกลาง ".admin-table td { text-align: left }"
+   (style.css:2510) มี specificity สูงกว่า .usage-num เฉย ๆ เขียนสั้นแล้วไม่มีผล */
+.admin-table th.usage-num,
+.admin-table td.usage-num {
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.usage-total td {
+.admin-table tr.usage-total td {
   border-top: 2px solid var(--border-md);
   background: var(--surface-2);
 }
