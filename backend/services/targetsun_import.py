@@ -446,6 +446,12 @@ def _attach_readback(
     การส่งที่สำเร็จแล้วกลายเป็นล้มเหลว (verify_after_send ไม่ raise อยู่แล้ว)
     """
     ts = out.get("targetsun") if isinstance(out, dict) else None
+    # รหัสพนักงานที่อยู่ในไฟล์ที่ส่งจริง — เดิมคำนวณไว้ใช้แค่ตอนตรวจยอดย้อนกลับ
+    # แล้วหายไปพร้อม bundle ที่ถูกลบใน finally ทำให้ไม่มีที่ไหนในระบบตอบได้เลยว่า
+    # "งวดนี้ส่งเป้าให้พนักงานกี่คน" · ส่งต่อออกไปให้ตัวบันทึกการใช้งานเก็บไว้
+    # แนบก่อนทางออกทุกทาง รวมทางที่ส่งไม่สำเร็จ — จะได้รู้ว่ากะจะส่งให้ใครบ้าง
+    if isinstance(out, dict):
+        out["emp_codes"] = [str(e).strip() for e in (emp_codes or []) if str(e).strip()]
     if isinstance(ts, dict) and ts.get("success") is False:
         out["readback"] = {"checked": False, "reason": "send_failed"}
         return out

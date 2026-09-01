@@ -54,6 +54,18 @@ def _tga_skus_path(year: int, month: int) -> str:
     return os.path.join(cache_dir(), f"tga_skus_{int(year)}_{int(month):02d}.csv")
 
 
+def _roster_path() -> str:
+    """
+    รายชื่อพนักงานทั้งบริษัท — **ไม่ผูกกับงวด** จึงไม่มี suffix ปี/เดือน
+
+    ชื่อไฟล์จงใจไม่ขึ้นต้นด้วย dim_product / price_per_box / tga_skus เพราะ
+    invalidate_period_cache() จับด้วย prefix เหล่านั้น และเวลาไม่ระบุงวดมันจะลบ
+    **ทุกไฟล์ที่ตรง prefix** — ถ้าตั้งชื่อพลาด กด "ล้างแคชงวด" ทีเดียวรายชื่อ
+    พนักงานทั้งบริษัทหายไปด้วยโดยไม่มีใครตั้งใจ
+    """
+    return os.path.join(cache_dir(), "salesman_roster.json")
+
+
 def seed_cache_from_repo() -> int:
     """
     เติมไฟล์แคชตั้งต้นจาก seed/cache/ ถ้า data/cache/ ยังไม่มีไฟล์นั้น
@@ -254,6 +266,71 @@ def write_tga_skus_csv(year: int, month: int, df: pd.DataFrame) -> None:
         _write_json_cache(path + ".meta.json", {"row_count": len(df)})
 
 
+def _cache_age_sec(doc: dict[str, Any] | None) -> float | None:
+    raw = str((doc or {}).get("cached_at") or "").strip()
+    if not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - dt.astimezone(timezone.utc)).total_seconds()
+    except (TypeError, ValueError):
+        return None
+
+
+def read_salesman_roster(*, allow_stale: bool = True) -> dict[str, Any] | None:
+    """
+    รายชื่อพนักงานทั้งบริษัทจากแคช — คืน {"rows", "cached_at", "row_count", "stale"}
+
+    ค่าเริ่มต้นยอมใช้ของเก่า เพราะหน้าสรุปการใช้งานต้องเปิดได้แม้ Fabric ล่ม
+    รายชื่อพนักงานขยับช้ามาก ของเมื่อวานใกล้ความจริงกว่า "ไม่มีตัวเลขเลย" มาก
+    (หลักเดียวกับแคชราคาที่อธิบายไว้ใน _read_meta) — ผู้เรียกต้องเอา stale
+    ไปบอกบนหน้าจอเสมอ ไม่ใช่ใช้เงียบ ๆ
+    """
+    doc = _read_meta(_roster_path(), allow_stale=allow_stale)
+    if not doc:
+        return None
+    rows = doc.get("rows")
+    if not isinstance(rows, list):
+        return None
+    age = _cache_age_sec(doc)
+    ttl = fabric_static_cache_ttl_sec()
+    return {
+        "rows": rows,
+        "row_count": len(rows),
+        "cached_at": doc.get("cached_at"),
+        "age_sec": age,
+        "stale": bool(age is not None and ttl > 0 and age > ttl),
+    }
+
+
+def write_salesman_roster(rows: list[dict[str, Any]]) -> None:
+    if not _cache_enabled() or rows is None:
+        return
+    _write_json_cache(_roster_path(), {"rows": list(rows), "row_count": len(rows)})
+
+
+def roster_cache_status() -> dict[str, Any]:
+    """สถานะการ์ดของรายชื่อพนักงาน — period_scoped=False กันเข้าใจผิดว่าเป็นของงวดที่เลือก"""
+    path = _roster_path()
+    exists = os.path.isfile(path)
+    doc = _read_meta(path, allow_stale=True) if exists else None
+    age = _cache_age_sec(doc)
+    ttl = fabric_static_cache_ttl_sec()
+    return {
+        "layer": "roster",
+        "label": "รายชื่อพนักงานทั้งบริษัท (Dim_Salesman)",
+        "path": path,
+        "exists": exists,
+        "fresh": bool(doc is not None and not (age is not None and ttl > 0 and age > ttl)),
+        "cached_at": (doc or {}).get("cached_at"),
+        "row_count": (doc or {}).get("row_count"),
+        "ttl_sec": ttl,
+        "period_scoped": False,
+    }
+
+
 def _payload_cache_status(year: int, month: int) -> dict[str, Any]:
     """
     สถานะแคช payload ของงวด (ทุกทีมรวมกัน)
@@ -312,6 +389,7 @@ def cache_status(year: int, month: int) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     ttl = fabric_static_cache_ttl_sec()
     out.append(_payload_cache_status(year, month))
+    out.append(roster_cache_status())
     for layer_id, path, label in layers:
         meta_path = path if path.endswith(".json") else path + ".meta.json"
         exists = os.path.isfile(path)
@@ -351,6 +429,8 @@ def invalidate_period_cache(
     # ไม่มี "payload" ในชุดนี้ — แคช payload อยู่ใน data/ ไม่ใช่ data/cache/
     # และมีตัวลบของตัวเองที่ invalidate_employee_payload_cache
     # (ของเดิมใส่ไว้ในค่าเริ่มต้นแต่ลูปข้างล่างไม่เคยจับ อ่านแล้วนึกว่าลบให้ด้วย)
+    # "roster" ไม่อยู่ในชุดเริ่มต้นโดยตั้งใจ — เป็นข้อมูลทั้งบริษัทที่ไม่ผูกงวด
+    # การกด "ล้างแคชงวด" ไม่ควรพารายชื่อพนักงานหายไปด้วย ต้องระบุชื่อมาเท่านั้น
     want = layers or {"product", "price", "tga_skus"}
     removed = 0
     suffix = ""
@@ -363,9 +443,11 @@ def invalidate_period_cache(
             hit = True
         elif "price" in want and name.startswith("price_per_box") and (not suffix or name.endswith(suffix + ".json")):
             hit = True
-        elif "tga_skus" in want and (name.startswith("tga_skus") or name.startswith("tga_skus")):
+        elif "tga_skus" in want and name.startswith("tga_skus"):
             if not suffix or suffix in name:
                 hit = True
+        elif "roster" in want and name == os.path.basename(_roster_path()):
+            hit = True                      # ไม่ผูกงวด — suffix ไม่เกี่ยว
         if hit:
             try:
                 os.unlink(path)

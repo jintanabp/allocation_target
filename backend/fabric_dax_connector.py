@@ -466,6 +466,52 @@ SELECTCOLUMNS(
         print(f"✅ พบพนักงาน {len(df)} คน ใต้ SuperCode {manager_code}")
         return df
 
+    def get_dim_salesman_roster(self) -> list[dict]:
+        """
+        พนักงานขาย + ทีมที่สังกัด **ทั้งบริษัทในคำสั่งเดียว**
+
+        ใช้ทำ "ตัวหาร" ของรายงานสรุปการใช้งาน — ต้องรู้ว่าทั้งบริษัทมีพนักงานกี่คน
+        ไม่ใช่แค่ทีมที่เคยเปิดใช้ระบบ · **ห้ามวน get_employees_by_manager ทีละทีม**
+        (ของจริงมี ~90 ทีม = 90 คำสั่ง DAX ต่อการรีเฟรชหนึ่งครั้ง)
+
+        ไม่กรองรหัสขึ้นต้น V ที่นี่ — ปล่อยให้ชั้นบนใช้ drop_van_employees ตัวเดียวกับ
+        ที่ทุกหน้าจอใช้ จะได้ไม่มีกฎการตัดพนักงานสองชุดในระบบ
+        """
+        print("📡 [Dim_Salesman] กำลังดึงรายชื่อพนักงานทั้งบริษัท...")
+        dax = """
+EVALUATE
+SUMMARIZECOLUMNS(
+    'Dim_Salesman'[SalesmanCode],
+    'Dim_Salesman'[Salesman_NameThai],
+    'Dim_Salesman'[SuperCode]
+)
+"""
+        rows = self._execute_dax(dax)
+        out: list[dict] = []
+        seen: set[str] = set()
+        for r in rows or []:
+            emp_id = str(
+                self._get(r, "[SalesmanCode]", "Dim_Salesman[SalesmanCode]", default="")
+            ).strip()
+            if not emp_id or emp_id in seen:
+                continue
+            sup = str(
+                self._get(r, "[SuperCode]", "Dim_Salesman[SuperCode]", default="")
+            ).strip().upper()
+            if sup in ("NONE", "0", "(BLANK)"):
+                sup = ""
+            seen.add(emp_id)
+            out.append({
+                "emp_id": emp_id,
+                "emp_name": str(
+                    self._get(r, "[Salesman_NameThai]", "Dim_Salesman[Salesman_NameThai]",
+                              default="")
+                ).strip(),
+                "super_code": sup,
+            })
+        print(f"✅ รายชื่อพนักงานทั้งบริษัท {len(out)} คน")
+        return out
+
     # ── 1.1 ชื่อ Supervisor จากรหัส SuperCode ─────────────────────────
     def get_supervisor_name(self, super_code: str) -> str:
         """

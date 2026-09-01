@@ -1743,6 +1743,7 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
 .admin-btn-primary:focus-visible,
 .admin-btn-ghost:focus-visible,
 .admin-btn-refresh:focus-visible,
+.admin-btn-export:focus-visible,
 .admin-btn-ack:focus-visible {
   outline: 2px solid var(--accent-light);
   outline-offset: 2px;
@@ -1819,6 +1820,53 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
 }
 .admin-btn-ack:active {
   transform: translateY(1px);
+}
+/* ปุ่มดาวน์โหลด Excel — เขียวแบบเส้นขอบ ไอคอนขยับลงเวลาชี้ (ไม่หมุน)
+
+   เดิมยืม .admin-btn-refresh มาใช้ทั้งดุ้น ไอคอน 📥 จึงหมุน -200deg ตอน hover
+   ตามกฎของปุ่มโหลดใหม่ และสีก็เหมือนกันทุกอย่างทั้งที่อยู่ติดกันในแถบเดียว
+   ขนาด/ระยะ/ฟอนต์ตั้งให้เท่า .admin-btn-refresh ทุกค่า — สองปุ่มอยู่ในแถบ
+   .admin-period-bar เดียวกัน ถ้าสูงไม่เท่ากันแถบทั้งแถวจะจัดเรียงใหม่ */
+.admin-btn-export {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--green-brd);
+  background: var(--white);
+  color: var(--green);
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(5, 150, 105, 0.12);
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.1s;
+  white-space: nowrap;
+}
+.admin-btn-export--sm {
+  padding: 7px 12px;
+  font-size: 12px;
+  border-radius: 8px;
+}
+.admin-btn-export:hover {
+  background: var(--green-bg);
+  border-color: var(--green);
+  box-shadow: 0 3px 10px rgba(5, 150, 105, 0.18);
+}
+.admin-btn-export:active {
+  transform: translateY(1px);
+  box-shadow: 0 1px 4px rgba(5, 150, 105, 0.15);
+}
+.admin-btn-export__icon {
+  display: inline-block;
+  font-size: 14px;
+  line-height: 1;
+  transition: transform 0.2s ease;
+}
+.admin-btn-export:hover .admin-btn-export__icon {
+  transform: translateY(2px);
 }
 /* select ใน toolbar แอดมิน */
 .admin-select {
@@ -9115,4 +9163,84 @@ tr.emp-row--no-target .emp-tag {
 
 #adminView .admin-table--alloc td.alloc-col-act .admin-action + .admin-action {
   padding-left: 8px;
+}
+
+/* ══════════════════════════════════════════════
+   สรุปการใช้งาน (แท็บแอดมิน)
+
+   ลอก "ค่า" มาจาก .lakehouse-stat และ .global-busy-progress-* แทนที่จะใช้ class
+   เดิมซ้ำ — สองอันนั้นเป็นของกล่องยืนยันส่งงานและแถบโหลด วันหลังใครแก้ที่นั่น
+   แดชบอร์ดหน้านี้จะเปลี่ยนตามโดยไม่มีใครตั้งใจ
+══════════════════════════════════════════════ */
+.usage-kpi-wrap {
+  margin-bottom: 12px;
+}
+.usage-kpi {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 10px;
+}
+@media (max-width: 720px) {
+  .usage-kpi { grid-template-columns: 1fr; }
+}
+.usage-kpi__tile {
+  background: var(--bg-main);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+}
+.usage-kpi__label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+  margin-bottom: 6px;
+}
+.usage-kpi__value {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--accent);
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+.usage-kpi__pct {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-2);
+}
+.usage-kpi__meter {
+  display: block;
+  height: 8px;
+  margin-top: 8px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+.usage-kpi__meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.35s ease;
+}
+.usage-kpi__sub {
+  display: block;
+  font-size: 11px;
+  color: var(--text-3);
+  margin-top: 6px;
+  line-height: 1.5;
+}
+.usage-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.usage-total td {
+  border-top: 2px solid var(--border-md);
+  background: var(--surface-2);
 }

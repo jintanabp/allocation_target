@@ -28,10 +28,20 @@ from ..services.usage_log_store import log_from_user
 router = APIRouter(tags=["lakehouse"])
 
 
+# รายชื่อที่เก็บลง log ต่อการส่งหนึ่งครั้ง — ทีมปกติมีหลักสิบ ตัวเลขนี้เผื่อไว้มาก
+# ทีมที่ชนเพดานจะมีธง emp_ids_truncated ให้รายงานถอยไปใช้ค่าประมาณระดับทีมแทน
+_MAX_LOGGED_EMP_IDS = 500
+
+
 def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) -> None:
     """
     บันทึกทุกครั้งที่กดส่ง Target Sun — สำเร็จหรือไม่ก็ตาม
     นี่คือหลักฐานเดียวที่บอกได้ว่าทีมไหนส่งอะไรไปเมื่อไหร่ (snapshot เก็บแค่ครั้งล่าสุดต่องวด)
+
+    ต้องส่ง target_month/target_year เสมอ — เดิมไม่ได้ส่ง ทุกแถว send_targetsun
+    จึงไม่มีงวดเป้าติดมาเลย แล้วการกรอง /admin/usage-logs?target_month= กลายเป็น
+    กรองตาม "วันที่ของไฟล์ log" (วันที่กด) ไม่ใช่งวดที่ส่ง · ทางเดียวที่เหลือคือ
+    ไปแกะข้อความ detail เอา ซึ่งยังต้องคงไว้เป็น fallback ของแถวเก่าที่มีอยู่แล้ว
     """
     try:
         res = result if isinstance(result, dict) else {}
@@ -50,6 +60,7 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
             level = "error"
         elif rb.get("checked") is False and ok:
             rb_note = f" · ตรวจยอดหลังส่งไม่ได้ ({rb.get('reason') or '-'})"
+        emp_ids = [str(e).strip() for e in (res.get("emp_codes") or []) if str(e).strip()]
         log_from_user(
             user,
             level=level,
@@ -63,6 +74,20 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
                 + ("" if ok else f" · {ts.get('resultMsg') or ''}")
                 + rb_note
             ),
+            target_month=int(req.target_month),
+            target_year=int(req.target_year),
+            context={
+                "rows_sent": res.get("rows_sent", 0),
+                "inserted": r.get("inserted", 0),
+                "updated": r.get("updated", 0),
+                "skipped": r.get("skipped", 0),
+                "emp_count": len(emp_ids),
+                "emp_ids": emp_ids[:_MAX_LOGGED_EMP_IDS],
+                "emp_ids_truncated": len(emp_ids) > _MAX_LOGGED_EMP_IDS,
+                "readback_checked": rb.get("checked"),
+                "readback_ok": rb.get("ok"),
+                "ok": ok,
+            },
         )
     except Exception:  # log ต้องไม่ทำให้การส่งพัง
         pass
@@ -203,6 +228,9 @@ def import_targetsun_from_allocations(
             action="send_targetsun",
             message="ส่งเข้า Target Sun ไม่สำเร็จ",
             detail=f"งวด {req.target_year}-{req.target_month:02d} · {type(e).__name__}: {e}",
+            target_month=int(req.target_month),
+            target_year=int(req.target_year),
+            context={"ok": False, "error": type(e).__name__},
         )
         raise
     _log_targetsun_send(user, req, result)

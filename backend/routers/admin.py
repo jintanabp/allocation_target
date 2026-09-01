@@ -1213,6 +1213,53 @@ def _scoped_allocation_items(
     return items
 
 
+def _alloc_search_haystack(it: dict) -> str:
+    """
+    ข้อความที่ใช้เทียบคำค้นของแถวผลกระจาย
+
+    ลำดับฟิลด์ต้องตรงกับ adminRenderAllocationsTable ฝั่งหน้าเว็บเป๊ะ ๆ
+    (sup → ชื่อ → ภาค → ดิวิชัน → หน่วย คั่นด้วยช่องว่างเดียว) เพราะคำค้น
+    คร่อมสองฟิลด์ได้ เช่น "SL397 สม" — ถ้าลำดับต่างกัน ที่เห็นบนจอกับที่ได้
+    ในไฟล์จะไม่ตรงกันอีกแบบหนึ่งแทน
+    """
+    return " ".join(
+        str(it.get(k) or "")
+        for k in ("sup_id", "full_name", "acc_region", "acc_division", "acc_unit")
+    ).upper()
+
+
+def _filter_allocation_items_by_q(items: list[dict], q: str | None) -> list[dict]:
+    """
+    กรองด้วยคำค้นเดียวกับช่องค้นหาบนตาราง
+
+    ต้องเรียก **หลัง** _scoped_allocation_items เสมอ — คำค้นเป็นตัวกรองให้แคบลง
+    อย่างเดียว ไม่มีทางขยายขอบเขตที่แอดมินคนนั้นดูแลได้
+    """
+    needle = str(q or "").strip().upper()
+    if not needle:
+        return items
+    return [it for it in items if needle in _alloc_search_haystack(it)]
+
+
+def _alloc_export_basename(
+    target_month: int | None, target_year: int | None, q: str | None = None
+) -> str:
+    """
+    ชื่อไฟล์ Excel ที่บอกงวดที่โหลดจริง
+
+    ของเดิมได้ allocation_report_all_all.xlsx ซึ่งอ่านแล้วเหมือนตัวกรองไม่ทำงาน
+    ทั้งที่มันทำตามที่ตั้งไว้ทุกอย่าง · ใช้ ASCII เท่านั้นเพราะ _xlsx_response
+    เขียน filename="…" ดิบ ๆ และหน้าเว็บแกะด้วย regex — คำค้นภาษาไทยไปโผล่ใน toast แทน
+    """
+    if target_month and target_year:
+        stem = f"allocation_report_{int(target_year)}-{int(target_month):02d}"
+    elif target_year:
+        stem = f"allocation_report_{int(target_year)}-all-months"
+    else:
+        stem = "allocation_report_all-periods"
+    return f"{stem}_filtered" if str(q or "").strip() else stem
+
+
 @router.get("/allocations")
 def admin_list_allocations(
     admin: dict = Depends(require_admin_scoped),
@@ -1505,9 +1552,16 @@ def admin_export_allocations_xlsx(
     admin: dict = Depends(require_admin_scoped),
     target_month: int | None = Query(None, ge=1, le=12),
     target_year: int | None = Query(None, ge=2020, le=2100),
+    q: str | None = Query(None, max_length=100),
 ):
-    """ตารางผลการกระจาย (ตามขอบเขต + filter งวด) เป็น Excel สำหรับรายงานการใช้งาน"""
+    """
+    ตารางผลการกระจาย (ตามขอบเขต + งวด + คำค้น) เป็น Excel สำหรับรายงานการใช้งาน
+
+    รับ q มาด้วยเพื่อให้ไฟล์ที่ได้ = สิ่งที่เห็นบนหน้าจอ · เดิมช่องค้นหากรองแค่
+    ฝั่งหน้าเว็บ คนกรองเหลือ 3 แถวแล้วกดดาวน์โหลด แต่ได้ไฟล์มาทั้ง 40 แถว
+    """
     items = _scoped_allocation_items(admin, target_month, target_year)
+    items = _filter_allocation_items_by_q(items, q)
     for it in items:
         it["period"] = f"{int(it.get('target_month') or 0):02d}/{it.get('target_year') or ''}"
         it["status_th"] = _ALLOC_STATUS_TH.get(
@@ -1523,15 +1577,144 @@ def admin_export_allocations_xlsx(
         ("acc_unit", "หน่วย"),
         ("period", "งวด"),
         ("status_th", "สถานะ"),
+        ("emp_count", "จำนวนพนักงานที่ได้รับเป้า"),
         ("allocation_rows", "จำนวนแถวผลกระจาย"),
         ("strategy", "วิธีกระจาย"),
         ("updated_at_th", "อัปเดตล่าสุด"),
         ("updated_by", "อัปเดตโดย"),
         ("sent_at_th", "ส่ง Target Sun เมื่อ"),
     ]
-    m_part = f"{target_month:02d}" if target_month else "all"
-    y_part = str(target_year) if target_year else "all"
-    return _xlsx_response(items, cols, f"allocation_report_{y_part}_{m_part}")
+    return _xlsx_response(items, cols, _alloc_export_basename(target_month, target_year, q))
+
+
+def _xlsx_response_multi(
+    sheets: list[tuple[str, list[dict], list[tuple[str, str]]]], basename: str
+) -> Response:
+    """
+    .xlsx หลายชีตในไฟล์เดียว — (ชื่อชีต, rows, columns)
+
+    แยกจาก _xlsx_response โดยตั้งใจ ไม่แก้ตัวเดิม: export ที่ใช้อยู่สองที่
+    (ผลการกระจาย / บันทึกการใช้งาน) จะได้ไม่มีทางพังจากงานนี้
+    """
+    import io as _io
+
+    import pandas as pd
+
+    def _write(writer):
+        for name, rows, cols in sheets:
+            data = {header: [row.get(key, "") for row in rows] for key, header in cols}
+            pd.DataFrame(data).to_excel(writer, sheet_name=name[:31], index=False)
+
+    buf = _io.BytesIO()
+    try:
+        with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+            _write(writer)
+    except ImportError:
+        buf = _io.BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+            _write(writer)
+    total = sum(len(rows) for _, rows, _ in sheets)
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{basename}.xlsx"',
+            "X-Export-Rows": str(total),
+        },
+    )
+
+
+def _usage_summary_scope(admin: dict) -> set[str] | None:
+    """
+    รหัสทีมที่แอดมินคนนี้เห็นได้ — None = ไม่จำกัด (dev)
+
+    ต้องเอาไปกรอง **ก่อน** คำนวณทุกตัวเลข ไม่ใช่กรองผลลัพธ์ทีหลัง
+    ไม่งั้นตัวหารจะเป็นของทั้งบริษัทซึ่งอยู่นอกขอบเขตที่เขามีสิทธิ์รู้
+    """
+    if admin.get("role") == ROLE_DEV or admin.get("auth_disabled"):
+        return None
+    return {
+        str(c).strip().upper()
+        for c in ((admin.get("admin_scope") or {}).get("sl_codes") or set())
+    }
+
+
+def _build_usage_summary_or_503(admin: dict, month: int, year: int, force: bool) -> dict:
+    from ..services.usage_summary import build_usage_summary
+
+    try:
+        return build_usage_summary(
+            month=month, year=year, sl_codes=_usage_summary_scope(admin), force=force
+        )
+    except PermissionError as e:
+        # ตารางสิทธิ์อ่านไม่ได้ = ยังไม่รู้ว่าใครกระจายได้บ้าง ตอบ 503 ให้รู้ว่าเป็น
+        # ปัญหาชั่วคราวของเซิร์ฟเวอร์ ไม่ใช่ 500 เปล่า ๆ ที่ไม่บอกอะไรเลย
+        raise HTTPException(status_code=503, detail=str(e)) from None
+
+
+@router.get("/usage-summary")
+def admin_usage_summary(
+    admin: dict = Depends(require_admin_scoped),
+    target_month: int = Query(..., ge=1, le=12),
+    target_year: int = Query(..., ge=2020, le=2100),
+    force: bool = Query(False),
+):
+    """
+    สรุปการใช้งานของงวด — ใครใช้จริงบ้างเทียบกับทั้งหมดในระบบ
+
+    ไม่ยิง Fabric เด็ดขาด · ถ้ายังไม่เคยดึงรายชื่อพนักงานทั้งบริษัท จะยังตอบ 200
+    โดยตัวเลขระดับทีมครบและ roster.available = false — หน้านี้ต้องเปิดได้ตอน Fabric ล่ม
+    ซึ่งเป็นตอนที่คนอยากเข้ามาดูพอดี
+    """
+    return _build_usage_summary_or_503(admin, target_month, target_year, force)
+
+
+_USAGE_SUMMARY_SHEETS = (
+    ("สรุป", "summary_kv_rows", [
+        ("topic", "หัวข้อ"), ("value", "ค่า"), ("note", "หมายเหตุ"),
+    ]),
+    ("รายภาค", "region_rows", [
+        ("region", "ภาค"),
+        ("teams", "ทีมที่กระจายได้"), ("used", "ทีมที่เข้ามาใช้"), ("used_pct", "% ใช้"),
+        ("sent_teams", "ทีมที่ส่ง Target Sun"), ("sent_teams_pct", "% ส่ง"),
+        ("employees", "พนักงานทั้งหมด"),
+        ("allocated", "พนักงานที่ถูกกระจายเป้า"), ("allocated_pct", "% กระจาย"),
+        ("sent", "พนักงานที่กระจาย+ส่ง"), ("sent_pct", "% ส่ง (พนักงาน)"),
+        ("method", "วิธีนับ"),
+    ]),
+    ("รายทีม", "team_rows", [
+        ("sup_id", "รหัส SL"), ("full_name", "ชื่อ"), ("login_kind", "ตำแหน่ง"),
+        ("manager_level", "ระดับผู้จัดการ"), ("acc_division", "Division"),
+        ("acc_region", "ภาค"), ("acc_unit", "หน่วย"),
+        ("employees", "พนักงานทั้งหมด"), ("allocated", "ถูกกระจายเป้า"),
+        ("sent", "กระจาย+ส่ง"), ("status", "สถานะผลกระจาย"),
+        ("updated_at_th", "อัปเดตล่าสุด"), ("updated_by", "อัปเดตโดย"),
+        ("sent_at_th", "ส่ง Target Sun เมื่อ"), ("method", "วิธีนับ"),
+    ]),
+)
+
+
+@router.get("/usage-summary/export-xlsx")
+def admin_export_usage_summary_xlsx(
+    admin: dict = Depends(require_admin_scoped),
+    target_month: int = Query(..., ge=1, le=12),
+    target_year: int = Query(..., ge=2020, le=2100),
+):
+    """สรุปการใช้งานเป็น Excel — สรุป / รายภาค / รายทีม ในไฟล์เดียว"""
+    from ..services import usage_summary as usum
+
+    data = _build_usage_summary_or_503(admin, target_month, target_year, False)
+    sheets = []
+    for sheet_name, builder, cols in _USAGE_SUMMARY_SHEETS:
+        rows = getattr(usum, builder)(data)
+        if builder == "team_rows":
+            for r in rows:
+                r["status"] = _ALLOC_STATUS_TH.get(str(r.get("status") or "").lower(),
+                                                   r.get("status") or "")
+                r["updated_at_th"] = _fmt_ts_th(r.get("updated_at"))
+                r["sent_at_th"] = _fmt_ts_th(r.get("target_sun_sent_at"))
+        sheets.append((sheet_name, rows, cols))
+    return _xlsx_response_multi(sheets, f"usage_summary_{target_year}-{target_month:02d}")
 
 
 @router.get("/user-access/export")
@@ -2014,6 +2197,13 @@ def admin_cache_invalidate(
     removed_fabric = 0
     removed_payload = 0
     layer = str(body.layer or "all").strip().lower()
+    if layer == "roster":
+        # ไม่รวมใน "all" — รายชื่อทั้งบริษัทไม่ผูกงวด การล้างแคชงวดไม่ควรพาไปด้วย
+        return {
+            "status": "ok",
+            "removed_fabric_files": fc.invalidate_period_cache(layers={"roster"}),
+            "removed_payload_files": 0,
+        }
     if layer in ("product", "price", "tga_skus", "all", "fabric"):
         layers = {"product", "price", "tga_skus"} if layer in ("all", "fabric") else {layer}
         removed_fabric = fc.invalidate_period_cache(body.year, body.month, layers=layers)
@@ -2035,12 +2225,28 @@ def admin_cache_refresh(
     body: CacheRefreshBody,
     _admin: dict = Depends(require_admin_user),
 ):
-    """รีเฟรชแคช — layer=product|payload|all"""
+    """รีเฟรชแคช — layer=product|payload|roster|all"""
     from ..services import fabric_cache as fc
     from ..services.employees import load_employees_payload
 
     layer = str(body.layer or "all").strip().lower()
     result: dict[str, Any] = {"status": "ok", "layer": layer}
+
+    # รายชื่อพนักงานทั้งบริษัท — ไม่ผูกงวด และไม่อยู่ใน "all" โดยตั้งใจ
+    # เป็นคำสั่ง DAX ก้อนใหญ่ก้อนเดียว ควรกดเมื่อรู้ตัวว่าต้องการเลขล่าสุด
+    if layer == "roster":
+        from ..services import company_roster
+
+        got = company_roster.get_company_roster(refresh=True)
+        result["row_count"] = got.get("row_count")
+        result["cached_at"] = got.get("cached_at")
+        if got.get("error"):
+            result["warm_error"] = got["error"]
+            result["hint"] = (
+                "ดึงรายชื่อพนักงานใหม่ไม่สำเร็จ — เก็บของเดิมไว้ให้ใช้งานต่อได้ "
+                "ลองใหม่อีกครั้งเมื่อ Fabric กลับมาปกติ"
+            )
+        return result
 
     if layer in ("product", "all", "fabric"):
         # ห้ามลบก่อนดึงใหม่ — ถ้า Fabric ล่ม (เช่น capacity เต็ม) จะได้ "ไม่มีอะไรเลย"

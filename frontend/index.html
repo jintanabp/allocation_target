@@ -1005,6 +1005,7 @@
           <div class="admin-nav-group__label">ผลการดำเนินงาน</div>
           <button type="button" class="admin-nav-item" role="tab" data-tab="allocations" aria-selected="false" onclick="adminSwitchTab('allocations')">ผลการกระจาย</button>
           <button type="button" class="admin-nav-item" role="tab" data-tab="usageLogs" aria-selected="false" onclick="adminSwitchTab('usageLogs')">บันทึกการใช้งาน</button>
+          <button type="button" class="admin-nav-item" role="tab" data-tab="usageSummary" aria-selected="false" onclick="adminSwitchTab('usageSummary')">สรุปการใช้งาน</button>
         </div>
         <div class="admin-nav-group">
           <div class="admin-nav-group__label">ทีม</div>
@@ -1437,8 +1438,8 @@
                 <span class="admin-btn-refresh__icon" aria-hidden="true">↻</span>
                 <span>โหลดใหม่</span>
               </button>
-              <button type="button" class="admin-btn-refresh admin-btn-refresh--sm" onclick="adminDownloadUsageLogsXlsx()" title="ดาวน์โหลดรายการตามตัวกรองเป็นไฟล์ Excel">
-                <span class="admin-btn-refresh__icon" aria-hidden="true">📥</span>
+              <button type="button" class="admin-btn-export admin-btn-export--sm" onclick="adminDownloadUsageLogsXlsx()" title="ดาวน์โหลดรายการตามตัวกรองเป็นไฟล์ Excel">
+                <span class="admin-btn-export__icon" aria-hidden="true">📥</span>
                 <span>Excel</span>
               </button>
               <span id="adminUsageLogCount" class="admin-period-bar__meta" aria-live="polite"></span>
@@ -1482,9 +1483,9 @@
                 <span class="admin-btn-refresh__icon" aria-hidden="true">↻</span>
                 <span>โหลดใหม่</span>
               </button>
-              <button type="button" class="admin-btn-refresh admin-btn-refresh--sm" onclick="adminDownloadAllocationsXlsx()" title="ดาวน์โหลดตารางตามตัวกรองเป็นไฟล์ Excel สำหรับรายงาน">
-                <span class="admin-btn-refresh__icon" aria-hidden="true">📥</span>
-                <span>Excel</span>
+              <button type="button" id="adminAllocExportBtn" class="admin-btn-export admin-btn-export--sm" onclick="adminDownloadAllocationsXlsx()" title="ดาวน์โหลดตารางตามตัวกรองเป็นไฟล์ Excel สำหรับรายงาน">
+                <span class="admin-btn-export__icon" aria-hidden="true">📥</span>
+                <span id="adminAllocExportLabel">Excel</span>
               </button>
               <span id="adminAllocCount" class="admin-period-bar__meta" aria-live="polite"></span>
             </div>
@@ -1505,6 +1506,72 @@
               <tbody id="adminAllocTable"><tr><td colspan="6" class="admin-empty">กำลังโหลด…</td></tr></tbody>
             </table>
           </div>
+        </section>
+      </div>
+
+      <div id="adminPanelUsageSummary" class="admin-panel" data-panel="usageSummary" style="display:none;">
+        <section class="admin-card admin-card--panel">
+          <div class="admin-card-header">
+            <div>
+              <h2 class="admin-card__title">สรุปการใช้งาน</h2>
+              <p class="admin-card__hint">งวดนี้มีใครใช้ระบบจริงบ้าง — เทียบกับทั้งหมดที่มีในระบบ</p>
+            </div>
+            <div class="admin-period-bar">
+              <label class="admin-period-bar__field">เดือน
+                <select id="adminUsageSumMonth" class="admin-select admin-select--sm"></select>
+              </label>
+              <label class="admin-period-bar__field">ปี
+                <input type="number" id="adminUsageSumYear" class="field-input field-input--sm admin-period-input" min="2020" max="2100" />
+              </label>
+              <button type="button" class="admin-btn-refresh admin-btn-refresh--sm" onclick="adminLoadUsageSummary(true)" title="คำนวณใหม่จากข้อมูลล่าสุด">
+                <span class="admin-btn-refresh__icon" aria-hidden="true">↻</span>
+                <span>คำนวณใหม่</span>
+              </button>
+              <button type="button" class="admin-btn-export admin-btn-export--sm" onclick="adminDownloadUsageSummaryXlsx()" title="ดาวน์โหลดสรุป / รายภาค / รายทีม เป็นไฟล์ Excel">
+                <span class="admin-btn-export__icon" aria-hidden="true">📥</span>
+                <span>Excel</span>
+              </button>
+              <span id="adminUsageSumMeta" class="admin-period-bar__meta" aria-live="polite"></span>
+            </div>
+          </div>
+          <div id="adminUsageSumRoster" class="admin-help-strip admin-help-strip--compact" style="display:none;"></div>
+          <div id="adminUsageSumKpi" class="usage-kpi-wrap" aria-live="polite"></div>
+          <div class="admin-help-strip admin-help-strip--compact">
+            <p><strong>ทีมที่กระจายได้</strong> = รหัสล็อกอินที่เป็น Supervisor หรือ Manager และมีรหัส SL จริง (ไม่นับบัญชีแอดมินอย่างเดียว ไม่นับทีมสาธิต · รหัสที่ผูกกันแล้วนับเป็นรหัสเดียว · ผู้จัดการนับรหัสละ 1 ไม่กระจายออกเป็นทีมลูกน้อง เพราะทีมของผู้จัดการซ้อนทับกันเอง)<br>
+            <strong>เข้ามาใช้</strong> = มีผลกระจายในงวดนี้และมีหีบมากกว่า 0 อย่างน้อย 1 แถว — ไม่ใช่แค่เปิดหน้าจอ · ผู้จัดการที่กระจายแทนทั้งภาค ผลจะไปลงทีมของแต่ละซุปตามจริง<br>
+            <strong>ส่ง Target Sun</strong> = เคยส่งสำเร็จในงวดนี้ (ดูจากเวลาที่ส่ง ซึ่งอยู่ถาวรแม้จะกลับมาแก้ต่อจนเป็นแบบร่าง)<br>
+            <strong>พนักงาน</strong> นับเป็นคู่ (ทีม, รหัสพนักงาน) เสมอ เพราะรหัสพนักงานซ้ำข้ามทีมได้ · ตัดรหัสขึ้นต้น V (รถเงินสด) ออกเหมือนทุกหน้าจอ</p>
+          </div>
+          <div id="adminUsageSumRegionWrap" class="admin-table-wrap admin-table-wrap--scroll">
+            <table class="admin-table admin-table--compact admin-table--zebra">
+              <thead><tr>
+                <th>ภาค</th>
+                <th class="usage-num">ทีมที่กระจายได้</th>
+                <th class="usage-num">เข้ามาใช้</th>
+                <th class="usage-num">ส่ง Target Sun</th>
+                <th class="usage-num">พนักงานทั้งหมด</th>
+                <th class="usage-num">ถูกกระจายเป้า</th>
+                <th class="usage-num">กระจาย+ส่ง</th>
+              </tr></thead>
+              <tbody id="adminUsageSumRegionTable"><tr><td colspan="7" class="admin-empty">กำลังโหลด…</td></tr></tbody>
+            </table>
+          </div>
+          <details id="adminUsageSumTeamsBox" class="admin-inv-block" style="margin-top:12px;">
+            <summary>ดูรายทีม (รวมทีมที่ยังไม่เคยใช้)</summary>
+            <div class="admin-table-wrap admin-table-wrap--scroll" style="max-height:min(50vh, 460px);">
+              <table class="admin-table admin-table--compact admin-table--zebra">
+                <thead><tr>
+                  <th>ทีม</th>
+                  <th>Div / ภาค / หน่วย</th>
+                  <th class="usage-num">พนักงาน</th>
+                  <th class="usage-num">ถูกกระจายเป้า</th>
+                  <th class="usage-num">กระจาย+ส่ง</th>
+                  <th>อัปเดตโดย</th>
+                </tr></thead>
+                <tbody id="adminUsageSumTeamTable"></tbody>
+              </table>
+            </div>
+          </details>
         </section>
       </div>
 

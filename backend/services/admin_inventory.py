@@ -50,6 +50,9 @@ API_MAP = [
     {"endpoint": "GET /admin/sl-links", "fabric": False, "sources": ["sl_links.json"]},
     {"endpoint": "GET /admin/no-target-employees", "fabric": False, "sources": ["no_target_employees.json"]},
     {"endpoint": "PUT /admin/no-target-employees", "fabric": False, "sources": ["no_target_employees.json"]},
+    {"endpoint": "GET /admin/usage-summary", "fabric": False, "sources": ["allocations/*.json", "user_access.json", "sl_links.json", "logs/usage_*.jsonl", "cache/salesman_roster.json"]},
+    {"endpoint": "GET /admin/usage-summary/export-xlsx", "fabric": False, "sources": ["เหมือน GET /admin/usage-summary"]},
+    {"endpoint": "POST /admin/cache/refresh (layer=roster)", "fabric": True, "sources": ["Dim_Salesman ทั้งบริษัท (คำสั่งเดียว) → cache/salesman_roster.json"]},
 ]
 
 _CACHE_PATTERNS = [

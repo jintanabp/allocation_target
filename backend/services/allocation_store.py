@@ -217,6 +217,32 @@ def _snapshot_has_work(snap: dict[str, Any]) -> bool:
     )
 
 
+def allocated_emp_ids(snap: dict[str, Any] | None) -> set[str]:
+    """
+    รหัสพนักงานใน snapshot นี้ที่ได้หีบจริง (> 0)
+
+    นับจาก "ได้หีบ" ไม่ใช่ "มีแถว" — ผลกระจายมีแถวของทุกคู่พนักงาน×สินค้า
+    รวมคู่ที่ได้ 0 ด้วย ถ้านับตามแถวจะได้คนที่ไม่ได้เป้าเลยมาปนเต็มไปหมด
+    (ของจริง: SL397 งวด 07/2026 มี 2,960 แถว แต่มีพนักงานแค่ 5 คน)
+
+    คืนเฉพาะรหัส ไม่ผูกทีมมาด้วย — ผู้เรียกต้องจับคู่กับ sup_id เอง เพราะ
+    รหัสพนักงานซ้ำข้ามทีมได้ (invariant I7) เอาไปรวมเป็นเซ็ตเดียวไม่ได้
+    """
+    out: set[str] = set()
+    for a in (snap or {}).get("allocations") or []:
+        if not isinstance(a, dict):
+            continue
+        emp = str(a.get("emp_id") or "").strip()
+        if not emp:
+            continue
+        try:
+            if float(a.get("allocated_boxes") or 0) > 0:
+                out.add(emp)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def delete_snapshot(sup_id: str, month: int, year: int) -> bool:
     """ลบ snapshot — คืน True ถ้าลบได้ (มีไฟล์)"""
     path = allocation_snapshot_path(sup_id, month, year)
@@ -234,8 +260,16 @@ def delete_snapshot(sup_id: str, month: int, year: int) -> bool:
 def list_all_snapshots(
     month: int | None = None,
     year: int | None = None,
+    *,
+    with_emp_ids: bool = False,
 ) -> list[dict[str, Any]]:
-    """รายการ snapshot ทั้งหมด — filter งวดได้"""
+    """
+    รายการ snapshot ทั้งหมด — filter งวดได้
+
+    with_emp_ids=True แถมเซ็ตรหัสพนักงานมาด้วย (ใช้ในเครื่องเท่านั้น
+    **ห้ามส่งออกทาง HTTP** — ทีมละหลายสิบรหัส คูณจำนวนทีมแล้ว payload บวมฟรี ๆ)
+    ส่วน emp_count ติดมาเสมอเพราะฟังก์ชันนี้เปิดไฟล์อ่านอยู่แล้ว แทบไม่มีต้นทุนเพิ่ม
+    """
     root = allocations_dir()
     if not os.path.isdir(root):
         return []
@@ -261,19 +295,22 @@ def list_all_snapshots(
         if not snap or not _snapshot_has_work(snap):
             continue
         allocs = snap.get("allocations") or []
-        out.append(
-            {
-                "sup_id": snap.get("sup_id") or _normalize_sup(sid),
-                "target_month": m_i,
-                "target_year": y_i,
-                "status": snap.get("status"),
-                "updated_at": snap.get("updated_at"),
-                "updated_by": snap.get("updated_by"),
-                "target_sun_sent_at": snap.get("target_sun_sent_at"),
-                "allocation_rows": len(allocs),
-                "strategy": snap.get("strategy") or "",
-            }
-        )
+        emp_ids = allocated_emp_ids(snap)
+        row: dict[str, Any] = {
+            "sup_id": snap.get("sup_id") or _normalize_sup(sid),
+            "target_month": m_i,
+            "target_year": y_i,
+            "status": snap.get("status"),
+            "updated_at": snap.get("updated_at"),
+            "updated_by": snap.get("updated_by"),
+            "target_sun_sent_at": snap.get("target_sun_sent_at"),
+            "allocation_rows": len(allocs),
+            "emp_count": len(emp_ids),
+            "strategy": snap.get("strategy") or "",
+        }
+        if with_emp_ids:
+            row["emp_ids"] = emp_ids
+        out.append(row)
     out.sort(
         key=lambda r: (
             -_snapshot_updated_ts(r),

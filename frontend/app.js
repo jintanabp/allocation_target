@@ -13752,11 +13752,11 @@ function _canManageLinks() {
    ต่างกันที่ "ผู้ดูแลระบบ": หัวหน้าแอดมินเข้าได้ (เพิ่ม/ถอดสิทธิ์แอดมินคนอื่นในขอบเขตตัวเอง)
    ส่วนแอดมินธรรมดาเข้าไม่ได้ — backend กันซ้ำอีกชั้นด้วย require_role_manager */
 const ADMIN_TABS_MARKETING = ["team", "skuLinks", "slLinks"];
-const ADMIN_TABS_ADMIN = ["users", "slLinks", "skuLinks", "allocations", "usageLogs", "team"];
+const ADMIN_TABS_ADMIN = ["users", "slLinks", "skuLinks", "allocations", "usageLogs", "usageSummary", "team"];
 // แท็บ "ย้ายพนักงาน" ไม่อยู่ในสองชุดนี้โดยตั้งใจ — endpoint ใช้ require_admin_user
 // ซึ่งเป็น dev เท่านั้น (dev ได้ทุกแท็บอยู่แล้ว) · ถ้าโชว์ให้แอดมินจะกดแล้วเจอ 403
 // และการย้ายคนข้ามทีมกระทบยอดรวมของทั้งสองภาค ควรอยู่ในมือ dev จริง ๆ
-const ADMIN_TABS_HEAD_ADMIN = ["users", "roles", "slLinks", "skuLinks", "allocations", "usageLogs", "team"];
+const ADMIN_TABS_HEAD_ADMIN = ["users", "roles", "slLinks", "skuLinks", "allocations", "usageLogs", "usageSummary", "team"];
 
 function _adminAllowedTabs(teamOnly) {
   if (teamOnly) return ADMIN_TABS_MARKETING;
@@ -13828,6 +13828,7 @@ const ADMIN_TAB_META = {
   data: { group: "ข้อมูล", title: "แหล่งข้อมูล", sub: "สรุปการดึง ใช้ และส่งข้อมูลในระบบ + แคช" },
   usageLogs: { group: "ผลการดำเนินงาน", title: "บันทึกการใช้งาน", sub: "ใครส่ง Target Sun / ข้อผิดพลาด — เก็บถาวร ไม่มีการลบ" },
   allocations: { group: "ผลการดำเนินงาน", title: "ผลการกระจาย", sub: "snapshot บน server ต่อ SL × งวด" },
+  usageSummary: { group: "ผลการดำเนินงาน", title: "สรุปการใช้งาน", sub: "ใครใช้จริงบ้างในงวดนี้ — เทียบกับทั้งหมดในระบบ" },
   team: { group: "ทีม", title: "ทีมพนักงาน", sub: "รายชื่อพนักงานใต้ Supervisor จาก Fabric / cache" },
   empMoves: {
     group: "ทีม",
@@ -13882,6 +13883,7 @@ function adminSwitchTab(tab) {
   }
   if (_adminActiveTab === "usageLogs") adminInitUsageLogsPanel();
   if (_adminActiveTab === "allocations") adminInitAllocationsPanel();
+  if (_adminActiveTab === "usageSummary") adminInitUsageSummaryPanel();
   if (_adminActiveTab === "slLinks") adminInitSlLinksPanel();
   if (_adminActiveTab === "skuLinks") adminInitSkuLinksPanel();
   if (_adminActiveTab === "empMoves") loadEmpMoves();
@@ -14321,9 +14323,62 @@ async function adminDownloadUsageLogsXlsx() {
 }
 
 function adminInitAllocationsPanel() {
-  _adminFillMonthSelectAll(document.getElementById("adminAllocMonth"));
-  _adminBindPeriodReload(["adminAllocMonth", "adminAllocYear"], adminLoadAllocations);
+  const mEl = document.getElementById("adminAllocMonth");
+  const yEl = document.getElementById("adminAllocYear");
+  // เปิดแท็บครั้งแรกให้เริ่มที่ "งวดปัจจุบัน" ไม่ใช่ "ทุกเดือน/ทุกปี"
+  // ของเดิมเปิดมาเป็นทุกงวด ใครไม่เลื่อนเลือกเดือนก่อนกด Excel ก็ได้ครบทุกงวด
+  // ตามที่ตัวกรองบอกจริง ๆ แล้วอ่านชื่อไฟล์ allocation_report_all_all แล้วนึกว่าพัง
+  //
+  // ตั้งเฉพาะ "ครั้งแรก" — _adminFillMonthSelectAll ไม่ทำอะไรถ้ามี option แล้ว
+  // จึงใช้จำนวน option เป็นสัญญาณได้ · ถ้าตั้งทุกครั้งที่สลับแท็บจะไปทับเจตนา
+  // ของคนที่ตั้งใจเลือก "ทุกเดือน" ไว้แล้วเดินไปทำอย่างอื่นก่อน
+  const firstOpen = !!(mEl && !mEl.options.length);
+  _adminFillMonthSelectAll(mEl);
+  if (firstOpen) {
+    const p = _effectiveTargetPeriod();
+    if (mEl) mEl.value = String(p.month);
+    if (yEl && !yEl.value) yEl.value = String(p.year);
+  }
+  _adminBindPeriodReload(["adminAllocMonth", "adminAllocYear"], _adminAllocPeriodChanged);
+  _adminAllocSyncExportLabel();
   adminLoadAllocations();
+}
+
+function _adminAllocPeriodChanged() {
+  _adminAllocSyncExportLabel();
+  adminLoadAllocations();
+}
+
+/** ตัวกรองที่ใช้อยู่ตอนนี้ของแท็บผลการกระจาย — งวด (จาก dropdown) + คำค้น (จากช่องค้นหา) */
+function _adminAllocFilterState() {
+  const params = _adminPeriodFilterQuery("adminAllocMonth", "adminAllocYear");
+  const search = String(document.getElementById("adminAllocSearch")?.value || "").trim();
+  if (search) params.set("q", search);
+  return {
+    month: params.get("target_month") ? Number(params.get("target_month")) : null,
+    year: params.get("target_year") ? Number(params.get("target_year")) : null,
+    search,
+    params,
+  };
+}
+
+/** ป้ายงวดบนปุ่ม Excel — ให้รู้ก่อนกดว่าจะได้ไฟล์ของงวดไหน */
+function _adminAllocExportLabel(month, year) {
+  if (month && year) return `Excel ${String(month).padStart(2, "0")}/${year}`;
+  if (year) return `Excel ปี ${year}`;
+  return "Excel ทุกงวด";
+}
+
+function _adminAllocSyncExportLabel() {
+  const st = _adminAllocFilterState();
+  const label = _adminAllocExportLabel(st.month, st.year);
+  const el = document.getElementById("adminAllocExportLabel");
+  if (el) el.textContent = label;
+  const btn = document.getElementById("adminAllocExportBtn");
+  if (btn) {
+    btn.title = `ดาวน์โหลดตามตัวกรองที่เห็นบนจอ — ${label}`
+      + (st.search ? ` · ค้นหา "${st.search}"` : "");
+  }
 }
 
 let _adminAllocItems = [];
@@ -14384,6 +14439,7 @@ function _compareAdminAllocItems(a, b) {
 
 function adminFilterAllocations() {
   adminRenderAllocationsTable();
+  _adminAllocSyncExportLabel();
 }
 
 function adminRenderAllocationsTable() {
@@ -14402,11 +14458,21 @@ function adminRenderAllocationsTable() {
   _updateAdminAllocSortHeaders();
   if (countEl) {
     const total = _adminAllocItems.length;
-    countEl.textContent = total
+    // เขียนตัวกรองที่ใช้อยู่ไว้ในบรรทัดเดียวกัน — ปุ่ม Excel โหลดตามนี้เป๊ะ ๆ
+    // ไม่ใช่โหลดทุกงวดอย่างที่เคยเข้าใจกัน
+    const st = _adminAllocFilterState();
+    const scope = [
+      st.month && st.year
+        ? `งวด ${String(st.month).padStart(2, "0")}/${st.year}`
+        : (st.year ? `ปี ${st.year}` : "ทุกงวด"),
+      st.search ? `ค้นหา "${st.search}"` : "",
+    ].filter(Boolean).join(" · ");
+    const shown = total
       ? (items.length === total
         ? `ทั้งหมด ${total.toLocaleString("th-TH")} snapshot`
         : `แสดง ${items.length.toLocaleString("th-TH")} จาก ${total.toLocaleString("th-TH")}`)
-      : "ยังไม่มี snapshot ในระบบ";
+      : "ยังไม่มี snapshot ในงวดนี้";
+    countEl.textContent = `${scope} · ${shown}`;
   }
   if (!items.length) {
     tbody.innerHTML = `<tr><td colspan="6" class="admin-empty">${_adminAllocItems.length ? "ไม่พบรายการตามตัวกรอง" : "ยังไม่มี snapshot ในระบบ"}</td></tr>`;
@@ -14440,7 +14506,10 @@ function adminRenderAllocationsTable() {
           ? `<div class="alloc-place">${place.map((v) => `<span class="alloc-chip">${v}</span>`).join("")}</div>`
           : '<span class="alloc-sub">—</span>'
       }</td>
-      <td class="alloc-col-period mono">${period}</td>
+      <td class="alloc-col-period mono">
+        <div>${period}</div>
+        ${it.emp_count ? `<div class="alloc-sub">${Number(it.emp_count).toLocaleString("th-TH")} คน</div>` : ""}
+      </td>
       <td class="alloc-col-status ${stCls}">${st}</td>
       <td class="alloc-col-updated">
         <div>${when}</div>
@@ -14476,17 +14545,273 @@ async function adminLoadAllocations() {
   }
 }
 
-/** ดาวน์โหลดตารางผลการกระจายตามตัวกรองปัจจุบันเป็น Excel (สำหรับรายงานผู้บริหาร) */
+/**
+ * ดาวน์โหลดตารางผลการกระจายตามตัวกรองปัจจุบันเป็น Excel (สำหรับรายงานผู้บริหาร)
+ *
+ * ส่งคำค้นจากช่องค้นหาไปด้วย — เดิมช่องนั้นกรองแค่บนหน้าจอ คนเห็น 3 แถวแล้วกด
+ * แต่ได้ไฟล์ 40 แถว · backend กรองขอบเขตของแอดมินก่อนแล้วค่อยเอา q มากรองซ้ำ
+ * q จึงทำได้แค่ "แคบลง" ไม่มีทางขยายขอบเขต
+ */
 async function adminDownloadAllocationsXlsx() {
   try {
-    const q = _adminPeriodFilterQuery("adminAllocMonth", "adminAllocYear");
-    const res = await fetchWithTimeout(`${API_BASE_URL}/admin/allocations/export-xlsx?${q}`, {}, 60000);
+    const st = _adminAllocFilterState();
+    const res = await fetchWithTimeout(
+      `${API_BASE_URL}/admin/allocations/export-xlsx?${st.params}`, {}, 60000
+    );
     if (!res.ok) throw new Error("ดาวน์โหลดไม่สำเร็จ");
     const blob = await res.blob();
     const cd = res.headers.get("Content-Disposition") || "";
     const m = cd.match(/filename="?([^";]+)"?/i);
     dl(blob, (m && m[1]) || "allocation_report.xlsx");
-    toast("ดาวน์โหลดรายงานผลการกระจาย (Excel) แล้ว", "green");
+    const rows = Number(res.headers.get("X-Export-Rows") || 0);
+    const scope = st.month && st.year
+      ? `งวด ${String(st.month).padStart(2, "0")}/${st.year}`
+      : (st.year ? `ปี ${st.year}` : "ทุกงวด");
+    toast(
+      `ดาวน์โหลดแล้ว — ${scope}`
+      + (st.search ? ` · ค้นหา "${st.search}"` : "")
+      + ` · ${rows.toLocaleString("th-TH")} แถว`,
+      "green"
+    );
+  } catch (e) {
+    toast(e.message, "red");
+  }
+}
+
+/* ── สรุปการใช้งาน ─────────────────────────────────────────────────────
+   ตอบคำถามเดียว: งวดนี้มีคนใช้ระบบจริงกี่ราย เทียบกับทั้งหมดที่มีสิทธิ์ใช้
+   ตัวเลขทั้งหมดคำนวณฝั่ง server (backend/services/usage_summary.py) —
+   ฝั่งนี้แค่วาด ไม่นับซ้ำเอง จะได้ไม่มีสองนิยามในระบบ */
+
+let _adminUsageSummary = null;
+
+function adminInitUsageSummaryPanel() {
+  const m = document.getElementById("adminUsageSumMonth");
+  const y = document.getElementById("adminUsageSumYear");
+  const firstOpen = !!(m && !m.options.length);
+  // ไม่มีตัวเลือก "ทุกเดือน" โดยตั้งใจ — หน้านี้ดูทีละงวด การรวมทุกงวดเข้าด้วยกัน
+  // ไม่มีความหมาย เพราะทีมเดียวกันจะถูกนับซ้ำได้หลายงวด
+  _adminFillMonthSelect(m);
+  if (firstOpen) {
+    const p = _effectiveTargetPeriod();
+    if (m) m.value = String(p.month);
+    if (y && !y.value) y.value = String(p.year);
+  }
+  _adminBindPeriodReload(
+    ["adminUsageSumMonth", "adminUsageSumYear"],
+    () => adminLoadUsageSummary(false)
+  );
+  adminLoadUsageSummary(false);
+}
+
+function _usageNum(v) {
+  return (v === null || v === undefined) ? "—" : Number(v).toLocaleString("th-TH");
+}
+
+function _usagePct(v) {
+  return (v === null || v === undefined) ? "" : `${Number(v).toFixed(1)}%`;
+}
+
+function _usageTile(label, value, pct, sub) {
+  const hasPct = pct !== null && pct !== undefined;
+  const width = Math.max(0, Math.min(100, Number(pct) || 0)).toFixed(0);
+  return `<div class="usage-kpi__tile">
+    <span class="usage-kpi__label">${escapeHtml(label)}</span>
+    <span class="usage-kpi__value">${_usageNum(value)}${
+      hasPct ? `<span class="usage-kpi__pct">${_usagePct(pct)}</span>` : ""
+    }</span>
+    ${hasPct ? `<span class="usage-kpi__meter"><span class="usage-kpi__meter-fill" style="width:${width}%"></span></span>` : ""}
+    <span class="usage-kpi__sub">${escapeHtml(sub || "")}</span>
+  </div>`;
+}
+
+const _USAGE_METHOD_TH = {
+  exact: "นับรายคนจากบันทึกการส่ง",
+  team_approx: "เป็นการประมาณระดับทีม",
+  mixed: "บางทีมนับรายคน บางทีมประมาณ",
+};
+
+/** แถบบอกว่ารายชื่อพนักงาน (ตัวหาร) มาจากไหนและเก่าแค่ไหน — ห้ามซ่อนไว้ใน tooltip */
+function _adminRenderUsageRoster(r) {
+  const box = document.getElementById("adminUsageSumRoster");
+  if (!box) return;
+  const canRefresh = !!S.isAdmin;   // แคชทั้งบริษัทเป็นของ dev เหมือนแท็บแหล่งข้อมูล
+  const btn = canRefresh
+    ? ` <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminRefreshUsageRoster()">ดึงข้อมูลพนักงาน</button>`
+    : "";
+  box.style.display = "";
+  if (!r.available) {
+    box.innerHTML = `<p>ยังไม่เคยดึงข้อมูลพนักงานทั้งหมด — ตัวเลข「พนักงาน」จะยังว่างจนกว่าจะดึง${
+      canRefresh ? btn : " · แจ้งผู้ดูแลระบบ (dev) ให้กดดึงข้อมูล"
+    }</p>`;
+    return;
+  }
+  const when = r.cached_at
+    ? new Date(r.cached_at).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" })
+    : "—";
+  const age = (r.age_hours === null || r.age_hours === undefined) ? "" : ` (เก่า ${r.age_hours} ชม.)`;
+  box.innerHTML = r.stale
+    ? `<p>ข้อมูลพนักงาน ณ ${escapeHtml(when)}${escapeHtml(age)} — ดึงใหม่ไม่สำเร็จ ใช้ข้อมูลเดิมไปก่อน${btn}</p>`
+    : `<p>ข้อมูลพนักงาน ณ ${escapeHtml(when)} · ${_usageNum(r.row_count)} คนทั้งบริษัท${btn}</p>`;
+}
+
+function _adminRenderUsageSummary(d) {
+  const kpi = document.getElementById("adminUsageSumKpi");
+  const meta = document.getElementById("adminUsageSumMeta");
+  const t = d.teams;
+  const e = d.employees;
+  _adminRenderUsageRoster(d.roster || {});
+
+  if (kpi) {
+    const approx = e.method && e.method !== "exact"
+      ? `ตัวเลขนี้${_USAGE_METHOD_TH[e.method] || e.method}`
+      : "นับรายคนจากบันทึกการส่ง";
+    kpi.innerHTML =
+      `<div class="usage-kpi">
+        ${_usageTile("ทีมที่กระจายได้", t.total, null,
+          d.scope.scoped ? "เฉพาะทีมในขอบเขตที่ดูแล" : "ทั้งระบบ")}
+        ${_usageTile("เข้ามาใช้", t.used, t.used_pct,
+          t.opened_no_boxes
+            ? `อีก ${_usageNum(t.opened_no_boxes)} ทีมกระจายแล้วแต่ยังไม่มีหีบ`
+            : "มีผลกระจายและมีหีบ")}
+        ${_usageTile("ส่ง Target Sun", t.sent, t.sent_pct, "เคยส่งสำเร็จในงวดนี้")}
+      </div>
+      <div class="usage-kpi">
+        ${_usageTile("พนักงานทั้งหมด", e.total, null,
+          e.not_under_allocating_team
+            ? `อีก ${_usageNum(e.not_under_allocating_team)} คนสังกัดรหัสที่กระจายเป้าไม่ได้`
+            : "ในทีมที่กระจายเป้าได้")}
+        ${_usageTile("ถูกกระจายเป้า", e.allocated, e.allocated_pct,
+          e.duplicate_emp_ids_across_teams
+            ? `มีรหัสซ้ำข้ามทีม ${_usageNum(e.duplicate_emp_ids_across_teams)} รหัส — นับแยกทีม`
+            : "ได้หีบมากกว่า 0")}
+        ${_usageTile("กระจาย+ส่ง Target Sun", e.sent, e.sent_pct, approx)}
+      </div>` +
+      (d.scope.note
+        ? `<p class="admin-inv-muted" style="margin:6px 2px 0;">${escapeHtml(d.scope.note)}</p>`
+        : "");
+  }
+
+  if (meta) {
+    const when = new Date(d.generated_at).toLocaleString("th-TH", { timeStyle: "short" });
+    meta.textContent = `คำนวณเมื่อ ${when}${d.cached ? " (จากแคช)" : ""}`;
+  }
+
+  const rt = document.getElementById("adminUsageSumRegionTable");
+  if (rt) {
+    const rows = d.by_region || [];
+    // แถวรวมท้ายตารางต้องเท่ากับการ์ดด้านบนเสมอ — เป็นหลักฐานบนหน้าจอว่าไม่มีทีมไหนถูกนับซ้ำ
+    const totalRow = `<tr class="usage-total">
+      <td><strong>รวมทั้งหมด</strong></td>
+      <td class="usage-num"><strong>${_usageNum(t.total)}</strong></td>
+      <td class="usage-num"><strong>${_usageNum(t.used)}</strong></td>
+      <td class="usage-num"><strong>${_usageNum(t.sent)}</strong></td>
+      <td class="usage-num"><strong>${_usageNum(e.total)}</strong></td>
+      <td class="usage-num"><strong>${_usageNum(e.allocated)}</strong></td>
+      <td class="usage-num"><strong>${_usageNum(e.sent)}</strong></td>
+    </tr>`;
+    rt.innerHTML = rows.length
+      ? rows.map((r) => `<tr>
+          <td>${escapeHtml(r.region)}</td>
+          <td class="usage-num">${_usageNum(r.teams)}</td>
+          <td class="usage-num">${_usageNum(r.used)} <span class="alloc-sub">${_usagePct(r.used_pct)}</span></td>
+          <td class="usage-num">${_usageNum(r.sent_teams)} <span class="alloc-sub">${_usagePct(r.sent_teams_pct)}</span></td>
+          <td class="usage-num">${_usageNum(r.employees)}</td>
+          <td class="usage-num">${_usageNum(r.allocated)} <span class="alloc-sub">${_usagePct(r.allocated_pct)}</span></td>
+          <td class="usage-num">${_usageNum(r.sent)} <span class="alloc-sub">${_usagePct(r.sent_pct)}</span></td>
+        </tr>`).join("") + totalRow
+      : `<tr><td colspan="7" class="admin-empty">ไม่มีทีมในขอบเขตที่ดูแล</td></tr>`;
+  }
+
+  const tt = document.getElementById("adminUsageSumTeamTable");
+  if (tt) {
+    const teams = d.teams_detail || [];
+    tt.innerHTML = teams.length
+      ? teams.map((r) => {
+        const place = [r.acc_division, r.acc_region, r.acc_unit].filter(Boolean);
+        return `<tr>
+          <td>
+            <div class="alloc-who"><code>${escapeHtml(r.sup_id)}</code></div>
+            ${r.full_name ? `<div class="alloc-sub">${escapeHtml(r.full_name)}</div>` : ""}
+          </td>
+          <td>${
+            place.length
+              ? `<div class="alloc-place">${place.map((v) => `<span class="alloc-chip">${escapeHtml(v)}</span>`).join("")}</div>`
+              : '<span class="alloc-sub">—</span>'
+          }</td>
+          <td class="usage-num">${_usageNum(r.employees)}</td>
+          <td class="usage-num">${_usageNum(r.allocated)}</td>
+          <td class="usage-num">${_usageNum(r.sent)}</td>
+          <td>${escapeHtml(r.updated_by || "—")}</td>
+        </tr>`;
+      }).join("")
+      : `<tr><td colspan="6" class="admin-empty">—</td></tr>`;
+  }
+}
+
+async function adminLoadUsageSummary(force) {
+  const kpi = document.getElementById("adminUsageSumKpi");
+  if (!kpi) return;
+  const m = Number(document.getElementById("adminUsageSumMonth")?.value || 0);
+  const y = Number(document.getElementById("adminUsageSumYear")?.value || 0);
+  // ปีที่พิมพ์ค้างครึ่งทาง (เช่น "20") ยังไม่ต้องยิง — รอให้ครบก่อน
+  if (!m || y < 2020 || y > 2100) return;
+  kpi.innerHTML = `<div class="admin-loading">กำลังคำนวณ…</div>`;
+  try {
+    const q = new URLSearchParams({ target_month: String(m), target_year: String(y) });
+    if (force) q.set("force", "true");
+    // สแกนผลกระจายทั้งบริษัทของงวดหนึ่งใช้เวลาได้หลายวินาทีตอนยังไม่มีแคช
+    const data = await _adminJsonFetch(`/admin/usage-summary?${q}`, { timeout: 60000 });
+    _adminUsageSummary = data;
+    _adminRenderUsageSummary(data);
+  } catch (e) {
+    _adminUsageSummary = null;
+    kpi.innerHTML = `<div class="admin-alert admin-alert--error">${escapeHtml(e.message)}</div>`;
+    const rt = document.getElementById("adminUsageSumRegionTable");
+    if (rt) rt.innerHTML = `<tr><td colspan="7" class="admin-empty">—</td></tr>`;
+  }
+}
+
+/** ดึงรายชื่อพนักงานทั้งบริษัทใหม่ — dev เท่านั้น (คำสั่ง DAX ก้อนใหญ่ก้อนเดียว) */
+async function adminRefreshUsageRoster() {
+  const m = Number(document.getElementById("adminUsageSumMonth")?.value || 0);
+  const y = Number(document.getElementById("adminUsageSumYear")?.value || 0);
+  try {
+    toast("กำลังดึงรายชื่อพนักงานทั้งบริษัท…", "amber");
+    const r = await _adminJsonFetch("/admin/cache/refresh", {
+      method: "POST",
+      body: { layer: "roster", month: m || 1, year: y || 2026 },
+      timeout: 120000,
+    });
+    if (r.warm_error) {
+      toast(r.hint || "ดึงรายชื่อพนักงานไม่สำเร็จ — ใช้ข้อมูลเดิมต่อไป", "amber");
+    } else {
+      toast(`ดึงรายชื่อพนักงานแล้ว — ${Number(r.row_count || 0).toLocaleString("th-TH")} คน`, "green");
+    }
+    adminLoadUsageSummary(true);
+  } catch (e) {
+    toast(e.message, "red");
+  }
+}
+
+async function adminDownloadUsageSummaryXlsx() {
+  const m = Number(document.getElementById("adminUsageSumMonth")?.value || 0);
+  const y = Number(document.getElementById("adminUsageSumYear")?.value || 0);
+  if (!m || y < 2020 || y > 2100) {
+    toast("เลือกงวดก่อนดาวน์โหลด", "amber");
+    return;
+  }
+  try {
+    const q = new URLSearchParams({ target_month: String(m), target_year: String(y) });
+    const res = await fetchWithTimeout(
+      `${API_BASE_URL}/admin/usage-summary/export-xlsx?${q}`, {}, 60000
+    );
+    if (!res.ok) throw new Error("ดาวน์โหลดไม่สำเร็จ");
+    const blob = await res.blob();
+    const cd = res.headers.get("Content-Disposition") || "";
+    const hit = cd.match(/filename="?([^";]+)"?/i);
+    dl(blob, (hit && hit[1]) || `usage_summary_${y}-${String(m).padStart(2, "0")}.xlsx`);
+    toast(`ดาวน์โหลดสรุปการใช้งาน งวด ${String(m).padStart(2, "0")}/${y} แล้ว`, "green");
   } catch (e) {
     toast(e.message, "red");
   }
