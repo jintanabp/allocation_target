@@ -27,3 +27,10 @@ node_modules/
 
 # Claude Code — ตั้งค่าเฉพาะเครื่อง + worktree ชั่วคราว ไม่ใช่ของโปรเจกต์
 .claude/
+
+# ผลลัพธ์ของ launcher (ดู launcher/README.md) — เคยหลุดเข้า git มาแล้ว ~22 MB
+# เพราะมีคนลบ /build ออกจากไฟล์นี้เพื่อ commit ไฟล์ที่ build เสร็จ · อย่าทำอีก
+/dist
+/dist_launcher
+/dist_release
+/latest.json

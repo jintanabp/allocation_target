@@ -4,6 +4,11 @@ setlocal
 cd /d "%~dp0"
 
 set "ROOT=%~dp0"
+REM รับพอร์ตเป็น argument ตัวแรก (ไม่ใส่ = 8000 เหมือนเดิม)
+REM launcher/launcher.py หาพอร์ตว่างเองแล้วส่งมาทางนี้ เพราะเครื่องผู้ใช้อาจมีอย่างอื่น
+REM จอง 8000 อยู่ แล้วเปิดโปรแกรมไม่ขึ้นโดยไม่มีใครรู้ว่าทำไม
+set "PORT=8000"
+if not "%~1"=="" set "PORT=%~1"
 REM Force UTF-8 for Python stdout/stderr (avoid 'charmap' codec issues on Windows consoles)
 set "PYTHONUTF8=1"
 set "PORT_PY=%ROOT%runtime\python\python.exe"
@@ -54,16 +59,16 @@ goto :START_SERVER
 
 :START_SERVER
 echo ============================================
-echo  Server: http://localhost:8000/  (แนะนำ — ล็อกอิน Microsoft / Entra)
-echo            http://127.0.0.1:8000/  (ได้เหมือนกัน แต่ OAuth จะส่งกลับมาที่ localhost)
+echo  Server: http://localhost:%PORT%/  (แนะนำ — ล็อกอิน Microsoft / Entra)
+echo            http://127.0.0.1:%PORT%/  (ได้เหมือนกัน แต่ OAuth จะส่งกลับมาที่ localhost)
 echo  ข้อมูล/cache อยู่ในโฟลเดอร์ data\
 echo  กด Ctrl+C เพื่อหยุด
 echo ============================================
 echo.
 
-start "" cmd /c "timeout /t 2 /nobreak >nul && start http://localhost:8000/"
+start "" cmd /c "timeout /t 2 /nobreak >nul && start http://localhost:%PORT%/"
 
-"%USE_PY%" -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+"%USE_PY%" -m uvicorn backend.main:app --host 127.0.0.1 --port %PORT%
 pause
 exit /b 0
 
