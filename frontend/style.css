@@ -9202,6 +9202,7 @@ tr.emp-row--no-target .emp-tag {
   display: flex;
   align-items: baseline;
   gap: 8px;
+  min-height: 27px;
   font-size: 22px;
   font-weight: 800;
   color: var(--accent);
@@ -9213,9 +9214,34 @@ tr.emp-row--no-target .emp-tag {
   font-weight: 700;
   color: var(--text-2);
 }
+/* "จาก 90" — ตัวหารอยู่ในการ์ดเดียวกับตัวเศษ ไม่ต้องกวาดตาไปหาว่าเทียบกับอะไร */
+.usage-kpi__of {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-3);
+}
+/* หัวข้อคั่นกลุ่มการ์ด — เส้นยาวไปจนสุดขวา ตาจะได้รู้ว่าแถวนี้จบตรงไหน */
+.usage-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+.usage-group::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.usage-group + .usage-kpi { margin-bottom: 14px; }
 .usage-kpi__meter {
   display: block;
   height: 8px;
+  max-width: 220px;
   margin-top: 8px;
   border-radius: 999px;
   background: var(--border);
@@ -9228,6 +9254,8 @@ tr.emp-row--no-target .emp-tag {
   background: var(--accent);
   transition: width 0.35s ease;
 }
+/* ยังไม่เคยดึงทะเบียนพนักงาน = "ไม่รู้" — ทำให้ดูเป็นช่องว่างที่ตั้งใจ ไม่ใช่ตัวเลขที่พัง */
+.usage-kpi__tile--unknown .usage-kpi__value { color: var(--text-3); font-weight: 600; }
 .usage-kpi__sub {
   display: block;
   font-size: 11px;
@@ -9243,7 +9271,68 @@ tr.emp-row--no-target .emp-tag {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.admin-table tr.usage-total td {
+.admin-table tr/* เส้นคั่นกลุ่มคอลัมน์ "นับเป็นทีม" กับ "นับเป็นคน" — ตาราง 7 คอลัมน์
+   ถ้าไม่มีเส้นนี้ต้องอ่านหัวตารางทุกครั้งว่ากำลังดูทีมหรือดูคนอยู่ */
+.admin-table th.usage-split,
+.admin-table td.usage-split { border-left: 2px solid var(--border-md); }
+.admin-table .usage-grouprow th {
+  padding-bottom: 2px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+  border-bottom: 0;
+  text-align: center;
+}
+.admin-table .usage-grouprow + tr th { padding-top: 2px; }
+/* แถบสัดส่วนในช่องตาราง — เรียงลำดับภาคด้วยตาได้โดยไม่ต้องไล่อ่านเลข */
+.usage-bar {
+  display: block;
+  height: 3px;
+  width: 88px;
+  max-width: 100%;
+  margin: 4px 0 0 auto;      /* ชิดขวาให้อยู่ใต้ตัวเลข — คอลัมน์นี้ text-align:right */
+  border-radius: 999px;
+  background: var(--border-md);
+  overflow: hidden;
+}
+.usage-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+}
+/* กล่องนิยาม — พับไว้ ไม่ให้ข้อความ 4 บรรทัดขวางระหว่างการ์ดกับตาราง */
+.usage-defs {
+  margin: 4px 0 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+.usage-defs > summary {
+  cursor: pointer;
+  padding: 9px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-2);
+  list-style-position: inside;
+}
+.usage-defs > summary:focus-visible { outline: 2px solid var(--accent-light); outline-offset: -2px; }
+.usage-defs dl {
+  margin: 0;
+  padding: 0 14px 12px;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 14px;
+  font-size: 12px;
+  line-height: 1.65;
+}
+.usage-defs dt { font-weight: 700; color: var(--text-1); white-space: nowrap; }
+.usage-defs dd { margin: 0; color: var(--text-2); }
+@media (max-width: 720px) {
+  .usage-defs dl { grid-template-columns: 1fr; gap: 2px; }
+  .usage-defs dd { margin-bottom: 8px; }
+}
+.usage-total td {
   border-top: 2px solid var(--border-md);
   background: var(--surface-2);
 }
