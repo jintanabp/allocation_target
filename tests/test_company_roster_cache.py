@@ -152,6 +152,42 @@ class TestStaleness(_Base):
         self.assertIsNone(fc.read_salesman_roster(allow_stale=False))
 
 
+class TestPressOnceIsEnough(_Base):
+    """
+    กดปุ่ม "ดึงข้อมูลพนักงาน" ครั้งเดียวต้องพอ — ไม่ใช่ต้องกดใหม่ทุกวัน
+
+    แคชนี้ไม่มีวัน "หมดอายุจนใช้ไม่ได้" เลยอายุแล้วยังคืนข้อมูลครบ แค่ติดธง stale
+    ให้หน้าจอบอกว่าเก่าแค่ไหน · ถ้าเผลอทำให้มันคืนค่าว่างเมื่อเลย TTL
+    ตัวหารของรายงานจะกลายเป็น "—" เองเงียบ ๆ หลังผ่านไปหนึ่งวัน
+    """
+
+    def _age_the_cache(self):
+        path = fc._roster_path()
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+        doc["cached_at"] = "2020-01-01T00:00:00Z"
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(doc, fh)
+
+    def test_still_usable_long_after_ttl_without_pressing_again(self):
+        fc.write_salesman_roster(cr._normalize(RAW))
+        self._age_the_cache()
+        got = cr.get_company_roster()
+        self.assertTrue(got["available"])
+        self.assertEqual(got["row_count"], 3)
+        self.assertTrue(got["stale"])
+        # error ว่าง = "ไม่มีใครกดดึงใหม่" ไม่ใช่ "กดแล้วพัง" — หน้าจอใช้แยกข้อความ
+        self.assertIsNone(got["error"])
+
+    def test_reading_a_stale_roster_is_not_logged_as_a_failure(self):
+        """อ่านทุกครั้งที่เปิดหน้าสรุป — เตือนทุกครั้งคือ log ขยะที่ชวนไล่หาปัญหาผิด"""
+        fc.write_salesman_roster(cr._normalize(RAW))
+        self._age_the_cache()
+        with self.assertNoLogs("target_allocation", level="WARNING"):
+            fc.read_salesman_roster(allow_stale=True)
+            fc.roster_cache_status()
+
+
 class TestNotSweptByPeriodInvalidation(_Base):
     def setUp(self):
         super().setUp()

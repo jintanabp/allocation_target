@@ -105,7 +105,9 @@ def seed_cache_from_repo() -> int:
     return copied
 
 
-def _read_meta(path: str, *, allow_stale: bool = False) -> dict[str, Any] | None:
+def _read_meta(
+    path: str, *, allow_stale: bool = False, quiet: bool = False
+) -> dict[str, Any] | None:
     """
     allow_stale: ยอมใช้แคชที่หมดอายุแล้ว — สำหรับตอนดึงของใหม่ไม่ได้เท่านั้น
 
@@ -132,6 +134,11 @@ def _read_meta(path: str, *, allow_stale: bool = False) -> dict[str, Any] | None
         if age > fabric_static_cache_ttl_sec():
             if not allow_stale:
                 return None
+            if quiet:
+                # ผู้เรียกตั้งใจใช้ของเก่าเป็นเรื่องปกติ ไม่ใช่อาการของการดึงไม่สำเร็จ
+                # (รายชื่อพนักงานอ่านทุกครั้งที่เปิดหน้าสรุป — เตือนทุกครั้งคือ log ขยะ
+                #  ที่ทำให้คนไล่หาปัญหาที่ไม่มีอยู่จริง)
+                return doc
             logger.warning(
                 "ใช้แคชที่หมดอายุแล้ว %s (เก่า %.1f ชม.) — ดึงของใหม่ไม่ได้",
                 os.path.basename(path), age / 3600.0,
@@ -288,7 +295,7 @@ def read_salesman_roster(*, allow_stale: bool = True) -> dict[str, Any] | None:
     (หลักเดียวกับแคชราคาที่อธิบายไว้ใน _read_meta) — ผู้เรียกต้องเอา stale
     ไปบอกบนหน้าจอเสมอ ไม่ใช่ใช้เงียบ ๆ
     """
-    doc = _read_meta(_roster_path(), allow_stale=allow_stale)
+    doc = _read_meta(_roster_path(), allow_stale=allow_stale, quiet=True)
     if not doc:
         return None
     rows = doc.get("rows")
@@ -315,7 +322,7 @@ def roster_cache_status() -> dict[str, Any]:
     """สถานะการ์ดของรายชื่อพนักงาน — period_scoped=False กันเข้าใจผิดว่าเป็นของงวดที่เลือก"""
     path = _roster_path()
     exists = os.path.isfile(path)
-    doc = _read_meta(path, allow_stale=True) if exists else None
+    doc = _read_meta(path, allow_stale=True, quiet=True) if exists else None
     age = _cache_age_sec(doc)
     ttl = fabric_static_cache_ttl_sec()
     return {

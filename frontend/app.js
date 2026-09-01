@@ -14650,8 +14650,13 @@ function _adminRenderUsageRoster(r) {
     ? new Date(r.cached_at).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" })
     : "—";
   const age = (r.age_hours === null || r.age_hours === undefined) ? "" : ` (เก่า ${r.age_hours} ชม.)`;
+  // เก่าเพราะ "ไม่มีใครกดดึงใหม่" กับ "กดแล้วดึงไม่สำเร็จ" เป็นคนละเรื่องกัน
+  // แคชนี้ใช้ได้ตลอดไปแม้เลยอายุ (ไม่มีวันว่าง) ข้อความจึงต้องไม่ทำให้เข้าใจว่าพัง
+  const why = r.error
+    ? "ดึงใหม่ไม่สำเร็จ ใช้ข้อมูลเดิมไปก่อน"
+    : "ยังไม่ได้ดึงใหม่ — ตัวเลขพนักงานอาจไม่ตรงกับปัจจุบัน";
   box.innerHTML = r.stale
-    ? `<p>ข้อมูลพนักงาน ณ ${escapeHtml(when)}${escapeHtml(age)} — ดึงใหม่ไม่สำเร็จ ใช้ข้อมูลเดิมไปก่อน${btn}</p>`
+    ? `<p>ข้อมูลพนักงาน ณ ${escapeHtml(when)}${escapeHtml(age)} — ${escapeHtml(why)}${btn}</p>`
     : `<p>ข้อมูลพนักงาน ณ ${escapeHtml(when)} · ${_usageNum(r.row_count)} คนทั้งบริษัท${btn}</p>`;
 }
 
