@@ -995,6 +995,7 @@
           <span class="admin-sidebar-toggle__icon" aria-hidden="true">☰</span>
           <span class="admin-sidebar-toggle__label">พับเมนู</span>
         </button>
+        <div class="admin-sidebar-divider" aria-hidden="true"></div>
         <div class="admin-nav-group">
           <div class="admin-nav-group__label">สิทธิ์</div>
           <button type="button" class="admin-nav-item admin-nav-item--active" role="tab" data-tab="users" aria-selected="true" onclick="adminSwitchTab('users')">ผู้ใช้</button>
@@ -1313,7 +1314,7 @@
             <div class="admin-period-bar admin-period-bar--inline">
               <input type="text" id="empMoveSearch" class="field-input field-input--sm"
                      placeholder="ค้นหา รหัส / ชื่อ / ทีม / ภาค" oninput="renderEmpMoves()" />
-              <label class="admin-period-bar__field" style="gap:6px;">
+              <label class="admin-period-bar__field admin-period-bar__field--check">
                 <input type="checkbox" id="empMoveOnlyMoved" onchange="renderEmpMoves()" />
                 เฉพาะที่ย้ายแล้ว
               </label>
@@ -1384,7 +1385,7 @@
             <div class="admin-data-actions">
               <a href="/docs/DATA_FLOW.md" target="_blank" rel="noopener" class="admin-btn-ghost admin-btn-ghost--sm">เอกสารฉบับเต็ม</a>
               <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminRunDeepHealth()" title="ทดสอบว่าเชื่อม Fabric และอ่าน Target Sun ได้หรือไม่ — ไม่ส่งข้อมูล">ทดสอบการเชื่อมต่อ</button>
-              <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminLoadInventory(true)">ทดสอบ Fabric</button>
+              <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminLoadInventory(true)" title="ดึงรายการตาราง/คอลัมน์จาก Fabric ใหม่ เพื่อดูว่าโครงข้อมูลยังตรงกับที่ระบบคาดไว้">ทดสอบ Fabric</button>
               <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminLoadInventory(false)">โหลดใหม่</button>
             </div>
           </div>

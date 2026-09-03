@@ -1268,6 +1268,26 @@ body.is-admin .admin-view {
   background: var(--surface-a95);
   overflow-y: auto;
 }
+/* select ที่ใช้คลาสฟิลด์กลาง — เดิมไม่ได้ปิดลูกศรของระบบปฏิบัติการ
+   จึงโผล่เป็น dropdown ดิบของ Windows ปนกับ select ตัวอื่นในแอปที่มีลูกศรของตัวเอง
+   (แท็บผู้ดูแลระบบ 5 ตัว · ทีมพนักงาน 2 · แหล่งข้อมูล 1 · ย้ายพนักงาน 300)
+   ใช้ลูกศรชุดเดียวกับ .admin-select / .admin-cell-select ที่มีอยู่แล้ว */
+select.field-input,
+.roles-select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 28px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2394a3b8' d='M3 4.5 6 7.5 9 4.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+}
+select.field-input:disabled,
+.roles-select:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* กล่องผลตรวจเชิงลึกในแท็บแหล่งข้อมูล ยังไม่มีเนื้อหาก็ยังกินที่เป็นแถบเทา
+   ดูเหมือนโหลดค้าง — ว่างเมื่อไรให้หายไปเลย */
+.admin-deep-health:empty { display: none; }
+
 /* ── ตารางสิทธิ์หน้าแอดมิน ──────────────────────────────────────
    ไม่ใช้คลาสของตารางผู้ใช้ เพราะตารางนั้นเป็น table-layout:fixed และ
    .admin-cell-note บังคับ nowrap+ellipsis ซึ่งตัดคำอธิบายสิทธิ์ทิ้งกลางคัน
@@ -1383,37 +1403,75 @@ body.is-admin .admin-view {
    พับแล้วเหลือเป็นแถบแคบ 46px ที่ยังมีปุ่มอยู่ — ไม่ใช่ซ่อนหายไปทั้งแถบ
    ไม่งั้นปุ่มกางกลับต้องไปลอยอยู่ที่หัวหน้าจอ ซึ่งดูไม่เกาะกับอะไรเลย
    จำสถานะไว้ใน localStorage · ค่าเริ่มต้นกางไว้เสมอ ไม่พับเอง */
-.admin-layout--collapsed { grid-template-columns: 46px minmax(0, 1fr); }
-.admin-layout--collapsed .admin-sidebar { padding: 8px 5px; align-items: center; }
-.admin-layout--collapsed .admin-nav-group { display: none; }
-.admin-layout--collapsed .admin-sidebar-toggle { width: 36px; padding: 0; }
-.admin-layout--collapsed .admin-sidebar-toggle__label { display: none; }
-
+/* ปุ่มพับ/กางเมนู — เป็นหัวของเมนู ไม่ใช่ปุ่มลอยที่หัวหน้าจอ
+   ตอนกาง: เต็มความกว้าง ไอคอน + ข้อความ ชิดซ้ายเหมือนรายการเมนูข้างล่าง
+   ตอนพับ: จัตุรัส 36x36 ไอคอนอยู่กลางพอดี
+   (เคยลืม justify-content ทำให้ตอนพับไอคอนไปกองซ้าย ห่างซ้าย 1px ห่างขวา 22px) */
 .admin-sidebar-toggle {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 8px;
   width: 100%;
-  height: 34px;
-  padding: 0 10px;
-  margin-bottom: 6px;
+  height: 36px;
+  padding: 0 11px;
   border-radius: 10px;
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-3);
   font-family: var(--font);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 800;
+  letter-spacing: 0.02em;
   line-height: 1;
   cursor: pointer;
 }
-.admin-sidebar-toggle__icon { font-size: 14px; }
+.admin-sidebar-toggle__icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  font-size: 14px;
+  line-height: 1;
+}
 .admin-sidebar-toggle:hover {
   background: var(--accent-bg);
   border-color: var(--accent-brd);
   color: var(--accent-strong);
 }
+/* เส้นคั่นให้รู้ว่าปุ่มนี้เป็นหัวของเมนู ไม่ใช่รายการเมนูอันหนึ่ง */
+.admin-sidebar-divider {
+  flex: 0 0 auto;
+  height: 1px;
+  margin: 4px 2px 2px;
+  background: var(--border-md, var(--border));
+}
+
+/* ── สภาพตอนพับ ── */
+.admin-layout--collapsed { grid-template-columns: 46px minmax(0, 1fr); }
+/* ถอดกรอบ/พื้นหลังของเมนูออกตอนพับ ไม่งั้นเหลือเป็นกล่องขาวสูงเต็มจอที่ว่างเปล่า
+   ดูเหมือนทำค้างไว้ · ตอนพับควรเหลือแค่ปุ่มเดียวลอยอยู่ริมซ้าย */
+.admin-layout--collapsed .admin-sidebar {
+  align-self: start;
+  padding: 0;
+  border: 0;
+  background: none;
+  overflow: visible;
+  align-items: center;
+  gap: 0;
+}
+.admin-layout--collapsed .admin-nav-group,
+.admin-layout--collapsed .admin-sidebar-divider { display: none; }
+.admin-layout--collapsed .admin-sidebar-toggle {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  justify-content: center;
+  gap: 0;
+}
+.admin-layout--collapsed .admin-sidebar-toggle__label { display: none; }
 
 .admin-nav-group__label {
   font-size: 10px;
@@ -6151,10 +6209,12 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
   font-family: var(--font);
   font-size: 12.5px;
   color: var(--text-1);
-  background: var(--white);
+  /* ต้องเป็น background-color ไม่ใช่ background แบบย่อ — ย่อแล้วจะลบ background-image
+     ที่กฎลูกศร (select.field-input, .roles-select) ตั้งไว้ทิ้งไปด้วย */
+  background-color: var(--white);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 6px 8px;
+  padding: 6px 28px 6px 8px;   /* เว้นที่ขวาให้ลูกศร */
   min-width: 168px;
   cursor: pointer;
 }
@@ -9506,4 +9566,26 @@ tr.emp-row--no-target .emp-tag {
 .usage-total td {
   border-top: 2px solid var(--border-md);
   background: var(--surface-2);
+}
+
+/* ปุ่มบันทึกรายแถวของหน้าย้ายพนักงาน — มี 300 แถว ถ้าเป็นปุ่มหลักสีเข้มทุกแถว
+   ทั้งหน้าจะกลายเป็นแถบน้ำเงินจนไม่รู้ว่าต้องกดอันไหน · เงียบไว้ก่อน
+   แล้วค่อยเด่นขึ้นเฉพาะแถวที่ผู้ใช้เพิ่งแก้ */
+.moves-save { transition: background-color 0.15s, border-color 0.15s, color 0.15s; }
+.moves-save--dirty {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--white);
+  font-weight: 700;
+}
+
+/* ช่องติ๊กในแถบเครื่องมือ: .admin-period-bar__field เป็น column เพราะออกแบบไว้
+   ให้ป้ายอยู่เหนือช่องกรอก พอเอามาใช้กับ checkbox ช่องติ๊กเลยไปลอยเหนือข้อความ
+   ต้องอยู่ท้ายไฟล์ — ประกาศก่อน .admin-period-bar__field แล้วจะโดนทับ (specificity เท่ากัน) */
+.admin-period-bar__field--check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  cursor: pointer;
 }

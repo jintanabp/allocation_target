@@ -12305,13 +12305,16 @@ function renderEmpMoves() {
           <td class="admin-muted">${escH(_empMoveScopeText(r.home_division, r.home_region, r.home_unit))}</td>
           <td>
             <select class="field-input field-input--sm" id="empMoveTo_${escH(r.emp_id)}"
+                    onchange="_empMoveTouched('${escH(r.emp_id)}')"
                     aria-label="ทีมที่จะเกลี่ยเป้าแทนสำหรับ ${escH(r.emp_id)}">${opts(r.to_sup)}</select>
             ${moved ? `<span class="moves-to-scope">→ ${escH(_empMoveScopeText(r.to_division, r.to_region, r.to_unit))}</span>` : ""}
           </td>
           <td><input type="text" class="field-input field-input--sm" id="empMoveNote_${escH(r.emp_id)}"
                      value="${escH(r.note || "")}" placeholder="เช่น ขายชายแดน"
+                     oninput="_empMoveTouched('${escH(r.emp_id)}')"
                      aria-label="หมายเหตุของ ${escH(r.emp_id)}" /></td>
-          <td><button type="button" class="admin-btn-primary admin-btn-primary--sm"
+          <td><button type="button" class="admin-btn-ghost admin-btn-ghost--sm moves-save"
+                      id="empMoveSave_${escH(r.emp_id)}"
                       onclick="saveEmpMove('${escH(r.emp_id)}')">บันทึก</button></td>
         </tr>`;
       })
@@ -12320,6 +12323,13 @@ function renderEmpMoves() {
     (rows.length > MAX
       ? `<div class="admin-muted" style="margin-top:8px;">แสดง ${MAX} จาก ${rows.length} คน — พิมพ์ค้นหาเพื่อแคบลง</div>`
       : "");
+}
+
+/* 300 แถวมีปุ่มบันทึกทุกแถว ถ้าเข้มหมดจะไม่รู้ว่าต้องกดอันไหน
+   ปุ่มจึงเงียบไว้ก่อน แล้วเด่นขึ้นเฉพาะแถวที่ผู้ใช้เพิ่งเปลี่ยนทีมหรือพิมพ์หมายเหตุ */
+function _empMoveTouched(empId) {
+  const btn = document.getElementById("empMoveSave_" + empId);
+  if (btn) btn.classList.add("moves-save--dirty");
 }
 
 async function saveEmpMove(empId) {
@@ -13813,7 +13823,13 @@ function _adminApplySidebarState(collapsed) {
   const layout = document.querySelector("#adminView .admin-layout");
   const btn = document.getElementById("adminSidebarToggle");
   if (layout) layout.classList.toggle("admin-layout--collapsed", !!collapsed);
-  if (btn) btn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  if (!btn) return;
+  btn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  // ข้อความต้องบอกสิ่งที่จะเกิดเมื่อกด ไม่ใช่สถานะปัจจุบัน
+  btn.title = collapsed ? "กางเมนูกลับ" : "พับเมนูเพื่อให้ตารางกว้างขึ้น";
+  btn.setAttribute("aria-label", collapsed ? "กางเมนูด้านซ้าย" : "พับเมนูด้านซ้าย");
+  const icon = btn.querySelector(".admin-sidebar-toggle__icon");
+  if (icon) icon.textContent = collapsed ? "»" : "☰";
 }
 
 function adminRestoreSidebarState() {
