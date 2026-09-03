@@ -1800,7 +1800,10 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
   justify-content: space-between;
   align-items: center;
   gap: 8px;
+  /* ให้เหมือน .admin-card-header — เลื่อนทั้งหน้าแล้วเส้นคั่นหัวการ์ดเคยโผล่บ้างหายบ้าง */
+  padding-bottom: 12px;
   margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
 }
 .admin-data-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .admin-inventory { font-size: 13px; padding-bottom: 24px; }
@@ -2868,10 +2871,21 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
   accent-color: var(--accent);
   cursor: pointer;
 }
+/* ต้องคืน display เป็น table-cell ที่นี่ด้วย — กฎแรกของคลาสนี้ (ที่ประกาศไว้ก่อนหน้า)
+   ตั้ง display:flex ไว้ ซึ่งทำให้ <td> หลุดจากการคิดความกว้างของตาราง
+   พื้นลายม้าลายกับเส้นใต้แถวจึงเกาะแค่ความสูงของปุ่ม ไม่เต็มแถว
+   โปรเจกต์เคยแก้อาการนี้ให้ตาราง alloc ไปแล้ว แต่ตารางอื่นยังค้างอยู่
+   ปุ่มยังชิดขวาเหมือนเดิม เพราะ .admin-action / .admin-action-group เป็น inline-flex */
 .admin-td-actions {
   white-space: nowrap;
   text-align: right;
+  display: table-cell;
+  vertical-align: middle;
 }
+
+/* X3 — หัวคอลัมน์ "จัดการ" เคยไม่มีกฎเลยสักข้อ (คลาสถูกเขียนใน HTML แต่ไม่มีใน CSS)
+   หัวจึงชิดซ้ายตาม .admin-table th ขณะที่ปุ่มข้างล่างชิดขวา */
+.admin-table th.admin-th-actions { text-align: right; }
 .admin-action-group {
   display: inline-flex;
   align-items: center;
@@ -3059,7 +3073,10 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
 .admin-role--supervisor_acc { background: var(--accent-bg); color: var(--accent-strong); }
 .admin-role--manager_acc { background: #f3e8ff; color: #7e22ce; }
 .admin-role--marketing { background: var(--amber-bg); color: var(--amber); }
-.admin-role--unknown { background: var(--bg-main); color: var(--text-3); }
+.admin-role--unknown,
+/* _adminRoleCssClass() คืนค่า "none" (app.js) แต่ CSS มีแต่ --unknown ที่ไม่มีใครเรียก
+   ป้าย "ไม่ระบุบทบาท" จึงเป็นกรอบเปล่าไม่มีสี ทั้งที่เป็นงานค้างที่ควรสะดุดตาที่สุด */
+.admin-role--none { background: var(--bg-main); color: var(--text-3); }
 .admin-role--acc_only { background: var(--surface-2); color: var(--text-3-decor); }
 
 @media (max-width: 768px) {
@@ -9248,20 +9265,20 @@ tr.emp-row--no-target .emp-tag {
 }
 
 /* บรรทัดรองใต้ค่าหลัก (ชื่อคน / อีเมลผู้แก้) */
-#adminView .admin-table--alloc .alloc-sub {
+#adminView .alloc-sub {
   margin-top: 2px;
   font-size: 11px;
   color: var(--text-3);
   line-height: 1.45;
 }
 
-#adminView .admin-table--alloc .alloc-place {
+#adminView .alloc-place {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
 }
 
-#adminView .admin-table--alloc .alloc-chip {
+#adminView .alloc-chip {
   display: inline-flex;
   align-items: center;
   padding: 1px 8px;
@@ -9589,3 +9606,38 @@ tr.emp-row--no-target .emp-tag {
   white-space: nowrap;
   cursor: pointer;
 }
+
+/* ── กล่องตารางในแผงที่การ์ดไม่ใช่ flex ─────────────────────────
+   .admin-table-wrap ตั้ง flex:1 1 0 + min-height:420px ไว้คู่กับการ์ดแบบ flex
+   (.admin-card--table / .admin-card--panel) · แต่แผงข้างล่างใช้ .admin-card เปล่า ๆ
+   ซึ่งเป็น block ธรรมดา flex:1 จึงไม่มีผล เหลือแต่ min-height บังคับสูง 420px
+   ผลคือ (1) ตาราง 2-3 แถวเหลือขาวครึ่งกรอบ
+        (2) ไม่มี max-height กล่องจึงโตตามเนื้อหา ไม่เคยเกิดแถบเลื่อนในตัวเอง
+            → position:sticky ที่หัวตารางไม่มีทางทำงาน เลื่อนดู 300 แถวแล้วลืมว่า
+              คอลัมน์ไหนคือ "ทีมจริง" คอลัมน์ไหนคือ "ให้ทีมนี้เกลี่ยแทน"
+   ต้องอยู่ท้ายไฟล์เพราะ .admin-table-wrap ประกาศไว้ก่อนหน้า */
+#adminPanelRoles .admin-table-wrap,
+#adminPanelSlLinks .admin-table-wrap,
+#adminPanelSkuLinks .admin-table-wrap,
+#adminPanelTeam .admin-table-wrap,
+#adminPanelEmpMoves .admin-table-wrap,
+#adminPanelUsageSummary .admin-table-wrap {
+  min-height: 0;
+  max-height: calc(100dvh - var(--topbar-h) - 260px);
+}
+
+/* คลาสที่เขียนไว้ในหน้าแต่ไม่เคยมีกฎรองรับ — ตรวจแล้วว่า grep ใน style.css ได้ 0 ผลลัพธ์ */
+
+/* ข้อความอธิบายใต้หัวการ์ด (แผงย้ายพนักงาน / ผูกรหัส SKU)
+   เดิมเป็นตัวหนังสือเปล่าน้ำหนักเท่าเนื้อหา อ่านแล้วแยกไม่ออกว่าเป็นคำอธิบาย */
+.admin-card__note {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--text-2);
+}
+.admin-card__note strong { color: var(--text-1); }
+
+/* ข้อมูลบริบทในตาราง (เช่นคอลัมน์ ดิวิชัน · ภาค · หน่วย ของแผงย้ายพนักงาน)
+   เดิมเข้มเท่าข้อมูลหลัก แยกไม่ออกว่าอันไหนคือของจริงอันไหนคือบริบท */
+.admin-muted { color: var(--text-2); }

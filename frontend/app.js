@@ -14520,7 +14520,9 @@ function adminShowUsageDetail(btn) {
   if (!detail) return;
   _showInfoModal({
     title: "รายละเอียด (เทคนิค)",
-    bodyHtml: `<pre style="white-space:pre-wrap;font-size:12px;margin:0;">${detail}</pre>`,
+    // dataset คืนค่าที่เบราว์เซอร์ decode กลับมาแล้ว = ข้อความดิบ ต้อง escape อีกรอบก่อนใส่ innerHTML
+    // ไม่งั้น log ที่มี <class 'ValueError'> จะถูกตีความเป็นแท็กแล้วหายจากจอ
+    bodyHtml: `<pre style="white-space:pre-wrap;font-size:12px;margin:0;">${escapeHtml(detail)}</pre>`,
     secondaryLabel: "ปิด",
   });
 }
@@ -14757,6 +14759,9 @@ async function adminLoadAllocations() {
     const qs = q.toString();
     const res = await fetchWithTimeout(`${API_BASE_URL}/admin/allocations${qs ? `?${qs}` : ""}`, {}, 20000);
     const data = await res.json().catch(() => ({}));
+    // ไม่เช็ค res.ok แปลว่า 403/500 จะกลายเป็น items ว่าง แล้ววาดว่า "ยังไม่มี snapshot"
+    // ผู้ดูแลจึงแยกไม่ออกระหว่าง "งวดนี้ยังไม่มีใครกระจาย" กับ "สิทธิ์ไม่พอ/เซิร์ฟเวอร์พัง"
+    if (!res.ok) throw new Error(_formatApiErrorDetail(data) || "โหลดผลการกระจายไม่สำเร็จ");
     _adminAllocItems = Array.isArray(data.items) ? data.items : [];
     adminRenderAllocationsTable();
   } catch (e) {
@@ -15037,6 +15042,12 @@ async function adminLoadUsageSummary(force) {
     kpi.innerHTML = `<div class="admin-alert admin-alert--error">${escapeHtml(e.message)}</div>`;
     const rt = document.getElementById("adminUsageSumRegionTable");
     if (rt) rt.innerHTML = `<tr><td colspan="7" class="admin-empty">—</td></tr>`;
+    // ต้องล้างตารางรายทีมกับแถบ roster ด้วย ไม่งั้นค้างตัวเลขงวดก่อนไว้
+    // ข้าง ๆ ข้อความ error ของงวดใหม่ ดูเหมือนเป็นตัวเลขของงวดที่เพิ่งเลือก
+    const tt = document.getElementById("adminUsageSumTeamTable");
+    if (tt) tt.innerHTML = `<tr><td colspan="10" class="admin-empty">—</td></tr>`;
+    const roster = document.getElementById("adminUsageSumRoster");
+    if (roster) roster.style.display = "none";
   }
 }
 
@@ -15867,7 +15878,19 @@ async function adminSaveNoTargetEmployees() {
   }
 }
 
-async function adminLoadTeam(forceRefresh) {
+/* discardDraft = ตั้งใจทิ้งของที่ยังไม่บันทึก (ปุ่ม "ยกเลิกการแก้")
+   ปุ่ม "โหลด" กับ "รีเฟรชจาก Fabric" อยู่บนสุดของแผง ห่างจากปุ่มบันทึกที่อยู่ใต้ตาราง
+   เดิมกดแล้วติ๊กที่ค้างไว้หายทันทีโดยไม่ถามอะไรเลย */
+async function adminLoadTeam(forceRefresh, discardDraft) {
+  if (!discardDraft && _adminNoTargetDirty()) {
+    const n = _adminTeamNoTarget.draft.size;
+    const ok = await _confirmDialog(
+      `มีการติ๊ก "ไม่ต้องตั้งเป้า" ที่ยังไม่ได้บันทึก (${n} คน)
+โหลดใหม่แล้วจะหายไป`,
+      { title: "ยังมีของที่ยังไม่บันทึก", okLabel: "โหลดใหม่ ทิ้งที่ค้าง", cancelLabel: "ยกเลิก" }
+    );
+    if (!ok) return;
+  }
   const sel = document.getElementById("adminTeamSuper");
   const monthSel = document.getElementById("adminTeamMonth");
   const yearInp = document.getElementById("adminTeamYear");
@@ -16132,6 +16155,9 @@ function adminResetTableFilters() {
     else el.value = "";
   }
   _adminSort = { col: "email", dir: "asc" };
+  // กระดิ่ง "ต้องตรวจสอบ" ก็เป็นตัวกรองหนึ่ง ถ้าไม่ล้างด้วย กดล้างตัวกรองแล้ว
+  // รายชื่อยังเหลือแค่คนข้อมูลไม่ครบ โดยที่ปุ่มล้างดูเหมือนไม่ทำงาน
+  _adminShowIncompleteOnly = false;
   adminUpdateSortUI();
   adminSyncFilterVisuals();
   adminFilterRows();
@@ -16790,7 +16816,16 @@ function _adminScopeLabel(scope) {
    แสดงเฉพาะคนที่มีสิทธิ์อยู่จริง — ปกติไม่กี่คน จึงมีที่ให้ปุ่มใหญ่และคำอธิบายครบ */
 function adminInitRolesPanel() {
   if (!S.adminRows.length) {
-    adminLoadRows();
+    // ข้อความ error ของ adminLoadRows เขียนลงแผง "ผู้ใช้" ซึ่งตอนนี้ซ่อนอยู่
+    // ถ้าไม่บอกอะไรตรงนี้ ผู้ดูแลจะเห็นหัวตารางเปล่ากับกล่องขาว ไม่รู้ว่าโหลดพลาด
+    const body = document.getElementById("adminRolesBody");
+    if (body) body.innerHTML = `<tr><td colspan="5" class="admin-empty">กำลังโหลด…</td></tr>`;
+    adminLoadRows().then(() => {
+      if (S.adminRows.length) adminRenderRolesPanel();
+      else if (body) {
+        body.innerHTML = `<tr><td colspan="5" class="admin-empty">โหลดรายการไม่สำเร็จ — กด「โหลดใหม่」ลองอีกครั้ง</td></tr>`;
+      }
+    });
     return;
   }
   adminRenderRolesPanel();
@@ -17051,7 +17086,10 @@ async function adminRolesShowAdd() {
 }
 
 async function adminSetSystemRole(email, role, adminScope, opts = {}) {
-  const label = role === "dev" ? "Dev (ทั้งระบบ)" : role === "admin" ? "แอดมิน" : "ผู้ใช้ทั่วไป";
+  // head_admin เคยตกลง else กลายเป็น "ผู้ใช้ทั่วไป" ทั้งที่กำลังให้สิทธิ์สูงสุดรองจาก dev
+  // ป้ายนี้ใช้ทั้งหัวกล่องยืนยันและ toast หลังบันทึก จึงสื่อผิดสองที่พร้อมกัน
+  const ROLE_LABELS = { dev: "Dev (ทั้งระบบ)", head_admin: "หัวหน้าแอดมิน", admin: "แอดมิน" };
+  const label = ROLE_LABELS[role] || "ผู้ใช้ทั่วไป";
   const scope = role === "admin" ? (adminScope || ADMIN_SCOPE_DEFAULT) : "";
   const scopeLine = scope
     ? `\nขอบเขต: ${_adminScopeLabel(scope)}\n` + (ADMIN_SCOPE_DETAIL[scope] || "")
@@ -17232,6 +17270,8 @@ function adminRenderTable(rows) {
       (document.getElementById("adminFEmail")?.value || "").trim() ||
       (document.getElementById("adminFUserpl")?.value || "").trim() ||
       document.getElementById("adminFRole")?.value ||
+      document.getElementById("adminFSysRole")?.value ||
+      _adminShowIncompleteOnly ||
       document.getElementById("adminFDivision")?.value ||
       document.getElementById("adminFRegion")?.value ||
       document.getElementById("adminFUnit")?.value ||
