@@ -2474,8 +2474,11 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
    min-width จึงไม่มีผลกับการแบ่งคอลัมน์ — เคยลอง width:1% แล้วคอลัมน์ยุบเหลือ 16px
    จนปุ่มลบถูกตัดหาย · ต้องระบุความกว้างตรง ๆ แค่ลดจาก 148px ให้พอดีปุ่มจริง */
 .admin-th-stack--actions {
-  min-width: 124px;
-  width: 124px;
+  /* dev เห็น 3 ปุ่ม (แก้ไข + ดูแบบนี้ + ลบ) รวม 146px ส่วนผู้ดูแลเห็น 2 ปุ่ม ~87px
+     เคยตั้ง 124px แล้วปุ่มสุดท้ายของ dev ถูกตัด · ต้องระบุ width เป็น px ตรง ๆ เท่านั้น
+     min-width ไม่มีผลกับ table-layout:fixed และ width:1% เคยทำให้คอลัมน์ยุบเหลือ 16px */
+  min-width: 150px;
+  width: 150px;
   white-space: nowrap;
 }
 .admin-th-stack > .admin-sort-btn,
