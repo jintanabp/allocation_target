@@ -194,6 +194,9 @@ TTL: `EMPLOYEE_PAYLOAD_CACHE_TTL_SEC`, `MANAGERS_CACHE_TTL_SEC`, `ADMIN_TEAM_CAC
 | `GET /admin/supervisor-team` | ใช่ | รายชื่อพนักงานใต้ Supervisor |
 | `GET /admin/data-inventory` | บางส่วน | สรุปแหล่งข้อมูล |
 | `GET /admin/sku-links` | ไม่ | รายการผูกรหัส SKU (`config/sku_links.json`) |
+| `GET /admin/permissions` | ไม่ | ทะเบียนสิทธิ์ + ค่าที่ตั้งไว้ (dev เท่านั้น) |
+| `PUT /admin/permissions` | ไม่ | บันทึกตารางสิทธิ์ (dev เท่านั้น) |
+| `GET /admin/permissions/me` | ไม่ | สิทธิ์/แท็บของคนที่ล็อกอินอยู่ |
 | `GET /admin/sku-links/preview` | ใช่ | ทดสอบยอดประวัติ 3M/LY หลังรวม alias |
 | `GET /debug/fabric` | ใช่ | debug (`ENABLE_DEBUG_ENDPOINTS=1`) |
 

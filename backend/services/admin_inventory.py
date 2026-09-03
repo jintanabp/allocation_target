@@ -48,6 +48,9 @@ API_MAP = [
     {"endpoint": "GET /admin/sku-links/catalog", "fabric": True, "sources": ["tga_target_salesman_next", "Dim_Product", "sku_links.json"]},
     {"endpoint": "GET /admin/sku-links/preview", "fabric": True, "sources": ["cross_sold_history_2y_qu", "Dim_Salesman"]},
     {"endpoint": "GET /admin/sl-links", "fabric": False, "sources": ["sl_links.json"]},
+    {"endpoint": "GET /admin/permissions", "fabric": False, "sources": ["admin_permissions.json"]},
+    {"endpoint": "PUT /admin/permissions", "fabric": False, "sources": ["admin_permissions.json (dev เท่านั้น)"]},
+    {"endpoint": "GET /admin/permissions/me", "fabric": False, "sources": ["admin_permissions.json"]},
     {"endpoint": "GET /admin/no-target-employees", "fabric": False, "sources": ["no_target_employees.json"]},
     {"endpoint": "PUT /admin/no-target-employees", "fabric": False, "sources": ["no_target_employees.json"]},
     {"endpoint": "GET /admin/usage-summary", "fabric": False, "sources": ["allocations/*.json", "user_access.json", "sl_links.json", "logs/usage_*.jsonl", "cache/salesman_roster.json"]},
@@ -186,6 +189,8 @@ def build_data_inventory(*, check_fabric: bool = True) -> dict[str, Any]:
             "user_access_rows": len(rows),
             "user_access_path": os.environ.get("USER_ACCESS_JSON_PATH") or "config/user_access.json",
             "sku_links_path": os.environ.get("SKU_LINKS_JSON_PATH") or "config/sku_links.json",
+            "admin_permissions_path": os.environ.get("ADMIN_PERMISSIONS_JSON_PATH")
+            or "config/admin_permissions.json",
             "access_hierarchy_supervisors": len(supervisors),
             "access_hierarchy_managers": len(manager_codes),
             "access_hierarchy_path": hierarchy_path,

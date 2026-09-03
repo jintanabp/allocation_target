@@ -1268,6 +1268,41 @@ body.is-admin .admin-view {
   background: var(--surface-a95);
   overflow-y: auto;
 }
+/* ── พับเมนูข้าง ────────────────────────────────────────────────
+   เมนูข้างกินที่คงที่ 168-220px ตลอดเวลา บนจอ 1366 คิดเป็น ~16% ของความกว้าง
+   ปุ่ม ☰ ที่หัวหน้าจอสลับคลาสนี้เพื่อคืนที่ให้ตาราง · จำสถานะไว้ใน localStorage
+   ค่าเริ่มต้นคือ "กางไว้" เสมอ ไม่พับเอง — ผู้ใช้ต้องเห็นเมนูเหมือนที่คุ้นมือ */
+.admin-layout--collapsed { grid-template-columns: minmax(0, 1fr); }
+.admin-layout--collapsed .admin-sidebar { display: none; }
+
+.admin-sidebar-toggle {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  margin-right: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--white);
+  color: var(--text-2);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.admin-sidebar-toggle:hover {
+  background: var(--accent-bg);
+  border-color: var(--accent-brd);
+  color: var(--accent-strong);
+}
+.admin-sidebar-toggle[aria-expanded="false"] {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
 .admin-nav-group__label {
   font-size: 10px;
   font-weight: 800;
@@ -2234,32 +2269,41 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
   padding: 0;
   border-bottom: 2px solid var(--border);
 }
+/* ความกว้างคอลัมน์ตารางผู้ใช้ — ตัวเลขชุดนี้คือ "พื้นที่ที่ตารางต้องการอย่างน้อย"
+   ผลรวม min-width ของ 9 คอลัมน์เดิมคือ ~1,014px แต่จอ 1366 เหลือให้ตารางแค่ ~1,106px
+   (หัก sidebar 220 + padding 28 + gap 12) ทุกคอลัมน์จึงถูกบีบจนตัวอักษรตัดทั้งแถว
+   ลดลงเหลือรวม ~860px เพื่อให้มีที่หายใจ · ยังเลื่อนแนวนอนได้ถ้าจอแคบกว่านั้น
+   (.admin-table-wrap มี overflow:auto) จึงไม่มีข้อมูลไหนถูกตัดทิ้ง */
 .admin-th-stack {
-  min-width: 96px;
+  min-width: 84px;
   vertical-align: top;
 }
 .admin-th-stack--role {
-  min-width: 118px;
+  min-width: 100px;
   width: 11%;
 }
 .admin-th-stack--email {
-  min-width: min(220px, 28vw);
+  min-width: min(180px, 24vw);
   width: 24%;
 }
 .admin-th-stack--code {
-  min-width: 72px;
+  min-width: 64px;
   width: 7%;
 }
 .admin-th-stack--narrow {
-  min-width: 88px;
+  min-width: 76px;
   width: 8%;
 }
 .admin-th-stack--static {
-  min-width: 120px;
+  min-width: 104px;
 }
+/* คอลัมน์ปุ่ม: ตารางนี้เป็น table-layout:fixed ซึ่งคิดความกว้างจากแถวแรกอย่างเดียว
+   min-width จึงไม่มีผลกับการแบ่งคอลัมน์ — เคยลอง width:1% แล้วคอลัมน์ยุบเหลือ 16px
+   จนปุ่มลบถูกตัดหาย · ต้องระบุความกว้างตรง ๆ แค่ลดจาก 148px ให้พอดีปุ่มจริง */
 .admin-th-stack--actions {
-  min-width: 148px;
-  width: 148px;
+  min-width: 124px;
+  width: 124px;
+  white-space: nowrap;
 }
 .admin-th-stack > .admin-sort-btn,
 .admin-th-stack > .admin-th-static-label,
@@ -2484,7 +2528,7 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
 }
 .admin-table {
   width: 100%;
-  min-width: 920px;
+  min-width: 860px;
   border-collapse: separate;
   border-spacing: 0;
   font-size: 13px;
@@ -8720,6 +8764,21 @@ tr.emp-row--no-target .emp-tag {
    PRINT — คลาย max-height/sticky ของตารางผล
    ไม่งั้นจะพิมพ์ได้แค่ส่วนที่มองเห็นในกล่องเลื่อน
 ══════════════════════════════════════════════ */
+/* ── จอช่วงกลาง 900-1400px (โน้ตบุ๊กส่วนใหญ่) ───────────────────
+   เดิมมี breakpoint แค่ที่ 900px (คืนการเลื่อนแบบเอกสาร) กับ 1200px ที่ทำเฉพาะ
+   ตาราง log/alloc · ตารางผู้ใช้จึงไม่มีอะไรช่วยเลยในช่วงที่คับที่สุด
+   บีบระยะขอบและขนาดตัวอักษรลงเล็กน้อยเพื่อคืนความกว้างให้คอลัมน์ */
+/* ต้องเป็น "ช่วงปิด" ไม่ใช่ max-width เดี่ยว — บล็อกนี้อยู่ล่างกว่า @media (max-width: 900px)
+   ที่คืนการเลื่อนแบบเอกสาร ถ้าใช้ max-width เดี่ยว จอ <900px จะโดนกฎนี้ทับ
+   แล้ว sidebar กลับมาเป็นคอลัมน์ซ้ายบนมือถืออีก (specificity เท่ากัน ตัวหลังชนะ) */
+@media (min-width: 901px) and (max-width: 1400px) {
+  .admin-view { padding: 8px 10px 10px; }
+  .admin-layout { gap: 8px; grid-template-columns: minmax(150px, 190px) minmax(0, 1fr); }
+  .admin-layout--collapsed { grid-template-columns: minmax(0, 1fr); }
+  .admin-table { font-size: 12.5px; }
+  .admin-nav-item { padding: 8px 10px; }
+}
+
 @media print {
   .result-block {
     overflow: visible;

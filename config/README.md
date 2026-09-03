@@ -217,6 +217,7 @@ Supervisor และแอดมินพร้อมกันได้ ตำ�
 | `config/user_access.json` | ผู้ใช้ + สิทธิ์ที่แอดมินเพิ่มบนเว็บ | ✅ **ใช่** (โดยตั้งใจ — ดูด้านล่าง) |
 | `config/access_hierarchy.json` | ลำดับ Manager → Supervisor | ✅ ใช่ |
 | `config/sl_links.json`, `config/sku_links.json` | การผูกรหัส | ✅ ใช่ |
+| `config/admin_permissions.json` | บทบาทไหนเข้าหน้าแอดมินหน้าไหนได้ | ✅ ใช่ |
 | `config/no_target_employees.json` | พนักงานที่ไม่ต้องตั้งเป้า | ✅ ใช่ |
 | `data/allocations/*.json` | ผลการกระจายราย SL × งวด | ❌ ไม่ |
 | `data/baselines/*.json` | เป้าตั้งต้นของงวด | ❌ ไม่ |

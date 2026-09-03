@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "roles": {
+    "head_admin": [
+      "users",
+      "roles",
+      "sl_links",
+      "sku_links",
+      "allocations",
+      "usage_logs",
+      "usage_summary",
+      "team",
+      "emp_moves"
+    ],
+    "admin": [
+      "users",
+      "sl_links",
+      "sku_links",
+      "allocations",
+      "usage_logs",
+      "usage_summary",
+      "team",
+      "emp_moves"
+    ],
+    "marketing": [
+      "team",
+      "sku_links",
+      "sl_links"
+    ]
+  },
+  "updated_by": "",
+  "updated_at": ""
+}

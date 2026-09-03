@@ -53,6 +53,7 @@ allocation_target/
 │   ├── access_hierarchy.json     # ลำดับชั้น Manager → Supervisor (rebuild จาก roster)
 │   ├── sl_links.json             # ผูกรหัส SL ใหม่ ↔ เก่า (สืบทอดสิทธิ/ทีม)
 │   ├── sku_links.json            # ผูกรหัส SKU (รวมประวัติขายข้ามรหัสเก่า)
+│   ├── admin_permissions.json   # บทบาทไหนเข้าหน้าแอดมินหน้าไหนได้ (dev ตั้งเองได้)
 │   └── README.md                 # workflow อัปเดตสิทธิ์ + กฎ config
 │
 ├── scripts/

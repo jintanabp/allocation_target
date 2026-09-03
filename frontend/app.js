@@ -12126,6 +12126,97 @@ async function runReAllocationKeepEdits() {
 ══════════════════════════════════════════════ */
 let _empMoveData = null;
 
+/* -- แท็บ「สิทธิ์หน้าแอดมิน」(dev เท่านั้น) ---------------------------
+   ตาราง บทบาท x หน้า · dev ไม่มีคอลัมน์ให้ติ๊กเพราะได้ทุกหน้าเสมอ
+   หน้าที่ล็อกไว้ (grantable=false) แสดงเป็นแถวสีจางและติ๊กไม่ได้ */
+let _adminPermsData = null;
+
+function _adminPermsMsg(text, isError) {
+  const el = document.getElementById("adminPermsMsg");
+  if (!el) return;
+  el.textContent = text || "";
+  el.style.display = text ? "" : "none";
+  el.style.color = isError ? "var(--red)" : "var(--text-2)";
+}
+
+async function adminPermsLoad() {
+  _adminPermsMsg("");
+  try {
+    _adminPermsData = await _adminJsonFetch("/admin/permissions");
+    adminPermsRender();
+  } catch (e) {
+    _adminPermsMsg(e.message || String(e), true);
+  }
+}
+
+function adminPermsRender() {
+  const d = _adminPermsData;
+  const head = document.getElementById("adminPermsHead");
+  const body = document.getElementById("adminPermsBody");
+  if (!d || !head || !body) return;
+  const roles = d.configurable_roles || [];
+  head.innerHTML =
+    "<tr><th>หน้า</th>" +
+    roles.map((r) => "<th class=\"r\">" + escH(r.label) + "</th>").join("") +
+    "</tr>";
+  body.innerHTML = (d.capabilities || [])
+    .map((cap) => {
+      const cells = roles
+        .map((r) => {
+          const allowed = (cap.allowed_roles || []).includes(r.key);
+          if (!allowed) {
+            return "<td class=\"r\" title=\"สิทธิ์นี้มอบให้" + escH(r.label) + "ไม่ได้\">&mdash;</td>";
+          }
+          const on = (d.roles[r.key] || []).includes(cap.key);
+          return "<td class=\"r\"><input type=\"checkbox\" " + (on ? "checked " : "")
+            + "onchange=\"adminPermsToggle('" + cap.key + "','" + r.key + "',this.checked)\" "
+            + "aria-label=\"" + escH(cap.label + " สำหรับ" + r.label) + "\" /></td>";
+        })
+        .join("");
+      const lockNote = cap.grantable
+        ? ""
+        : " <span class=\"admin-ro-badge\">Dev เท่านั้น</span>";
+      return "<tr" + (cap.grantable ? "" : " style=\"opacity:.62\"") + ">"
+        + "<td><strong>" + escH(cap.label) + "</strong>" + lockNote
+        + "<div class=\"admin-cell-note\">" + escH(cap.desc || "") + "</div></td>"
+        + cells + "</tr>";
+    })
+    .join("");
+}
+
+function adminPermsToggle(cap, role, on) {
+  if (!_adminPermsData) return;
+  if (!_adminPermsData.roles[role]) _adminPermsData.roles[role] = [];
+  const list = _adminPermsData.roles[role];
+  const i = list.indexOf(cap);
+  if (on && i < 0) list.push(cap);
+  if (!on && i >= 0) list.splice(i, 1);
+  _adminPermsMsg("แก้แล้วยังไม่บันทึก — กดปุ่ม「บันทึก」");
+}
+
+function adminPermsResetDefaults() {
+  if (!_adminPermsData) return;
+  _adminPermsData.roles = JSON.parse(JSON.stringify(_adminPermsData.defaults || {}));
+  adminPermsRender();
+  _adminPermsMsg("ติ๊กกลับเป็นค่าตั้งต้นแล้ว — ยังไม่บันทึกจนกว่าจะกด「บันทึก」");
+}
+
+async function adminPermsSave() {
+  if (!_adminPermsData) return;
+  try {
+    const res = await _adminJsonFetch("/admin/permissions", {
+      method: "PUT",
+      body: { roles: _adminPermsData.roles },
+    });
+    _adminPermsData.roles = res.roles || _adminPermsData.roles;
+    adminPermsRender();
+    _adminPermsMsg("บันทึกแล้ว — ผู้ใช้จะเห็นผลเมื่อเปิดหน้าแอดมินรอบถัดไป");
+    toast("บันทึกสิทธิ์หน้าแอดมินแล้ว", "green");
+  } catch (e) {
+    _adminPermsMsg(e.message || String(e), true);
+  }
+}
+
 async function loadEmpMoves() {
   const body = document.getElementById("empMovesBody");
   if (body) body.innerHTML = `<div class="admin-empty">กำลังโหลด…</div>`;
@@ -13698,6 +13789,40 @@ function _adminShowTablePlaceholder(message) {
     `<tr><td colspan="9" class="admin-empty">${escapeHtml(message || "กำลังโหลด…")}</td></tr>`;
 }
 
+/* ── พับ/กางเมนูข้างของหน้าแอดมิน ─────────────────────────────
+   เมนูข้างกินที่ 168-220px ตลอดเวลา บนจอ 1366 ตารางผู้ใช้จึงเหลือที่พอดีกับ
+   ค่าต่ำสุดของคอลัมน์เป๊ะ ๆ จนตัวอักษรตัด · ปุ่มนี้คืนที่ให้ตารางเมื่อผู้ใช้ต้องการ
+   ค่าเริ่มต้นคือกางไว้เสมอ ไม่พับเอง — หน้าจอต้องเหมือนที่ผู้ใช้คุ้นมือ */
+const ADMIN_SIDEBAR_KEY = "adminSidebarCollapsed";
+
+function _adminApplySidebarState(collapsed) {
+  const layout = document.querySelector("#adminView .admin-layout");
+  const btn = document.getElementById("adminSidebarToggle");
+  if (layout) layout.classList.toggle("admin-layout--collapsed", !!collapsed);
+  if (btn) btn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+}
+
+function adminRestoreSidebarState() {
+  let collapsed = false;
+  try {
+    collapsed = localStorage.getItem(ADMIN_SIDEBAR_KEY) === "1";
+  } catch {
+    collapsed = false;   // โหมดส่วนตัว/ปิดคุกกี้ = กางไว้ตามค่าเริ่มต้น
+  }
+  _adminApplySidebarState(collapsed);
+}
+
+function adminToggleSidebar() {
+  const layout = document.querySelector("#adminView .admin-layout");
+  if (!layout) return;
+  const collapsed = !layout.classList.contains("admin-layout--collapsed");
+  _adminApplySidebarState(collapsed);
+  try {
+    localStorage.setItem(ADMIN_SIDEBAR_KEY, collapsed ? "1" : "0");
+  } catch {
+    /* จำไม่ได้ก็ไม่เป็นไร — รอบนี้ยังพับให้ตามที่กด */
+  }
+}
 function openAdminView(opts = {}) {
   const teamOnly = opts.teamOnly === true || (S.isMarketing && !S.isAdmin && !S.isAdminRole);
   // โหมดดูสิทธิ์เปิดหน้าแอดมินได้เมื่อบัญชีที่กำลังดูมีสิทธิ์แอดมินจริง
@@ -13720,6 +13845,12 @@ function openAdminView(opts = {}) {
   _setPageScrollLocked(false);
   const nav = document.getElementById("adminNavBtn");
   if (nav) nav.style.display = "none";
+  adminRestoreSidebarState();
+  // โหลดสิทธิ์จาก server แล้วค่อยทาสีแท็บซ้ำ — ระหว่างรอใช้ค่า fallback ไปก่อน
+  adminLoadMyCapabilities().then(() => {
+    _adminApplyTabAccess(S.isMarketing && !S.isAdmin && !S.isAdminRole);
+    adminSwitchTab(_adminActiveTab);
+  });
   window.scrollTo(0, 0);
   adminHideEditForm();
   adminHideAddForm();
@@ -13758,12 +13889,33 @@ const ADMIN_TABS_ADMIN = ["users", "slLinks", "skuLinks", "allocations", "usageL
 // และการย้ายคนข้ามทีมกระทบยอดรวมของทั้งสองภาค ควรอยู่ในมือ dev จริง ๆ
 const ADMIN_TABS_HEAD_ADMIN = ["users", "roles", "slLinks", "skuLinks", "allocations", "usageLogs", "usageSummary", "team"];
 
+/* แท็บที่เข้าได้มาจาก /admin/permissions/me (dev ตั้งเองได้ในแท็บ「สิทธิ์หน้าแอดมิน」)
+   อาร์เรย์ ADMIN_TABS_* ข้างบนเหลือไว้เป็น fallback เมื่อเรียก API ไม่สำเร็จ —
+   ต้องถอยไปใช้ค่าเดิม ไม่ใช่เปิดทุกแท็บ ไม่งั้นเน็ตสะดุดครั้งเดียวก็เห็นจอที่ไม่ควรเห็น
+   (การซ่อนแท็บเป็นแค่ความสะดวก — ทุก endpoint ยังกันจริงด้วย require_capability) */
+let _adminTabsFromServer = null;
+
 function _adminAllowedTabs(teamOnly) {
+  if (S.isAdmin) return null;              // dev ได้ทุกแท็บเสมอ ถอดไม่ได้
+  if (_adminTabsFromServer) {
+    const tabs = _adminTabsFromServer.slice();
+    if (S.role === "dev") return null;
+    return tabs;
+  }
   if (teamOnly) return ADMIN_TABS_MARKETING;
-  if (S.isAdmin) return null;
   if (S.isHeadAdmin) return ADMIN_TABS_HEAD_ADMIN;
   if (S.isAdminRole) return ADMIN_TABS_ADMIN;
   return null;
+}
+
+async function adminLoadMyCapabilities() {
+  try {
+    const data = await _adminJsonFetch("/admin/permissions/me");
+    _adminTabsFromServer = Array.isArray(data.tabs) ? data.tabs : null;
+  } catch (e) {
+    _adminTabsFromServer = null;           // ถอยไปใช้อาร์เรย์เดิม
+    console.warn("โหลดสิทธิ์หน้าแอดมินไม่สำเร็จ ใช้ค่าเดิมแทน:", e.message || e);
+  }
 }
 
 function _adminApplyTabAccess(teamOnly) {
@@ -13823,6 +13975,7 @@ let _adminSupervisorCodes = [];
 const ADMIN_TAB_META = {
   users: { group: "สิทธิ์", title: "สิทธิผู้ใช้", sub: "อีเมล + รหัส SL — แก้แล้วมีผลทันที" },
   roles: { group: "สิทธิ์", title: "ผู้ดูแลระบบ", sub: "ใครเป็น Dev / แอดมิน และดูแลผู้ใช้ได้กว้างแค่ไหน" },
+  permissions: { group: "สิทธิ์", title: "สิทธิ์หน้าแอดมิน", sub: "บทบาทไหนเข้าหน้าแอดมินหน้าไหนได้ — Dev เข้าได้ทุกหน้าเสมอ" },
   slLinks: { group: "การผูกรหัส", title: "ผูกรหัส SL", sub: "รหัสใหม่สืบทอดสิทธิ/ทีมจากรหัสเก่า — เช่น SL524 → SL508" },
   skuLinks: { group: "การผูกรหัส", title: "ผูกรหัส SKU", sub: "รวมประวัติขายข้ามรหัสเก่า — แสดงรายการสินค้าทันทีเมื่อเปิดแท็บ" },
   data: { group: "ข้อมูล", title: "แหล่งข้อมูล", sub: "สรุปการดึง ใช้ และส่งข้อมูลในระบบ + แคช" },
@@ -13886,6 +14039,7 @@ function adminSwitchTab(tab) {
   if (_adminActiveTab === "usageSummary") adminInitUsageSummaryPanel();
   if (_adminActiveTab === "slLinks") adminInitSlLinksPanel();
   if (_adminActiveTab === "skuLinks") adminInitSkuLinksPanel();
+  if (_adminActiveTab === "permissions") adminPermsLoad();
   if (_adminActiveTab === "empMoves") loadEmpMoves();
 }
 

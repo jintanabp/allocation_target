@@ -7,6 +7,9 @@ Admin API — จัดการ user_access.json และการตั้ง
   - **ผู้ดูแล** (`require_admin_scoped`) — จัดการผู้ใช้/ผูกรหัส/ดูผลการดำเนินงาน
     เฉพาะภาคของตัวเอง แตะการตั้งค่าระบบไม่ได้
 
+  - **ตามตารางสิทธิ์** (`require_capability`) — dev ตั้งเองได้ว่าบทบาทไหนเข้าหน้าไหน
+    จาก config/admin_permissions.json (หน้าแอดมิน แท็บ「สิทธิ์หน้าแอดมิน」)
+
 route ที่มีผลทั้งระบบต้องใช้ require_admin_user เสมอ ส่วน route ที่ให้ผู้ดูแลใช้ได้
 ต้องกรอง/ตรวจขอบเขตในตัว handler ด้วย — ผ่านด่านอย่างเดียวไม่พอ
 """
@@ -16,6 +19,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 import pandas as pd
@@ -31,8 +35,10 @@ from ..deps import (
     require_admin_scoped,
     require_admin_user,
     require_authenticated_user,
+    require_capability,
     require_role_manager,
 )
+from ..services import admin_capabilities, admin_permissions_store
 from ..services.access_control import (
     ADMIN_SCOPE_ALL,
     ADMIN_SCOPE_LABELS,
@@ -100,6 +106,12 @@ from ..services.user_access_store import read_rows as read_user_access_rows
 from ..fabric_dax_connector import FabricDAXConnector
 
 logger = logging.getLogger("target_allocation")
+
+def _now_iso_utc() -> str:
+    return (
+        datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    )
+
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -2093,8 +2105,73 @@ def _employee_directory() -> list[dict]:
     return out
 
 
+# ─── สิทธิ์หน้าแอดมิน (dev ตั้งเองได้) ───────────────────────────────
+class AdminPermissionsBody(BaseModel):
+    roles: dict[str, list[str]]
+
+
+@router.get("/permissions")
+def admin_get_permissions(_admin: dict = Depends(require_admin_user)):
+    """ทะเบียนสิทธิ์ + ค่าที่ตั้งไว้ + ค่าตั้งต้น — สำหรับวาดตาราง บทบาท x สิทธิ์"""
+    return {
+        "capabilities": admin_capabilities.registry_for_api(),
+        "roles": admin_permissions_store.read_roles(),
+        "defaults": admin_permissions_store.default_roles(),
+        "configurable_roles": [
+            {"key": r, "label": admin_capabilities.ROLE_LABELS.get(r, r)}
+            for r in admin_capabilities.CONFIGURABLE_ROLES
+        ],
+    }
+
+
+@router.put("/permissions")
+def admin_put_permissions(
+    body: AdminPermissionsBody,
+    admin: dict = Depends(require_admin_user),
+):
+    """
+    บันทึกตารางสิทธิ์ — dev เท่านั้น
+
+    ตัว store ตรวจกติกาให้แล้ว (ห้ามตั้งให้ dev · ห้ามมอบสิทธิ์ที่ล็อกไว้ ·
+    ห้ามมอบ 'roles' ให้แอดมินธรรมดา) จึงแปลง ValueError เป็น 400 พร้อมเหตุผลที่อ่านรู้เรื่อง
+    """
+    try:
+        saved = admin_permissions_store.write_roles(
+            body.roles,
+            updated_by=str(admin.get("email") or ""),
+            updated_at=_now_iso_utc(),
+        )
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e)) from e
+    _audit_admin(
+        admin,
+        "admin_permissions_update",
+        "แก้ตารางสิทธิ์หน้าแอดมิน",
+        " · ".join(f"{r}: {len(c)} สิทธิ์" for r, c in sorted(saved.items())),
+        level="warn",
+        context={"roles": saved},
+    )
+    return {"ok": True, "roles": saved}
+
+
+@router.get("/permissions/me")
+def admin_my_permissions(user: dict = Depends(require_admin_or_marketing_team)):
+    """
+    สิทธิ์ของคนที่ล็อกอินอยู่ — หน้าเว็บใช้ตัดสินว่าจะโชว์แท็บไหน
+
+    หน้าเว็บซ่อนแท็บเป็นแค่ความสะดวก ทุก endpoint ยังกันจริงด้วย require_capability
+    """
+    role = str(user.get("role") or "")
+    caps = admin_permissions_store.capabilities_for_role(role)
+    return {
+        "role": role,
+        "capabilities": caps,
+        "tabs": [t for t in (admin_capabilities.tab_for(c) for c in caps) if t],
+    }
+
+
 @router.get("/emp-assignments")
-def admin_emp_assignments(_admin: dict = Depends(require_admin_user)):
+def admin_emp_assignments(_admin: dict = Depends(require_capability("emp_moves"))):
     """รายชื่อพนักงาน + ทีมที่สังกัดจริง + ทีมที่ย้ายไปเกลี่ยเป้าด้วย (ถ้ามี)"""
     sups = _sup_attrs()
     return {
@@ -2111,7 +2188,7 @@ def admin_emp_assignments(_admin: dict = Depends(require_admin_user)):
 @router.post("/emp-assignments")
 def admin_set_emp_assignment(
     body: EmpAssignmentBody,
-    admin: dict = Depends(require_admin_user),
+    admin: dict = Depends(require_capability("emp_moves")),
 ):
     """
     ย้ายพนักงานไปให้ทีมอื่นเกลี่ยเป้า (หรือปลดการย้ายเมื่อ to_sup ว่าง)
@@ -2154,6 +2231,16 @@ def admin_set_emp_assignment(
         "ย้ายพนักงาน %s → %s (เดิม %s) โดย %s · ล้างแคช %d ไฟล์",
         emp, to_sup or "(ปลดการย้าย)", from_sup or "-",
         admin.get("email"), cleared,
+    )
+    # ต้องลง audit ด้วย ไม่ใช่แค่ logger — การย้ายเปลี่ยนยอดรวมของทั้งทีมต้นทางและปลายทาง
+    # และตอนนี้แอดมิน (ไม่ใช่แค่ dev) ย้ายได้แล้ว จึงต้องตามรอยได้จากหน้าแอดมิน
+    _audit_admin(
+        admin,
+        "admin_emp_assignment",
+        (f"ย้ายพนักงาน {emp} → {to_sup}" if to_sup else f"ปลดการย้ายพนักงาน {emp}"),
+        f"จากทีม {from_sup or '-'} · ล้างแคช {cleared} ไฟล์",
+        level="warn",
+        context={"emp_id": emp, "from_sup": from_sup, "to_sup": to_sup},
     )
     return {
         "status": "ok",

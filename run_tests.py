@@ -76,6 +76,8 @@ _PROTECTED_CONFIGS = (
     "data/managers_cache.json",
     # ย้ายพนักงานข้ามทีม — เทสที่ลืมตั้ง env จะทำให้ของจริงเปลี่ยนสังกัดเงียบ ๆ
     "config/emp_assignments.json",
+    # ตารางสิทธิ์หน้าแอดมิน — เทสที่เขียนทับจะเปลี่ยนว่าใครเข้าหน้าไหนได้บนของจริง
+    "config/admin_permissions.json",
 )
 
 

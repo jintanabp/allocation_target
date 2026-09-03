@@ -24,6 +24,7 @@ from .services.access_control import (
     unrestricted_user_context,
     user_can_import_targetsun,
 )
+from .services.admin_permissions_store import capabilities_for_role
 from .services.sl_link_store import expand_sl_codes, resolve_to_canonical
 
 logger = logging.getLogger("target_allocation")
@@ -353,6 +354,41 @@ def require_admin_or_marketing_team(
             "role": "marketing", "admin_scope": None,
         }
     raise HTTPException(status_code=403, detail="ไม่มีสิทธิ์เข้าถึงหน้านี้")
+
+
+def require_capability(capability: str):
+    """
+    ด่านที่อ่านสิทธิ์จาก config/admin_permissions.json แทนการฮาร์ดโค้ดต่อ endpoint
+
+    ต่างจาก require_admin_user/require_admin_scoped ตรงที่ "ใครเข้าได้" ย้ายไปอยู่ในไฟล์
+    ที่ dev แก้ได้จากหน้าแอดมิน — โค้ดบอกแค่ว่า endpoint นี้คู่กับสิทธิ์ตัวไหน
+
+    ยังคงกติกาเดิมสองข้อไว้:
+      - dev ผ่านเสมอ (capabilities_for_role คืนทุกสิทธิ์ให้ dev)
+      - โหมด "ดูสิทธิ์แบบผู้ใช้อื่น" จำลองตามจริง — บัญชีที่กำลังดูไม่มีสิทธิ์ก็ต้อง 403
+        เหมือนที่เจ้าตัวจะเจอ ไม่งั้นจอที่ควรถูกกันจะหลุดเข้าไปในการจำลอง
+
+    หมายเหตุ: ผ่านด่านนี้แล้วยังต้องกรองข้อมูลตามขอบเขตเองเหมือนเดิม
+    (ensure_row_in_admin_scope / ensure_sup_in_admin_scope) — ยกเว้น capability
+    ที่ตั้งใจให้ข้ามขอบเขต เช่น emp_moves ซึ่งย้ายข้ามทีมได้ตามที่ตกลงไว้
+    """
+
+    def _dep(
+        authorization: Annotated[str | None, Header()] = None,
+        x_view_as_email: Annotated[str | None, Header(alias="X-View-As-Email")] = None,
+    ) -> dict:
+        ctx = require_admin_or_marketing_team(
+            authorization=authorization, x_view_as_email=x_view_as_email
+        )
+        role = ctx.get("role") or ""
+        if capability in capabilities_for_role(role):
+            return ctx
+        raise HTTPException(
+            status_code=403,
+            detail=f"บทบาทนี้ไม่มีสิทธิ์ '{capability}' — ให้ dev เปิดให้ในหน้า「สิทธิ์หน้าแอดมิน」",
+        )
+
+    return _dep
 
 
 def ensure_demo_team_not_sent(sup_id) -> None:

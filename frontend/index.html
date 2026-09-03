@@ -947,6 +947,13 @@
            เดิมทั้งหมดอยู่แถวเดียวกัน 12 ชิ้น น้ำหนักสีเท่ากันหมด เลยลายตาจนหาปุ่มที่ต้องการไม่เจอ -->
       <header class="admin-top">
         <div class="admin-top__row">
+        <button type="button" class="admin-sidebar-toggle" id="adminSidebarToggle"
+          aria-expanded="true" aria-controls="adminSidebar"
+          aria-label="พับหรือกางเมนูด้านซ้าย"
+          onclick="adminToggleSidebar()"
+          title="พับ/กางเมนูด้านซ้าย — พับแล้วตารางจะกว้างขึ้น">
+          <span aria-hidden="true">☰</span>
+        </button>
         <div class="admin-top__title">
           <p class="admin-view__breadcrumb" id="adminViewBreadcrumb">สิทธิ์ / สิทธิผู้ใช้</p>
           <h1 class="admin-view__title" id="adminViewTitle">แอดมิน</h1>
@@ -991,6 +998,7 @@
           <div class="admin-nav-group__label">สิทธิ์</div>
           <button type="button" class="admin-nav-item admin-nav-item--active" role="tab" data-tab="users" aria-selected="true" onclick="adminSwitchTab('users')">ผู้ใช้</button>
           <button type="button" class="admin-nav-item" role="tab" data-tab="roles" aria-selected="false" onclick="adminSwitchTab('roles')">ผู้ดูแลระบบ</button>
+          <button type="button" class="admin-nav-item" role="tab" data-tab="permissions" aria-selected="false" onclick="adminSwitchTab('permissions')" title="ตั้งว่าบทบาทไหนเข้าหน้าแอดมินหน้าไหนได้ (เฉพาะ dev)">สิทธิ์หน้าแอดมิน</button>
         </div>
         <div class="admin-nav-group">
           <div class="admin-nav-group__label">การผูกรหัส</div>
@@ -1267,6 +1275,31 @@
               <tbody id="adminSlLinkBody">
                 <tr><td colspan="4" class="admin-empty">กำลังโหลด…</td></tr>
               </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <div id="adminPanelPermissions" class="admin-panel" data-panel="permissions" style="display:none;">
+        <section class="admin-card">
+          <div class="admin-card-header">
+            <h2 class="admin-card__title">สิทธิ์หน้าแอดมิน</h2>
+            <div class="admin-period-bar admin-period-bar--inline">
+              <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminPermsLoad()" title="โหลดค่าที่บันทึกไว้ล่าสุดจากเซิร์ฟเวอร์">โหลดใหม่</button>
+              <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminPermsResetDefaults()" title="ติ๊กกลับเป็นค่าตั้งต้น (ยังไม่บันทึกจนกว่าจะกดบันทึก)">คืนค่าตั้งต้น</button>
+              <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminPermsSave()" title="บันทึกตารางสิทธิ์ลงเซิร์ฟเวอร์">บันทึก</button>
+            </div>
+          </div>
+          <p class="admin-card__note">
+            ติ๊กว่าบทบาทไหนเข้าหน้าไหนได้ · <strong>Dev เข้าได้ทุกหน้าเสมอ ถอดไม่ได้</strong> จึงไม่มีคอลัมน์ให้ติ๊ก ·
+            แถวที่เป็นสีเทาคือหน้าที่ล็อกไว้ให้ dev เท่านั้นเพราะมีผลทั้งระบบ ·
+            การซ่อนแท็บเป็นแค่ความสะดวก — เซิร์ฟเวอร์ยังตรวจสิทธิ์ทุกครั้งที่กด
+          </p>
+          <p id="adminPermsMsg" class="admin-card__note" style="display:none;"></p>
+          <div class="admin-table-wrap admin-table-wrap--panel">
+            <table class="admin-table admin-table--compact admin-table--zebra" id="adminPermsTable">
+              <thead id="adminPermsHead"></thead>
+              <tbody id="adminPermsBody"></tbody>
             </table>
           </div>
         </section>
