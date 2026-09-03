@@ -1431,10 +1431,10 @@
             <h2 class="admin-card__title">แคชข้อมูล Fabric / Payload</h2>
             <div class="admin-period-bar admin-period-bar--inline">
               <label class="admin-period-bar__field">เดือน
-                <select id="adminCacheMonth" class="field-input field-input--sm admin-period-input"></select>
+                <select id="adminCacheMonth" class="field-input field-input--sm admin-period-input" onchange="adminLoadCacheStatus()" title="เปลี่ยนงวดแล้วตัวเลขสถานะแคชจะอัปเดตตาม"></select>
               </label>
               <label class="admin-period-bar__field">ปี
-                <input type="number" id="adminCacheYear" class="field-input field-input--sm admin-period-input" min="2000" max="2100" />
+                <input type="number" id="adminCacheYear" class="field-input field-input--sm admin-period-input" min="2000" max="2100" onchange="adminLoadCacheStatus()" title="เปลี่ยนงวดแล้วตัวเลขสถานะแคชจะอัปเดตตาม" />
               </label>
               <input type="text" id="adminCacheSupId" class="field-input field-input--sm" placeholder="SL (ไม่บังคับ)" />
               <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminLoadCacheStatus()">สถานะ</button>

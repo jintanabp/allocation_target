@@ -12249,9 +12249,44 @@ function _empMoveScopeText(div, region, unit) {
   return [div, region, unitTh].filter(Boolean).join(" · ") || "—";
 }
 
+/* ค่าที่ผู้ใช้เลือก/พิมพ์ไว้แต่ยังไม่กดบันทึก
+   ตารางถูกวาดใหม่ทั้งใบทุกครั้งที่พิมพ์ค้นหา 1 ตัวอักษร (oninput) — เดิมของที่เลือกไว้
+   หายเงียบ ๆ ทุกครั้ง · เก็บไว้ในที่ของมันเอง **ห้ามเขียนทับ r.to_sup**
+   เพราะ r.to_sup เป็นตัวตัดสินว่าแถวนี้ "ย้ายแล้ว" (ไฮไลต์ + ตัวกรองเฉพาะที่ย้ายแล้ว)
+   ถ้าเขียนทับ แถวที่แค่เลือกค้างไว้จะดูเหมือนบันทึกไปแล้วทั้งที่ยังไม่ได้กด */
+let _empMoveDraft = {};
+
+function _empMoveCaptureUnsaved() {
+  if (!_empMoveData) return;
+  for (const r of _empMoveData.employees || []) {
+    const sel = document.getElementById("empMoveTo_" + r.emp_id);
+    const note = document.getElementById("empMoveNote_" + r.emp_id);
+    if (!sel && !note) continue;
+    const to = sel ? sel.value : (r.to_sup || "");
+    const nt = note ? note.value : (r.note || "");
+    if (to !== (r.to_sup || "") || nt !== (r.note || "")) {
+      _empMoveDraft[r.emp_id] = { to_sup: to, note: nt };
+    } else {
+      delete _empMoveDraft[r.emp_id];
+    }
+  }
+}
+
+/* คืนค่าที่ค้างไว้กลับเข้าช่อง หลังวาดตารางใหม่ */
+function _empMoveRestoreUnsaved() {
+  for (const [empId, d] of Object.entries(_empMoveDraft)) {
+    const sel = document.getElementById("empMoveTo_" + empId);
+    const note = document.getElementById("empMoveNote_" + empId);
+    if (sel && d.to_sup !== undefined) sel.value = d.to_sup;
+    if (note && d.note !== undefined) note.value = d.note;
+    if (sel || note) _empMoveTouched(empId);
+  }
+}
+
 function renderEmpMoves() {
   const body = document.getElementById("empMovesBody");
   if (!body || !_empMoveData) return;
+  _empMoveCaptureUnsaved();
   const q = (document.getElementById("empMoveSearch")?.value || "").trim().toLowerCase();
   const onlyMoved = !!document.getElementById("empMoveOnlyMoved")?.checked;
   const sups = _empMoveData.supervisors || [];
@@ -12323,6 +12358,7 @@ function renderEmpMoves() {
     (rows.length > MAX
       ? `<div class="admin-muted" style="margin-top:8px;">แสดง ${MAX} จาก ${rows.length} คน — พิมพ์ค้นหาเพื่อแคบลง</div>`
       : "");
+  _empMoveRestoreUnsaved();
 }
 
 /* 300 แถวมีปุ่มบันทึกทุกแถว ถ้าเข้มหมดจะไม่รู้ว่าต้องกดอันไหน
@@ -12368,6 +12404,7 @@ async function saveEmpMove(empId) {
         : `✅ ปลดการย้ายของ ${emp} แล้ว — กลับไปอยู่ทีมจริง`,
       "green"
     );
+    delete _empMoveDraft[emp];   // บันทึกแล้ว ไม่ใช่ค่าค้างอีกต่อไป
     await loadEmpMoves();
   } catch (e) {
     toast("❌ " + _userFacingError(e, "บันทึกการย้ายไม่สำเร็จ"), "red");
@@ -15645,8 +15682,11 @@ function adminSlLinkHideAdd() {
 function adminSlLinkEdit(oldSl) {
   const row = _adminSlLinkRows.find((r) => (r.old_sl || r.canonical_sl) === oldSl);
   if (!row) return;
-  _adminSlLinkEditOld = oldSl;
+  // ต้องตั้งธง "กำลังแก้ไข" หลังเรียก showAdd เพราะ showAdd ล้างธงเป็น null
+  // (เดิมตั้งก่อน แล้วโดนล้างทันทีบรรทัดถัดมา ปุ่มแก้ไขจึงยิง POST = สร้างใหม่
+  //  แล้วเจอ 409 "มีกลุ่มผูกรหัสนี้อยู่แล้ว" ทุกครั้ง แก้ไขไม่ได้เลย)
   adminSlLinkShowAdd();
+  _adminSlLinkEditOld = oldSl;
   const o = document.getElementById("adminSlLinkOld");
   const n = document.getElementById("adminSlLinkNew");
   const t = document.getElementById("adminSlLinkNote");
@@ -17025,6 +17065,8 @@ async function adminSetSystemRole(email, role, adminScope, opts = {}) {
     `ตั้งสิทธิ์ดูแลระบบของ ${email} เป็น "${label}"\n`
     + (role === "dev"
         ? "Dev เห็นและทำได้ทุกอย่างทั้งระบบ รวมการตั้งค่าปลายทางที่ส่งข้อมูลจริง"
+        : role === "head_admin"
+          ? "หัวหน้าแอดมินทำได้เหมือนแอดมิน และเพิ่ม/ถอดสิทธิ์แอดมินคนอื่นในขอบเขตตัวเองได้" + scopeLine
         : role === "admin"
           ? "แอดมินจัดการผู้ใช้/ผูกรหัส/ดูผลกระจายได้ แต่แตะการตั้งค่าระบบไม่ได้" + scopeLine
           : "ถอดสิทธิ์ดูแลระบบทั้งหมดของบัญชีนี้"
