@@ -947,13 +947,6 @@
            เดิมทั้งหมดอยู่แถวเดียวกัน 12 ชิ้น น้ำหนักสีเท่ากันหมด เลยลายตาจนหาปุ่มที่ต้องการไม่เจอ -->
       <header class="admin-top">
         <div class="admin-top__row">
-        <button type="button" class="admin-sidebar-toggle" id="adminSidebarToggle"
-          aria-expanded="true" aria-controls="adminSidebar"
-          aria-label="พับหรือกางเมนูด้านซ้าย"
-          onclick="adminToggleSidebar()"
-          title="พับ/กางเมนูด้านซ้าย — พับแล้วตารางจะกว้างขึ้น">
-          <span aria-hidden="true">☰</span>
-        </button>
         <div class="admin-top__title">
           <p class="admin-view__breadcrumb" id="adminViewBreadcrumb">สิทธิ์ / สิทธิผู้ใช้</p>
           <h1 class="admin-view__title" id="adminViewTitle">แอดมิน</h1>
@@ -994,6 +987,14 @@
 
       <div class="admin-layout">
       <nav class="admin-sidebar" id="adminSidebar" aria-label="เมนูแอดมิน">
+        <button type="button" class="admin-sidebar-toggle" id="adminSidebarToggle"
+          aria-expanded="true" aria-controls="adminSidebar"
+          aria-label="พับหรือกางเมนูด้านซ้าย"
+          onclick="adminToggleSidebar()"
+          title="พับเมนูเพื่อให้ตารางกว้างขึ้น">
+          <span class="admin-sidebar-toggle__icon" aria-hidden="true">☰</span>
+          <span class="admin-sidebar-toggle__label">พับเมนู</span>
+        </button>
         <div class="admin-nav-group">
           <div class="admin-nav-group__label">สิทธิ์</div>
           <button type="button" class="admin-nav-item admin-nav-item--active" role="tab" data-tab="users" aria-selected="true" onclick="adminSwitchTab('users')">ผู้ใช้</button>
@@ -1290,14 +1291,14 @@
               <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminPermsSave()" title="บันทึกตารางสิทธิ์ลงเซิร์ฟเวอร์">บันทึก</button>
             </div>
           </div>
-          <p class="admin-card__note">
-            ติ๊กว่าบทบาทไหนเข้าหน้าไหนได้ · <strong>Dev เข้าได้ทุกหน้าเสมอ ถอดไม่ได้</strong> จึงไม่มีคอลัมน์ให้ติ๊ก ·
-            แถวที่เป็นสีเทาคือหน้าที่ล็อกไว้ให้ dev เท่านั้นเพราะมีผลทั้งระบบ ·
-            การซ่อนแท็บเป็นแค่ความสะดวก — เซิร์ฟเวอร์ยังตรวจสิทธิ์ทุกครั้งที่กด
-          </p>
-          <p id="adminPermsMsg" class="admin-card__note" style="display:none;"></p>
-          <div class="admin-table-wrap admin-table-wrap--panel">
-            <table class="admin-table admin-table--compact admin-table--zebra" id="adminPermsTable">
+          <div class="perms-hint">
+            <span><b>Dev</b> เข้าได้ทุกหน้าเสมอ ถอดไม่ได้ จึงไม่มีคอลัมน์ให้ติ๊ก</span>
+            <span><b>แถวสีจาง</b> คือหน้าที่ล็อกไว้ให้ dev เพราะมีผลทั้งระบบ</span>
+            <span><b>เครื่องหมาย –</b> คือมอบให้บทบาทนั้นไม่ได้</span>
+          </div>
+          <p id="adminPermsMsg" class="perms-msg" style="display:none;"></p>
+          <div class="perms-wrap">
+            <table class="perms-table" id="adminPermsTable">
               <thead id="adminPermsHead"></thead>
               <tbody id="adminPermsBody"></tbody>
             </table>

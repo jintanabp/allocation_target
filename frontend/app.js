@@ -12155,33 +12155,47 @@ function adminPermsRender() {
   const body = document.getElementById("adminPermsBody");
   if (!d || !head || !body) return;
   const roles = d.configurable_roles || [];
+
   head.innerHTML =
-    "<tr><th>หน้า</th>" +
-    roles.map((r) => "<th class=\"r\">" + escH(r.label) + "</th>").join("") +
-    "</tr>";
-  body.innerHTML = (d.capabilities || [])
-    .map((cap) => {
-      const cells = roles
-        .map((r) => {
-          const allowed = (cap.allowed_roles || []).includes(r.key);
-          if (!allowed) {
-            return "<td class=\"r\" title=\"สิทธิ์นี้มอบให้" + escH(r.label) + "ไม่ได้\">&mdash;</td>";
-          }
-          const on = (d.roles[r.key] || []).includes(cap.key);
-          return "<td class=\"r\"><input type=\"checkbox\" " + (on ? "checked " : "")
-            + "onchange=\"adminPermsToggle('" + cap.key + "','" + r.key + "',this.checked)\" "
-            + "aria-label=\"" + escH(cap.label + " สำหรับ" + r.label) + "\" /></td>";
-        })
-        .join("");
-      const lockNote = cap.grantable
+    "<tr><th>หน้าในระบบแอดมิน</th>"
+    + roles.map((r) => "<th class=\"perms-col-role\">" + escH(r.label) + "</th>").join("")
+    + "</tr>";
+
+  // จัดกลุ่มตามหมวดเดียวกับเมนูด้านซ้าย เพื่อให้อ่านคู่กันได้ว่าแถวไหนคือแท็บไหน
+  const groupOf = (cap) => (ADMIN_TAB_META[cap.tab] || {}).group || "อื่น ๆ";
+  const order = [];
+  const buckets = new Map();
+  for (const cap of d.capabilities || []) {
+    const g = groupOf(cap);
+    if (!buckets.has(g)) { buckets.set(g, []); order.push(g); }
+    buckets.get(g).push(cap);
+  }
+
+  const colSpan = roles.length + 1;
+  let html = "";
+  for (const g of order) {
+    html += "<tr class=\"perms-group\"><td colspan=\"" + colSpan + "\">" + escH(g) + "</td></tr>";
+    for (const cap of buckets.get(g)) {
+      const cells = roles.map((r) => {
+        if (!(cap.allowed_roles || []).includes(r.key)) {
+          return "<td class=\"perms-cell\"><span class=\"perms-na\" title=\""
+            + escH("มอบสิทธิ์นี้ให้" + r.label + "ไม่ได้") + "\">–</span></td>";
+        }
+        const on = (d.roles[r.key] || []).includes(cap.key);
+        return "<td class=\"perms-cell\"><input type=\"checkbox\" " + (on ? "checked " : "")
+          + "onchange=\"adminPermsToggle('" + cap.key + "','" + r.key + "',this.checked)\" "
+          + "aria-label=\"" + escH(cap.label + " สำหรับ" + r.label) + "\" /></td>";
+      }).join("");
+      const badge = cap.grantable
         ? ""
-        : " <span class=\"admin-ro-badge\">Dev เท่านั้น</span>";
-      return "<tr" + (cap.grantable ? "" : " style=\"opacity:.62\"") + ">"
-        + "<td><strong>" + escH(cap.label) + "</strong>" + lockNote
-        + "<div class=\"admin-cell-note\">" + escH(cap.desc || "") + "</div></td>"
+        : "<span class=\"perms-lock-badge\">Dev เท่านั้น</span>";
+      html += "<tr class=\"perms-row" + (cap.grantable ? "" : " perms-row--locked") + "\">"
+        + "<td><div class=\"perms-name\">" + escH(cap.label) + badge + "</div>"
+        + "<div class=\"perms-desc\">" + escH(cap.desc || "") + "</div></td>"
         + cells + "</tr>";
-    })
-    .join("");
+    }
+  }
+  body.innerHTML = html;
 }
 
 function adminPermsToggle(cap, role, on) {

@@ -1268,38 +1268,150 @@ body.is-admin .admin-view {
   background: var(--surface-a95);
   overflow-y: auto;
 }
+/* ── ตารางสิทธิ์หน้าแอดมิน ──────────────────────────────────────
+   ไม่ใช้คลาสของตารางผู้ใช้ เพราะตารางนั้นเป็น table-layout:fixed และ
+   .admin-cell-note บังคับ nowrap+ellipsis ซึ่งตัดคำอธิบายสิทธิ์ทิ้งกลางคัน
+   ตารางนี้ต้องการตรงข้าม: ชื่อ/คำอธิบายยืดได้ ส่วนคอลัมน์ติ๊กแคบและคงที่ */
+.perms-wrap {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--white);
+  overflow: hidden;
+}
+.perms-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+  font-size: 13px;
+}
+.perms-table th,
+.perms-table td { padding: 10px 14px; vertical-align: middle; }
+.perms-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-md);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--text-2);
+  text-align: center;
+  white-space: nowrap;
+}
+.perms-table thead th:first-child { text-align: left; }
+.perms-col-role { width: 132px; }
+
+.perms-group td {
+  padding: 9px 14px 5px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.perms-group:first-child td { border-top: 0; }
+
+.perms-row { border-top: 1px solid var(--border); }
+.perms-row:hover { background: var(--accent-bg); }
+.perms-row--locked { background: var(--surface-2); }
+.perms-row--locked:hover { background: var(--surface-2); }
+
+.perms-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  color: var(--text);
+}
+.perms-desc {
+  margin-top: 3px;
+  max-width: 62ch;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--text-2);
+  white-space: normal;          /* ตรงข้ามกับ .admin-cell-note โดยตั้งใจ */
+}
+/* ชื่อหน้าอยู่ซ้ายสุด ช่องติ๊กอยู่ขวาสุด ห่างกันเกิน 1,000px บนจอกว้าง
+   ถ้าไม่มีอะไรคั่น ตาจะไล่ข้ามแถวผิดง่ายมาก — เส้นคั่นบอกว่า "จากตรงนี้ไปคือส่วนที่ตั้งค่า"
+   และแถบสลับสีช่วยยึดสายตาไว้ในแถวเดียวกันตลอดทาง */
+.perms-table th:nth-child(2),
+.perms-table td:nth-child(2) { border-left: 1px solid var(--border); }
+.perms-row:nth-of-type(even) { background: var(--surface-2); }
+.perms-row:nth-of-type(even):hover,
+.perms-row:hover { background: var(--accent-bg); }
+
+.perms-cell { text-align: center; }
+.perms-cell input[type="checkbox"] {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.perms-na {
+  display: inline-block;
+  min-width: 22px;
+  color: var(--text-3);
+  opacity: 0.55;
+  cursor: help;
+}
+.perms-lock-badge {
+  font-size: 9px;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--amber-bg);
+  color: var(--amber);
+  border: 1px solid var(--amber-brd);
+  white-space: nowrap;
+}
+.perms-hint {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.perms-hint b { color: var(--text); }
+.perms-msg { margin: 0 0 10px; font-size: 12px; font-weight: 700; }
+
 /* ── พับเมนูข้าง ────────────────────────────────────────────────
    เมนูข้างกินที่คงที่ 168-220px ตลอดเวลา บนจอ 1366 คิดเป็น ~16% ของความกว้าง
-   ปุ่ม ☰ ที่หัวหน้าจอสลับคลาสนี้เพื่อคืนที่ให้ตาราง · จำสถานะไว้ใน localStorage
-   ค่าเริ่มต้นคือ "กางไว้" เสมอ ไม่พับเอง — ผู้ใช้ต้องเห็นเมนูเหมือนที่คุ้นมือ */
-.admin-layout--collapsed { grid-template-columns: minmax(0, 1fr); }
-.admin-layout--collapsed .admin-sidebar { display: none; }
+   พับแล้วเหลือเป็นแถบแคบ 46px ที่ยังมีปุ่มอยู่ — ไม่ใช่ซ่อนหายไปทั้งแถบ
+   ไม่งั้นปุ่มกางกลับต้องไปลอยอยู่ที่หัวหน้าจอ ซึ่งดูไม่เกาะกับอะไรเลย
+   จำสถานะไว้ใน localStorage · ค่าเริ่มต้นกางไว้เสมอ ไม่พับเอง */
+.admin-layout--collapsed { grid-template-columns: 46px minmax(0, 1fr); }
+.admin-layout--collapsed .admin-sidebar { padding: 8px 5px; align-items: center; }
+.admin-layout--collapsed .admin-nav-group { display: none; }
+.admin-layout--collapsed .admin-sidebar-toggle { width: 36px; padding: 0; }
+.admin-layout--collapsed .admin-sidebar-toggle__label { display: none; }
 
 .admin-sidebar-toggle {
   flex: 0 0 auto;
-  align-self: flex-start;
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  justify-content: center;
-  width: 34px;
+  gap: 8px;
+  width: 100%;
   height: 34px;
-  margin-right: 10px;
+  padding: 0 10px;
+  margin-bottom: 6px;
   border-radius: 10px;
   border: 1px solid var(--border);
-  background: var(--white);
-  color: var(--text-2);
-  font-size: 15px;
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 700;
   line-height: 1;
   cursor: pointer;
 }
+.admin-sidebar-toggle__icon { font-size: 14px; }
 .admin-sidebar-toggle:hover {
   background: var(--accent-bg);
   border-color: var(--accent-brd);
-  color: var(--accent-strong);
-}
-.admin-sidebar-toggle[aria-expanded="false"] {
-  background: var(--accent-bg);
-  border-color: var(--accent);
   color: var(--accent-strong);
 }
 
@@ -8774,7 +8886,7 @@ tr.emp-row--no-target .emp-tag {
 @media (min-width: 901px) and (max-width: 1400px) {
   .admin-view { padding: 8px 10px 10px; }
   .admin-layout { gap: 8px; grid-template-columns: minmax(150px, 190px) minmax(0, 1fr); }
-  .admin-layout--collapsed { grid-template-columns: minmax(0, 1fr); }
+  .admin-layout--collapsed { grid-template-columns: 46px minmax(0, 1fr); }
   .admin-table { font-size: 12.5px; }
   .admin-nav-item { padding: 8px 10px; }
 }
