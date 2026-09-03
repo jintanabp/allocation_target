@@ -1863,9 +1863,12 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
 }
 /* เน้นเฉพาะยอดรวม — ที่เหลือเป็นรายละเอียดประกอบ */
 .admin-stat-pill--total b { color: var(--accent); }
-.admin-stat-pill--marketing { border-color: var(--amber-brd); background: var(--amber-bg); }
-.admin-stat-pill--regional { border-color: var(--amber-brd); background: var(--amber-bg); }
-.admin-stat-pill--muted { border-color: var(--border); background: var(--surface-2); }
+/* .admin-stat-pill ถูกเปลี่ยนเป็น "บรรทัดสรุปเงียบ ๆ" (ไม่มีกรอบ ไม่มีพื้น) แล้ว
+   แต่ modifier พวกนี้ยังสั่งพื้นหลัง+กรอบอยู่ และประกาศทีหลังจึงชนะ
+   ผลคือ 2 ใน 6 ชิ้นบนแถบสรุปกลายเป็นบล็อกสีทึบมุมฉาก ไม่เข้าพวกกับอีก 4 ชิ้น
+   เหลือไว้แค่การเน้นสีตัวเลข ซึ่งเป็นเจตนาเดิมของ modifier */
+.admin-stat-pill--marketing b { color: var(--amber); }
+.admin-stat-pill--muted b { color: var(--text-3); }
 .admin-btn-back {
   display: inline-flex;
   align-items: center;
@@ -4568,7 +4571,9 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
    ตารางนี้มี select + input อยู่ในเซลล์ ต่างจากตารางแอดมินอื่นที่มีแต่ข้อความ
    ถ้าไม่กำหนดความกว้างขั้นต่ำ คอลัมน์จะบีบกันจนตัวควบคุมทับกัน */
 .admin-table--moves { min-width: 62rem; }
-.admin-table--moves th,
+/* ต้องมี .admin-table นำหน้าฝั่ง th ไม่งั้นแพ้ .admin-table th:not(.admin-th-stack)
+   (specificity 0,2,1 > 0,1,1) แล้วหัวคอลัมน์กับข้อความในเซลล์เยื้องกัน 2px ทุกคอลัมน์ */
+.admin-table.admin-table--moves th,
 .admin-table--moves td {
   vertical-align: top;
   padding: 10px 12px;
@@ -6213,6 +6218,9 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
   font-weight: 600;
   color: var(--text-1);
   font-size: 13px;
+  /* .admin-table td มี overflow:hidden — อีเมลยาวจึงถูกตัดหายเงียบ ๆ
+     ต่างจาก .admin-email-primary ในตารางผู้ใช้ที่ตัดคำได้อยู่แล้ว */
+  overflow-wrap: anywhere;
 }
 
 .roles-sub {
@@ -8967,7 +8975,9 @@ tr.emp-row--no-target .emp-tag {
   .admin-view { padding: 8px 10px 10px; }
   .admin-layout { gap: 8px; grid-template-columns: minmax(150px, 190px) minmax(0, 1fr); }
   .admin-layout--collapsed { grid-template-columns: 46px minmax(0, 1fr); }
-  .admin-table { font-size: 12.5px; }
+  /* ไม่ลดขนาดตัวอักษรตรงนี้ — #adminView .admin-table td/th กำหนดขนาดด้วย --afs-*
+     ซึ่งชนะทั้ง specificity เขียนไว้ก็ไม่มีผล · ส่วนที่ได้ผลจริงในบล็อกนี้คือ
+     padding ของ .admin-view และการบีบเมนูซ้ายจาก 220px เหลือ 190px */
   .admin-nav-item { padding: 8px 10px; }
 }
 
@@ -9186,7 +9196,9 @@ tr.emp-row--no-target .emp-tag {
 
 /* เวลาต้องอยู่บรรทัดเดียวเสมอ — วันที่+เวลาตกบรรทัดแล้วกวาดตาหาเหตุการณ์ตามลำดับไม่ได้ */
 #adminView .admin-table--log .log-col-time { width: 12rem; }
-#adminView .admin-table--log td:first-child { white-space: nowrap; }
+/* กันไม่ให้ไปโดนแถว colspan (กำลังโหลด / ยังไม่มีบันทึก / error) ซึ่งเป็นลูกคนแรก
+   ของแถวเหมือนกัน — ข้อความยาวจะถูกบังคับไม่ให้ขึ้นบรรทัดใหม่แล้วล้นออกนอกตาราง */
+#adminView .admin-table--log td:first-child:not([colspan]) { white-space: nowrap; }
 #adminView .admin-table--log .log-col-level { width: 4.5rem; }
 #adminView .admin-table--log .log-col-user { width: 13rem; }
 #adminView .admin-table--log .log-col-sup { width: 4.5rem; }
@@ -9243,7 +9255,7 @@ tr.emp-row--no-target .emp-tag {
 }
 
 #adminView .admin-table--alloc .alloc-col-who { width: 20%; }
-#adminView .admin-table--alloc .alloc-col-place { width: 21%; }
+#adminView .admin-table--alloc .alloc-col-place { width: 20%; }   /* รวมทุกคอลัมน์เคยได้ 101% */
 #adminView .admin-table--alloc .alloc-col-period { width: 8%; }
 #adminView .admin-table--alloc .alloc-col-status { width: 13%; }
 #adminView .admin-table--alloc .alloc-col-updated { width: 19%; }
@@ -9297,7 +9309,7 @@ tr.emp-row--no-target .emp-tag {
 }
 
 /* จอแคบ: ชื่อกับสังกัดยาวกว่าช่องอื่น ให้ลดลงก่อน */
-@media (max-width: 1200px) {
+@media (max-width: 1400px) {
   #adminView .admin-table--alloc .alloc-col-who { width: 17%; }
   #adminView .admin-table--alloc .alloc-col-place { width: 17%; }
   #adminView .admin-table--alloc .alloc-col-updated { width: 17%; }
@@ -9522,7 +9534,7 @@ tr.emp-row--no-target .emp-tag {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.admin-table tr/* เส้นคั่นกลุ่มคอลัมน์ "นับเป็นทีม" กับ "นับเป็นคน" — ตาราง 7 คอลัมน์
+/* เส้นคั่นกลุ่มคอลัมน์ "นับเป็นทีม" กับ "นับเป็นคน" — ตาราง 7 คอลัมน์
    ถ้าไม่มีเส้นนี้ต้องอ่านหัวตารางทุกครั้งว่ากำลังดูทีมหรือดูคนอยู่ */
 .admin-table th.usage-split,
 .admin-table td.usage-split { border-left: 2px solid var(--border-md); }
@@ -9644,3 +9656,57 @@ tr.emp-row--no-target .emp-tag {
 /* ข้อมูลบริบทในตาราง (เช่นคอลัมน์ ดิวิชัน · ภาค · หน่วย ของแผงย้ายพนักงาน)
    เดิมเข้มเท่าข้อมูลหลัก แยกไม่ออกว่าอันไหนคือของจริงอันไหนคือบริบท */
 .admin-muted { color: var(--text-2); }
+
+/* ── เก็บงานตามผลตรวจหน้าแอดมิน (ข้อ 20 · 26 · 27 · 28) ────────
+   ทุกกฎอยู่ท้ายไฟล์โดยตั้งใจ — คลาสกลางอย่าง .admin-table td ประกาศไว้กลางไฟล์
+   ถ้าเขียนไว้ก่อนหน้าจะแพ้ทั้งลำดับและ specificity (บทเรียนเดียวกับที่คอมเมนต์
+   เรื่อง .admin-period-bar__field--check บันทึกไว้) */
+
+/* 20 — คอลัมน์ "หมายเหตุ" ในตารางผู้ใช้ ไม่เคยมีกฎ เลยได้ที่เท่าคอลัมน์ภูมิภาค
+   ทั้งที่ข้อความยาวกว่ามาก (คลาส --static ที่มีอยู่แล้วไม่มีใครเรียกใช้) */
+.admin-th-stack--note { width: 15%; }
+
+/* 26 — ปุ่มที่ disabled ยังแดงสดและเมาส์เป็นรูปมือ เหมือนกดได้
+   .admin-action ไม่มีกฎ :disabled เลย และ hover ของ .roles-revoke ยังทำงาน */
+#adminView .admin-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+#adminView .admin-action:disabled:hover {
+  background: transparent;
+  color: inherit;
+}
+
+/* 27 — ตารางทีมพนักงานมี 4 คอลัมน์ แต่รับ min-width 860px ที่คำนวณไว้ให้ตาราง
+   ผู้ใช้ 9 คอลัมน์ · Marketing ถูกพามาที่แผงนี้เป็นหน้าแรก จอมือถือจึงต้องเลื่อน
+   แนวนอนโดยไม่จำเป็น · อย่าไปลด min-width ของ .admin-table ตัวกลาง ตารางผู้ใช้พึ่งอยู่ */
+#adminView .admin-table--team { min-width: 34rem; }
+#adminView .admin-table--team th:nth-child(1) { width: 9rem; }
+#adminView .admin-table--team th:nth-child(3) { width: 8rem; }
+
+/* 28 — ช่องติ๊ก "ไม่ต้องตั้งเป้า" กองชิดซ้ายของคอลัมน์กว้าง 136px
+   .admin-team-col-notarget สั่ง center ไว้แล้วแต่แพ้ .admin-table td
+   ต้องมี .admin-table นำหน้า ตามที่คอมเมนต์เรื่อง .usage-num เตือนไว้ */
+.admin-table th.admin-team-col-notarget,
+.admin-table td.admin-team-col-notarget { text-align: center; }
+
+/* 31 — คอลัมน์ "ข้อความ" ของบันทึกการใช้งานได้ที่เหลือจากคอลัมน์อื่น (width:auto)
+   แต่คอลัมน์อื่นรวมกัน ~888px บนจอ 1366 จึงเหลือให้ข้อความน้อยที่สุด
+   ทั้งที่เป็นคอลัมน์ที่เนื้อหายาวที่สุด · ตรงข้ามกับเจตนาที่คอมเมนต์ข้างบนเขียนไว้ */
+@media (min-width: 901px) and (max-width: 1400px) {
+  #adminView .admin-table--log .log-col-time { width: 10.5rem; }
+  #adminView .admin-table--log .log-col-user { width: 10rem; }
+  #adminView .admin-table--log .log-col-action { width: 10.5rem; }
+}
+
+/* 40 — ปุ่มทำลายข้อมูลหน้าตาเหมือนปุ่มดูข้อมูลเป๊ะ (ลบกลุ่มผูกรหัส / ล้างแคช)
+   ทั้ง repo ไม่มีคลาสปุ่มอันตราย แต่โทนสีมีอยู่แล้วที่ .admin-btn-del:hover */
+.admin-btn-ghost--danger {
+  color: var(--red);
+  border-color: var(--red-brd);
+}
+.admin-btn-ghost--danger:hover {
+  background: var(--red-bg);
+  border-color: var(--red);
+  color: var(--red);
+}

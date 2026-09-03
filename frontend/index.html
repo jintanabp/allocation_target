@@ -1019,7 +1019,7 @@
         </div>
         <div class="admin-nav-group">
           <div class="admin-nav-group__label">ทีม</div>
-          <button type="button" class="admin-nav-item" role="tab" data-tab="team" aria-selected="false" onclick="adminSwitchTab('team')">ทีมพนักงาน</button>
+          <button type="button" class="admin-nav-item" role="tab" data-tab="team" aria-selected="false" onclick="adminSwitchTab('team')">ทีมพนักงาน <span id="adminTeamReadOnlyBadge" class="admin-ro-badge" style="display:none;">ดูอย่างเดียว</span></button>
           <button type="button" class="admin-nav-item" role="tab" data-tab="empMoves" aria-selected="false" onclick="adminSwitchTab('empMoves')">ย้ายพนักงาน</button>
         </div>
       </nav>
@@ -1109,7 +1109,7 @@
                     <span class="admin-sort-label">ตำแหน่ง</span>
                     <span class="admin-sort-icon" data-col="role" aria-hidden="true"></span>
                   </button>
-                  <select id="adminFRole" class="admin-col-filter admin-col-filter--select" onchange="adminFilterRows()">
+                  <select id="adminFRole" class="admin-col-filter admin-col-filter--select" onchange="adminFilterRows()" aria-label="กรองตามตำแหน่งงาน">
                     <option value="">ทั้งหมด</option>
                     <option value="supervisor">Supervisor</option>
                     <option value="mgr_division">Mgr · Division</option>
@@ -1133,7 +1133,7 @@
                     <span class="admin-sort-label">Division</span>
                     <span class="admin-sort-icon" data-col="division" aria-hidden="true"></span>
                   </button>
-                  <select id="adminFDivision" class="admin-col-filter admin-col-filter--select" onchange="adminFilterRows()">
+                  <select id="adminFDivision" class="admin-col-filter admin-col-filter--select" onchange="adminFilterRows()" aria-label="กรองตาม Division">
                     <option value="">ทั้งหมด</option>
                     <option value="Div.B">Div.B</option>
                     <option value="Div.E">Div.E</option>
@@ -1146,7 +1146,7 @@
                     <span class="admin-sort-label">ภูมิภาค</span>
                     <span class="admin-sort-icon" data-col="region" aria-hidden="true"></span>
                   </button>
-                  <select id="adminFRegion" class="admin-col-filter admin-col-filter--select" onchange="adminFilterRows()">
+                  <select id="adminFRegion" class="admin-col-filter admin-col-filter--select" onchange="adminFilterRows()" aria-label="กรองตามภูมิภาค">
                     <option value="">ทั้งหมด</option>
                   </select>
                 </th>
@@ -1155,7 +1155,7 @@
                     <span class="admin-sort-label">หน่วย</span>
                     <span class="admin-sort-icon" data-col="unit" aria-hidden="true"></span>
                   </button>
-                  <select id="adminFUnit" class="admin-col-filter admin-col-filter--select" onchange="adminFilterRows()">
+                  <select id="adminFUnit" class="admin-col-filter admin-col-filter--select" onchange="adminFilterRows()" aria-label="กรองตามหน่วยขาย">
                     <option value="">ทั้งหมด</option>
                     <option value="van">รถเงินสด (van)</option>
                     <option value="credit">เครดิต (credit)</option>
@@ -1171,7 +1171,7 @@
                     <span class="admin-sort-label">Target Sun</span>
                     <span class="admin-sort-icon" data-col="targetsun" aria-hidden="true"></span>
                   </button>
-                  <select id="adminFTargetSun" class="admin-col-filter admin-col-filter--select" onchange="adminFilterRows()">
+                  <select id="adminFTargetSun" class="admin-col-filter admin-col-filter--select" onchange="adminFilterRows()" aria-label="กรองตามสิทธิ์ส่ง Target Sun">
                     <option value="">ทั้งหมด</option>
                     <option value="yes">เปิด</option>
                     <option value="no">ปิด</option>
@@ -1212,11 +1212,11 @@
             </div>
             <div class="roles-legend__item">
               <span class="admin-sysrole-chip admin-sysrole-chip--head_admin">หัวหน้าแอดมิน</span>
-              <span>เหมือนแอดมิน + <strong>เพิ่ม/ถอดสิทธิ์แอดมินคนอื่น</strong>ในขอบเขตตัวเองได้ (ตั้ง Dev หรือหัวหน้าแอดมินไม่ได้)</span>
+              <span>ดูแล<strong>ทั้งระบบ</strong> (ไม่มีขอบเขตจำกัด) + <strong>เพิ่ม/ถอดสิทธิ์ระดับ「แอดมิน」</strong>ให้คนอื่นได้ — ตั้ง Dev หรือหัวหน้าแอดมิน และแก้สิทธิ์ตัวเองไม่ได้</span>
             </div>
             <div class="roles-legend__item">
               <span class="admin-sysrole-chip admin-sysrole-chip--admin">แอดมิน</span>
-              <span>จัดการผู้ใช้ / ผูกรหัส / ดูผลการดำเนินงาน ตาม<strong>ขอบเขต</strong>ที่กำหนดให้ แต่ตั้งสิทธิ์ใครและแตะการตั้งค่าระบบไม่ได้</span>
+              <span>เข้าได้เฉพาะหน้าที่ Dev เปิดให้ในแท็บ <strong>「สิทธิ์หน้าแอดมิน」</strong> และเห็นข้อมูลเฉพาะตาม<strong>ขอบเขต</strong>ที่กำหนดให้ · ตั้งสิทธิ์ใครและแตะการตั้งค่าระบบไม่ได้เสมอ</span>
             </div>
             <p class="roles-legend__note">
               สิทธิ์นี้<strong>ซ้อนทับตำแหน่งเดิม</strong> — คนหนึ่งเป็นทั้ง Supervisor และแอดมินได้พร้อมกัน ตำแหน่งงานและการเห็นข้อมูลทีมยังเหมือนเดิมทุกอย่าง
@@ -1226,11 +1226,11 @@
             <table class="admin-table roles-table">
               <thead>
                 <tr>
-                  <th>ผู้ดูแล</th>
-                  <th>ตำแหน่งงาน</th>
-                  <th>สิทธิ์</th>
-                  <th>ขอบเขต (แก้ผู้ใช้คนไหนได้)</th>
-                  <th></th>
+                  <th style="width:30%;">ผู้ดูแล</th>
+                  <th style="width:16%;">ตำแหน่งงาน</th>
+                  <th style="width:18%;">สิทธิ์</th>
+                  <th style="width:28%;">ขอบเขต (แก้ผู้ใช้คนไหนได้)</th>
+                  <th class="admin-th-actions" style="width:8%;">จัดการ</th>
                 </tr>
               </thead>
               <tbody id="adminRolesBody"></tbody>
@@ -1439,8 +1439,8 @@
               <input type="text" id="adminCacheSupId" class="field-input field-input--sm" placeholder="SL (ไม่บังคับ)" />
               <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminLoadCacheStatus()">สถานะ</button>
               <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminRefreshCache('all')">รีเฟรชทั้งหมด</button>
-              <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminInvalidateCache('payload')">ล้างเฉพาะ payload</button>
-              <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminInvalidateCache('all')">ล้างแคชงวด</button>
+              <button type="button" class="admin-btn-ghost admin-btn-ghost--sm admin-btn-ghost--danger" onclick="adminInvalidateCache('payload')">ล้างเฉพาะ payload</button>
+              <button type="button" class="admin-btn-ghost admin-btn-ghost--sm admin-btn-ghost--danger" onclick="adminInvalidateCache('all')">ล้างแคชงวด</button>
             </div>
           </div>
           <div id="adminCacheBody" class="admin-inventory admin-inventory--cache"></div>
@@ -1582,6 +1582,10 @@
               <dd>เคยส่งสำเร็จในงวดนี้ ดูจากเวลาที่ส่ง ซึ่งอยู่ถาวรแม้จะกลับมาแก้ต่อจนสถานะเป็นแบบร่าง</dd>
               <dt>พนักงาน</dt>
               <dd>นับเป็นคู่ (ทีม, รหัสพนักงาน) เสมอ เพราะรหัสพนักงานซ้ำข้ามทีมได้ · ตัดรหัสขึ้นต้น V (รถเงินสด) ออกเหมือนทุกหน้าจอ</dd>
+              <dt>ถูกกระจายเป้า</dt>
+              <dd>พนักงานที่ได้หีบมากกว่า 0 อย่างน้อย 1 SKU ในงวดนี้ — คนที่อยู่ในทีมแต่ได้ 0 ทุกช่องไม่นับ</dd>
+              <dt>กระจาย + ส่ง Target Sun</dt>
+              <dd>พนักงานที่ทั้งได้หีบ และอยู่ในชุดที่ส่งสำเร็จแล้ว — นับจากบันทึกการส่ง ไม่ใช่จากผลบนหน้าจอ</dd>
             </dl>
           </details>
           <div id="adminUsageSumRegionWrap" class="admin-table-wrap admin-table-wrap--scroll">
@@ -1650,7 +1654,7 @@
                   <th>เป้า (หีบ)</th>
                   <th>ราคา/หีบ</th>
                   <th>ผูกกับรหัส (เก่า)</th>
-                  <th class="admin-th-actions"></th>
+                  <th class="admin-th-actions">จัดการ</th>
                 </tr>
               </thead>
               <tbody id="adminSkuCatalogBody">

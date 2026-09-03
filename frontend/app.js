@@ -11123,7 +11123,7 @@ function _renderAllocationSummaryRows(items) {
     </div>`;
   body.innerHTML = rows
     ? `<table class="alloc-summary-table"><thead><tr>
-        <th>SL</th><th>สถานะ</th><th>อัปเดตล่าสุด</th><th>โดย</th><th></th>
+        <th>SL</th><th>สถานะ</th><th>อัปเดตล่าสุด</th><th>โดย</th><th class="admin-th-actions">จัดการ</th>
       </tr></thead><tbody>${rows}</tbody></table>${legend}`
     : `<span class="admin-inv-muted">ยังไม่มีผลกระจายที่บันทึกบน server</span>`;
   body.dataset.loaded = "1";
@@ -12299,7 +12299,14 @@ function renderEmpMoves() {
     );
   }
   if (!rows.length) {
-    body.innerHTML = `<div class="admin-empty">ไม่พบพนักงานตามที่ค้นหา</div>`;
+    // แยกสาเหตุออกจากกัน เดิมใช้ข้อความ "ไม่พบตามที่ค้นหา" ทุกกรณี
+    // แม้แต่ตอนที่ยังไม่ได้พิมพ์ค้นหาอะไรเลย
+    const msg = q
+      ? "ไม่พบพนักงานตามที่ค้นหา"
+      : onlyMoved
+        ? "ยังไม่มีใครถูกย้ายไปเกลี่ยเป้ากับทีมอื่น"
+        : "ยังไม่มีรายชื่อพนักงาน — กด「โหลดใหม่」อีกครั้ง";
+    body.innerHTML = `<div class="admin-empty">${escH(msg)}</div>`;
     return;
   }
   const opts = (cur) =>
@@ -12325,7 +12332,7 @@ function renderEmpMoves() {
       </colgroup>
       <thead><tr>
         <th>พนักงาน</th><th>ทีมจริง</th><th>ดิวิชัน · ภาค · หน่วย</th>
-        <th>ให้ทีมนี้เกลี่ยเป้าแทน</th><th>หมายเหตุ</th><th></th>
+        <th>ให้ทีมนี้เกลี่ยเป้าแทน</th><th>หมายเหตุ</th><th class="admin-th-actions">จัดการ</th>
       </tr></thead>
       <tbody>` +
     shown
@@ -12376,6 +12383,28 @@ async function saveEmpMove(empId) {
   if (row && toSup && toSup === row.home_sup) {
     toast("ทีมปลายทางเป็นทีมเดิมอยู่แล้ว", "amber");
     return;
+  }
+  // ย้ายข้ามภาค/ดิวิชันได้โดยตั้งใจ (แอดมินย้ายได้ทุกทีมเหมือน dev) แต่ต้องเห็นก่อนว่า
+  // กำลังข้ามอะไร — การย้าย 1 คนเปลี่ยนยอดรวมของทั้งทีมต้นทางและทีมปลายทางในงวดนั้น
+  if (row && toSup) {
+    const dest = (_empMoveData?.supervisors || []).find((sv) => sv.code === toSup);
+    const ข้ามภาค = dest && row.home_region && dest.region && row.home_region !== dest.region;
+    const ข้ามดิวิชัน = dest && row.home_division && dest.division && row.home_division !== dest.division;
+    if (ข้ามภาค || ข้ามดิวิชัน) {
+      const ok = await _confirmDialog(
+        `ย้าย ${emp} ข้าม${ข้ามภาค ? "ภาค" : "ดิวิชัน"}
+
+`
+        + `จาก  ${row.home_sup} · ${_empMoveScopeText(row.home_division, row.home_region, row.home_unit)}
+`
+        + `ไป   ${dest.code} · ${_empMoveScopeText(dest.division, dest.region, dest.unit)}
+
+`
+        + "ยอดรวมของทั้งสองทีมจะเปลี่ยนในงวดที่กระจาย",
+        { title: "ยืนยันการย้ายข้ามภาค", okLabel: "ย้าย", cancelLabel: "ยกเลิก" }
+      );
+      if (!ok) return;
+    }
   }
   try {
     const res = await fetchWithTimeout(
@@ -13928,8 +13957,12 @@ function openAdminView(opts = {}) {
   const mktRo = S.isMarketing && !S.isAdmin;
   const slBadge = document.getElementById("adminSlReadOnlyBadge");
   const skuBadge = document.getElementById("adminSkuReadOnlyBadge");
+  // ทีมพนักงานเป็นหน้าแรกที่ Marketing ถูกพามา แต่เดิมไม่มีป้ายบอกว่าแก้ไม่ได้
+  // ต่างจากแท็บผูกรหัสที่มีป้ายนี้อยู่แล้ว
+  const teamBadge = document.getElementById("adminTeamReadOnlyBadge");
   if (slBadge) slBadge.style.display = mktRo ? "inline" : "none";
   if (skuBadge) skuBadge.style.display = mktRo ? "inline" : "none";
+  if (teamBadge) teamBadge.style.display = mktRo ? "inline" : "none";
   if (teamOnly) {
     adminSwitchTab("team");
     return;
@@ -14358,6 +14391,9 @@ async function adminRefreshCache(layer) {
   const month = Number(document.getElementById("adminCacheMonth")?.value || S.targetMonth);
   const year = Number(document.getElementById("adminCacheYear")?.value || S.targetYear);
   const sup = (document.getElementById("adminCacheSupId")?.value || "").trim();
+  // timeout ตั้งไว้ 2 นาที ถ้าไม่บอกอะไรก่อน await จอจะนิ่งสนิทจนผู้ใช้กดซ้ำ
+  const cacheBody = document.getElementById("adminCacheBody");
+  if (cacheBody) cacheBody.textContent = "กำลังรีเฟรชแคช… (นานได้ถึง 2 นาที)";
   try {
     const res = await fetchWithTimeout(`${API_BASE_URL}/admin/cache/refresh`, {
       method: "POST",
@@ -14453,6 +14489,7 @@ async function adminLoadUsageLogs() {
     if (countEl) {
       countEl.textContent = items.length
         ? `แสดง ${items.length.toLocaleString("th-TH")} รายการล่าสุด`
+          + (items.length >= 500 ? " (จำกัด 500 รายการ — กด Excel เพื่อดูทั้งหมด)" : "")
         : "ยังไม่มีบันทึก";
     }
     if (!items.length) {
@@ -15574,7 +15611,10 @@ async function adminLoadSkuCatalog() {
   if (hint) hint.textContent = "กำลังดึงเป้างวดปัจจุบัน…";
   if (periodBadge) periodBadge.textContent = "";
   try {
-    const period = getNextMonthPeriod();
+    // ต้องใช้งวดเดียวกับแผงแอดมินอื่น ไม่งั้นป้าย "งวด MM/YYYY" ของแผงนี้
+    // เป็นคนละงวดกับที่เหลือของแอป ทั้งที่คำอธิบายบอกว่า "งวดกระจายปัจจุบัน"
+    // (_effectiveTargetPeriod ตกไป getNextMonthPeriod เองอยู่แล้วเมื่อไม่มี session)
+    const period = _effectiveTargetPeriod();
     const q = new URLSearchParams({
       month: String(period.month),
       year: String(period.year),
@@ -15596,17 +15636,27 @@ async function adminLoadSkuCatalog() {
     if (hint) hint.textContent = _adminSkuCatalogHintBase;
     if (!body) return;
     if (!rows.length) {
-      const msg = data.hint || data.fabric_error || "ไม่มีรายการสินค้าในงวดนี้";
+      // แยกสองเคสออกจากกัน: "ดึงข้อมูลไม่ได้" กับ "งวดนี้ไม่มีสินค้า" คนละเรื่องกัน
+      // เดิมเอา exception ดิบจาก Fabric มาเป็นหัวเรื่องตัวหนา แล้วแนะนำให้เปลี่ยนเดือน/ปี
+      // ทั้งที่แผงนี้ไม่มีช่องเลือกเดือน/ปีเลย มีแต่ป้ายที่อ่านอย่างเดียว
+      const fabricErr = data.fabric_error || "";
+      if (fabricErr) _adminSkuLinkShowErr(fabricErr);
+      const msg = fabricErr ? "ดึงรายการสินค้าจาก Fabric ไม่สำเร็จ" : (data.hint || "งวดนี้ยังไม่มีสินค้าที่มีเป้าหีบ");
+      const sub = fabricErr
+        ? "กดปุ่ม「โหลดใหม่」อีกครั้ง — ถ้ายังไม่ได้ ให้แจ้งผู้ดูแลระบบ"
+        : "งวดที่แสดงมาจากงวดกระจายปัจจุบัน เปลี่ยนได้ที่หน้าหลัก";
       body.innerHTML = `<tr><td colspan="6" class="admin-empty admin-empty--rich">
         <div class="admin-empty__title">${escapeHtml(msg)}</div>
-        <div class="admin-empty__sub">ลองเปลี่ยนเดือน/ปี หรือตรวจว่างวดนั้นมีเป้า TGA ใน Fabric แล้ว</div>
+        <div class="admin-empty__sub">${escapeHtml(sub)}</div>
       </td></tr>`;
       return;
     }
     adminFilterSkuCatalog();
   } catch (e) {
-    if (body) body.innerHTML = `<tr><td colspan="6" class="admin-empty">โหลดไม่สำเร็จ</td></tr>`;
-    if (hint) hint.textContent = e.message || String(e);
+    if (body) body.innerHTML = `<tr><td colspan="6" class="admin-empty">โหลดรายการสินค้าไม่สำเร็จ</td></tr>`;
+    // เหตุผลจริงต้องขึ้นกล่องแดงที่มีอยู่แล้ว ไม่ใช่ซ่อนในตัวหนังสือเทาใต้หัวตาราง
+    _adminSkuLinkShowErr(e.message || String(e));
+    if (hint) hint.textContent = "";
   } finally {
     if (loading) loading.style.display = "none";
   }
@@ -15661,11 +15711,11 @@ function adminRenderSlLinks() {
     const oldEsc = escapeHtml(oldSl);
     const btns = canEdit
       ? `<button type="button" class="admin-btn-ghost admin-btn-ghost--sm" data-old="${oldEsc}" onclick="adminSlLinkEdit(this.dataset.old)">แก้ไข</button>` +
-        `<button type="button" class="admin-btn-ghost admin-btn-ghost--sm" data-old="${oldEsc}" onclick="adminSlLinkDelete(this.dataset.old)">ลบ</button>`
+        `<button type="button" class="admin-btn-ghost admin-btn-ghost--sm admin-btn-ghost--danger" data-old="${oldEsc}" onclick="adminSlLinkDelete(this.dataset.old)">ลบ</button>`
       : "";
     return `<tr>
       <td><code>${oldEsc}</code></td>
-      <td>${escapeHtml(newSls)}</td>
+      <td>${(r.new_sls || []).map((c) => `<code>${escapeHtml(c)}</code>`).join(" ")}</td>
       <td>${escapeHtml(r.note || "")}</td>
       <td class="admin-td-actions">${btns}</td>
     </tr>`;
@@ -15751,6 +15801,10 @@ async function adminSlLinkDelete(oldSl) {
   }
 }
 
+/* ดึงรายชื่อ Supervisor พลาดหรือเปล่า — ปุ่ม "โหลด" เรียก adminLoadTeam ไม่ใช่
+   adminInitTeamPanel รายชื่อจึงไม่กลับมาเอง ต้องบอกผู้ใช้ให้ถูกว่าติดตรงไหน */
+let _adminTeamSuperLoadFailed = false;
+
 async function adminInitTeamPanel() {
   const sel = document.getElementById("adminTeamSuper");
   const monthSel = document.getElementById("adminTeamMonth");
@@ -15770,8 +15824,10 @@ async function adminInitTeamPanel() {
   if (_adminSupervisorCodes.length) return;
   try {
     const res = await fetchWithTimeout(`${API_BASE_URL}/admin/supervisor-codes`, {}, 20000);
-    if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(_formatApiErrorDetail(data) || `โหลดรายชื่อ Supervisor ไม่สำเร็จ (HTTP ${res.status})`);
+    }
     _adminSupervisorCodes = data.supervisors || [];
     sel.innerHTML =
       _adminSupervisorCodes
@@ -15781,8 +15837,12 @@ async function adminInitTeamPanel() {
           return `<option value="${sc}">${sc}${mc}</option>`;
         })
         .join("") || '<option value="">— ไม่มีข้อมูล —</option>';
+    _adminTeamSuperLoadFailed = false;
   } catch (e) {
     sel.innerHTML = '<option value="">โหลดรายการไม่สำเร็จ</option>';
+    // ต้องจำไว้ว่าพลาดเพราะอะไร ไม่งั้นตารางข้างล่างจะบอกให้ "เลือก Supervisor"
+    // ทั้งที่ในช่องไม่มีอะไรให้เลือกเลย
+    _adminTeamSuperLoadFailed = true;
     console.warn("adminInitTeamPanel", e);
   }
 }
@@ -15897,11 +15957,18 @@ async function adminLoadTeam(forceRefresh, discardDraft) {
   const body = document.getElementById("adminTeamBody");
   const meta = document.getElementById("adminTeamMeta");
   if (!sel || !monthSel || !yearInp || !body) return;
+  // เคยดึงรายชื่อพลาด — ลองใหม่ให้เลย ผู้ใช้จะได้ไม่ต้องออกไปแท็บอื่นแล้วกลับเข้ามา
+  if (_adminTeamSuperLoadFailed) {
+    await adminInitTeamPanel();
+    if (_adminTeamSuperLoadFailed) return;
+  }
   const superCode = (sel.value || "").trim();
   const month = parseInt(monthSel.value, 10);
   const year = parseInt(yearInp.value, 10);
   if (!superCode) {
-    body.innerHTML = '<tr><td colspan="4" class="admin-empty">เลือก Supervisor</td></tr>';
+    body.innerHTML = _adminTeamSuperLoadFailed
+      ? '<tr><td colspan="4" class="admin-empty">โหลดรายชื่อ Supervisor ไม่สำเร็จ — กด「โหลด」อีกครั้ง</td></tr>'
+      : '<tr><td colspan="4" class="admin-empty">เลือก Supervisor</td></tr>';
     return;
   }
   body.innerHTML = '<tr><td colspan="4" class="admin-empty">กำลังโหลด…</td></tr>';
@@ -16040,8 +16107,12 @@ async function adminLoadInventory(checkFabric) {
   try {
     const q = new URLSearchParams({ check_fabric: checkFabric ? "1" : "0" });
     const res = await fetchWithTimeout(`${API_BASE_URL}/admin/data-inventory?${q}`, {}, 60000);
-    if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
+    // อย่าเอา res.text() ดิบมาโยน — ถ้า proxy ตอบหน้า HTML 502 หรือ traceback ยาว ๆ
+    // จะถูกเทลงการ์ดทั้งก้อน · อ่าน json ก่อนแล้วใช้ detail แบบเดียวกับแผงอื่น
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(_formatApiErrorDetail(data) || `โหลดรายการแหล่งข้อมูลไม่สำเร็จ (HTTP ${res.status})`);
+    }
     _adminRenderInventory(data);
   } catch (e) {
     if (body) body.innerHTML = `<p class="admin-inv-err">${escapeHtml(String(e.message || e))}</p>`;
@@ -16194,10 +16265,17 @@ function _adminRenderVisibleChipsInner(arr) {
   if (!arr.length) {
     return '<span class="admin-vis-subrow__label">ดูได้</span><span class="admin-cell-muted">—</span>';
   }
+  // ผู้จัดการระดับ Division เห็นได้หลายสิบรหัส ถ้าพ่นครบแถวจะสูงกว่าแถวอื่นหลายเท่า
+  // ตัดเหลือ 6 ตัวแรก — รายการเต็มยังอ่านได้จาก title ของ <div> ที่ครอบอยู่แล้ว
+  const MAX_CHIPS = 6;
   const chips = arr
+    .slice(0, MAX_CHIPS)
     .map((c) => `<code class="admin-vis-chip">${escapeHtml(c)}</code>`)
     .join("");
-  return `<span class="admin-vis-subrow__label">ดูได้</span>${chips}`;
+  const more = arr.length > MAX_CHIPS
+    ? `<span class="admin-cell-muted">+${arr.length - MAX_CHIPS}</span>`
+    : "";
+  return `<span class="admin-vis-subrow__label">ดูได้</span>${chips}${more}`;
 }
 
 function _adminRenderVisibleChipsHtml(vis) {
@@ -16891,9 +16969,17 @@ function adminRenderRolesPanel() {
   const body = document.getElementById("adminRolesBody");
   if (!body) return;
   const rows = _adminRolesRows();
+  // ข้อความว่างเคยเป็น <p> นอกกล่องตาราง จึงไปโผล่ใต้กรอบ คนละที่กับตาราง
+  // วาดเป็นแถวในตารางแทน จะได้อยู่ตรงที่ผู้ใช้กำลังมองอยู่
   const empty = document.getElementById("adminRolesEmpty");
-  if (empty) empty.style.display = rows.length ? "none" : "";
+  if (empty) empty.style.display = "none";
   body.innerHTML = "";
+  if (!rows.length) {
+    body.innerHTML =
+      '<tr><td colspan="5" class="admin-empty">ยังไม่มีใครได้รับสิทธิ์ดูแลระบบ' +
+      ' — กด “+ เพิ่มผู้ดูแล” เพื่อกำหนด</td></tr>';
+    return;
+  }
   rows.forEach((r) => {
     const cur = String(r.system_role || "").toLowerCase();
     const isDev = cur === "dev";
