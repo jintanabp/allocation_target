@@ -109,15 +109,6 @@
     "acc_scope": "credit"
   },
   {
-    "email": "chaisant.l@sahapat.co.th",
-    "userpl": "SL112",
-    "can_import_targetsun": true,
-    "note": "",
-    "acc_type": "NON",
-    "acc_joblevel": "A",
-    "login_kind": "standard"
-  },
-  {
     "email": "chaiwat.k@sahapat.co.th",
     "userpl": "SL372",
     "can_import_targetsun": true,
@@ -547,16 +538,6 @@
     "acc_scope": "van"
   },
   {
-    "email": "noppol.t@sahapat.co.th",
-    "userpl": "SL411",
-    "can_import_targetsun": true,
-    "note": "",
-    "acc_type": "NON",
-    "acc_joblevel": "1",
-    "login_kind": "supervisor_acc",
-    "acc_scope": "region_peers"
-  },
-  {
     "email": "numchok.p@sahapat.co.th",
     "userpl": "SL387",
     "can_import_targetsun": true,
@@ -595,17 +576,6 @@
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯ Div.E ภาคกทม.",
     "acc_scope": "van"
-  },
-  {
-    "email": "pairat.c@sahapat.co.th",
-    "userpl": "SL358",
-    "can_import_targetsun": true,
-    "note": "",
-    "acc_region": "ใต้",
-    "acc_type": "NON",
-    "acc_joblevel": "1",
-    "login_kind": "supervisor_acc",
-    "acc_scope": "region_peers"
   },
   {
     "email": "pakpoom.k@sahapat.co.th",
@@ -1190,16 +1160,6 @@
     "acc_unit": "van",
     "acc_position": "ซุปเปอร์ฯหน่วยรถภาคเหนือ",
     "acc_scope": "van"
-  },
-  {
-    "email": "thitiwat.a@sahapat.co.th",
-    "userpl": "SL511",
-    "can_import_targetsun": true,
-    "note": "",
-    "acc_type": "NON",
-    "acc_joblevel": "2",
-    "login_kind": "manager_acc",
-    "acc_scope": "all"
   },
   {
     "email": "tree.p@sahapat.co.th",

@@ -1,6 +1,6 @@
 {
   "source": "excel_roster",
-  "synced_at": "2026-08-26T18:13:36+0700",
+  "synced_at": "2026-09-03T15:05:39+0700",
   "rows": [
     {
       "supervisor_code": "SL397",
@@ -483,11 +483,6 @@
       "manager_code": ""
     },
     {
-      "supervisor_code": "SL411",
-      "depend_on": "",
-      "manager_code": ""
-    },
-    {
       "supervisor_code": "SL387",
       "depend_on": "",
       "manager_code": ""
@@ -499,11 +494,6 @@
     },
     {
       "supervisor_code": "SL320",
-      "depend_on": "",
-      "manager_code": ""
-    },
-    {
-      "supervisor_code": "SL358",
       "depend_on": "",
       "manager_code": ""
     },
@@ -1478,66 +1468,6 @@
       "manager_code": ""
     },
     {
-      "supervisor_code": "SL223",
-      "depend_on": "SL511",
-      "manager_code": "SL511"
-    },
-    {
-      "supervisor_code": "SL340",
-      "depend_on": "SL511",
-      "manager_code": "SL511"
-    },
-    {
-      "supervisor_code": "SL367",
-      "depend_on": "SL511",
-      "manager_code": "SL511"
-    },
-    {
-      "supervisor_code": "SL371",
-      "depend_on": "SL511",
-      "manager_code": "SL511"
-    },
-    {
-      "supervisor_code": "SL395",
-      "depend_on": "SL511",
-      "manager_code": "SL511"
-    },
-    {
-      "supervisor_code": "SL411",
-      "depend_on": "SL511",
-      "manager_code": "SL511"
-    },
-    {
-      "supervisor_code": "SL413",
-      "depend_on": "SL511",
-      "manager_code": "SL511"
-    },
-    {
-      "supervisor_code": "SL458",
-      "depend_on": "SL511",
-      "manager_code": "SL511"
-    },
-    {
-      "supervisor_code": "SL511",
-      "depend_on": "SL511",
-      "manager_code": "SL511"
-    },
-    {
-      "supervisor_code": "SL513",
-      "depend_on": "SL511",
-      "manager_code": "SL511"
-    },
-    {
-      "supervisor_code": "SL958",
-      "depend_on": "SL511",
-      "manager_code": "SL511"
-    },
-    {
-      "supervisor_code": "SL959",
-      "depend_on": "SL511",
-      "manager_code": "SL511"
-    },
-    {
       "supervisor_code": "SL397",
       "depend_on": "SL510",
       "manager_code": "SL510"
@@ -2155,20 +2085,6 @@
       "SL510",
       "SL529"
     ],
-    "SL511": [
-      "SL223",
-      "SL340",
-      "SL367",
-      "SL371",
-      "SL395",
-      "SL411",
-      "SL413",
-      "SL458",
-      "SL511",
-      "SL513",
-      "SL958",
-      "SL959"
-    ],
     "SL524": [
       "SL223",
       "SL340",
@@ -2209,7 +2125,6 @@
   },
   "supervisors": [
     "SL105",
-    "SL112",
     "SL204",
     "SL214",
     "SL223",
@@ -2280,7 +2195,6 @@
     "SL508",
     "SL509",
     "SL510",
-    "SL511",
     "SL513",
     "SL514",
     "SL515",
@@ -2325,13 +2239,11 @@
     "SL402",
     "SL508",
     "SL510",
-    "SL511",
     "SL524",
     "SL532",
     "SL629"
   ],
   "managers": [
-    "SL112 (Supervisor)",
     "SL214 (Supervisor)",
     "SL223 (Supervisor)",
     "SL225 (Supervisor)",
@@ -2421,7 +2333,6 @@
     "SL402 (Manager)",
     "SL508 (Manager)",
     "SL510 (Manager)",
-    "SL511 (Manager)",
     "SL524 (Manager)",
     "SL532 (Manager)",
     "SL629 (Manager)"
