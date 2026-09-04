@@ -15082,7 +15082,7 @@ async function adminLoadUsageSummary(force) {
     // ต้องล้างตารางรายทีมกับแถบ roster ด้วย ไม่งั้นค้างตัวเลขงวดก่อนไว้
     // ข้าง ๆ ข้อความ error ของงวดใหม่ ดูเหมือนเป็นตัวเลขของงวดที่เพิ่งเลือก
     const tt = document.getElementById("adminUsageSumTeamTable");
-    if (tt) tt.innerHTML = `<tr><td colspan="10" class="admin-empty">—</td></tr>`;
+    if (tt) tt.innerHTML = `<tr><td colspan="6" class="admin-empty">—</td></tr>`;
     const roster = document.getElementById("adminUsageSumRoster");
     if (roster) roster.style.display = "none";
   }

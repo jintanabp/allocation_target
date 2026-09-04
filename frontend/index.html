@@ -1483,7 +1483,7 @@
           <div class="admin-help-strip admin-help-strip--compact">
             <p>บันทึกถาวร ไม่มีการลบ — ใช้ตรวจย้อนหลังว่าใคร/ทีมไหนทำอะไรเมื่อไหร่ เช่น <strong>send_targetsun</strong> = กดส่งเข้า Target Sun (กรอง「การกระทำ」ได้ที่ช่องระดับ + ค้นในหน้า)</p>
           </div>
-          <div id="adminUsageLogsBody" class="admin-table-wrap admin-table-wrap--scroll admin-table-wrap--panel">
+          <div id="adminUsageLogsBody" class="admin-table-wrap admin-table-wrap--panel">
             <table class="admin-table admin-table--compact admin-table--zebra admin-table--log">
               <thead><tr>
                 <th class="log-col-time">เวลา</th>
@@ -1528,7 +1528,7 @@
           <div class="admin-data-actions" style="margin:0 0 12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
             <input type="search" id="adminAllocSearch" class="field-input field-input--sm" placeholder="ค้นหา SL / ชื่อ / ภาค…" style="min-width:12rem;" oninput="adminFilterAllocations()" />
           </div>
-          <div class="admin-table-wrap admin-table-wrap--scroll admin-table-wrap--panel">
+          <div class="admin-table-wrap admin-table-wrap--panel">
             <table class="admin-table admin-table--compact admin-table--zebra admin-table--alloc">
               <thead><tr>
                 <th class="th-sortable alloc-col-who" data-sort="sup" onclick="adminToggleAllocSort('sup')">Supervisor</th>
@@ -1588,7 +1588,7 @@
               <dd>พนักงานที่ทั้งได้หีบ และอยู่ในชุดที่ส่งสำเร็จแล้ว — นับจากบันทึกการส่ง ไม่ใช่จากผลบนหน้าจอ</dd>
             </dl>
           </details>
-          <div id="adminUsageSumRegionWrap" class="admin-table-wrap admin-table-wrap--scroll">
+          <div id="adminUsageSumRegionWrap" class="admin-table-wrap">
             <table class="admin-table admin-table--compact admin-table--zebra">
               <thead>
                 <tr class="usage-grouprow">
@@ -1611,7 +1611,7 @@
           </div>
           <details id="adminUsageSumTeamsBox" class="admin-inv-block" style="margin-top:12px;">
             <summary>ดูรายทีม (รวมทีมที่ยังไม่เคยใช้)</summary>
-            <div class="admin-table-wrap admin-table-wrap--scroll" style="max-height:min(50vh, 460px);">
+            <div class="admin-table-wrap" style="max-height:min(50vh, 460px);">
               <table class="admin-table admin-table--compact admin-table--zebra">
                 <thead><tr>
                   <th>ทีม</th>
@@ -1645,7 +1645,7 @@
           <div id="adminSkuLinkError" class="admin-alert admin-alert--error" style="display:none;"></div>
           <p id="adminSkuCatalogHint" class="admin-inv-muted"></p>
           <div id="adminSkuCatalogLoading" class="admin-loading" style="display:none;">กำลังโหลดรายการสินค้า…</div>
-          <div class="admin-table-wrap admin-table-wrap--scroll" id="adminSkuCatalogWrap" style="max-height:min(70vh, 640px);">
+          <div class="admin-table-wrap" id="adminSkuCatalogWrap" style="max-height:min(70vh, 640px);">
             <table class="admin-table admin-table--compact" id="adminSkuCatalogTable">
               <thead>
                 <tr>
