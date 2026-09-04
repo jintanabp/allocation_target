@@ -1560,6 +1560,83 @@ def _xlsx_response(rows: list[dict], columns: list[tuple[str, str]], basename: s
     )
 
 
+# ฟิลด์ที่พอสำหรับวัดผลรอบ 0 — ตัดชื่อสินค้า/แบรนด์ออก เหลือครึ่งเดียว
+# วัดจริงกับ 4,661 แถว: ทุกฟิลด์ 2.08 MB → เฉพาะที่ใช้วิเคราะห์ 1.07 MB
+# ทั้งบริษัทราว 90 ทีมจึงอยู่ราว 40 MB แทนที่จะเป็น 80 MB · ขอทุกฟิลด์ได้ด้วย ?full=true
+_ALLOC_ANALYSIS_FIELDS = (
+    "emp_id",
+    "sku",
+    "warehouse_code",
+    "allocated_boxes",
+    "engine_boxes",
+    "is_edited",
+    "baseline_boxes",
+    "hist_avg",
+    "hist_prev_month",
+    "hist_ly_same_month",
+    "hist_dev_pct",
+    "hist_dev_status",
+    "price_per_box",
+)
+
+
+@router.get("/allocations/export-all")
+def admin_export_all_allocations(
+    admin: dict = Depends(require_admin_scoped),
+    target_month: int = Query(..., ge=1, le=12),
+    target_year: int = Query(..., ge=2020, le=2100),
+    full: bool = Query(False, description="เอาทุกฟิลด์ (ชื่อสินค้า/แบรนด์) มาด้วย — ไฟล์ใหญ่ขึ้นราว 4 เท่า"),
+):
+    """ผลกระจายของทุกทีมในงวดเดียว รวมเป็นไฟล์ JSON ไฟล์เดียว
+
+    ทำไมต้องมี: รอบ 0 ของแผนผลสำรวจต้องอ่านแถวผลกระจายจริงเพื่อวัดว่าซุปต้องแก้
+    ที่ระบบให้มามากแค่ไหน · ปุ่ม「สำรอง」ที่มีอยู่ดาวน์โหลดได้ทีละทีม ~90 ทีมต่องวด
+    ทำมือไม่ไหว และ server บริษัทรันสคริปต์เองไม่ได้ · เส้นทางนี้จึงรวมให้ในครั้งเดียว
+
+    อ่านอย่างเดียวล้วน ๆ — ไม่เขียนไฟล์ ไม่แตะ Target Sun ไม่แตะ Fabric
+    ขอบเขตเดียวกับหน้าจอ: ผู้ดูแลได้เฉพาะทีมของตัวเอง dev ได้ทั้งหมด
+    """
+    items = _scoped_allocation_items(admin, target_month, target_year)
+    snapshots = []
+    missing = []
+    for it in items:
+        sid = str(it.get("sup_id") or "").strip().upper()
+        if not sid:
+            continue
+        snap = read_snapshot(sid, target_month, target_year)
+        if not snap:
+            missing.append(sid)
+            continue
+        # แนบบริบทของทีมมาด้วย ไม่งั้นฝั่งวิเคราะห์ต้องไปหาจากไฟล์อื่นอีก
+        snap = dict(snap)
+        for k in ("full_name", "acc_division", "acc_region", "acc_unit"):
+            if it.get(k) is not None:
+                snap.setdefault(k, it.get(k))
+        if not full:
+            snap["allocations"] = [
+                {k: r.get(k) for k in _ALLOC_ANALYSIS_FIELDS if k in r}
+                for r in (snap.get("allocations") or [])
+            ]
+        snapshots.append(snap)
+
+    total_rows = sum(len(s.get("allocations") or []) for s in snapshots)
+    payload = {
+        "target_month": target_month,
+        "target_year": target_year,
+        "generated_at": _now_iso_utc(),
+        "team_count": len(snapshots),
+        "row_count": total_rows,
+        "teams_without_snapshot": missing,
+        "fields": "all" if full else "analysis",
+        "snapshots": snapshots,
+    }
+    fname = f"allocations_all_{target_year}_{target_month:02d}.json"
+    return JSONResponse(
+        content=payload,
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
 @router.get("/allocations/export-xlsx")
 def admin_export_allocations_xlsx(
     admin: dict = Depends(require_admin_scoped),

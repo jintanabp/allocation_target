@@ -2617,6 +2617,7 @@ function _pushUndoState(reason = "") {
       sku: a.sku,
       allocated_boxes: Number(a.allocated_boxes) || 0,
       is_edited: !!a.is_edited,
+      engine_boxes: a.engine_boxes == null ? null : Number(a.engine_boxes) || 0,
       // เก็บ metadata ที่ใช้ render (กัน header/brand หายเมื่อ restore)
       price_per_box: Number(a.price_per_box) || 0,
       brand_name_thai: a.brand_name_thai || "",
@@ -5893,6 +5894,17 @@ async function runOptimization() {
     allocs = await _doOptimize(lockedEdits);
     if (!allocs || !allocs.length) return;
 
+    // จำ "เลขที่เครื่องคำนวณให้" ของทุกแถว ตั้งแต่วินาทีที่ผลออกมา
+    //
+    // เดิมจำเฉพาะช่องที่ผู้ใช้ไปแตะ (ตั้งแบบขี้เกียจตอน onResultEdit) และเป็น
+    // ฟิลด์ขึ้นต้นด้วย _ ที่ถูกตัดทิ้งตอนบันทึก จึงหายทุกครั้งที่รีเฟรช
+    // ผลคือตอบไม่ได้เลยว่า "ซุปต้องแก้ที่ระบบให้มามากแค่ไหน" ซึ่งเป็นคำถามที่
+    // ผลสำรวจทั้งชุดตั้งอยู่บนนั้น (กลุ่มแก้เล็กน้อยพอใจ 100% · แก้เกินครึ่งพอใจ 27%)
+    // และ is_edited อย่างเดียวใช้แทนไม่ได้ เพราะติดธงตั้งแต่คลิกล็อกช่องเฉย ๆ
+    //
+    // ไม่เปลี่ยนตัวเลขที่ผู้ใช้เห็น ไม่เปลี่ยนสิ่งที่ส่งเข้า Target Sun — เพิ่มฟิลด์อย่างเดียว
+    for (const a of allocs) a.engine_boxes = Number(a.allocated_boxes) || 0;
+
     let displayAllocs = _filterAllocationsEligibleOnly(allocs);
     if (!displayAllocs.length) {
       console.warn("[optimize] filter removed all rows — using server payload (WH split?)");
@@ -7315,14 +7327,17 @@ function revertResultCell(empId, sku, wh) {
     a => String(a.emp_id) === String(empId) && String(a.sku) === String(sku)
       && String(a.warehouse_code || "") === String(wh || "")
   );
-  if (!alloc || alloc._engine_boxes == null) {
+  // ค่าที่บันทึกไว้ในไฟล์ (engine_boxes) ใช้ได้ด้วย — เดิมมีแต่ค่าชั่วคราวในหน้า
+  // ปุ่ม ↺ จึงตายทุกครั้งที่รีเฟรชหรือกดย้อนกลับ ซึ่งเป็นข้อที่ Sl381 ร้องเรียนมา
+  const engBoxes = alloc && (alloc._engine_boxes != null ? alloc._engine_boxes : alloc.engine_boxes);
+  if (!alloc || engBoxes == null) {
     toast("ไม่มีค่าเดิมของช่องนี้ให้คืน", "amber");
     return;
   }
   _pushUndoState(`revert:${empId}:${sku}`);
   // ล็อกเฉย ๆ (ไม่เคยเปลี่ยนเลข) → ↺ คือ "ปลดล็อก" ไม่ใช่ "คืนค่า" — บอกให้ตรงกับที่เกิดขึ้น
-  const wasLockOnly = (Number(alloc._engine_boxes) || 0) === (Number(alloc.allocated_boxes) || 0);
-  alloc.allocated_boxes = Number(alloc._engine_boxes) || 0;
+  const wasLockOnly = (Number(engBoxes) || 0) === (Number(alloc.allocated_boxes) || 0);
+  alloc.allocated_boxes = Number(engBoxes) || 0;
   alloc.is_edited = false;
   delete alloc._engine_boxes;
   S._hasUnsaved = true;
@@ -10309,13 +10324,20 @@ function _deriveAllocStatus(allocs = null) {
 }
 
 function _slimAllocationsForDraft(allocs) {
-  return (allocs || []).map((a) => ({
-    emp_id: a.emp_id,
-    sku: a.sku,
-    warehouse_code: a.warehouse_code || "",
-    allocated_boxes: Number(a.allocated_boxes) || 0,
-    is_edited: !!a.is_edited,
-  }));
+  return (allocs || []).map((a) => {
+    const row = {
+      emp_id: a.emp_id,
+      sku: a.sku,
+      warehouse_code: a.warehouse_code || "",
+      allocated_boxes: Number(a.allocated_boxes) || 0,
+      is_edited: !!a.is_edited,
+    };
+    // เลขที่เครื่องคำนวณให้ ต้องรอดไปกับไฟล์ ไม่งั้นรีเฟรชแล้วหาย
+    // (ยอมรับ _engine_boxes ของเก่าด้วย เผื่อแถวที่ถูกแตะก่อนกระจายรอบใหม่)
+    const eng = a.engine_boxes != null ? a.engine_boxes : a._engine_boxes;
+    if (eng != null) row.engine_boxes = Number(eng) || 0;
+    return row;
+  });
 }
 
 /** เติมชื่อสินค้า/แบรนด์หลังโหลดแบบร่างแบบย่อ */
@@ -14929,6 +14951,47 @@ async function adminLoadAllocations() {
  * แต่ได้ไฟล์ 40 แถว · backend กรองขอบเขตของแอดมินก่อนแล้วค่อยเอา q มากรองซ้ำ
  * q จึงทำได้แค่ "แคบลง" ไม่มีทางขยายขอบเขต
  */
+/**
+ * ดาวน์โหลดแถวผลกระจายของทุกทีมในงวดเดียว เป็นไฟล์ JSON ไฟล์เดียว
+ *
+ * ไม่ใช่รายงาน — เป็นข้อมูลดิบสำหรับวัดผลตามรอบ 0 ของแผนผลสำรวจ
+ * (ซุปต้องแก้ที่ระบบให้มามากแค่ไหน · แยกสาเหตุการแก้)
+ * ปุ่ม「สำรอง」รายทีมที่มีอยู่ดาวน์โหลดได้ทีละทีม ~90 ทีมต่องวด ทำมือไม่ไหว
+ *
+ * ต้องระบุงวดเสมอ ถ้าเลือก「ทุกเดือน」อยู่จะรวมทั้งปีซึ่งไฟล์ใหญ่เกินไป
+ */
+async function adminDownloadAllAllocations() {
+  const st = _adminAllocFilterState();
+  if (!st.month || !st.year) {
+    toast("เลือกเดือนและปีให้ครบก่อน — ปุ่มนี้ดึงทีละงวด", "amber");
+    return;
+  }
+  const btn = document.getElementById("adminAllocExportAllBtn");
+  const label = btn ? btn.textContent : "";
+  try {
+    // รวม snapshot ของทุกทีมใช้เวลาได้หลายสิบวินาทีเมื่อมีเกือบร้อยทีม
+    if (btn) { btn.disabled = true; btn.textContent = "กำลังรวมไฟล์…"; }
+    const q = new URLSearchParams({
+      target_month: String(st.month),
+      target_year: String(st.year),
+    });
+    const res = await fetchWithTimeout(
+      `${API_BASE_URL}/admin/allocations/export-all?${q}`, {}, 180000
+    );
+    if (!res.ok) throw new Error("ดาวน์โหลดไม่สำเร็จ");
+    const blob = await res.blob();
+    const cd = res.headers.get("Content-Disposition") || "";
+    const m = cd.match(/filename="?([^";]+)"?/i);
+    dl(blob, (m && m[1]) || `allocations_all_${st.year}_${String(st.month).padStart(2, "0")}.json`);
+    const mb = (blob.size / 1048576).toFixed(1);
+    toast(`ดาวน์โหลดผลกระจายงวด ${String(st.month).padStart(2, "0")}/${st.year} แล้ว · ${mb} MB`, "green");
+  } catch (e) {
+    toast(e.message, "red");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = label; }
+  }
+}
+
 async function adminDownloadAllocationsXlsx() {
   try {
     const st = _adminAllocFilterState();
