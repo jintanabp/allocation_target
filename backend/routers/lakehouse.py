@@ -1,6 +1,7 @@
+import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 
 from ..deps import (
@@ -25,12 +26,41 @@ from ..services.targetsun_import import (
 )
 from ..services.usage_log_store import log_from_user
 
+logger = logging.getLogger("target_allocation.lakehouse_router")
+
 router = APIRouter(tags=["lakehouse"])
 
 
 # รายชื่อที่เก็บลง log ต่อการส่งหนึ่งครั้ง — ทีมปกติมีหลักสิบ ตัวเลขนี้เผื่อไว้มาก
 # ทีมที่ชนเพดานจะมีธง emp_ids_truncated ให้รายงานถอยไปใช้ค่าประมาณระดับทีมแทน
 _MAX_LOGGED_EMP_IDS = 500
+
+
+# รายชื่อ SKU ที่ตัดออก เก็บลง log ได้กี่ตัว — ทีมหนึ่งมีหลักพัน SKU แต่ที่ตัดจริง
+# ปกติหลักสิบ · เกินกว่านี้ให้ดูตัวเลขนับแทน ไม่ต้องเก็บรายชื่อครบ
+_MAX_LOGGED_EXCLUDED_SKUS = 100
+
+
+def _excluded_sku_summary(res: dict) -> dict:
+    """
+    สรุปว่าการส่งครั้งนี้ตัด SKU ไหนออกทั้งตัวบ้าง
+
+    ระบบตัด SKU ทั้งตัวเมื่อมีคู่พนักงาน×สินค้าที่เขียนลง Target Sun ไม่ได้และคู่นั้นมีหีบ > 0
+    (เพื่อไม่ให้เป้าของ SKU นั้นกลายเป็นครึ่ง ๆ กลาง ๆ) ผลคือ Target Sun ยังถือเลขงวดก่อน
+    ของ SKU นั้นอยู่ ไม่ตรงกับที่กระจายไว้ — ผู้ใช้เห็นบนจอตอนนั้นแล้วก็หายไป
+    ไม่เคยมีใครเก็บไว้เลย ตรวจ 234 การส่งย้อนหลังไม่มีสักครั้งที่บันทึกเรื่องนี้
+    """
+    items = [s for s in (res.get("shortfall") or []) if isinstance(s, dict)]
+    whole = [s for s in items if s.get("excluded_whole_sku")]
+    skus = sorted({str(s.get("sku") or "").strip() for s in whole if str(s.get("sku") or "").strip()})
+    return {
+        "excluded_sku_count": len(skus),
+        "excluded_skus": skus[:_MAX_LOGGED_EXCLUDED_SKUS],
+        "excluded_skus_truncated": len(skus) > _MAX_LOGGED_EXCLUDED_SKUS,
+        "excluded_boxes": sum(int(s.get("excluded_boxes") or 0) for s in whole),
+        "shortfall_sku_count": len(items),
+        "shortfall_boxes": int(res.get("shortfall_boxes") or 0),
+    }
 
 
 def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) -> None:
@@ -61,6 +91,17 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
         elif rb.get("checked") is False and ok:
             rb_note = f" · ตรวจยอดหลังส่งไม่ได้ ({rb.get('reason') or '-'})"
         emp_ids = [str(e).strip() for e in (res.get("emp_codes") or []) if str(e).strip()]
+        # SKU ที่ถูกตัดออกทั้งตัว + แถวหีบ 0 ที่ส่งไปล้างเป้าเดิม — สองตัวเลขนี้เป็น
+        # ตัวชี้ว่ายอดใน Target Sun ตรงกับที่กระจายไว้หรือไม่ แต่เดิมไม่เคยถูกบันทึก
+        exc = _excluded_sku_summary(res)
+        exc_note = ""
+        if exc["excluded_sku_count"]:
+            exc_note = (
+                f" · ⚠ ไม่ส่ง {exc['excluded_sku_count']} SKU ทั้งตัว "
+                f"({exc['excluded_boxes']:,} หีบ) — Target Sun ยังถือเลขเดิมของ SKU เหล่านี้"
+            )
+            if level == "info":
+                level = "warn"
         log_from_user(
             user,
             level=level,
@@ -71,13 +112,18 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
                 f"งวด {req.target_year}-{req.target_month:02d} · "
                 f"ส่ง {res.get('rows_sent', 0)} แถว · "
                 f"เพิ่ม {r.get('inserted', 0)} · แก้ {r.get('updated', 0)} · ข้าม {r.get('skipped', 0)}"
+                + f" · หีบ 0 ที่ส่งไปล้างเป้าเดิม {res.get('zero_rows_sent', 0)} แถว"
                 + ("" if ok else f" · {ts.get('resultMsg') or ''}")
+                + exc_note
                 + rb_note
             ),
             target_month=int(req.target_month),
             target_year=int(req.target_year),
             context={
                 "rows_sent": res.get("rows_sent", 0),
+                "zero_rows_sent": res.get("zero_rows_sent", 0),
+                "rows_not_in_targetsun_count": res.get("rows_not_in_targetsun_count", 0),
+                **exc,
                 "inserted": r.get("inserted", 0),
                 "updated": r.get("updated", 0),
                 "skipped": r.get("skipped", 0),
@@ -146,6 +192,36 @@ def upload_to_lakehouse(
     return out
 
 
+def _log_prepare_blocked(user: dict, req: LakehouseUploadRequest, e: HTTPException) -> None:
+    """บันทึกทุกครั้งที่ขั้นเตรียมไฟล์ตีกลับ — โดยเฉพาะกรณี SKU ถูกตัดทั้งตัว"""
+    d = e.detail if isinstance(e.detail, dict) else {}
+    code = str(d.get("code") or "") or f"http_{e.status_code}"
+    ctx = {
+        "ok": False,
+        "status": int(e.status_code),
+        "code": code,
+        "excluded_sku_count": int(d.get("excluded_sku_count") or 0),
+        "excluded_boxes": int(d.get("excluded_boxes") or 0),
+        "shortfall_boxes": int(d.get("shortfall_boxes") or 0),
+        "excluded_skus": [str(x) for x in (d.get("excluded_skus") or [])][:_MAX_LOGGED_EXCLUDED_SKUS],
+    }
+    msg = str(d.get("message") or "") or "เตรียมไฟล์ส่ง Target Sun ไม่ผ่าน"
+    try:
+        log_from_user(
+            user,
+            level="warn",
+            sup_id=req.sup_id,
+            action="prepare_targetsun_blocked",
+            message="ยังไม่ได้ส่ง — ติดด่านตอนเตรียมไฟล์",
+            detail=f"งวด {req.target_year}-{req.target_month:02d} · {code} · {msg[:300]}",
+            target_month=int(req.target_month),
+            target_year=int(req.target_year),
+            context=ctx,
+        )
+    except Exception:  # การบันทึกล้มต้องไม่ทำให้คำขอพัง
+        logger.exception("บันทึก prepare_targetsun_blocked ไม่สำเร็จ")
+
+
 @router.post("/lakehouse/prepare-targetsun")
 def prepare_targetsun_from_allocations(
     req: LakehouseUploadRequest,
@@ -156,7 +232,14 @@ def prepare_targetsun_from_allocations(
     ensure_own_supervisor_write(user, req.sup_id)
     ensure_targetsun_import_allowed(user)
     ensure_demo_team_not_sent(req.sup_id)
-    return prepare_targetsun_import(req)
+    try:
+        return prepare_targetsun_import(req)
+    except HTTPException as e:
+        # ด่านที่ตีกลับตอนเตรียมไฟล์ไม่เคยถูกบันทึกเลย ผู้ใช้ที่ติดตรงนี้จึงหายไป
+        # จากบันทึกโดยไม่มีร่องรอย — ตรวจย้อนหลังพบว่า 2 ใน 3 ทีมที่รายงานว่า
+        # "ส่งไม่สำเร็จ" ไม่มีบันทึกการกดส่งเลยสักครั้ง เพราะติดตั้งแต่ขั้นนี้
+        _log_prepare_blocked(user, req, e)
+        raise
 
 
 @router.get("/lakehouse/send-env")
