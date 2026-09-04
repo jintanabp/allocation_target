@@ -1313,7 +1313,7 @@
             <h2 class="admin-card__title">ย้ายพนักงานไปเกลี่ยเป้ากับทีมอื่น</h2>
             <div class="admin-period-bar admin-period-bar--inline">
               <input type="text" id="empMoveSearch" class="field-input field-input--sm"
-                     placeholder="ค้นหา รหัส / ชื่อ / ทีม / ภาค" oninput="renderEmpMoves()" />
+                     placeholder="ค้นหา รหัส / ชื่อ / ทีม / ภาค" oninput="empMoveSearchChanged()" />
               <label class="admin-period-bar__field admin-period-bar__field--check">
                 <input type="checkbox" id="empMoveOnlyMoved" onchange="renderEmpMoves()" />
                 เฉพาะที่ย้ายแล้ว
@@ -1383,7 +1383,7 @@
           <div class="admin-data-head">
             <h2 class="admin-card__title">แหล่งข้อมูลในระบบ</h2>
             <div class="admin-data-actions">
-              <a href="/docs/DATA_FLOW.md" target="_blank" rel="noopener" class="admin-btn-ghost admin-btn-ghost--sm">เอกสารฉบับเต็ม</a>
+              <a href="/doc/DATA_FLOW" target="_blank" rel="noopener" class="admin-btn-ghost admin-btn-ghost--sm">เอกสารฉบับเต็ม</a>
               <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminRunDeepHealth()" title="ทดสอบว่าเชื่อม Fabric และอ่าน Target Sun ได้หรือไม่ — ไม่ส่งข้อมูล">ทดสอบการเชื่อมต่อ</button>
               <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminLoadInventory(true)" title="ดึงรายการตาราง/คอลัมน์จาก Fabric ใหม่ เพื่อดูว่าโครงข้อมูลยังตรงกับที่ระบบคาดไว้">ทดสอบ Fabric</button>
               <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminLoadInventory(false)">โหลดใหม่</button>

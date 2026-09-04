@@ -8,6 +8,8 @@ import logging
 import os
 from pathlib import Path
 
+from fastapi import HTTPException
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.staticfiles import StaticFiles as StarletteStaticFiles
 from starlette.types import Scope
@@ -55,6 +57,31 @@ class _NoCacheFrontendStaticFiles(StarletteStaticFiles):
 
 
 _DOCS_DIR = Path(__file__).resolve().parent.parent / "docs"
+
+
+@app.get("/doc/{name}", response_class=HTMLResponse)
+def read_doc(name: str):
+    """อ่านเอกสารใน docs/ เป็นหน้า HTML แทนไฟล์ .md ดิบ
+
+    /docs/<ชื่อ>.md ที่ mount ไว้ข้างล่างเสิร์ฟเป็น text/plain เบราว์เซอร์จึงโชว์
+    '#' กับ '|' ดิบ ๆ · เส้นทางนี้แปลงเป็น HTML ให้อ่านได้ ตัวไฟล์ดิบยังโหลดได้เหมือนเดิม
+
+    ชื่อไฟล์ต้องตรงกับ .md ที่มีอยู่จริงใน docs/ เท่านั้น (เทียบกับรายการที่ scan มา)
+    จึงไม่มีทางหลุดออกไปนอกโฟลเดอร์ได้แม้จะใส่ ../ มา
+    """
+    from .services.markdown_view import render_markdown_page
+
+    if not _DOCS_DIR.is_dir():
+        raise HTTPException(status_code=404, detail="ไม่มีโฟลเดอร์เอกสารบนเครื่องนี้")
+    stem = str(name or "").strip()
+    if stem.lower().endswith(".md"):
+        stem = stem[:-3]
+    match = next((p for p in sorted(_DOCS_DIR.glob("*.md")) if p.stem == stem), None)
+    if match is None:
+        raise HTTPException(status_code=404, detail=f"ไม่พบเอกสาร '{stem}'")
+    return HTMLResponse(render_markdown_page(match.read_text(encoding="utf-8"), match.stem))
+
+
 if _DOCS_DIR.is_dir():
     app.mount("/docs", StaticFiles(directory=str(_DOCS_DIR)), name="docs")
 

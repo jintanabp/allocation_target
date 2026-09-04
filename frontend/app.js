@@ -12276,14 +12276,46 @@ function _empMoveCaptureUnsaved() {
 }
 
 /* คืนค่าที่ค้างไว้กลับเข้าช่อง หลังวาดตารางใหม่ */
+/**
+ * เติมรายการทีมทั้งหมดลง select ตอนผู้ใช้แตะครั้งแรก
+ *
+ * คู่กับ opts() ใน renderEmpMoves ที่ใส่มาแค่ตัวที่เลือกอยู่ — ถ้าไม่เติมก่อน
+ * การตั้ง sel.value เป็นรหัสที่ยังไม่มีใน option จะกลายเป็นค่าว่างเงียบ ๆ
+ */
+function _empMoveFillOptions(sel) {
+  if (!sel || sel.dataset.full === "1") return;
+  const sups = (_empMoveData && _empMoveData.supervisors) || [];
+  const cur = sel.value;
+  sel.innerHTML =
+    `<option value="">— อยู่ทีมจริง —</option>` +
+    sups
+      .map((sv) => {
+        const label = `${sv.code} · ${_empMoveScopeText(sv.division, sv.region, sv.unit)}`;
+        return `<option value="${escH(sv.code)}">${escH(label)}</option>`;
+      })
+      .join("");
+  sel.value = cur;
+  sel.dataset.full = "1";
+}
+
 function _empMoveRestoreUnsaved() {
   for (const [empId, d] of Object.entries(_empMoveDraft)) {
     const sel = document.getElementById("empMoveTo_" + empId);
     const note = document.getElementById("empMoveNote_" + empId);
-    if (sel && d.to_sup !== undefined) sel.value = d.to_sup;
+    if (sel && d.to_sup !== undefined) {
+      _empMoveFillOptions(sel);
+      sel.value = d.to_sup;
+    }
     if (note && d.note !== undefined) note.value = d.note;
     if (sel || note) _empMoveTouched(empId);
   }
+}
+
+/* พิมพ์ค้นหาแล้ววาดตารางใหม่ทั้งก้อนทุกตัวอักษร — หน่วงไว้ให้พิมพ์จบก่อน */
+let _empMoveSearchTimer = null;
+function empMoveSearchChanged() {
+  clearTimeout(_empMoveSearchTimer);
+  _empMoveSearchTimer = setTimeout(renderEmpMoves, 200);
 }
 
 function renderEmpMoves() {
@@ -12317,14 +12349,17 @@ function renderEmpMoves() {
     body.innerHTML = `<div class="admin-empty">${escH(msg)}</div>`;
     return;
   }
-  const opts = (cur) =>
-    `<option value="">— อยู่ทีมจริง —</option>` +
-    sups
-      .map((sv) => {
-        const label = `${sv.code} · ${_empMoveScopeText(sv.division, sv.region, sv.unit)}`;
-        return `<option value="${escH(sv.code)}"${sv.code === cur ? " selected" : ""}>${escH(label)}</option>`;
-      })
-      .join("");
+  // เดิมสร้าง <option> ครบทุกทีม (91 ตัว) ให้ทุกแถว (300 แถว) = 27,300 node
+  // คิดเป็น 84% ของ DOM ทั้งหน้า วาดตารางครั้งหนึ่ง 459ms และพิมพ์ค้นหาตัวที่สอง
+  // หน่วง 784ms · ตอนนี้ใส่มาแค่ตัวที่เลือกอยู่ แล้วเติมรายการเต็มตอนผู้ใช้แตะครั้งแรก
+  const opts = (cur) => {
+    const head = `<option value="">— อยู่ทีมจริง —</option>`;
+    if (!cur) return head;
+    const sv = sups.find((x) => x.code === cur);
+    return head + `<option value="${escH(cur)}" selected>${escH(
+      sv ? `${sv.code} · ${_empMoveScopeText(sv.division, sv.region, sv.unit)}` : cur
+    )}</option>`;
+  };
 
   const MAX = 300;
   const shown = rows.slice(0, MAX);
@@ -12361,6 +12396,7 @@ function renderEmpMoves() {
           <td class="admin-muted">${escH(_empMoveScopeText(r.home_division, r.home_region, r.home_unit))}</td>
           <td>
             <select class="field-input field-input--sm" id="empMoveTo_${escH(r.emp_id)}"
+                    onfocus="_empMoveFillOptions(this)" onmousedown="_empMoveFillOptions(this)"
                     onchange="_empMoveTouched('${escH(r.emp_id)}')"
                     aria-label="ทีมที่จะเกลี่ยเป้าแทนสำหรับ ${escH(r.emp_id)}">${opts(r.to_sup)}</select>
             ${moved ? `<span class="moves-to-scope">→ ${escH(_empMoveScopeText(r.to_division, r.to_region, r.to_unit))}</span>` : ""}

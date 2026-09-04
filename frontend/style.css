@@ -9467,22 +9467,25 @@ tr.emp-row--no-target .emp-tag {
    แดชบอร์ดหน้านี้จะเปลี่ยนตามโดยไม่มีใครตั้งใจ
 ══════════════════════════════════════════════ */
 .usage-kpi-wrap {
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 .usage-kpi {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 10px;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
 }
 @media (max-width: 720px) {
   .usage-kpi { grid-template-columns: 1fr; }
 }
+/* บีบเฉพาะ "ช่องว่าง" ไม่ลดขนาดตัวอักษรสักจุด — ผู้ใช้กลุ่มนี้สูงวัย
+   ตัวเลขและป้ายต้องอ่านง่ายเท่าเดิม · ที่บีบได้คือ padding/margin/gap
+   รวมแล้วคืนความสูงให้ตารางรายภาคราว 50px บนจอ 768 */
 .usage-kpi__tile {
   background: var(--bg-main);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
-  padding: 12px 14px;
+  padding: 9px 14px 10px;
 }
 .usage-kpi__label {
   display: block;
@@ -9531,7 +9534,7 @@ tr.emp-row--no-target .emp-tag {
   height: 1px;
   background: var(--border);
 }
-.usage-group + .usage-kpi { margin-bottom: 14px; }
+.usage-group + .usage-kpi { margin-bottom: 10px; }
 .usage-kpi__meter {
   display: block;
   height: 8px;
@@ -9554,7 +9557,7 @@ tr.emp-row--no-target .emp-tag {
   display: block;
   font-size: 11px;
   color: var(--text-3);
-  margin-top: 6px;
+  margin-top: 4px;
   line-height: 1.5;
 }
 /* ต้องระบุ .admin-table นำหน้า — กฎกลาง ".admin-table td { text-align: left }"
@@ -9597,7 +9600,7 @@ tr.emp-row--no-target .emp-tag {
 }
 /* กล่องนิยาม — พับไว้ ไม่ให้ข้อความ 4 บรรทัดขวางระหว่างการ์ดกับตาราง */
 .usage-defs {
-  margin: 4px 0 14px;
+  margin: 2px 0 10px;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   background: var(--surface-2);
@@ -9747,6 +9750,34 @@ tr.emp-row--no-target .emp-tag {
      13rem พอสำหรับชื่อที่ยาวที่สุดที่ใช้จริง (save_allocation_no_precondition) */
   #adminView .admin-table--log .log-col-action { width: 14rem; }
 }
+
+/* ── ตารางที่ไม่เคยกำหนดความกว้างคอลัมน์เลย ──────────────────────
+   .admin-table เป็น table-layout:fixed ถ้า <th> ไม่ระบุ width จะหาร 100%
+   เท่ากันทุกคอลัมน์โดยไม่สนเนื้อหา · วัดที่ 1366x768 ก่อนแก้:
+     ผูกรหัส SL   4 คอลัมน์ได้ 276px เท่ากันหมด
+     ผูกรหัส SKU  6 คอลัมน์ได้ 184px เท่ากันหมด — ชื่อสินค้ายาวตัดสามบรรทัด
+                  ขณะที่คอลัมน์「จัดการ」ที่มีปุ่มเดียวกว้าง 60px ก็ได้ 184px เท่ากัน
+     แหล่งข้อมูล  3 คอลัมน์ได้ 360px เท่ากัน คอลัมน์「จำนวน」ใส่เลขหลักเดียว
+                  ส่วน「ล่าสุด」ที่ต้องใส่ชื่อไฟล์ + เวลาเต็มก็ได้เท่ากันแล้วตัดสองบรรทัด */
+#adminSlLinkTable th:nth-child(1) { width: 22%; }
+#adminSlLinkTable th:nth-child(2) { width: 26%; }
+#adminSlLinkTable th:nth-child(3) { width: 37%; }
+#adminSlLinkTable th:nth-child(4) { width: 15%; }
+
+#adminSkuCatalogTable th:nth-child(1) { width: 10%; }
+#adminSkuCatalogTable th:nth-child(2) { width: 32%; }
+#adminSkuCatalogTable th:nth-child(3) { width: 11%; }
+#adminSkuCatalogTable th:nth-child(4) { width: 11%; }
+#adminSkuCatalogTable th:nth-child(5) { width: 24%; }
+#adminSkuCatalogTable th:nth-child(6) { width: 12%; }
+
+/* ตารางในกล่องพับของแท็บแหล่งข้อมูล (Cache ใน data/ และ API → แหล่งข้อมูล)
+   สองตารางนี้สร้างจาก app.js จึงไม่มี id ให้เจาะจง — โครงเหมือนกันทั้งคู่คือ
+   คอลัมน์กลางเป็นตัวเลข/คำสั้น ส่วนคอลัมน์ท้ายยาวที่สุด */
+.admin-inv-block table th:nth-child(1) { width: 38%; }
+.admin-inv-block table th:nth-child(2) { width: 10%; }
+.admin-inv-block table th:nth-child(3) { width: 52%; }
+.admin-inv-block table td:nth-child(2) { text-align: center; }
 
 /* ── เซลล์ที่ประกาศการจัดตำแหน่งไว้แล้วแต่ไม่เคยมีผล ─────────────
    ".admin-table th:not(.admin-th-stack), .admin-table td { text-align: left }"
