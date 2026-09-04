@@ -10576,7 +10576,14 @@ async function saveServerAllocationSnapshot(status = "draft", opts = {}) {
       : opts.ifMatchVersion !== undefined
         ? opts.ifMatchVersion
         : _ifMatchVersionFor(supId);
-    if (ifMatch !== null && ifMatch !== undefined) body.if_match_version = ifMatch;
+    if (ifMatch !== null && ifMatch !== undefined) {
+      body.if_match_version = ifMatch;
+    } else {
+      // บอก server ไปด้วยว่าทำไมถึงไม่ส่ง version — ไม่งั้นมันแยกไม่ออกระหว่าง
+      // "ตั้งใจทับทั้งภาค" · "ยังไม่เคยโหลด snapshot จึงไม่มี version ในเครื่อง"
+      // กับ "หน้าเว็บเวอร์ชันเก่าจริง ๆ" แล้วเหมาว่าเป็นอย่างหลังทั้งหมด
+      body.no_precondition_reason = opts.forceRegional ? "regional" : "no_meta";
+    }
 
     const res = await fetchWithTimeout(
       `${API_BASE_URL}/data/allocations`,

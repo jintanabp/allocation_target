@@ -284,6 +284,9 @@ class AllocationSnapshotBody(BaseModel):
     # version ที่ client เห็นตอนโหลด — ไม่ส่งมา = เขียนทับแบบเดิม (tab เก่าจึงไม่พัง)
     # ใช้ field ใน body ไม่ใช่ header If-Match เพื่อเลี่ยงปัญหา preflight/proxy ตัด header
     if_match_version: int | None = None
+    # ทำไมถึงไม่ส่ง version มา — "regional" (ตั้งใจทับทั้งภาค) | "no_meta" (ยังไม่เคย
+    # โหลด snapshot ของงวดนี้) · ไม่มี field นี้เลย = หน้าเว็บเวอร์ชันเก่าจริง
+    no_precondition_reason: str | None = None
 
 
 @router.get("/data/allocations")
@@ -332,14 +335,28 @@ def put_allocation_snapshot(
     payload["updated_by"] = email
 
     if expected_version is None and read_snapshot(sid, body.target_month, body.target_year):
-        # สัญญาณสำหรับ rollout: ถ้าไม่มี log นี้แล้ว = ทุก client ส่ง version → เปิดบังคับได้
+        # แยกสามกรณีออกจากกัน — เดิมเหมาว่าเป็น "client เก่า" ทั้งหมด ซึ่งไม่จริง
+        #
+        # วิเคราะห์ log 20 ก.ค.–4 ก.ย. 2026 (685 แถว): 86% ของแถวอยู่ในนาทีที่ผู้ใช้
+        # คนเดียวบันทึกหลายทีมพร้อมกัน = ลูปกระจายทั้งภาค ซึ่งจงใจไม่ส่ง precondition
+        # อยู่แล้ว (ดูคอมเมนต์ที่ saveServerAllocationSnapshot) · และ 29 จาก 41 คน
+        # มีทั้ง save_allocation_ok และแถวนี้ ซึ่งเป็นไปไม่ได้ถ้า client เก่าจริง
+        #
+        # ที่สำคัญกว่า: สัญญาณ rollout เดิมใช้ไม่ได้เลย เพราะเส้นทางกระจายทั้งภาค
+        # จะสร้าง log นี้ตลอดไป ตัวเลขจึงไม่มีวันเป็นศูนย์ และไม่มีใครกล้าเปิดบังคับ
+        reason = str(body.no_precondition_reason or "").strip().lower()
+        _PRECOND_REASON = {
+            "regional": ("info", "กระจายทั้งภาค — ตั้งใจทับทุกทีมในลูป"),
+            "no_meta": ("warn", "ยังไม่ได้โหลด snapshot ของงวดนี้ จึงไม่มี version ในเครื่อง"),
+        }
+        level, why = _PRECOND_REASON.get(reason, ("warn", "หน้าเว็บเวอร์ชันเก่า — ไม่รู้จัก precondition"))
         log_from_user(
             user,
-            level="warn",
+            level=level,
             sup_id=sid,
             action="save_allocation_no_precondition",
-            message="บันทึกทับโดยไม่ส่ง version (client เก่า)",
-            detail=f"{body.target_year}-{body.target_month:02d}",
+            message=f"บันทึกทับโดยไม่ส่ง version — {why}",
+            detail=f"{body.target_year}-{body.target_month:02d} · reason={reason or 'ไม่ระบุ'}",
             target_month=body.target_month,
             target_year=body.target_year,
         )
