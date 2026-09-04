@@ -39,6 +39,7 @@ from ..deps import (
     require_role_manager,
 )
 from ..services import admin_capabilities, admin_permissions_store
+from ..services.demo_data import is_demo_supervisor
 from ..services.access_control import (
     ADMIN_SCOPE_ALL,
     ADMIN_SCOPE_LABELS,
@@ -1150,7 +1151,7 @@ def sku_link_catalog(
         fabric_error = str(e)
         logger.warning("sku-links catalog fabric failed: %s", e)
         if not hint:
-            hint = f"ดึงจาก Fabric ไม่สำเร็จ: {e}"
+            hint = "ดึงรายการสินค้าจาก Fabric ไม่สำเร็จ — กด「โหลดใหม่」อีกครั้ง"
 
     return {
         "supervisor_code": sup or None,
@@ -2181,6 +2182,9 @@ def admin_emp_assignments(_admin: dict = Depends(require_capability("emp_moves")
             {"code": c, **v}
             for c, v in sorted(sups.items())
             if v.get("login_kind") in ("supervisor_acc", "manager_acc")
+            # ทีมสาธิตต้องไม่โผล่เป็นปลายทางให้ย้ายพนักงานจริงเข้าไป
+            # ที่อื่นตัดออกหมดแล้ว (allocating_teams / supervisor-codes) เหลือที่นี่
+            and not is_demo_supervisor(c)
         ],
     }
 

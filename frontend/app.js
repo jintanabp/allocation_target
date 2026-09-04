@@ -12173,6 +12173,8 @@ function adminPermsRender() {
 
   const colSpan = roles.length + 1;
   let html = "";
+  // นับเฉพาะแถวสิทธิ์จริง ไม่นับแถวหัวหมวด — ดูคอมเมนต์ที่ perms-row--alt
+  let rowNo = 0;
   for (const g of order) {
     html += "<tr class=\"perms-group\"><td colspan=\"" + colSpan + "\">" + escH(g) + "</td></tr>";
     for (const cap of buckets.get(g)) {
@@ -12189,7 +12191,8 @@ function adminPermsRender() {
       const badge = cap.grantable
         ? ""
         : "<span class=\"perms-lock-badge\">Dev เท่านั้น</span>";
-      html += "<tr class=\"perms-row" + (cap.grantable ? "" : " perms-row--locked") + "\">"
+      html += "<tr class=\"perms-row" + (cap.grantable ? "" : " perms-row--locked")
+        + ((rowNo++ % 2) ? " perms-row--alt" : "") + "\">"
         + "<td><div class=\"perms-name\">" + escH(cap.label) + badge + "</div>"
         + "<div class=\"perms-desc\">" + escH(cap.desc || "") + "</div></td>"
         + cells + "</tr>";
@@ -12291,10 +12294,15 @@ function renderEmpMoves() {
   const onlyMoved = !!document.getElementById("empMoveOnlyMoved")?.checked;
   const sups = _empMoveData.supervisors || [];
   let rows = _empMoveData.employees || [];
-  if (onlyMoved) rows = rows.filter((r) => r.to_sup);
+  // ปลายทางเป็นทีมเดิม = ไม่ได้ย้ายไปไหน (saveEmpMove ปฏิเสธการสร้างสถานะนี้อยู่แล้ว
+  // แต่แถวเก่าที่พนักงานย้ายทีมจริงตามมาทีหลัง จะกลายเป็น no-op ค้างอยู่)
+  if (onlyMoved) rows = rows.filter((r) => r.to_sup && r.to_sup !== r.home_sup);
   if (q) {
     rows = rows.filter((r) =>
-      [r.emp_id, r.emp_name, r.home_sup, r.home_division, r.home_region, r.to_sup]
+      // ต้องรวม "หน่วย" ทั้งรหัสดิบ (credit/van) และคำไทยที่โชว์บนจอ (เครดิต/รถเงินสด)
+      // เดิมพิมพ์คำที่เห็นอยู่ตรงหน้าแล้วได้ 0 แถว
+      [r.emp_id, r.emp_name, r.home_sup, r.home_division, r.home_region, r.home_unit,
+       r.to_sup, _empMoveScopeText(r.home_division, r.home_region, r.home_unit)]
         .join(" ").toLowerCase().includes(q)
     );
   }
@@ -12320,10 +12328,16 @@ function renderEmpMoves() {
 
   const MAX = 300;
   const shown = rows.slice(0, MAX);
-  const movedCount = (_empMoveData.employees || []).filter((r) => r.to_sup).length;
+  const movedCount = (_empMoveData.employees || [])
+    .filter((r) => r.to_sup && r.to_sup !== r.home_sup).length;
+  const shownMovedCount = shown.filter((r) => r.to_sup && r.to_sup !== r.home_sup).length;
   body.innerHTML =
     (movedCount
-      ? `<div class="admin-card__note" style="margin-bottom:10px;">ตอนนี้ย้ายไว้ <strong>${movedCount}</strong> คน — แถวที่ไฮไลต์คือคนที่ถูกย้าย</div>`
+      ? `<div class="admin-card__note" style="margin-bottom:10px;">ตอนนี้ย้ายไว้ <strong>${movedCount}</strong> คน${
+          shownMovedCount
+            ? " — แถวที่ไฮไลต์คือคนที่ถูกย้าย"
+            : " — ไม่มีใครอยู่ในรายการที่แสดงอยู่ตอนนี้"
+        }</div>`
       : "") +
     `<div class="admin-table-wrap"><table class="admin-table admin-table--moves">
       <colgroup>
@@ -12337,7 +12351,7 @@ function renderEmpMoves() {
       <tbody>` +
     shown
       .map((r) => {
-        const moved = !!r.to_sup;
+        const moved = !!r.to_sup && r.to_sup !== r.home_sup;
         return `<tr${moved ? ' class="row-moved"' : ""}>
           <td>
             <code>${escH(r.emp_id)}</code>
@@ -12355,7 +12369,7 @@ function renderEmpMoves() {
                      value="${escH(r.note || "")}" placeholder="เช่น ขายชายแดน"
                      oninput="_empMoveTouched('${escH(r.emp_id)}')"
                      aria-label="หมายเหตุของ ${escH(r.emp_id)}" /></td>
-          <td><button type="button" class="admin-btn-ghost admin-btn-ghost--sm moves-save"
+          <td class="admin-td-actions"><button type="button" class="admin-btn-ghost admin-btn-ghost--sm moves-save"
                       id="empMoveSave_${escH(r.emp_id)}"
                       onclick="saveEmpMove('${escH(r.emp_id)}')">บันทึก</button></td>
         </tr>`;
@@ -14140,7 +14154,10 @@ function adminSwitchTab(tab) {
   if (_adminActiveTab === "slLinks") adminInitSlLinksPanel();
   if (_adminActiveTab === "skuLinks") adminInitSkuLinksPanel();
   if (_adminActiveTab === "permissions") adminPermsLoad();
-  if (_adminActiveTab === "empMoves") loadEmpMoves();
+  // /admin/emp-assignments ใช้เวลา ~9 วินาทีและไม่มีแคชฝั่งไหนเลย
+  // เดิมยิงใหม่ทุกครั้งที่เปิดแท็บ พร้อมล้างตารางที่โหลดไว้ทิ้งก่อน
+  // ปุ่ม「โหลดใหม่」ยังบังคับดึงสดได้เหมือนเดิม
+  if (_adminActiveTab === "empMoves" && !_empMoveData) loadEmpMoves();
 }
 
 function adminInitCachePanel() {
@@ -14228,11 +14245,18 @@ function adminRenderTargetPeriods(periods) {
       ? `${String(p.target_month).padStart(2, "0")}/${p.target_year}`
       : "—";
     const eff = p.max_effective_date ? escapeHtml(String(p.max_effective_date)) : "—";
-    const stClass = p.error ? "admin-target-period--err" : "admin-target-period--ok";
+    // ต้องมีสามสถานะ ไม่ใช่สอง — "ตอบ 200 แต่ไม่มีงวดสักอัน" ไม่ใช่ความสำเร็จ
+    // เดิมตัดสินจาก error อย่างเดียว การ์ดจึงขึ้นเขียว "ปกติ" ทั้งที่ทุกช่องเป็น "—"
+    // แอดมินที่เปิดหน้านี้มาไล่ปัญหาจะสรุปว่า Target Sun ปกติดี
+    const hasPeriod = !!(p.target_year && p.target_month);
+    const stClass = p.error
+      ? "admin-target-period--err"
+      : (hasPeriod ? "admin-target-period--ok" : "admin-target-period--none");
     return `<div class="admin-target-period ${stClass}">
       <div class="admin-target-period__label">${escapeHtml(p.label || "")}</div>
       <div class="admin-target-period__period">งวดเป้า <strong>${period}</strong></div>
       <div class="admin-inv-muted">effective: ${eff}</div>
+      ${!err && !hasPeriod ? `<div class="admin-target-period__none">ยังไม่มีงวดในระบบปลายทาง</div>` : ""}
       ${err ? `<div class="admin-target-period__err">${err}</div>` : ""}
     </div>`;
   }).join("");
@@ -14363,6 +14387,9 @@ async function adminLoadCacheStatus() {
   body.textContent = "กำลังโหลด…";
   try {
     const q = new URLSearchParams({ target_month: String(month), target_year: String(year) });
+    // ช่อง SL ข้าง ๆ ไม่ได้กรองสถานะแคช — /admin/cache/status คืนสถานะรายงวด
+    // ไม่ใช่รายทีม (backend/routers/admin.py admin_cache_status ไม่รับ sup_id เลย)
+    // ช่องนั้นใช้กับ「รีเฟรช」/「ล้าง payload」เท่านั้น จึงไปแก้คำอธิบายในหน้าแทน
     const res = await fetchWithTimeout(`${API_BASE_URL}/admin/cache/status?${q}`, {}, 20000);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -14506,16 +14533,18 @@ async function adminLoadUsageLogs() {
       const detailBtn = detail
         ? `<button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminShowUsageDetail(this)" data-detail="${detail.replace(/"/g, "&quot;")}">รายละเอียด</button>`
         : "";
-      const period = (r.target_year && r.target_month)
-        ? `<div class="log-period">งวด ${String(r.target_month).padStart(2, "0")}/${r.target_year}</div>`
-        : "";
+      // แถว send_targetsun เก็บงวดไว้ใน detail ไม่ใช่คอลัมน์ target_year/month
+      // เดิมจึงไม่มีป้ายงวด คนที่กรอง "เดือน 07" แล้วเห็นแถวส่ง จะเข้าใจว่าเป็นงวด 07
+      // ทั้งที่เป็นเป้าของงวด 08 (ฝั่ง server มี fallback นี้อยู่แล้วและใช้จริง)
+      const pd = _adminLogPeriodText(r);
+      const period = pd ? `<div class="log-period">งวด ${escapeHtml(pd)}</div>` : "";
       // ไม่มีปุ่ม「รับทราบ」แล้ว — log เป็นบันทึกการใช้งานถาวร ไม่ต้องให้แอดมินมาเคลียร์
       return `<tr>
         <td>${ts}</td>
         <td><span class="admin-log-level ${lvlClass}">${escapeHtml(lvl || "—")}</span></td>
         <td>${escapeHtml(String(r.email || "—"))}</td>
         <td>${escapeHtml(String(r.sup_id || "—"))}</td>
-        <td class="log-action">${escapeHtml(String(r.action || "—"))}${period}</td>
+        <td class="log-action" title="${escapeHtml(String(r.action || ""))}">${escapeHtml(String(r.action || "—"))}${period}</td>
         <td class="log-msg">${escapeHtml(String(r.message || "—"))}</td>
         <td class="admin-td-actions">${detailBtn}</td>
       </tr>`;
@@ -14527,6 +14556,55 @@ async function adminLoadUsageLogs() {
 }
 
 /** รวมทุกอย่างที่ช่วยสืบย้อนหลังไว้ในกล่องรายละเอียดกล่องเดียว */
+/**
+ * งวดเป้าของแถว log — ฟิลด์ตรง ๆ ก่อน ไม่มีค่อยแกะจาก detail
+ *
+ * แถว send_targetsun ไม่เคยมี target_month/target_year แต่ detail ขึ้นต้นด้วย
+ * "งวด YYYY-MM" เสมอ · ฝั่ง server ใช้ fallback เดียวกันนี้อยู่แล้ว
+ * (backend/services/usage_summary.py _period_from_log) ฝั่งนี้เคยไม่มี
+ * แถวส่งจึงไม่มีป้ายงวดเลย คนที่กรองเดือน 07 แล้วเห็นแถวส่งจะเข้าใจว่าเป็นงวด 07
+ * ทั้งที่เป็นเป้าของงวด 08
+ */
+function _adminLogPeriodText(r) {
+  const m = Number(r.target_month || 0);
+  const y = Number(r.target_year || 0);
+  if (m && y) return `${String(m).padStart(2, "0")}/${y}`;
+  const hit = String(r.detail || "").match(/งวด\s*(\d{4})-(\d{1,2})/);
+  if (hit) {
+    const mm = Number(hit[2]);
+    const yy = Number(hit[1]);
+    if (mm >= 1 && mm <= 12 && yy >= 2000) return `${String(mm).padStart(2, "0")}/${yy}`;
+  }
+  return "";
+}
+
+/**
+ * ข้อความผิดพลาดจากระบบภายนอก (MSAL / Azure / Fabric / Target Sun)
+ *
+ * ของพวกนี้เป็นอังกฤษดิบยาวเป็นย่อหน้า และเคยถูกโยนลงจอตรง ๆ สามที่
+ * (ตารางทีมพนักงาน · กล่องแดงผูกรหัส SKU · กล่อง error หน้าล็อกอิน)
+ * คืน { text } เป็นภาษาไทยที่บอกว่าต้องทำอะไรต่อ ส่วน { raw } เก็บต้นฉบับไว้ให้ dev
+ */
+function _adminExtErr(raw) {
+  const s = String(raw == null ? "" : raw).trim();
+  if (!s) return { text: "เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ", raw: "" };
+  if (/login\.microsoftonline|b2clogin|ciamlogin|onmicrosoft|AADSTS|authority/i.test(s)) {
+    return {
+      text: "เชื่อมต่อระบบยืนยันตัวตนของ Microsoft ไม่ได้ — ตั้งค่า Fabric ไม่ครบหรือเครือข่ายไปไม่ถึง แจ้งผู้ดูแลระบบ",
+      raw: s,
+    };
+  }
+  if (/timed? ?out|timeout/i.test(s)) {
+    return { text: "ระบบปลายทางตอบช้าเกินกำหนด — ลองใหม่อีกครั้ง", raw: s };
+  }
+  if (/ConnectionError|Max retries|refused|Failed to establish|NewConnectionError/i.test(s)) {
+    return { text: "เชื่อมต่อระบบปลายทางไม่ได้ — ตรวจเครือข่ายแล้วลองใหม่", raw: s };
+  }
+  // ข้อความไทยสั้น ๆ ที่ backend เขียนมาเองอ่านรู้เรื่องอยู่แล้ว ส่งผ่านตรง ๆ
+  if (/[\u0E00-\u0E7F]/.test(s) && s.length <= 160) return { text: _friendlyMsg(s) || s, raw: "" };
+  return { text: "ระบบปลายทางตอบกลับผิดพลาด — แจ้งผู้ดูแลระบบพร้อมรายละเอียดด้านล่าง", raw: s };
+}
+
 function _adminLogDetailText(r) {
   const lines = [];
   if (r.detail) lines.push(String(r.detail));
@@ -14735,7 +14813,7 @@ function adminRenderAllocationsTable() {
     countEl.textContent = `${scope} · ${shown}`;
   }
   if (!items.length) {
-    tbody.innerHTML = `<tr><td colspan="6" class="admin-empty">${_adminAllocItems.length ? "ไม่พบรายการตามตัวกรอง" : "ยังไม่มี snapshot ในระบบ"}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" class="admin-empty">${_adminAllocItems.length ? "ไม่พบรายการตามตัวกรอง" : "ยังไม่มี snapshot ในงวดที่เลือก"}</td></tr>`;
     return;
   }
   tbody.innerHTML = items.map((it) => {
@@ -15004,7 +15082,11 @@ function _adminRenderUsageSummary(d) {
 
   if (meta) {
     const when = new Date(d.generated_at).toLocaleString("th-TH", { timeStyle: "short" });
-    meta.textContent = `คำนวณเมื่อ ${when}${d.cached ? " (จากแคช)" : ""}`;
+    // ต้องมีงวดอยู่ในบรรทัดนี้ — ทั้งหน้าไม่มีที่ไหนบอกเลยว่ากำลังดูงวดไหน
+    const pm = Number(document.getElementById("adminUsageSumMonth")?.value || 0);
+    const py = Number(document.getElementById("adminUsageSumYear")?.value || 0);
+    const period = pm && py ? `งวด ${String(pm).padStart(2, "0")}/${py} · ` : "";
+    meta.textContent = `${period}คำนวณเมื่อ ${when}${d.cached ? " (จากแคช)" : ""}`;
   }
 
   const rt = document.getElementById("adminUsageSumRegionTable");
@@ -15052,10 +15134,13 @@ function _adminRenderUsageSummary(d) {
           <td class="usage-num">${_usageNum(r.employees)}</td>
           <td class="usage-num">${_usageNum(r.allocated)}</td>
           <td class="usage-num">${_usageNum(r.sent)}</td>
+          <td>${r.ever_sent
+            ? '<span class="usage-sent-yes">ส่งแล้ว</span>'
+            : '<span class="usage-sent-no">ยังไม่ส่ง</span>'}</td>
           <td>${escapeHtml(r.updated_by || "—")}</td>
         </tr>`;
       }).join("")
-      : `<tr><td colspan="6" class="admin-empty">—</td></tr>`;
+      : `<tr><td colspan="7" class="admin-empty">—</td></tr>`;
   }
 }
 
@@ -15065,7 +15150,18 @@ async function adminLoadUsageSummary(force) {
   const m = Number(document.getElementById("adminUsageSumMonth")?.value || 0);
   const y = Number(document.getElementById("adminUsageSumYear")?.value || 0);
   // ปีที่พิมพ์ค้างครึ่งทาง (เช่น "20") ยังไม่ต้องยิง — รอให้ครบก่อน
-  if (!m || y < 2020 || y > 2100) return;
+  // แต่ต้องบอกด้วยว่ากำลังรออะไร ไม่งั้นตัวเลขงวดก่อนค้างเต็มจอแบบเงียบ ๆ
+  // แล้วผู้ใช้อ่านว่าเป็นตัวเลขของงวดที่เพิ่งพิมพ์
+  if (!m || y < 2020 || y > 2100) {
+    kpi.innerHTML = `<div class="admin-alert admin-alert--warn">เลือกเดือนและกรอกปีให้ครบก่อน — ตัวเลขที่เคยแสดงเป็นของงวดก่อนหน้า จึงล้างออกไปแล้ว</div>`;
+    const rt0 = document.getElementById("adminUsageSumRegionTable");
+    if (rt0) rt0.innerHTML = `<tr><td colspan="7" class="admin-empty">—</td></tr>`;
+    const tt0 = document.getElementById("adminUsageSumTeamTable");
+    if (tt0) tt0.innerHTML = `<tr><td colspan="7" class="admin-empty">—</td></tr>`;
+    const meta0 = document.getElementById("adminUsageSumMeta");
+    if (meta0) meta0.textContent = "";
+    return;
+  }
   kpi.innerHTML = `<div class="admin-loading">กำลังคำนวณ…</div>`;
   try {
     const q = new URLSearchParams({ target_month: String(m), target_year: String(y) });
@@ -15082,7 +15178,7 @@ async function adminLoadUsageSummary(force) {
     // ต้องล้างตารางรายทีมกับแถบ roster ด้วย ไม่งั้นค้างตัวเลขงวดก่อนไว้
     // ข้าง ๆ ข้อความ error ของงวดใหม่ ดูเหมือนเป็นตัวเลขของงวดที่เพิ่งเลือก
     const tt = document.getElementById("adminUsageSumTeamTable");
-    if (tt) tt.innerHTML = `<tr><td colspan="6" class="admin-empty">—</td></tr>`;
+    if (tt) tt.innerHTML = `<tr><td colspan="7" class="admin-empty">—</td></tr>`;
     const roster = document.getElementById("adminUsageSumRoster");
     if (roster) roster.style.display = "none";
   }
@@ -15398,6 +15494,24 @@ function adminInitSkuLinksPanel() {
 
 let _adminSkuCatalogRows = [];
 let _adminSkuCatalogHintBase = "";
+// จำไว้ว่าตารางว่างเพราะอะไร เพื่อวาดสถานะเดิมคืนได้เมื่อผู้ใช้ล้างคำค้น
+let _adminSkuCatalogEmpty = { fabricErr: "", hint: "" };
+
+function _adminSkuCatalogRenderEmptyState() {
+  const body = document.getElementById("adminSkuCatalogBody");
+  if (!body) return;
+  const fabricErr = _adminSkuCatalogEmpty.fabricErr;
+  const msg = fabricErr
+    ? "ดึงรายการสินค้าจาก Fabric ไม่สำเร็จ"
+    : (_adminSkuCatalogEmpty.hint || "งวดนี้ยังไม่มีสินค้าที่มีเป้าหีบ");
+  const sub = fabricErr
+    ? "กดปุ่ม「โหลดใหม่」อีกครั้ง — ถ้ายังไม่ได้ ให้แจ้งผู้ดูแลระบบ"
+    : "งวดที่แสดงมาจากงวดกระจายปัจจุบัน เปลี่ยนได้ที่หน้าหลัก";
+  body.innerHTML = `<tr><td colspan="6" class="admin-empty admin-empty--rich">
+    <div class="admin-empty__title">${escapeHtml(msg)}</div>
+    <div class="admin-empty__sub">${escapeHtml(sub)}</div>
+  </td></tr>`;
+}
 
 function adminFilterSkuCatalog() {
   const q = (document.getElementById("adminSkuSearch")?.value || "").trim().toLowerCase();
@@ -15426,6 +15540,13 @@ function _renderAdminSkuCatalogBody(rows) {
   const body = document.getElementById("adminSkuCatalogBody");
   if (!body) return;
   if (!rows.length) {
+    // "ค้นแล้วไม่เจอ" กับ "ไม่มีรายการให้ค้นตั้งแต่แรก" คนละเรื่องกัน
+    // เดิมเขียนทับด้วย "ไม่พบรายการที่ตรงกับคำค้น" เสมอ ตอน Fabric ล่มแล้วผู้ใช้
+    // พิมพ์อะไรลงช่องค้นหา คำแนะนำ「กดโหลดใหม่ / แจ้งผู้ดูแล」จะหายถาวรจนกว่าจะ F5
+    if (!_adminSkuCatalogRows.length) {
+      _adminSkuCatalogRenderEmptyState();
+      return;
+    }
     body.innerHTML = `<tr><td colspan="6" class="admin-empty">ไม่พบรายการที่ตรงกับคำค้น</td></tr>`;
     return;
   }
@@ -15639,16 +15760,12 @@ async function adminLoadSkuCatalog() {
       // แยกสองเคสออกจากกัน: "ดึงข้อมูลไม่ได้" กับ "งวดนี้ไม่มีสินค้า" คนละเรื่องกัน
       // เดิมเอา exception ดิบจาก Fabric มาเป็นหัวเรื่องตัวหนา แล้วแนะนำให้เปลี่ยนเดือน/ปี
       // ทั้งที่แผงนี้ไม่มีช่องเลือกเดือน/ปีเลย มีแต่ป้ายที่อ่านอย่างเดียว
-      const fabricErr = data.fabric_error || "";
-      if (fabricErr) _adminSkuLinkShowErr(fabricErr);
-      const msg = fabricErr ? "ดึงรายการสินค้าจาก Fabric ไม่สำเร็จ" : (data.hint || "งวดนี้ยังไม่มีสินค้าที่มีเป้าหีบ");
-      const sub = fabricErr
-        ? "กดปุ่ม「โหลดใหม่」อีกครั้ง — ถ้ายังไม่ได้ ให้แจ้งผู้ดูแลระบบ"
-        : "งวดที่แสดงมาจากงวดกระจายปัจจุบัน เปลี่ยนได้ที่หน้าหลัก";
-      body.innerHTML = `<tr><td colspan="6" class="admin-empty admin-empty--rich">
-        <div class="admin-empty__title">${escapeHtml(msg)}</div>
-        <div class="admin-empty__sub">${escapeHtml(sub)}</div>
-      </td></tr>`;
+      _adminSkuCatalogEmpty = {
+        fabricErr: data.fabric_error || "",
+        hint: data.hint || "",
+      };
+      if (_adminSkuCatalogEmpty.fabricErr) _adminSkuLinkShowErr(_adminSkuCatalogEmpty.fabricErr);
+      _adminSkuCatalogRenderEmptyState();
       return;
     }
     adminFilterSkuCatalog();
@@ -15810,7 +15927,8 @@ async function adminInitTeamPanel() {
   const monthSel = document.getElementById("adminTeamMonth");
   const yearInp = document.getElementById("adminTeamYear");
   if (!sel || !monthSel || !yearInp) return;
-  if (!monthSel.options.length) {
+  const firstOpen = !monthSel.options.length;
+  if (firstOpen) {
     for (let m = 1; m <= 12; m++) {
       const o = document.createElement("option");
       o.value = String(m);
@@ -15818,9 +15936,15 @@ async function adminInitTeamPanel() {
       monthSel.appendChild(o);
     }
   }
-  const now = new Date();
-  if (!yearInp.value) yearInp.value = String(now.getFullYear());
-  if (!monthSel.value) monthSel.value = String(now.getMonth() + 1);
+  // งวดตั้งต้นต้องเป็น "งวดเป้าที่กำลังทำงานอยู่" ให้ตรงกับแท็บอื่นทั้งหมด
+  // เดิมเช็ค !monthSel.value ซึ่งไม่มีวันเป็นจริง — select ที่เพิ่งใส่ option
+  // เบราว์เซอร์จะเลือกตัวแรกให้เอง value จึงเป็น "1" เสมอ แอดมินกด「โหลด」
+  // แล้วได้ข้อมูลงวดมกราคมโดยไม่มีอะไรเตือน (ยืนยันจาก request จริง month=1)
+  if (firstOpen) {
+    const period = _effectiveTargetPeriod();
+    monthSel.value = String(period.month);
+    if (!yearInp.value) yearInp.value = String(period.year);
+  }
   if (_adminSupervisorCodes.length) return;
   try {
     const res = await fetchWithTimeout(`${API_BASE_URL}/admin/supervisor-codes`, {}, 20000);
@@ -16022,7 +16146,11 @@ async function adminLoadTeam(forceRefresh, discardDraft) {
       }
     }
   } catch (e) {
-    body.innerHTML = `<tr><td colspan="4" class="admin-empty">${escapeHtml(String(e.message || e))}</td></tr>`;
+    const fe = _adminExtErr(e.message || e);
+    body.innerHTML = `<tr><td colspan="4" class="admin-empty admin-empty--rich">
+      <div class="admin-empty__title">${escapeHtml(fe.text)}</div>
+      ${fe.raw ? `<div class="admin-empty__sub" title="${escapeHtml(fe.raw)}">รายละเอียดทางเทคนิค: ${escapeHtml(fe.raw)}</div>` : ""}
+    </td></tr>`;
   }
 }
 
@@ -17259,7 +17387,7 @@ function _adminRenderTableRowView(tr, r) {
     <td class="admin-td-unit">${unit}</td>
     <td class="admin-td-note">${
       S.isAdmin
-        ? `<input type="text" class="admin-cell-input admin-cell-input--note admin-note-inline" value="${escapeHtml(r.note || "")}" placeholder="หมายเหตุ" aria-label="หมายเหตุ" />`
+        ? `<input type="text" class="admin-cell-input admin-cell-input--note admin-note-inline" value="${escapeHtml(r.note || "")}" title="${escapeHtml(r.note || "")}" placeholder="หมายเหตุ" aria-label="หมายเหตุ" />`
         : _adminNoteCellHtml(r.note, false, r)
     }</td>
     <td class="admin-td-ts"><input type="checkbox" class="admin-ts-check" ${tsChecked} aria-label="Target Sun" /></td>

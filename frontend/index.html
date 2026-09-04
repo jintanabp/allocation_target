@@ -1141,7 +1141,7 @@
                     <option value="__none__">ไม่ระบุ</option>
                   </select>
                 </th>
-                <th class="admin-th-stack">
+                <th class="admin-th-stack admin-th-stack--region">
                   <button type="button" class="admin-sort-btn" onclick="adminToggleSort('region')">
                     <span class="admin-sort-label">ภูมิภาค</span>
                     <span class="admin-sort-icon" data-col="region" aria-hidden="true"></span>
@@ -1159,7 +1159,7 @@
                     <option value="">ทั้งหมด</option>
                     <option value="van">รถเงินสด (van)</option>
                     <option value="credit">เครดิต (credit)</option>
-                    <option value="all">ทั้งสองหน่วย (all)</option>
+                    <option value="all">ทั้งสองหน่วย</option>
                     <option value="__none__">ยังไม่ระบุ</option>
                   </select>
                 </th>
@@ -1212,7 +1212,7 @@
             </div>
             <div class="roles-legend__item">
               <span class="admin-sysrole-chip admin-sysrole-chip--head_admin">หัวหน้าแอดมิน</span>
-              <span>ดูแล<strong>ทั้งระบบ</strong> (ไม่มีขอบเขตจำกัด) + <strong>เพิ่ม/ถอดสิทธิ์ระดับ「แอดมิน」</strong>ให้คนอื่นได้ — ตั้ง Dev หรือหัวหน้าแอดมิน และแก้สิทธิ์ตัวเองไม่ได้</span>
+              <span>ดูแล<strong>ทั้งระบบ</strong> (ไม่จำกัด<strong>ขอบเขตข้อมูล</strong>) + <strong>เพิ่ม/ถอดสิทธิ์ระดับ「แอดมิน」</strong>ให้คนอื่นได้ — ตั้ง Dev หรือหัวหน้าแอดมิน และแก้สิทธิ์ตัวเองไม่ได้ · ส่วน<strong>หน้าที่เข้าได้</strong>ยังกำหนดได้ในแท็บ「สิทธิ์หน้าแอดมิน」เหมือนกัน</span>
             </div>
             <div class="roles-legend__item">
               <span class="admin-sysrole-chip admin-sysrole-chip--admin">แอดมิน</span>
@@ -1294,7 +1294,7 @@
           </div>
           <div class="perms-hint">
             <span><b>Dev</b> เข้าได้ทุกหน้าเสมอ ถอดไม่ได้ จึงไม่มีคอลัมน์ให้ติ๊ก</span>
-            <span><b>แถวสีจาง</b> คือหน้าที่ล็อกไว้ให้ dev เพราะมีผลทั้งระบบ</span>
+            <span>แถวที่มีป้าย <b>Dev เท่านั้น</b> คือหน้าที่ล็อกไว้ เพราะมีผลทั้งระบบ</span>
             <span><b>เครื่องหมาย –</b> คือมอบให้บทบาทนั้นไม่ได้</span>
           </div>
           <p id="adminPermsMsg" class="perms-msg" style="display:none;"></p>
@@ -1436,7 +1436,9 @@
               <label class="admin-period-bar__field">ปี
                 <input type="number" id="adminCacheYear" class="field-input field-input--sm admin-period-input" min="2000" max="2100" onchange="adminLoadCacheStatus()" title="เปลี่ยนงวดแล้วตัวเลขสถานะแคชจะอัปเดตตาม" />
               </label>
-              <input type="text" id="adminCacheSupId" class="field-input field-input--sm" placeholder="SL (ไม่บังคับ)" />
+              <input type="text" id="adminCacheSupId" class="field-input field-input--sm"
+                placeholder="SL — ใช้กับรีเฟรช/ล้าง"
+                title="ใช้เฉพาะตอนกด「รีเฟรช」หรือ「ล้างเฉพาะ payload」 — ปุ่ม「สถานะ」คืนสถานะรายงวด ไม่แยกรายทีม" />
               <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminLoadCacheStatus()">สถานะ</button>
               <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminRefreshCache('all')">รีเฟรชทั้งหมด</button>
               <button type="button" class="admin-btn-ghost admin-btn-ghost--sm admin-btn-ghost--danger" onclick="adminInvalidateCache('payload')">ล้างเฉพาะ payload</button>
@@ -1481,7 +1483,7 @@
             </div>
           </div>
           <div class="admin-help-strip admin-help-strip--compact">
-            <p>บันทึกถาวร ไม่มีการลบ — ใช้ตรวจย้อนหลังว่าใคร/ทีมไหนทำอะไรเมื่อไหร่ เช่น <strong>send_targetsun</strong> = กดส่งเข้า Target Sun (กรอง「การกระทำ」ได้ที่ช่องระดับ + ค้นในหน้า)</p>
+            <p>บันทึกถาวร ไม่มีการลบ — ใช้ตรวจย้อนหลังว่าใคร/ทีมไหนทำอะไรเมื่อไหร่ เช่น <strong>send_targetsun</strong> = กดส่งเข้า Target Sun · ช่อง「ระดับ」กรองได้เฉพาะ error / warn / info — ถ้าจะหาการกระทำใดการกระทำหนึ่ง ให้ใช้ Ctrl+F ของเบราว์เซอร์</p>
           </div>
           <div id="adminUsageLogsBody" class="admin-table-wrap admin-table-wrap--panel">
             <table class="admin-table admin-table--compact admin-table--zebra admin-table--log">
@@ -1505,7 +1507,7 @@
           <div class="admin-card-header">
             <div>
               <h2 class="admin-card__title">ผลการกระจาย (server)</h2>
-              <p class="admin-card__hint">snapshot ทุกงวด — กดหัวคอลัมน์เพื่อเรียงลำดับ</p>
+              <p class="admin-card__hint">snapshot ของงวดที่เลือกในแถบด้านขวา (เลือก「ทุกเดือน」เพื่อดูทั้งปี) — กดหัวคอลัมน์เพื่อเรียงลำดับ</p>
             </div>
             <div class="admin-period-bar">
               <label class="admin-period-bar__field">เดือน
@@ -1536,7 +1538,7 @@
                 <th class="th-sortable alloc-col-period" data-sort="period" onclick="adminToggleAllocSort('period')">งวด</th>
                 <th class="th-sortable alloc-col-status" data-sort="status" onclick="adminToggleAllocSort('status')">สถานะ</th>
                 <th class="th-sortable th-sort--active th-sort--desc alloc-col-updated" data-sort="updated" onclick="adminToggleAllocSort('updated')">อัปเดตล่าสุด</th>
-                <th class="alloc-col-act">จัดการ</th>
+                <th class="alloc-col-act admin-th-actions">จัดการ</th>
               </tr></thead>
               <tbody id="adminAllocTable"><tr><td colspan="6" class="admin-empty">กำลังโหลด…</td></tr></tbody>
             </table>
@@ -1619,6 +1621,7 @@
                   <th class="usage-num">พนักงาน</th>
                   <th class="usage-num">ถูกกระจายเป้า</th>
                   <th class="usage-num">กระจาย+ส่ง</th>
+                  <th>ส่ง Target Sun</th>
                   <th>อัปเดตโดย</th>
                 </tr></thead>
                 <tbody id="adminUsageSumTeamTable"></tbody>
@@ -1645,7 +1648,7 @@
           <div id="adminSkuLinkError" class="admin-alert admin-alert--error" style="display:none;"></div>
           <p id="adminSkuCatalogHint" class="admin-inv-muted"></p>
           <div id="adminSkuCatalogLoading" class="admin-loading" style="display:none;">กำลังโหลดรายการสินค้า…</div>
-          <div class="admin-table-wrap" id="adminSkuCatalogWrap" style="max-height:min(70vh, 640px);">
+          <div class="admin-table-wrap" id="adminSkuCatalogWrap">
             <table class="admin-table admin-table--compact" id="adminSkuCatalogTable">
               <thead>
                 <tr>

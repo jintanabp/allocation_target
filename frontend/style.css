@@ -1080,8 +1080,11 @@ body.is-login {
   min-height: 0;
 }
 
-/* จอเตี้ย — ซ่อน hero + การ์ดเลื่อนในตัวถ้าสูงเกิน */
-@media (max-height: 900px) {
+/* จอเตี้ย — ซ่อน hero + การ์ดเลื่อนในตัวถ้าสูงเกิน
+   เดิมตั้งไว้ที่ 900px ซึ่งกินโน้ตบุ๊ก 768px ที่ผู้ใช้ส่วนใหญ่ใช้เข้าไปด้วย
+   ทั้งที่การ์ดสูงแค่ 547px และยังเหลือที่ว่างใต้การ์ด 111px กับด้านข้างอีกข้างละ 473px
+   ผู้ใช้ส่วนใหญ่จึงไม่เคยเห็นทั้งภาพประกอบและชิป "9 ขั้นตอน · ~4 นาที" ที่เขียนไว้ */
+@media (max-height: 700px) {
   .login-hero {
     display: none;
   }
@@ -1104,7 +1107,9 @@ body.is-login {
   }
 }
 
-@media (max-height: 820px) {
+/* บล็อกนี้ซ่อนภาพประกอบซ้ำอีกชั้น — ถ้าไม่ลดลงมาด้วย การแก้ที่บล็อก 900px
+   ข้างบนก็ไม่มีผล เพราะจอ 768 ยังติดเงื่อนไข 820 อยู่ดี */
+@media (max-height: 700px) {
   .login-hero {
     display: none;
   }
@@ -1296,7 +1301,12 @@ select.field-input:disabled,
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--white);
-  overflow: hidden;
+  /* ต้องเป็น clip ไม่ใช่ hidden — overflow:hidden สร้าง "กล่องเลื่อน" ที่ไม่เคยเลื่อน
+     หัวตาราง (position:sticky) จึงถูกตรึงกับกล่องนี้แทนที่จะติดขอบแผงที่เลื่อนจริง
+     วัดที่ 1366x768: เลื่อนแผงลง 411px แล้วหัวไปอยู่ y=-130 หลุดจอ เหลือ checkbox
+     สามคอลัมน์ที่ไม่มีป้ายกำกับ ทั้งที่ชื่อหน้าห่างจากช่องติ๊กราว 750px
+     clip ตัดขอบมนได้เหมือนเดิมแต่ไม่สร้างกล่องเลื่อน sticky จึงผูกกับ .admin-panel */
+  overflow: clip;
 }
 .perms-table {
   width: 100%;
@@ -1359,7 +1369,7 @@ select.field-input:disabled,
    และแถบสลับสีช่วยยึดสายตาไว้ในแถวเดียวกันตลอดทาง */
 .perms-table th:nth-child(2),
 .perms-table td:nth-child(2) { border-left: 1px solid var(--border); }
-.perms-row:nth-of-type(even) { background: var(--surface-2); }
+/* แถบสลับสีย้ายไปเป็น .perms-row--alt ท้ายไฟล์ — nth-of-type นับแถวหัวหมวดด้วย */
 .perms-row:nth-of-type(even):hover,
 .perms-row:hover { background: var(--accent-bg); }
 
@@ -2456,15 +2466,24 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
 }
 .admin-th-stack--role {
   min-width: 100px;
-  width: 11%;
+  width: 10.5%;
 }
 .admin-th-stack--email {
   min-width: min(180px, 24vw);
-  width: 24%;
+  width: 20%;
 }
 .admin-th-stack--code {
   min-width: 64px;
-  width: 7%;
+  width: 6.5%;
+}
+/* คอลัมน์ภูมิภาคเคยเป็น th ตัวเดียวในตารางที่ไม่มีคลาสความกว้าง จึงได้แต่เศษ
+   ที่เหลือ = 63px (1366) / 46px (1280) · ตัวกรองในหัวคอลัมน์กิน padding+ลูกศร 38px
+   เหลือช่องข้อความ 3px และ 0px ตามลำดับ — เลือกภาคแล้วไม่รู้ว่าเลือกอะไรอยู่
+   และ "ภาคสาธิต" ในเซลล์ก็ถูกตัด (76 → 63) */
+.admin-th-stack--region {
+  min-width: 96px;
+  /* 10% ยังเหลือช่องข้อความแค่ 42px บนจอ 1280 ("ภาคสาธิต" ต้องการ 48px) */
+  width: 11%;
 }
 .admin-th-stack--narrow {
   min-width: 76px;
@@ -2480,8 +2499,10 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
   /* dev เห็น 3 ปุ่ม (แก้ไข + ดูแบบนี้ + ลบ) รวม 146px ส่วนผู้ดูแลเห็น 2 ปุ่ม ~87px
      เคยตั้ง 124px แล้วปุ่มสุดท้ายของ dev ถูกตัด · ต้องระบุ width เป็น px ตรง ๆ เท่านั้น
      min-width ไม่มีผลกับ table-layout:fixed และ width:1% เคยทำให้คอลัมน์ยุบเหลือ 16px */
-  min-width: 150px;
-  width: 150px;
+  /* 2026-09-04: วัดจริงแล้วเนื้อหาต้องการ 174px (ปุ่ม 146 + padding ซ้ายขวา 28)
+     ที่ 150px ปุ่มสุดท้ายล้นกรอบ 10px ทุกความกว้างจอ พื้นที่กดหายไป 28% */
+  min-width: 174px;
+  width: 174px;
   white-space: nowrap;
 }
 .admin-th-stack > .admin-sort-btn,
@@ -2630,10 +2651,19 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  /* ป้าย + ปุ่มคู่ ต้องการ ~108px แต่คอลัมน์นี้กว้าง 88px (8% ของตาราง)
+     เดิมเรียงบรรทัดเดียวและป้ายเป็น nowrap ปุ่มคู่จึงเหลือ 26px จาก 46px
+     ปุ่ม「ปิด」ถูกตัดจนกดตรงกลางปุ่มแล้วโดนหัวคอลัมน์ถัดไปแทน (ยืนยันด้วย
+     elementFromPoint) เหลือกดได้แต่「เปิด」ซึ่งทำตรงข้ามกัน
+     ให้ป้ายขึ้นบรรทัดของตัวเอง ปุ่มคู่จะได้ความกว้างคอลัมน์เต็ม */
+  flex-wrap: wrap;
+  gap: 2px 6px;
   margin: 6px auto 8px;
-  width: fit-content;
   max-width: 100%;
+}
+.admin-ts-bulk__label {
+  flex: 0 0 100%;
+  text-align: center;
 }
 .admin-ts-bulk__label {
   font-size: 10px;
@@ -9204,7 +9234,8 @@ tr.emp-row--no-target .emp-tag {
 #adminView .admin-table--log .log-col-sup { width: 4.5rem; }
 #adminView .admin-table--log .log-col-action { width: 15rem; }
 #adminView .admin-table--log .log-col-msg { width: auto; }   /* ที่เหลือทั้งหมด */
-#adminView .admin-table--log .log-col-act { width: 6.5rem; }
+/* 6.5rem = 104px แคบกว่าปุ่ม「รายละเอียด」ที่กินจริง 112px ทั้ง 500 แถว */
+#adminView .admin-table--log .log-col-act { width: 7.5rem; }
 
 /* ป้ายระดับอยู่กลางคอลัมน์แคบ ๆ ให้ดูเป็นระเบียบ */
 #adminView .admin-table--log td:nth-child(2) { text-align: center; }
@@ -9641,6 +9672,21 @@ tr.emp-row--no-target .emp-tag {
   max-height: calc(100dvh - var(--topbar-h) - 260px);
 }
 
+/* ── สองแผงที่ 260px ไม่พอ ─────────────────────────────────────
+   ตัวเลข 260 คิดจากแผงที่มีแค่หัวการ์ดเหนือตาราง · สองแผงนี้มีมากกว่านั้น
+   วัดจริงที่ 1366x768 ก่อนแก้:
+     ย้ายพนักงาน  กล่องจบที่ y=783 (ขอบจอ 768) และบรรทัด "แสดง 300 จาก 311 คน"
+                  ซึ่งอยู่ใต้กล่องไปอยู่ที่ y=791 — คนอ่านไม่มีทางเห็นว่ามี 11 คน
+                  ถูกตัดทิ้ง และล้อเมาส์ก็ไปไม่ถึงเพราะต้องหมุนจนสุดตารางใน 18761px ก่อน
+     ผูกรหัส SKU  กล่องจบที่ y=967 ล้นออกนอกจอ 199px (เดิมใช้ inline 70vh ใน index.html)
+   ตัวเลขใหม่มาจากการวัด ไม่ได้เดา — ยืนยันซ้ำที่ 1280x720 และ 1920x1080 */
+#adminPanelEmpMoves .admin-table-wrap {
+  max-height: calc(100dvh - var(--topbar-h) - 330px);
+}
+#adminPanelSkuLinks .admin-table-wrap {
+  max-height: calc(100dvh - var(--topbar-h) - 390px);
+}
+
 /* คลาสที่เขียนไว้ในหน้าแต่ไม่เคยมีกฎรองรับ — ตรวจแล้วว่า grep ใน style.css ได้ 0 ผลลัพธ์ */
 
 /* ข้อความอธิบายใต้หัวการ์ด (แผงย้ายพนักงาน / ผูกรหัส SKU)
@@ -9664,7 +9710,7 @@ tr.emp-row--no-target .emp-tag {
 
 /* 20 — คอลัมน์ "หมายเหตุ" ในตารางผู้ใช้ ไม่เคยมีกฎ เลยได้ที่เท่าคอลัมน์ภูมิภาค
    ทั้งที่ข้อความยาวกว่ามาก (คลาส --static ที่มีอยู่แล้วไม่มีใครเรียกใช้) */
-.admin-th-stack--note { width: 15%; }
+.admin-th-stack--note { width: 12%; }
 
 /* 26 — ปุ่มที่ disabled ยังแดงสดและเมาส์เป็นรูปมือ เหมือนกดได้
    .admin-action ไม่มีกฎ :disabled เลย และ hover ของ .roles-revoke ยังทำงาน */
@@ -9694,9 +9740,122 @@ tr.emp-row--no-target .emp-tag {
    แต่คอลัมน์อื่นรวมกัน ~888px บนจอ 1366 จึงเหลือให้ข้อความน้อยที่สุด
    ทั้งที่เป็นคอลัมน์ที่เนื้อหายาวที่สุด · ตรงข้ามกับเจตนาที่คอมเมนต์ข้างบนเขียนไว้ */
 @media (min-width: 901px) and (max-width: 1400px) {
-  #adminView .admin-table--log .log-col-time { width: 10.5rem; }
-  #adminView .admin-table--log .log-col-user { width: 10rem; }
-  #adminView .admin-table--log .log-col-action { width: 10.5rem; }
+  #adminView .admin-table--log .log-col-time { width: 9rem; }
+  #adminView .admin-table--log .log-col-user { width: 8.5rem; }
+  /* 10.5rem = 168px ทำให้ชื่อการกระทำถูกตัดกลางคำ 105 จาก 500 แถว
+     (save_allocation_confli ⏎ ct) และแถวสูงจาก 53px เป็น 79px
+     13rem พอสำหรับชื่อที่ยาวที่สุดที่ใช้จริง (save_allocation_no_precondition) */
+  #adminView .admin-table--log .log-col-action { width: 14rem; }
+}
+
+/* ── เซลล์ที่ประกาศการจัดตำแหน่งไว้แล้วแต่ไม่เคยมีผล ─────────────
+   ".admin-table th:not(.admin-th-stack), .admin-table td { text-align: left }"
+   (style.css:2733) มี specificity 0-2-0 จึงชนะกฎคลาสเดี่ยวทุกตัวที่เขียนทีหลัง
+   ผลที่วัดได้: หัว「จัดการ」ชิดขวาแต่ปุ่มในเซลล์ชิดซ้าย ห่างกัน 65-167px ·
+   ข้อความสถานะว่างที่สั่ง center ไว้กลับชิดซ้าย · คอลัมน์ตัวเลข (เป้าหีบ/ราคาต่อหีบ)
+   ไม่ตรงหลัก จุดทศนิยมไม่ตรงกัน ซึ่งเป็นปัญหาจริงของแอปตั้งเป้าหีบ
+   ต้องเขียนเป็น .admin-table td.<คลาส> (0-2-1) ถึงจะชนะ */
+.admin-table td.admin-td-actions { text-align: right; }
+.admin-table td.admin-empty { text-align: center; }
+.admin-table td.num,
+.admin-table th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* คอลัมน์ "ส่ง Target Sun" ของตารางรายทีมในสรุปการใช้งาน
+   ever_sent มาจาก backend ตั้งแต่แรกแต่หน้าเว็บไม่เคยเอามาแสดง
+   การ์ดบอกว่าส่งแล้วกี่ทีม แต่ในตารางหาไม่เจอว่าทีมไหน */
+.usage-sent-yes {
+  font-weight: 700;
+  color: var(--green);
+}
+.usage-sent-no { color: var(--text-3); }
+
+/* กล่องเตือนสีเหลือง — มีแต่ --error มาตลอด เวลาต้องเตือนแบบไม่ใช่ความผิดพลาด
+   (เช่น "ยังกรอกงวดไม่ครบ") เลยไม่มีอะไรใช้ */
+.admin-alert--warn {
+  background: var(--amber-bg);
+  border: 1px solid var(--amber-brd);
+  color: var(--amber);
+}
+
+/* ปุ่มกางกล่องในแผงแอดมิน สูงแค่ 19px กดยากสำหรับผู้ใช้สูงอายุ
+   เทียบกับปุ่มกางแบบเดียวกันในหน้าเดียวกัน (.usage-defs > summary) ที่สูง 37px */
+.admin-inv-block > summary {
+  padding: 9px 12px;
+  border-radius: 8px;
+}
+.admin-inv-block > summary:hover { background: var(--surface-2); }
+.admin-inv-block > summary:focus-visible {
+  outline: 2px solid var(--accent-light);
+  outline-offset: -2px;
+}
+
+/* ตัวเลือกพรีเซ็ตปลายทาง Target Sun — app.js สร้าง label คลาสนี้มาตลอด
+   แต่ไม่เคยมีกฎรองรับใน style.css เลย ปุ่มจึงสูง 19px ขณะที่วิทยุอีกชุด
+   ในการ์ดเดียวกัน (.admin-radio-pill) สูง 33px · ปุ่มชุดนี้เปลี่ยนปลายทางส่งเป้าจริง
+   ยิ่งต้องกดยากเมื่อกดพลาด */
+.admin-target-source-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--white);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.admin-target-source-opt:hover { border-color: var(--accent-light); }
+.admin-target-source-opt:focus-within {
+  outline: 2px solid var(--accent-light);
+  outline-offset: 1px;
+}
+.admin-target-source-opt:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+/* งวด Target Sun ที่ "ตอบสำเร็จแต่ไม่มีข้อมูล" — เดิมตกไปเป็นสีเขียวเหมือนปกติดี */
+.admin-target-period--none {
+  background: var(--surface-2);
+  border-color: var(--border-md);
+}
+.admin-target-period__none {
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--amber);
+}
+
+/* แถวที่ล็อกไว้ให้ dev เคยใช้ --surface-2 ซึ่งเป็นสีเดียวกับแถบซีบร้าเป๊ะ
+   6 ใน 11 แถวจึงหน้าตาเหมือน "แถวที่ล็อก" ทั้งที่ไม่ได้ล็อก */
+.perms-row--locked { background: var(--amber-bg); }
+/* แถบซีบร้าเดิมใช้ :nth-of-type(even) ซึ่งนับแถวหัวหมวดด้วย จังหวะสลับสีจึงเพี้ยน
+   ทุกครั้งที่ข้ามหัวหมวด (เกิดแถวสีเดียวกันติดกัน 3 คู่) · CSS ไม่มี nth-of-class
+   จึงให้ app.js ติดคลาส perms-row--alt ให้ตอนวาดแทน */
+.perms-table .perms-row--alt { background: var(--surface-2); }
+.perms-table .perms-row--locked { background: var(--amber-bg); }
+
+/* ชื่อการกระทำยาวกว่าคอลัมน์ ให้ตัดท้ายพร้อม tooltip แทนการหักกลางคำ
+   (เดิมได้ save_allocation_confli ⏎ ct และแถวสูงจาก 53px เป็น 79px) */
+#adminView .admin-table--log .log-action {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#adminView .admin-table--log .log-action .log-period { white-space: normal; }
+
+/* ข้อความผิดพลาดหน้าล็อกอิน: URL ยาวของ Microsoft เป็น token เดียวตัดบรรทัดไม่ได้
+   วัดที่ทุกขนาดจอ: #loginError scrollWidth 441 / clientWidth 360 หายไป 81px
+   และการ์ดเป็น overflow:hidden จึงไม่มีแถบเลื่อนให้ตามไปอ่าน */
+.login-error {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 /* 40 — ปุ่มทำลายข้อมูลหน้าตาเหมือนปุ่มดูข้อมูลเป๊ะ (ลบกลุ่มผูกรหัส / ล้างแคช)
