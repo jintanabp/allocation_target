@@ -15018,13 +15018,21 @@ function _usageTile(label, value, pct, sub, total) {
   const width = Math.max(0, Math.min(100, Number(pct) || 0)).toFixed(0);
   const hasTotal = total !== null && total !== undefined && value !== null && value !== undefined;
   const unknown = value === null || value === undefined;
+  // เรียงแนวนอน: ป้ายกับคำอธิบายอยู่ซ้าย ตัวเลขอยู่ขวา — การ์ดเตี้ยลงจาก ~103px
+  // เหลือ ~52px โดยไม่ลดขนาดตัวอักษรสักจุด (ผู้ใช้กลุ่มนี้สูงวัย ตัวเลขต้องเด่นเท่าเดิม)
+  // เดิมเรียงลงเป็นสี่ชั้น (ป้าย → ตัวเลข → แถบสัดส่วน → คำอธิบาย) บล็อกการ์ดหกใบ
+  // จึงสูง 275px ดันตารางรายภาคลงไปใต้ขอบจอบนโน้ตบุ๊ก 1366x768
+  // แถบสัดส่วนถูกตัดออก — เปอร์เซ็นต์เดียวกันนี้พิมพ์อยู่ข้างตัวเลขอยู่แล้ว
+  // และตารางข้างล่างก็มีแถบ .usage-bar ให้เทียบภาคด้วยตาอยู่แล้ว
+  void width;
   return `<div class="usage-kpi__tile${unknown ? " usage-kpi__tile--unknown" : ""}">
-    <span class="usage-kpi__label">${escapeHtml(label)}</span>
+    <span class="usage-kpi__head">
+      <span class="usage-kpi__label">${escapeHtml(label)}</span>
+      <span class="usage-kpi__sub">${escapeHtml(sub || "")}</span>
+    </span>
     <span class="usage-kpi__value">${_usageNum(value)}${
       hasTotal ? `<span class="usage-kpi__of">จาก ${_usageNum(total)}</span>` : ""
     }${hasPct ? `<span class="usage-kpi__pct">${_usagePct(pct)}</span>` : ""}</span>
-    ${hasPct ? `<span class="usage-kpi__meter"><span class="usage-kpi__meter-fill" style="width:${width}%"></span></span>` : ""}
-    <span class="usage-kpi__sub">${escapeHtml(sub || "")}</span>
   </div>`;
 }
 

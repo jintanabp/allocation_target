@@ -16,7 +16,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=2026082020" />
+  <link rel="stylesheet" href="style.css?v=2026090410" />
 </head>
 
 <body>
@@ -1573,23 +1573,6 @@
           </div>
           <div id="adminUsageSumRoster" class="admin-help-strip admin-help-strip--compact" style="display:none;"></div>
           <div id="adminUsageSumKpi" class="usage-kpi-wrap" aria-live="polite"></div>
-          <details class="usage-defs">
-            <summary>วิธีนับตัวเลขแต่ละช่อง</summary>
-            <dl>
-              <dt>ทีมที่กระจายได้</dt>
-              <dd>รหัสล็อกอินที่เป็น Supervisor หรือ Manager และมีรหัส SL จริง — ไม่นับบัญชีแอดมินอย่างเดียว ไม่นับทีมสาธิต · รหัสที่ผูกกันแล้วนับเป็นรหัสเดียว · ผู้จัดการนับรหัสละ 1 ไม่กระจายออกเป็นทีมลูกน้อง เพราะทีมของผู้จัดการซ้อนทับกันเอง</dd>
-              <dt>เข้ามาใช้</dt>
-              <dd>มีผลกระจายในงวดนี้และมีหีบมากกว่า 0 อย่างน้อย 1 แถว — ไม่ใช่แค่เปิดหน้าจอ · ผู้จัดการที่กระจายแทนทั้งภาค ผลจะไปลงทีมของแต่ละซุปตามจริง</dd>
-              <dt>ส่ง Target Sun</dt>
-              <dd>เคยส่งสำเร็จในงวดนี้ ดูจากเวลาที่ส่ง ซึ่งอยู่ถาวรแม้จะกลับมาแก้ต่อจนสถานะเป็นแบบร่าง</dd>
-              <dt>พนักงาน</dt>
-              <dd>นับเป็นคู่ (ทีม, รหัสพนักงาน) เสมอ เพราะรหัสพนักงานซ้ำข้ามทีมได้ · ตัดรหัสขึ้นต้น V (รถเงินสด) ออกเหมือนทุกหน้าจอ</dd>
-              <dt>ถูกกระจายเป้า</dt>
-              <dd>พนักงานที่ได้หีบมากกว่า 0 อย่างน้อย 1 SKU ในงวดนี้ — คนที่อยู่ในทีมแต่ได้ 0 ทุกช่องไม่นับ</dd>
-              <dt>กระจาย + ส่ง Target Sun</dt>
-              <dd>พนักงานที่ทั้งได้หีบ และอยู่ในชุดที่ส่งสำเร็จแล้ว — นับจากบันทึกการส่ง ไม่ใช่จากผลบนหน้าจอ</dd>
-            </dl>
-          </details>
           <div id="adminUsageSumRegionWrap" class="admin-table-wrap">
             <table class="admin-table admin-table--compact admin-table--zebra">
               <thead>
@@ -1611,6 +1594,23 @@
               <tbody id="adminUsageSumRegionTable"><tr><td colspan="7" class="admin-empty">กำลังโหลด…</td></tr></tbody>
             </table>
           </div>
+          <details class="usage-defs">
+            <summary>วิธีนับตัวเลขแต่ละช่อง</summary>
+            <dl>
+              <dt>ทีมที่กระจายได้</dt>
+              <dd>รหัสล็อกอินที่เป็น Supervisor หรือ Manager และมีรหัส SL จริง — ไม่นับบัญชีแอดมินอย่างเดียว ไม่นับทีมสาธิต · รหัสที่ผูกกันแล้วนับเป็นรหัสเดียว · ผู้จัดการนับรหัสละ 1 ไม่กระจายออกเป็นทีมลูกน้อง เพราะทีมของผู้จัดการซ้อนทับกันเอง</dd>
+              <dt>เข้ามาใช้</dt>
+              <dd>มีผลกระจายในงวดนี้และมีหีบมากกว่า 0 อย่างน้อย 1 แถว — ไม่ใช่แค่เปิดหน้าจอ · ผู้จัดการที่กระจายแทนทั้งภาค ผลจะไปลงทีมของแต่ละซุปตามจริง</dd>
+              <dt>ส่ง Target Sun</dt>
+              <dd>เคยส่งสำเร็จในงวดนี้ ดูจากเวลาที่ส่ง ซึ่งอยู่ถาวรแม้จะกลับมาแก้ต่อจนสถานะเป็นแบบร่าง</dd>
+              <dt>พนักงาน</dt>
+              <dd>นับเป็นคู่ (ทีม, รหัสพนักงาน) เสมอ เพราะรหัสพนักงานซ้ำข้ามทีมได้ · ตัดรหัสขึ้นต้น V (รถเงินสด) ออกเหมือนทุกหน้าจอ</dd>
+              <dt>ถูกกระจายเป้า</dt>
+              <dd>พนักงานที่ได้หีบมากกว่า 0 อย่างน้อย 1 SKU ในงวดนี้ — คนที่อยู่ในทีมแต่ได้ 0 ทุกช่องไม่นับ</dd>
+              <dt>กระจาย + ส่ง Target Sun</dt>
+              <dd>พนักงานที่ทั้งได้หีบ และอยู่ในชุดที่ส่งสำเร็จแล้ว — นับจากบันทึกการส่ง ไม่ใช่จากผลบนหน้าจอ</dd>
+            </dl>
+          </details>
           <details id="adminUsageSumTeamsBox" class="admin-inv-block" style="margin-top:12px;">
             <summary>ดูรายทีม (รวมทีมที่ยังไม่เคยใช้)</summary>
             <div class="admin-table-wrap" style="max-height:min(50vh, 460px);">
@@ -1675,8 +1675,8 @@
   <script src="vendor/msal-browser.min.js"></script>
   <!-- ตรรกะล้วน (ตัวแปลงเลข/คณิตการเกลี่ย) — ต้องมาก่อน app.js
        ไฟล์นี้มีเทสจริงด้วย node --test tests/logic.test.js -->
-  <script src="logic.js?v=2026082020"></script>
-  <script src="app.js?v=2026082020"></script>
+  <script src="logic.js?v=2026090410"></script>
+  <script src="app.js?v=2026090410"></script>
 </body>
 
 </html>

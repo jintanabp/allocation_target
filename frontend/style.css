@@ -9478,14 +9478,25 @@ tr.emp-row--no-target .emp-tag {
 @media (max-width: 720px) {
   .usage-kpi { grid-template-columns: 1fr; }
 }
-/* บีบเฉพาะ "ช่องว่าง" ไม่ลดขนาดตัวอักษรสักจุด — ผู้ใช้กลุ่มนี้สูงวัย
-   ตัวเลขและป้ายต้องอ่านง่ายเท่าเดิม · ที่บีบได้คือ padding/margin/gap
-   รวมแล้วคืนความสูงให้ตารางรายภาคราว 50px บนจอ 768 */
+/* การ์ดเรียงแนวนอน — ป้าย+คำอธิบายซ้าย ตัวเลขขวา
+   ไม่ลดขนาดตัวอักษรสักจุด (ผู้ใช้กลุ่มนี้สูงวัย) ที่ลดคือจำนวนบรรทัดในการ์ด
+   flex-wrap ไว้ให้ตกลงมาเรียงแบบเดิมเองเมื่อการ์ดแคบ เช่นจอมือถือ */
 .usage-kpi__tile {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 2px 12px;
   background: var(--bg-main);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
-  padding: 9px 14px 10px;
+  padding: 9px 14px;
+}
+.usage-kpi__head {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 8rem;
 }
 .usage-kpi__label {
   display: block;
@@ -9493,11 +9504,11 @@ tr.emp-row--no-target .emp-tag {
   font-weight: 600;
   letter-spacing: 0.04em;
   color: var(--text-3);
-  margin-bottom: 6px;
 }
 .usage-kpi__value {
   display: flex;
   align-items: baseline;
+  flex: 0 0 auto;
   gap: 8px;
   min-height: 27px;
   font-size: 22px;
@@ -9522,7 +9533,7 @@ tr.emp-row--no-target .emp-tag {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 4px 2px 8px;
+  margin: 2px 2px 4px;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -9534,7 +9545,7 @@ tr.emp-row--no-target .emp-tag {
   height: 1px;
   background: var(--border);
 }
-.usage-group + .usage-kpi { margin-bottom: 10px; }
+.usage-group + .usage-kpi { margin-bottom: 8px; }
 .usage-kpi__meter {
   display: block;
   height: 8px;
@@ -9557,8 +9568,8 @@ tr.emp-row--no-target .emp-tag {
   display: block;
   font-size: 11px;
   color: var(--text-3);
-  margin-top: 4px;
-  line-height: 1.5;
+  margin-top: 2px;
+  line-height: 1.45;
 }
 /* ต้องระบุ .admin-table นำหน้า — กฎกลาง ".admin-table td { text-align: left }"
    (style.css:2510) มี specificity สูงกว่า .usage-num เฉย ๆ เขียนสั้นแล้วไม่มีผล */
@@ -9600,7 +9611,7 @@ tr.emp-row--no-target .emp-tag {
 }
 /* กล่องนิยาม — พับไว้ ไม่ให้ข้อความ 4 บรรทัดขวางระหว่างการ์ดกับตาราง */
 .usage-defs {
-  margin: 2px 0 10px;
+  margin: 12px 0 0;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   background: var(--surface-2);
@@ -9919,6 +9930,17 @@ tr.emp-row--no-target .emp-tag {
    "#adminPanelUsageSummary .admin-table-wrap" (id+class = 110) ซึ่งชนะ id เดี่ยว (100)
    เขียนสั้นแล้ว flex ติดแต่ max-height ไม่ติด กล่องจะยังโดนตัดที่ 100dvh-316px
    วัดจริงบน 1366x768 ตอนเขียนสั้น: กล่องสูง 300px ขณะที่ตารางสูง 508px */
+/* แถวตารางรายภาคสูง 67px เพราะ .admin-table td ตั้ง padding 11px บน-ล่าง
+   (.admin-table--compact ที่หน้านี้ใส่ไว้เป็นคลาสตาย ประกาศก่อน .admin-table เลยแพ้)
+   ตารางนี้อ่านอย่างเดียว ไม่มีอะไรให้กดในแถว การบีบระยะจึงไม่ทำให้กดยากขึ้น
+   และไม่ลดขนาดตัวอักษรสักจุด — ได้แถวที่สามขึ้นมาอยู่ในจอ 1366x768 พอดี
+   จงใจเจาะจงเฉพาะตารางนี้ ไม่ไปแตะ .admin-table--compact ที่ใช้ร่วมกัน 6 ตาราง */
+#adminUsageSumRegionWrap .admin-table th,
+#adminUsageSumRegionWrap .admin-table td {
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
 #adminPanelUsageSummary #adminUsageSumRegionWrap {
   flex: 0 0 auto;
   height: auto;
