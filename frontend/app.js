@@ -16372,33 +16372,40 @@ function _adminFmtTime(iso) {
  */
 async function adminOpenDoc(name) {
   const base = API_BASE_URL.replace(/\/$/, "");
-  const url = `${base}/doc/${encodeURIComponent(name)}`;
+  const pretty = `${base}/doc/${encodeURIComponent(name)}`;
   try {
-    const res = await fetchWithTimeout(url, {}, 15000);
-    if (res.ok) { window.open(url, "_blank", "noopener"); return; }
-    // ลองไฟล์ .md ดิบที่ mount ไว้อีกเส้น — บางทีติดแค่เส้น /doc/
-    const raw = `${base}/docs/${encodeURIComponent(name)}.md`;
-    const res2 = await fetchWithTimeout(raw, {}, 15000).catch(() => null);
+    // 1) เส้นสวย /doc/... — ใช้ได้เมื่อแอปรับ request ที่รากเอง (เช่นตอนรันในเครื่อง)
+    const res = await fetchWithTimeout(pretty, {}, 15000).catch(() => null);
+    if (res && res.ok) { window.open(pretty, "_blank", "noopener"); return; }
+
+    // 2) เส้นสำรองใต้ /admin ซึ่ง proxy หน้าเซิร์ฟเวอร์ forward ให้อยู่แล้วแน่นอน
+    //    ต้องดึงเองแล้วเปิดเป็น blob เพราะแท็บใหม่ไม่พก Authorization ไปให้
+    const viaAdmin = `${base}/admin/doc/${encodeURIComponent(name)}`;
+    const res2 = await fetchWithTimeout(viaAdmin, {}, 20000).catch(() => null);
     if (res2 && res2.ok) {
-      toast("เปิดเป็นไฟล์ .md ดิบแทน — เส้น /doc/ ใช้ไม่ได้บนเซิร์ฟเวอร์นี้", "amber");
-      window.open(raw, "_blank", "noopener");
+      const blob = new Blob([await res2.text()], { type: "text/html;charset=utf-8" });
+      const u = URL.createObjectURL(blob);
+      window.open(u, "_blank", "noopener");
+      setTimeout(() => URL.revokeObjectURL(u), 60000);
       return;
     }
+
+    const status = res2 ? res2.status : res ? res.status : "—";
     _showInfoModal({
       title: "เปิดเอกสารไม่ได้",
       bodyHtml:
-        `<p style="margin:0 0 10px;">เซิร์ฟเวอร์ตอบ <b>HTTP ${res.status}</b> ที่</p>` +
-        `<p style="margin:0 0 12px;"><code>${escapeHtml(url)}</code></p>` +
+        `<p style="margin:0 0 10px;">ลองสองเส้นแล้วไม่สำเร็จ (ล่าสุดตอบ <b>HTTP ${escapeHtml(String(status))}</b>)</p>` +
+        `<p style="margin:0 0 4px;"><code>${escapeHtml(pretty)}</code></p>` +
+        `<p style="margin:0 0 12px;"><code>${escapeHtml(viaAdmin)}</code></p>` +
         `<p style="margin:0 0 8px;">ไฟล์ <code>docs/${escapeHtml(name)}.md</code> อยู่ใน git อยู่แล้ว ` +
-        `ถ้าเปิดไม่ได้มักเป็นเรื่องเส้นทาง ไม่ใช่ไฟล์หาย — ให้ IT ตรวจว่า reverse proxy ` +
-        `หน้าเซิร์ฟเวอร์ forward เส้น <code>/doc/</code> และ <code>/docs/</code> ไปที่แอปหรือยัง</p>` +
-        `<p style="margin:0;">ระหว่างนี้อ่านไฟล์ได้จากในโปรเจกต์ที่ <code>docs/${escapeHtml(name)}.md</code></p>`,
+        `จึงไม่ใช่ไฟล์หาย — ถ้าเส้นแรก 404 แบบไม่มีข้อความไทย แปลว่า request ไปไม่ถึงแอป ` +
+        `ให้ IT ตรวจว่าตัวเสิร์ฟหน้าเซิร์ฟเวอร์ forward เส้น <code>/doc/</code> ไปที่แอปหรือยัง</p>` +
+        `<p style="margin:0;">ระหว่างนี้อ่านได้จากในโปรเจกต์ที่ <code>docs/${escapeHtml(name)}.md</code></p>`,
     });
   } catch (e) {
     _showInfoModal({
       title: "เปิดเอกสารไม่ได้",
-      bodyHtml: `<p style="margin:0 0 10px;">ติดต่อ <code>${escapeHtml(url)}</code> ไม่สำเร็จ</p>` +
-        `<p style="margin:0;">${escapeHtml(_userFacingError(e, "ไม่ทราบสาเหตุ"))}</p>`,
+      bodyHtml: `<p style="margin:0;">${escapeHtml(_userFacingError(e, "ไม่ทราบสาเหตุ"))}</p>`,
     });
   }
 }

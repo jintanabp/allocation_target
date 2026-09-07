@@ -24,7 +24,7 @@ from typing import Any, Literal
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from ..deps import (
@@ -1816,6 +1816,37 @@ def admin_export_user_access(_admin: dict = Depends(require_admin_user)):
         content=rows,
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
+
+
+@router.get("/doc/{name}", response_class=HTMLResponse)
+def admin_read_doc(name: str, _admin: dict = Depends(require_admin_user)):
+    """
+    เอกสารใน docs/ เสิร์ฟใต้ prefix ของแอดมิน — เส้นสำรองของ `/doc/{name}` ใน main.py
+
+    ทำไมต้องมีสองเส้น: บนเซิร์ฟเวอร์จริง `/doc/DATA_FLOW` ตอบ 404 เปล่า ๆ (ไม่ใช่ 404
+    พร้อมข้อความไทยของแอป) ทั้งที่โค้ด deploy ครบแล้ว — แปลว่า request ไปไม่ถึงแอป
+    เพราะตัวเสิร์ฟหน้าเซิร์ฟเวอร์รับ `/` เองแล้ว forward ให้แอปเฉพาะ prefix ของ API
+    `/doc/` เป็น prefix ใหม่ที่ไม่มีใครไปเพิ่มให้
+
+    เส้นนี้อยู่ใต้ `/admin` ซึ่งใช้งานได้อยู่แล้วแน่นอน (ทั้งหน้าแอดมินเรียกผ่านมันหมด)
+    จึงไม่ต้องรอ IT แก้ค่า proxy · ฝั่งหน้าเว็บดึงด้วย token แล้วเปิดเป็น blob
+    เพราะแท็บใหม่ไม่พก Authorization ไปให้
+
+    dev เท่านั้น — ตรงกับลิงก์ที่อยู่ในแท็บ「แหล่งข้อมูล」ซึ่งล็อกให้ dev อยู่แล้ว
+    """
+    from ..main import _DOCS_DIR
+    from ..services.markdown_view import render_markdown_page
+
+    if not _DOCS_DIR.is_dir():
+        raise HTTPException(status_code=404, detail="ไม่มีโฟลเดอร์เอกสารบนเครื่องนี้")
+    stem = str(name or "").strip()
+    if stem.lower().endswith(".md"):
+        stem = stem[:-3]
+    # เทียบกับไฟล์ที่มีอยู่จริงเท่านั้น จึงไม่มีทางหลุดออกนอกโฟลเดอร์แม้จะใส่ ../ มา
+    match = next((p for p in sorted(_DOCS_DIR.glob("*.md")) if p.stem == stem), None)
+    if match is None:
+        raise HTTPException(status_code=404, detail=f"ไม่พบเอกสาร '{stem}'")
+    return HTMLResponse(render_markdown_page(match.read_text(encoding="utf-8"), match.stem))
 
 
 @router.get("/dev-bundle")

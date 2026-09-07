@@ -116,6 +116,47 @@ class TestRepeatedErrorsCollapse(unittest.TestCase):
         self.assertIn("p.error && !sharedErr", body)
 
 
+class TestDocLinkSurvivesTheProxy(unittest.TestCase):
+    """
+    บนเซิร์ฟเวอร์จริง /doc/DATA_FLOW ตอบ 404 เปล่า ๆ ทั้งที่ deploy ครบและไฟล์อยู่ใน git
+    — request ไปไม่ถึงแอป เพราะตัวเสิร์ฟหน้าเซิร์ฟเวอร์ forward ให้เฉพาะ prefix ของ API
+    เส้นสำรองใต้ /admin จึงต้องมีและต้องถูกใช้เป็นทางที่สอง
+    """
+
+    ADMIN_SRC = _read("backend/routers/admin.py")
+
+    def test_the_link_no_longer_hardcodes_a_root_path(self):
+        i = HTML.index('data-panel="data"')
+        j = HTML.index('data-panel="', i + 10)
+        panel = HTML[i:j]
+        self.assertNotIn('href="/doc/', panel, "ผูก path ตายตัวไว้อีกแล้ว")
+        self.assertIn("adminOpenDoc(", panel)
+
+    def test_it_builds_the_url_from_the_api_base(self):
+        self.assertIn("API_BASE_URL.replace(/\\/$/, \"\")", _fn("adminOpenDoc", 2600))
+
+    def test_there_is_a_fallback_under_the_admin_prefix(self):
+        body = _fn("adminOpenDoc", 2600)
+        self.assertIn("/admin/doc/", body)
+        self.assertIn('@router.get("/doc/{name}"', self.ADMIN_SRC)
+
+    def test_the_fallback_opens_a_blob_because_tabs_carry_no_token(self):
+        body = _fn("adminOpenDoc", 2600)
+        self.assertIn("createObjectURL", body)
+        self.assertIn("revokeObjectURL", body, "ต้องคืนหน่วยความจำของ blob ด้วย")
+
+    def test_the_admin_route_is_dev_only_and_cannot_escape_the_folder(self):
+        i = self.ADMIN_SRC.index('@router.get("/doc/{name}"')
+        block = self.ADMIN_SRC[i : i + 1600]
+        self.assertIn("Depends(require_admin_user)", block)
+        self.assertIn("_DOCS_DIR.glob", block, "ต้องเทียบกับไฟล์ที่มีอยู่จริง ไม่ใช่ต่อ path ตรง ๆ")
+
+    def test_the_failure_message_points_at_the_real_cause(self):
+        body = _fn("adminOpenDoc", 2600)
+        self.assertIn("อยู่ใน git", body, "ต้องบอกว่าไม่ใช่ไฟล์หาย")
+        self.assertIn("forward", body, "ต้องบอกให้ IT ตรวจการ forward เส้นทาง")
+
+
 class TestCssLivesAtTheEnd(unittest.TestCase):
     """กติกาของโปรเจกต์: กฎที่ประกาศก่อน .admin-* จะแพ้ลำดับเสมอ (เจอซ้ำหลายรอบ)"""
 
