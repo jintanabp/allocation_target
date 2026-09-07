@@ -2769,6 +2769,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   });
 
+  _installDriftRecheckOnReturn();
+
   _pollServerStatus();
 
   await initEntraAuth();
@@ -12555,11 +12557,21 @@ function _driftChanges(rows) {
   });
 }
 
+/** เวลาที่ตรวจเป้าครั้งล่าสุด (ms) — ใช้กันตรวจถี่เกินตอนสลับแท็บไปมา */
+let _lastDriftCheckAt = 0;
+
+/** เปิดหน้าค้างไว้นานเท่านี้แล้วกลับมา ถึงจะคุ้มที่จะตรวจซ้ำให้ */
+const DRIFT_RECHECK_AFTER_MS = 30 * 60 * 1000;
+
 /**
  * ตรวจว่าเป้าใน Target Sun เปลี่ยนไปจากตอนโหลดขั้นที่ 1 หรือยัง
  *
- * เรียกตอนเปิดหน้ารวมภาค (เงียบ ๆ) และตอนผู้ใช้กดปุ่มเอง — ไม่ยิงเป็นรอบอัตโนมัติ
- * เพราะแต่ละครั้งต้องอ่าน Target Sun ทีละทีม (ภาคหนึ่งมีได้ถึงสิบกว่าทีม)
+ * เรียกตอนเปิดหน้า (เงียบ ๆ) · ตอนผู้ใช้กดปุ่มเอง · และตอนกลับมาที่แท็บหลังทิ้งไว้
+ * นานเกิน DRIFT_RECHECK_AFTER_MS (ดู _installDriftRecheckOnReturn)
+ *
+ * **ไม่ยิงเป็นรอบอัตโนมัติ** เพราะแต่ละครั้งต้องอ่าน Target Sun ทีละทีม
+ * (ภาคหนึ่งมีได้ถึงสิบกว่าทีม) การ poll จะกลายเป็นสิบกว่าคำขอต่อรอบต่อคน
+ * ซึ่งไปซ้ำเติมเสียงร้องเรียนเรื่องความเร็วที่ยังไม่มีงานแก้
  *
  * คนที่เกลี่ยเป้าทั้งภาคเปิดหน้าค้างไว้ทีละหลายชั่วโมง ของเดิมจะรู้ว่าเป้าเปลี่ยน
  * ก็ตอนกดส่งแล้วโดน 409 ซึ่งตอนนั้นเกลี่ยหีบข้ามซุปไปหมดแล้ว
@@ -12568,6 +12580,7 @@ async function checkTargetSunDrift(opts = {}) {
   const silent = !!opts.silent;
   const ids = _driftScopeSupIds();
   if (!ids.length) return null;
+  _lastDriftCheckAt = Date.now();
   const btn = document.getElementById("targetDriftBtn");
   if (btn && !silent) { btn.disabled = true; btn.textContent = "กำลังตรวจ…"; }
   try {
@@ -12599,6 +12612,26 @@ async function checkTargetSunDrift(opts = {}) {
   } finally {
     if (btn && !silent) { btn.disabled = false; btn.textContent = "ตรวจเป้าล่าสุด"; }
   }
+}
+
+/**
+ * กลับมาที่แท็บหลังทิ้งหน้าไว้นาน → ตรวจเป้าให้เงียบ ๆ หนึ่งครั้ง
+ *
+ * ตอบเคสที่โค้ดตรวจเป้าบรรยายไว้เองว่า "เปิดหน้าค้างไว้ทีละหลายชั่วโมง" — เดิมคนกลุ่มนี้
+ * รู้ว่าเป้าขยับก็ตอนกดส่งแล้วโดน 409 ซึ่งกระจายหีบไปหมดแล้ว
+ *
+ * ต้นทุนเท่ากับเปิดหน้าใหม่ 1 ครั้ง ไม่ใช่ทุกนาที — ยิงเฉพาะตอน "กลับมาดู" จริง ๆ
+ * และเว้นระยะอย่างน้อย DRIFT_RECHECK_AFTER_MS กันคนสลับแท็บไปมาแล้วยิงรัว
+ */
+function _installDriftRecheckOnReturn() {
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) return;
+    if (Date.now() - _lastDriftCheckAt < DRIFT_RECHECK_AFTER_MS) return;
+    if (!_driftScopeSupIds().length) return;   // ยังไม่ได้เลือกทีม / ยังไม่ได้โหลดข้อมูล
+    checkTargetSunDrift({ silent: true }).catch((e) =>
+      console.warn("drift recheck on return:", e)
+    );
+  });
 }
 
 function syncTargetDriftNotice() {
