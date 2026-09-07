@@ -9946,3 +9946,158 @@ tr.emp-row--no-target .emp-tag {
   height: auto;
   max-height: none;
 }
+
+/* ── หน้า「แหล่งข้อมูล」: จัดระเบียบหัวการ์ดและรายการ ──────────────────────
+   เขียนท้ายไฟล์ตามกติกาของโปรเจกต์ — กฎที่ประกาศก่อน .admin-table / .admin-*
+   จะแพ้ลำดับเสมอ (เจอซ้ำหลายรอบ) */
+
+/* ปุ่ม 6 อันเรียงแถวเดียวไม่มีการแบ่ง ทำให้แยกไม่ออกว่าอันไหน "ตรวจสอบ"
+   อันไหน "ดาวน์โหลด" — จับเป็นกลุ่มมีป้ายกำกับและกรอบอ่อน ๆ */
+#adminView .admin-btn-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-2, var(--white));
+}
+#adminView .admin-btn-group__label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text-3);
+  padding-right: 2px;
+  white-space: nowrap;
+}
+
+/* คำเตือนเรื่องข้อมูลส่วนบุคคล — เดิมจมอยู่ในย่อหน้ายาว 433 ตัวอักษร */
+#adminView .admin-note-warn {
+  margin: 0 0 14px;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-2);
+  background: var(--amber-50, #fff8e6);
+  border: 1px solid var(--amber-200, #f0d9a0);
+  border-radius: 10px;
+}
+#adminView .admin-note-warn code {
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.05);
+}
+
+/* รายชื่อตาราง Fabric เดิมต่อกันด้วยคอมมาจนอ่านเหมือนย่อหน้า — เรียงเป็นชิป */
+#adminView .admin-inv-chips-label { margin: 10px 0 6px; }
+#adminView .admin-inv-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+#adminView .admin-inv-chips code {
+  font-size: 11.5px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--white);
+  white-space: nowrap;
+}
+#adminView .admin-inv-chips--muted code { opacity: 0.72; }
+
+/* ทุกช่องงวดพังด้วยเหตุเดียวกัน = เรื่องเดียว ไม่ใช่หกเรื่อง */
+#adminView .admin-target-periods__banner {
+  grid-column: 1 / -1;
+  margin-bottom: 4px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--red-700, #b42318);
+  background: var(--red-50, #fef3f2);
+  border: 1px solid var(--red-200, #fecdca);
+  border-radius: 10px;
+}
+
+/* บล็อกที่พับอยู่เคยกินที่เท่ากล่องเปล่า — สี่อันเรียงกันดูเหมือนการ์ดว่างสี่ใบ
+   พับอยู่ = ยังไม่สนใจ ให้แน่นเหมือนรายการ พอกางค่อยคืนที่ให้เต็ม */
+#adminView .admin-inv-block:not([open]) {
+  padding: 7px 12px;
+  margin-bottom: 6px;
+}
+#adminView .admin-inv-block:not([open]):hover {
+  border-color: var(--primary-300, #c7d2fe);
+  background: var(--bg-2, #fafafa);
+}
+
+/* หน้าแหล่งข้อมูล: หมวดย่อยเป็นแผ่นกดดู แทน <details> ห้าอันเรียงซ้อน
+   เดิมพับอยู่ก็กินที่เท่ากล่องเปล่าห้าใบ กางอันเดียวก็ดันอันอื่นหายจากจอ */
+#adminView .admin-inv-conn {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--white);
+}
+#adminView .admin-inv-conn__dot { font-size: 10px; line-height: 1; }
+#adminView .admin-inv-conn__ids { margin-left: auto; font-size: 12px; }
+#adminView .admin-inv-conn code { font-size: 11.5px; }
+
+#adminView .admin-inv-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+#adminView .admin-inv-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--white);
+  transition: border-color 0.12s, box-shadow 0.12s, transform 0.12s;
+}
+#adminView .admin-inv-tile:hover {
+  border-color: var(--primary-400, #818cf8);
+  box-shadow: 0 2px 10px rgba(79, 70, 229, 0.1);
+  transform: translateY(-1px);
+}
+#adminView .admin-inv-tile:focus-visible {
+  outline: 2px solid var(--primary-500, #6366f1);
+  outline-offset: 2px;
+}
+#adminView .admin-inv-tile__label { font-size: 12px; color: var(--text-3); }
+#adminView .admin-inv-tile__big { font-size: 22px; font-weight: 800; color: var(--text-1); line-height: 1.15; }
+#adminView .admin-inv-tile__sub { font-size: 11.5px; color: var(--text-3); }
+#adminView .admin-inv-tile::after {
+  content: "ดูรายละเอียด →";
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--primary-600, #4f46e5);
+  opacity: 0.75;
+}
+#adminView .admin-inv-stamp { margin-top: 12px; font-size: 12px; }
+
+/* ตารางในโมดัลรายละเอียด — ยาวได้ ให้เลื่อนในตัวเอง ไม่ดันโมดัลจนล้นจอ */
+#infoModal .admin-table-wrap { max-height: 58vh; overflow: auto; }
+#infoModal .admin-inv-chips { margin-top: 4px; }
+
+/* โมดัลรายละเอียดของหน้าแหล่งข้อมูลมีตาราง 3-4 คอลัมน์ — ความกว้างมาตรฐาน
+   ของ modal-card บีบจนคอลัมน์ท้ายหาย · ขยายเฉพาะใบที่มีตาราง/ชิปอยู่ข้างใน
+   (ใบที่เป็นข้อความยืนยันสั้น ๆ ต้องแคบเหมือนเดิม ไม่งั้นอ่านยากขึ้น) */
+#infoModal .modal-card:has(.admin-table-wrap),
+#infoModal .modal-card:has(.admin-inv-chips) {
+  width: min(940px, 94vw);
+  max-width: min(940px, 94vw);
+}
+#infoModal .admin-table--compact { width: 100%; }
+#infoModal .admin-table--compact td,
+#infoModal .admin-table--compact th { white-space: nowrap; }

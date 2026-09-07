@@ -14341,8 +14341,16 @@ function adminRenderTargetPeriods(periods) {
     box.innerHTML = `<span class="admin-inv-muted">ยังไม่มีข้อมูลงวดจาก Target Sun (หรือยังไม่ได้เปิด TARGETSUN_READ)</span>`;
     return;
   }
-  box.innerHTML = periods.map((p) => {
-    const err = p.error ? escapeHtml(String(p.error)) : "";
+  // ทุกใบพังด้วยเหตุเดียวกัน = ปัญหาการเชื่อมต่อ ไม่ใช่ปัญหาของแต่ละ Div×หน่วย
+  // เดิมพิมพ์ข้อความเดียวกันซ้ำ 6 ใบจนกลบสิ่งที่การ์ดควรบอก (Div ไหน หน่วยไหน)
+  const errs = periods.map((p) => String(p.error || ""));
+  const sharedErr = errs[0] && errs.every((e) => e === errs[0]) ? errs[0] : "";
+  const banner = sharedErr
+    ? `<div class="admin-target-periods__banner">⚠ ทุกช่องอ่านไม่ได้ด้วยเหตุเดียวกัน — ${escapeHtml(sharedErr)}</div>`
+    : "";
+
+  box.innerHTML = banner + periods.map((p) => {
+    const err = p.error && !sharedErr ? escapeHtml(String(p.error)) : "";
     const period = p.target_year && p.target_month
       ? `${String(p.target_month).padStart(2, "0")}/${p.target_year}`
       : "—";
@@ -16333,9 +16341,122 @@ async function adminLoadTeam(forceRefresh, discardDraft) {
   }
 }
 
+/**
+ * เวลาแบบอ่านออก — หน้าแหล่งข้อมูลเดิมโชว์ ISO ดิบพร้อมไมโครวินาทีและ +00:00
+ * เช่น "2026-09-07T09:03:35.052409+00:00" ซึ่งนอกจากอ่านยากแล้วยังเป็นเวลา UTC
+ * คนอ่านจึงคิดว่าแคชเก่ากว่าความจริงเจ็ดชั่วโมง
+ *
+ * แปลงไม่ได้ให้คืนค่าเดิม ดีกว่ากลืนข้อมูลหายไปเฉย ๆ
+ */
+function _adminFmtTime(iso) {
+  const s = String(iso || "").trim();
+  if (!s) return "—";
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return s;
+  return d.toLocaleString("th-TH", {
+    day: "numeric", month: "short", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+    timeZone: "Asia/Bangkok",
+  });
+}
+
+/** ข้อมูลชุดล่าสุดของหน้าแหล่งข้อมูล — โมดัลรายละเอียดอ่านจากตรงนี้ */
+let _adminInvData = null;
+
+function _invTable(head, rows) {
+  if (!rows.length) return `<p class="admin-inv-muted">ไม่มีข้อมูล</p>`;
+  return `<div class="admin-table-wrap"><table class="admin-table admin-table--compact">
+    <thead><tr>${head.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead>
+    <tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+/**
+ * รายละเอียดของแต่ละหมวดในหน้าแหล่งข้อมูล — เปิดเป็นโมดัลแยก
+ *
+ * เดิมทั้งห้าหมวดเป็น <details> เรียงซ้อนกันในการ์ดเดียว พับอยู่ก็ยังกินที่เท่ากล่องเปล่า
+ * ห้าใบ กางอันเดียวก็ดันอันอื่นหายไปจากจอ · ตอนนี้การ์ดเหลือเป็นรายการสั้น ๆ
+ * กดอันที่สนใจแล้วค่อยเปิดดูเต็ม ๆ
+ */
+function adminOpenInventoryDetail(kind) {
+  const inv = _adminInvData;
+  if (!inv) return;
+  const fc = inv.fabric || {};
+  const local = inv.local_config || {};
+  const patterns = (inv.data_dir && inv.data_dir.patterns) || [];
+  const outbound = inv.outbound || {};
+  const apiMap = inv.api_map || [];
+  let title = "";
+  let body = "";
+
+  if (kind === "tables") {
+    title = "ตารางใน Semantic Model (Fabric)";
+    const chips = (list, cls) =>
+      `<div class="admin-inv-chips ${cls}">${(list || []).map((t) => `<code>${escapeHtml(t)}</code>`).join("")}</div>`;
+    body = `<p class="admin-inv-chips-label"><strong>ที่ใช้อยู่</strong> (${(fc.tables_runtime || []).length})</p>
+      ${chips(fc.tables_runtime, "")}
+      <p class="admin-inv-chips-label admin-inv-muted" style="margin-top:14px;"><strong>ไม่ใช้แล้ว</strong> (${(fc.tables_deprecated || []).length})</p>
+      ${chips(fc.tables_deprecated, "admin-inv-chips--muted")}`;
+  } else if (kind === "config") {
+    title = "ไฟล์ config บน server";
+    body = _invTable(
+      ["ไฟล์", "สิ่งที่มีอยู่", "อัปเดตล่าสุด"],
+      [
+        [`<code>user_access.json</code>`, `<b>${local.user_access_rows ?? 0}</b> แถว`, "—"],
+        [
+          `<code>access_hierarchy.json</code>`,
+          `<b>${local.access_hierarchy_supervisors ?? 0}</b> supervisor · <b>${local.access_hierarchy_managers ?? 0}</b> manager`,
+          escapeHtml(_adminFmtTime(local.access_hierarchy_mtime)),
+        ],
+        [`<code>managers_cache.json</code>`, "แคชลำดับชั้น", escapeHtml(_adminFmtTime(local.managers_cache_mtime))],
+      ]
+    );
+  } else if (kind === "cache") {
+    title = `แคชในโฟลเดอร์ data/ (${patterns.length} ประเภท)`;
+    body = _invTable(
+      ["รูปแบบชื่อไฟล์", "จำนวน", "ไฟล์ล่าสุด", "เมื่อ"],
+      patterns.map((p) => [
+        `<code>${escapeHtml(p.pattern)}</code>`,
+        String(p.count),
+        `<span class="admin-inv-muted">${escapeHtml(p.latest_file || "—")}</span>`,
+        escapeHtml(_adminFmtTime(p.latest_mtime)),
+      ])
+    );
+  } else if (kind === "outbound") {
+    title = "ปลายทางส่งออก";
+    body = _invTable(
+      ["ปลายทาง", "สถานะ", "URL"],
+      [
+        [
+          "Target Sun",
+          outbound.targetsun_configured ? `<span class="admin-inv-ok">ตั้งค่าแล้ว</span>` : "—",
+          `<code class="admin-inv-url">${escapeHtml(outbound.targetsun_url || "—")}</code>`,
+        ],
+        [
+          "OneLake",
+          outbound.onelake_configured ? `<span class="admin-inv-ok">ตั้งค่าแล้ว</span>` : `<span class="admin-inv-muted">ยังไม่ตั้ง</span>`,
+          "—",
+        ],
+      ]
+    );
+  } else if (kind === "api") {
+    title = `API แต่ละเส้นดึงจากแหล่งไหน (${apiMap.length})`;
+    body = _invTable(
+      ["Endpoint", "ใช้ Fabric", "แหล่งข้อมูล"],
+      apiMap.map((a) => [
+        `<code>${escapeHtml(a.endpoint)}</code>`,
+        a.fabric ? "ใช่" : `<span class="admin-inv-muted">ไม่</span>`,
+        escapeHtml((a.sources || []).join(", ")),
+      ])
+    );
+  }
+  _showInfoModal({ title, bodyHtml: body });
+}
+
 function _adminRenderInventory(inv) {
   const el = document.getElementById("adminInventoryBody");
   if (!el || !inv) return;
+  _adminInvData = inv;
   const fc = inv.fabric || {};
   const conn = fc.connection || {};
   const local = inv.local_config || {};
@@ -16345,66 +16466,37 @@ function _adminRenderInventory(inv) {
 
   const connSkipped = !!conn.skipped;
   const connOk = connSkipped
-    ? "ยังไม่ทดสอบ — กด「ทดสอบ Fabric」"
+    ? "ยังไม่ทดสอบ — กด「โครงข้อมูล Fabric」"
     : conn.ok
       ? "เชื่อมต่อได้"
       : "เชื่อมต่อไม่ได้";
   const connCls = connSkipped ? "admin-inv-muted" : conn.ok ? "admin-inv-ok" : "admin-inv-err";
 
+  const cacheFiles = patterns.reduce((a, p) => a + (Number(p.count) || 0), 0);
+  const tile = (kind, label, big, sub) =>
+    `<button type="button" class="admin-inv-tile" onclick="adminOpenInventoryDetail('${kind}')">
+      <span class="admin-inv-tile__label">${escapeHtml(label)}</span>
+      <span class="admin-inv-tile__big">${big}</span>
+      <span class="admin-inv-tile__sub">${sub}</span>
+    </button>`;
+
   el.innerHTML = `
-    <details class="admin-inv-block" open>
-      <summary>Semantic Model (Fabric)</summary>
-      <p class="${connCls}">${escapeHtml(connOk)}${conn.http_status != null ? ` (HTTP ${conn.http_status})` : ""}</p>
-      <p>Dataset: <code>${escapeHtml(conn.dataset_id || "—")}</code> · Workspace: <code>${escapeHtml(conn.workspace_id || "—")}</code></p>
-      ${conn.error ? `<p class="admin-inv-err">${escapeHtml(conn.error)}</p>` : ""}
-      <p><strong>ตารางที่ใช้:</strong> ${(fc.tables_runtime || []).map((t) => `<code>${escapeHtml(t)}</code>`).join(", ")}</p>
-      <p class="admin-inv-muted"><strong>ไม่ใช้แล้ว:</strong> ${(fc.tables_deprecated || []).map((t) => `<code>${escapeHtml(t)}</code>`).join(", ")}</p>
-    </details>
-    <details class="admin-inv-block" open>
-      <summary>ไฟล์ config บน server</summary>
-      <ul class="admin-inv-list">
-        <li>user_access: <b>${local.user_access_rows ?? 0}</b> แถว</li>
-        <li>access_hierarchy: <b>${local.access_hierarchy_supervisors ?? 0}</b> supervisor · <b>${local.access_hierarchy_managers ?? 0}</b> manager</li>
-        <li>อัปเดต hierarchy: ${escapeHtml(local.access_hierarchy_mtime || "—")}</li>
-        <li>managers_cache: ${escapeHtml(local.managers_cache_mtime || "—")}</li>
-      </ul>
-    </details>
-    <details class="admin-inv-block">
-      <summary>Cache ใน data/ (${patterns.length} ประเภท)</summary>
-      <table class="admin-table admin-table--compact">
-        <thead><tr><th>Pattern</th><th>จำนวน</th><th>ล่าสุด</th></tr></thead>
-        <tbody>
-          ${patterns
-            .map(
-              (p) =>
-                `<tr><td><code>${escapeHtml(p.pattern)}</code></td><td>${p.count}</td><td>${escapeHtml(p.latest_file || "—")}<br><small>${escapeHtml(p.latest_mtime || "")}</small></td></tr>`
-            )
-            .join("")}
-        </tbody>
-      </table>
-    </details>
-    <details class="admin-inv-block">
-      <summary>ปลายทางส่งออก</summary>
-      <ul class="admin-inv-list">
-        <li>TargetSun: ${outbound.targetsun_configured ? "ตั้งค่าแล้ว" : "—"}<br><code class="admin-inv-url">${escapeHtml(outbound.targetsun_url || "")}</code></li>
-        <li>OneLake: ${outbound.onelake_configured ? "ตั้งค่าแล้ว" : "ยังไม่ตั้ง"}</li>
-      </ul>
-    </details>
-    <details class="admin-inv-block">
-      <summary>API → แหล่งข้อมูล (${apiMap.length})</summary>
-      <table class="admin-table admin-table--compact">
-        <thead><tr><th>Endpoint</th><th>Fabric</th><th>แหล่ง</th></tr></thead>
-        <tbody>
-          ${apiMap
-            .map(
-              (a) =>
-                `<tr><td><code>${escapeHtml(a.endpoint)}</code></td><td>${a.fabric ? "ใช่" : "ไม่"}</td><td>${escapeHtml((a.sources || []).join(", "))}</td></tr>`
-            )
-            .join("")}
-        </tbody>
-      </table>
-    </details>
-    <p class="admin-inv-muted">สร้างเมื่อ ${escapeHtml(inv.generated_at || "")}</p>`;
+    <div class="admin-inv-conn">
+      <span class="admin-inv-conn__dot ${connCls}">●</span>
+      <span><strong>Semantic Model (Fabric)</strong> — <span class="${connCls}">${escapeHtml(connOk)}</span>${
+        conn.http_status != null ? ` <span class="admin-inv-muted">(HTTP ${conn.http_status})</span>` : ""
+      }</span>
+      <span class="admin-inv-muted admin-inv-conn__ids">Dataset <code>${escapeHtml(conn.dataset_id || "—")}</code> · Workspace <code>${escapeHtml(conn.workspace_id || "—")}</code></span>
+    </div>
+    ${conn.error ? `<p class="admin-inv-err">${escapeHtml(conn.error)}</p>` : ""}
+    <div class="admin-inv-tiles">
+      ${tile("tables", "ตารางที่ใช้", (fc.tables_runtime || []).length, `เลิกใช้แล้ว ${(fc.tables_deprecated || []).length}`)}
+      ${tile("config", "ไฟล์ config", local.user_access_rows ?? 0, "แถวในทะเบียนผู้ใช้")}
+      ${tile("cache", "แคชใน data/", patterns.length, `${cacheFiles.toLocaleString("th-TH")} ไฟล์`)}
+      ${tile("outbound", "ปลายทางส่งออก", outbound.targetsun_configured ? "1" : "0", outbound.onelake_configured ? "+ OneLake" : "ยังไม่ตั้ง OneLake")}
+      ${tile("api", "API ที่ดึงข้อมูล", apiMap.length, "เส้นทาง")}
+    </div>
+    <p class="admin-inv-muted admin-inv-stamp">ข้อมูลนี้ดึงเมื่อ ${escapeHtml(_adminFmtTime(inv.generated_at))}</p>`;
 }
 
 async function adminLoadInventory(checkFabric) {
