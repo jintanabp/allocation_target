@@ -16360,6 +16360,56 @@ function _adminFmtTime(iso) {
   });
 }
 
+/**
+ * เปิดเอกสารใน docs/ — ต้องประกอบ URL จาก API_BASE_URL ไม่ใช่ผูก "/doc/..." ตายตัว
+ *
+ * เดิมเป็น <a href="/doc/DATA_FLOW"> ซึ่งชี้ราก origin เสมอ · ถ้าแอปถูกเสิร์ฟใต้ path ย่อย
+ * (เช่น https://host/app/) ลิงก์จะยิงไปผิดที่ · และถ้า reverse proxy หน้าเซิร์ฟเวอร์
+ * ไม่ได้ forward เส้น /doc/ ผู้ใช้จะเจอหน้า error ของ proxy โดยไม่รู้ว่าเกิดอะไรขึ้น
+ *
+ * ตรวจก่อนเปิด แล้วบอกสาเหตุให้ตรง — เอกสารอยู่ใน git อยู่แล้ว ถ้าเปิดไม่ได้
+ * แปลว่าเป็นเรื่องเส้นทาง ไม่ใช่ไฟล์หาย
+ */
+async function adminOpenDoc(name) {
+  const base = API_BASE_URL.replace(/\/$/, "");
+  const pretty = `${base}/doc/${encodeURIComponent(name)}`;
+  try {
+    // 1) เส้นสวย /doc/... — ใช้ได้เมื่อแอปรับ request ที่รากเอง (เช่นตอนรันในเครื่อง)
+    const res = await fetchWithTimeout(pretty, {}, 15000).catch(() => null);
+    if (res && res.ok) { window.open(pretty, "_blank", "noopener"); return; }
+
+    // 2) เส้นสำรองใต้ /admin ซึ่ง proxy หน้าเซิร์ฟเวอร์ forward ให้อยู่แล้วแน่นอน
+    //    ต้องดึงเองแล้วเปิดเป็น blob เพราะแท็บใหม่ไม่พก Authorization ไปให้
+    const viaAdmin = `${base}/admin/doc/${encodeURIComponent(name)}`;
+    const res2 = await fetchWithTimeout(viaAdmin, {}, 20000).catch(() => null);
+    if (res2 && res2.ok) {
+      const blob = new Blob([await res2.text()], { type: "text/html;charset=utf-8" });
+      const u = URL.createObjectURL(blob);
+      window.open(u, "_blank", "noopener");
+      setTimeout(() => URL.revokeObjectURL(u), 60000);
+      return;
+    }
+
+    const status = res2 ? res2.status : res ? res.status : "—";
+    _showInfoModal({
+      title: "เปิดเอกสารไม่ได้",
+      bodyHtml:
+        `<p style="margin:0 0 10px;">ลองสองเส้นแล้วไม่สำเร็จ (ล่าสุดตอบ <b>HTTP ${escapeHtml(String(status))}</b>)</p>` +
+        `<p style="margin:0 0 4px;"><code>${escapeHtml(pretty)}</code></p>` +
+        `<p style="margin:0 0 12px;"><code>${escapeHtml(viaAdmin)}</code></p>` +
+        `<p style="margin:0 0 8px;">ไฟล์ <code>docs/${escapeHtml(name)}.md</code> อยู่ใน git อยู่แล้ว ` +
+        `จึงไม่ใช่ไฟล์หาย — ถ้าเส้นแรก 404 แบบไม่มีข้อความไทย แปลว่า request ไปไม่ถึงแอป ` +
+        `ให้ IT ตรวจว่าตัวเสิร์ฟหน้าเซิร์ฟเวอร์ forward เส้น <code>/doc/</code> ไปที่แอปหรือยัง</p>` +
+        `<p style="margin:0;">ระหว่างนี้อ่านได้จากในโปรเจกต์ที่ <code>docs/${escapeHtml(name)}.md</code></p>`,
+    });
+  } catch (e) {
+    _showInfoModal({
+      title: "เปิดเอกสารไม่ได้",
+      bodyHtml: `<p style="margin:0;">${escapeHtml(_userFacingError(e, "ไม่ทราบสาเหตุ"))}</p>`,
+    });
+  }
+}
+
 /** ข้อมูลชุดล่าสุดของหน้าแหล่งข้อมูล — โมดัลรายละเอียดอ่านจากตรงนี้ */
 let _adminInvData = null;
 
