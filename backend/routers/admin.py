@@ -67,7 +67,7 @@ from ..services.user_access_store import (
     upsert_row,
     write_rows,
 )
-from ..services import emp_assignment_store, no_target_store
+from ..services import dev_bundle, emp_assignment_store, no_target_store
 from ..services.admin_team import list_supervisor_codes, load_supervisor_team
 from ..services.admin_inventory import build_data_inventory
 from ..services.sku_link_store import (
@@ -1814,6 +1814,46 @@ def admin_export_user_access(_admin: dict = Depends(require_admin_user)):
     fname = "user_access.json"
     return JSONResponse(
         content=rows,
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.get("/dev-bundle")
+def admin_download_dev_bundle(
+    admin: dict = Depends(require_admin_user),
+    light: bool = Query(False, description="ตัดผลกระจาย/เป้าตั้งต้นออก — เอาแค่ config กับแคชโครงสร้าง"),
+):
+    """
+    ชุดข้อมูลของ server สำหรับเอาไปพัฒนาต่อในเครื่อง — config + แคช รวมเป็น .zip
+
+    ทำไมต้องมี: พัฒนาในเครื่องแล้วอยากใช้ข้อมูลชุดเดียวกับที่ server ใช้จริง ไม่งั้น
+    ผลที่เห็นสองที่ไม่ตรงกันโดยไม่มีใครรู้ตัว · และของหลายอย่างในชุดนี้ไม่มีปุ่ม
+    ดาวน์โหลดของตัวเอง เดิมต้องขอ IT ก๊อปจากเครื่อง server ให้ทีละรอบ
+
+    dev เท่านั้น เพราะดึงข้อมูลทั้งระบบออกในครั้งเดียว รวมทะเบียนผู้ใช้ทั้งองค์กร
+    — ไม่มี `.env` อยู่ในชุดโดยตั้งใจ (มี secret) · อ่านอย่างเดียว ไม่เขียนไฟล์
+    """
+    content, manifest = dev_bundle.build_dev_bundle(light=light)
+    fname = dev_bundle.bundle_filename(light=light)
+    total_files = sum(int(m.get("files") or 0) for m in manifest)
+    _audit_admin(
+        admin,
+        action="admin_dev_bundle",
+        message="ดาวน์โหลดชุดข้อมูลสำหรับพัฒนา",
+        detail=(
+            f"{'ชุดเบา' if light else 'ชุดเต็ม'} · {total_files} ไฟล์ · "
+            f"{len(content) / 1024 / 1024:.1f} MB"
+        ),
+        level="warn",
+        context={
+            "light": bool(light),
+            "zip_bytes": len(content),
+            "parts": {m["part"]: m.get("files", 0) for m in manifest},
+        },
+    )
+    return Response(
+        content=content,
+        media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
 
