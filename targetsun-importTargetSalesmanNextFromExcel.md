@@ -55,8 +55,26 @@ If there is no header row, use the column order below (column A = index 0).
 | J | UPDATEDATE | No | Optional; if empty, server time is used |
 | K | USERCODE | Yes | User code (5 chars) |
 
-**Insert/update key:** `PRODUCTCODE` + `SALESTYPE` + `DIVISIONCODE` + `SALESMANCODE` + `AREACODE` + `PROVINCECODE`  
+**Insert/update key:** `PRODUCTCODE` + `SALESTYPE` + `DIVISIONCODE` + `SALESMANCODE` + `AREACODE` + `PROVINCECODE` + `WAREHOUSECODE`  
 Duplicate keys within the same file are skipped.
+
+> **แก้ไข 7 ก.ย. 2026 — `WAREHOUSECODE` ถูกเพิ่มเข้าคีย์บน production แล้ว**
+> เจ้าของระบบยืนยันว่าตั้งใจให้เก็บเป้าแยกรายคลังจริง ๆ
+>
+> ก่อนหน้านั้นคีย์มี 6 คอลัมน์ ทำให้สองแถวที่ต่างกันแค่คลังมีคีย์เหมือนกันเป๊ะ
+> เป็นสาเหตุที่ยอดปลายทางมากกว่าไฟล์ที่ส่งทุกครั้ง (10 ครั้งใน 6 ทีม จากการส่ง 234 ครั้ง)
+> วัดจากตาราง `tga_target_salesman_next` เอง เช่น SL460 งวด 09/2026 มี 1,593 แถว
+> แต่มีแค่ 1,395 คีย์ — 198 คีย์มีสองแถวที่ต่างกันแค่รหัสคลังล้วน ๆ
+>
+> **ผลต่อฝั่งเรา:** กติกา "Duplicate keys within the same file are skipped" ยังใช้ได้เหมือนเดิม
+> ไม่ต้องให้ปลายทางแก้อะไรเพิ่ม เพราะแถวคนละคลังไม่ใช่คีย์ซ้ำอีกต่อไป · สิ่งที่ต้องแก้คือ
+> ตัวสร้างไฟล์ของเราที่เคยยุบแถวคนละคลังเป็นแถวเดียว ซึ่งแก้แล้วที่
+> `backend/services/lakehouse.py` (`_dim_key_series` / `_collapse_grain_duplicate_keys` /
+> `_merge_duplicate_import_keys`)
+>
+> ⚠️ **ยังไม่ได้ยืนยันสองข้อ** — (1) UAT อาจยังไม่ได้เพิ่มคีย์ตาม production
+> (2) แถวซ้ำเดิมที่ค้างอยู่ก่อนเปลี่ยนคีย์ ถูกล้างหรือยัง ถ้ายัง เป้าเก่าของคลังที่สอง
+> จะยังค้างอยู่จนกว่าจะมีการส่งทับรายคลัง
 
 **Supported date formats:** `d/m/Y`, `d/m/Y H:i:s`, `Y-m-d`, Buddhist year (25xx converted to CE automatically), or Excel serial dates.
 

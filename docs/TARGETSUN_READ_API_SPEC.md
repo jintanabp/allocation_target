@@ -238,10 +238,21 @@ Read API อ่านเป้าหีบจากตาราง `TGA_TARGET_S
 ### Business key (insert/update ตอน import)
 
 ```
-PRODUCTCODE + SALESTYPE + DIVISIONCODE + SALESMANCODE + AREACODE + PROVINCECODE
+PRODUCTCODE + SALESTYPE + DIVISIONCODE + SALESMANCODE + AREACODE + PROVINCECODE + WAREHOUSECODE
 ```
 
-`WAREHOUSECODE` แยกบรรทัดได้ แต่ไม่ใช่ส่วนหนึ่งของ duplicate key ตอน import
+**เปลี่ยนเมื่อ 7 ก.ย. 2026** — เจ้าของระบบเพิ่ม `WAREHOUSECODE` เข้าคีย์บน production
+เพราะตั้งใจให้เก็บเป้าแยกรายคลังจริง ๆ · ก่อนหน้านั้นคีย์มี 6 คอลัมน์ และ
+`WAREHOUSECODE` แยกบรรทัดได้แต่ไม่นับเป็นส่วนหนึ่งของ duplicate key
+ซึ่งเป็นสาเหตุที่ยอดปลายทางมากกว่าไฟล์ที่ส่งทุกครั้ง
+
+`WAREHOUSECODE` ว่างยังส่งได้ตามปกติ (Required = No) และ **"ว่าง" นับเป็นค่าคีย์
+ค่าหนึ่ง** — ไม่ใช่ค่าที่ถูกละเว้น แถวคลังว่างกับแถวคลัง `R404` จึงเป็นคนละคีย์กัน
+(ข้อมูลจริงในแคช: 49% ของแถว grain มีคลังว่าง)
+
+> **สถานะ UAT ยังไม่ยืนยัน** — ยืนยันแล้วเฉพาะ production · ตรวจว่า UAT เปลี่ยนตาม
+> หรือยังต้องส่งไฟล์ทดสอบเข้า UAT เท่านั้น อ่านอย่างเดียวตอบไม่ได้ (ดูหัวข้อถัดไป
+> ไม่มี endpoint ไหนคืนนิยามคีย์)
 
 ### Mapping ฝั่งแอป Target Allocation
 

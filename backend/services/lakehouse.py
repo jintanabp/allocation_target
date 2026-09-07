@@ -257,33 +257,59 @@ def _read_tga_grain_cache(
 
 
 def _dim_key_series(g: pd.DataFrame) -> list[pd.Series]:
-    """ค่า dim ที่ normalize แล้วเหมือนตอนเขียนลงไฟล์ — ใช้เทียบคีย์ upsert"""
+    """
+    ค่า dim ที่ normalize แล้วเหมือนตอนเขียนลงไฟล์ — ใช้เทียบคีย์ upsert
+
+    **WAREHOUSECODE อยู่ในคีย์แล้ว** ตั้งแต่ 7 ก.ย. 2026 เจ้าของ Target Sun เพิ่มเข้าไป
+    เองบน production เพราะตั้งใจให้เก็บเป้าแยกรายคลังจริง ๆ (ก่อนหน้านั้นคีย์มีแค่ 6
+    คอลัมน์ ทำให้สองแถวที่ต่างกันแค่คลังชนกันจนยอดปลายทางเกินไฟล์ทุกครั้ง)
+
+    คอลัมน์ warehouse_code อาจไม่มีในบางเฟรมที่ยังไม่ผ่านการเติม dim — ถือเป็นค่าว่าง
+    ซึ่งก็เป็นค่าคีย์ที่ถูกต้องค่าหนึ่ง ไม่ใช่ข้อผิดพลาด
+    """
+    wh = (
+        g["warehouse_code"].map(_cell_str)
+        if "warehouse_code" in g.columns
+        else pd.Series([""] * len(g), index=g.index)
+    )
     return [
         g["salestype"].map(_cell_str),
         g["divisioncode"].map(_cell_str),
         g["areacode"].map(_areacode_str),
         g["provincecode"].map(_cell_str),
+        wh,
     ]
 
 
 def _collapse_grain_duplicate_keys(grp: pd.DataFrame) -> tuple[pd.DataFrame, int]:
     """
-    ยุบแถว grain ของคู่ (พนักงาน×สินค้า) ที่ dim ตรงกันให้เหลือแถวเดียว แล้วรวม qty
+    ยุบแถว grain ของคู่ (พนักงาน×สินค้า) ที่คีย์ตรงกันให้เหลือแถวเดียว แล้วรวม qty
 
     คีย์ upsert ของ Target Sun คือ PRODUCTCODE+SALESTYPE+DIVISIONCODE+SALESMANCODE
-    +AREACODE+PROVINCECODE — ไม่มี WAREHOUSECODE อยู่ในคีย์ สองแถวที่ต่างกันแค่คลัง
-    จึงเป็น "แถวเดียวกัน" สำหรับ Oracle ถ้าไม่ยุบตรงนี้ หีบจะถูกแบ่งลงทั้งสองแถว
-    แล้วตัวนำเข้าจะข้ามแถวหลังทิ้ง — หีบหายโดยระบบยังรายงานว่าส่งสำเร็จ
-    (พบจริงในแคช: 13/78 ไฟล์ หนักสุดหายถึง 35% ของยอดทีมนั้น)
+    +AREACODE+PROVINCECODE **+WAREHOUSECODE** — สองแถวที่ต่างกันที่คลังจึงเป็น
+    "คนละแถว" ต้องส่งแยกกัน ห้ามยุบรวม ไม่งั้นคลังหนึ่งได้เป้าทั้งก้อนและอีกคลัง
+    ค้างเลขเดิม
 
-    คลังที่เก็บไว้เป็นของแถวที่ qty มากสุด เพราะ WAREHOUSECODE ถูกใช้ตอน insert เท่านั้น
+    ที่ยังต้องมีตัวยุบอยู่ เพราะ grain อาจมีแถวที่ **เหมือนกันทุกคอลัมน์รวมทั้งคลัง**
+    (เช่นแคชจากสองงวดที่ทับกัน) แถวแบบนั้นเป็นคีย์ซ้ำจริง ตัวนำเข้าจะข้ามแถวหลังทิ้ง
+    ต้องบวก qty รวมเป็นแถวเดียวก่อนส่ง
+
+    ประวัติ: ก่อน 7 ก.ย. 2026 คีย์ไม่มี WAREHOUSECODE ตรงนี้จึงยุบแถวที่ต่างกันแค่คลัง
+    ทิ้งด้วย ซึ่งถูกต้องกับกติกาตอนนั้น (พบในแคช 15/78 ไฟล์) พอเจ้าของระบบเพิ่มคลัง
+    เข้าคีย์แล้ว การยุบแบบนั้นกลายเป็นสิ่งที่ทำให้ยอดไม่ตรงเสียเอง
     """
     n = len(grp)
     if n < 2:
         return grp, 0
     g = grp.copy()
-    kcols = ["_k_st", "_k_div", "_k_area", "_k_prov"]
-    g["_k_st"], g["_k_div"], g["_k_area"], g["_k_prov"] = _dim_key_series(g)
+    kcols = ["_k_st", "_k_div", "_k_area", "_k_prov", "_k_wh"]
+    (
+        g["_k_st"],
+        g["_k_div"],
+        g["_k_area"],
+        g["_k_prov"],
+        g["_k_wh"],
+    ) = _dim_key_series(g)
     if not g.duplicated(subset=kcols).any():
         return grp, 0
     g = g.sort_values("qty", ascending=False, kind="stable")
@@ -467,7 +493,7 @@ def _grain_by_pair(dg: pd.DataFrame) -> dict[tuple[str, str], pd.DataFrame]:
     if collapsed:
         logger.warning(
             "TGA grain: ยุบแถวคีย์ซ้ำ %d แถว จาก %d คู่พนักงาน×สินค้า "
-            "(ต่างกันแค่ WAREHOUSECODE ซึ่งไม่อยู่ในคีย์ upsert ของ Target Sun)",
+            "(เหมือนกันทุกคอลัมน์รวมทั้ง WAREHOUSECODE — คีย์ซ้ำจริง)",
             collapsed,
             pairs,
         )
@@ -490,15 +516,25 @@ def _merge_duplicate_import_keys(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
     แถวที่ dim ยังไม่ครบจะไม่ถูกรวม (ยังไม่ใช่คีย์จริง และเดี๋ยวถูกคัดออกอยู่แล้ว)
     ตัวยุบต้นทางอยู่ที่ _collapse_grain_duplicate_keys — ตรงนี้กันแถวซ้ำที่มาจาก
     ทางอื่น เช่น การเติมแถวศูนย์หรือการเติม dim จาก Fabric
+
+    คีย์รวม WAREHOUSECODE แล้ว (ดู _dim_key_series) — แถวคนละคลังจึงรอดออกไปเป็น
+    คนละบรรทัดในไฟล์ ซึ่งตรงกับกติกา "Duplicate keys within the same file are skipped"
+    ของฝั่งนำเข้าพอดี เพราะมันไม่ใช่คีย์ซ้ำอีกต่อไป
     """
     if df.empty:
         return df, 0
     d = df.copy().reset_index(drop=True)
     d["_ord"] = range(len(d))
-    kcols = ["_k_sku", "_k_emp", "_k_st", "_k_div", "_k_area", "_k_prov"]
+    kcols = ["_k_sku", "_k_emp", "_k_st", "_k_div", "_k_area", "_k_prov", "_k_wh"]
     d["_k_sku"] = d["sku"].astype(str).str.strip()
     d["_k_emp"] = d["emp_id"].astype(str).str.strip()
-    d["_k_st"], d["_k_div"], d["_k_area"], d["_k_prov"] = _dim_key_series(d)
+    (
+        d["_k_st"],
+        d["_k_div"],
+        d["_k_area"],
+        d["_k_prov"],
+        d["_k_wh"],
+    ) = _dim_key_series(d)
 
     mask = _import_key_mask(d)
     part = d[mask]
@@ -2009,7 +2045,10 @@ def _build_tga_upload_dataframe(
     t_expand = time.perf_counter()
 
     # grain จากขั้นที่ 1 ครบทุกแถว → ไม่ยิง Fabric ซ้ำ (เร็วขึ้น ~2–3s)
-    # WAREHOUSECODE ไม่บังคับ import — เติมจาก payload / cache เท่านั้น
+    # WAREHOUSECODE ไม่ได้อยู่ในด่านนี้ เพราะ Fabric enrich ไม่ได้เติมคลังให้อยู่แล้ว
+    # (คลังมาจาก grain / payload เท่านั้น) · แต่ตั้งแต่คลังเข้าคีย์ upsert แถวที่คลังว่าง
+    # จะกลายเป็น "แถวใหม่" ที่ปลายทางแทนการทับของเดิม — ตัวนับ dims_inferred ด้านล่าง
+    # เป็นตัวฟ้องกรณีนั้นอยู่แล้ว
     if grain_ok and not df.empty and bool(_import_key_mask(df).all()):
         logger.info(
             "lakehouse enrich: skip Fabric (grain_ok + SALESTYPE/DIVISION/AREACODE ครบ %d แถว)",
