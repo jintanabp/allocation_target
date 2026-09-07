@@ -16360,6 +16360,49 @@ function _adminFmtTime(iso) {
   });
 }
 
+/**
+ * เปิดเอกสารใน docs/ — ต้องประกอบ URL จาก API_BASE_URL ไม่ใช่ผูก "/doc/..." ตายตัว
+ *
+ * เดิมเป็น <a href="/doc/DATA_FLOW"> ซึ่งชี้ราก origin เสมอ · ถ้าแอปถูกเสิร์ฟใต้ path ย่อย
+ * (เช่น https://host/app/) ลิงก์จะยิงไปผิดที่ · และถ้า reverse proxy หน้าเซิร์ฟเวอร์
+ * ไม่ได้ forward เส้น /doc/ ผู้ใช้จะเจอหน้า error ของ proxy โดยไม่รู้ว่าเกิดอะไรขึ้น
+ *
+ * ตรวจก่อนเปิด แล้วบอกสาเหตุให้ตรง — เอกสารอยู่ใน git อยู่แล้ว ถ้าเปิดไม่ได้
+ * แปลว่าเป็นเรื่องเส้นทาง ไม่ใช่ไฟล์หาย
+ */
+async function adminOpenDoc(name) {
+  const base = API_BASE_URL.replace(/\/$/, "");
+  const url = `${base}/doc/${encodeURIComponent(name)}`;
+  try {
+    const res = await fetchWithTimeout(url, {}, 15000);
+    if (res.ok) { window.open(url, "_blank", "noopener"); return; }
+    // ลองไฟล์ .md ดิบที่ mount ไว้อีกเส้น — บางทีติดแค่เส้น /doc/
+    const raw = `${base}/docs/${encodeURIComponent(name)}.md`;
+    const res2 = await fetchWithTimeout(raw, {}, 15000).catch(() => null);
+    if (res2 && res2.ok) {
+      toast("เปิดเป็นไฟล์ .md ดิบแทน — เส้น /doc/ ใช้ไม่ได้บนเซิร์ฟเวอร์นี้", "amber");
+      window.open(raw, "_blank", "noopener");
+      return;
+    }
+    _showInfoModal({
+      title: "เปิดเอกสารไม่ได้",
+      bodyHtml:
+        `<p style="margin:0 0 10px;">เซิร์ฟเวอร์ตอบ <b>HTTP ${res.status}</b> ที่</p>` +
+        `<p style="margin:0 0 12px;"><code>${escapeHtml(url)}</code></p>` +
+        `<p style="margin:0 0 8px;">ไฟล์ <code>docs/${escapeHtml(name)}.md</code> อยู่ใน git อยู่แล้ว ` +
+        `ถ้าเปิดไม่ได้มักเป็นเรื่องเส้นทาง ไม่ใช่ไฟล์หาย — ให้ IT ตรวจว่า reverse proxy ` +
+        `หน้าเซิร์ฟเวอร์ forward เส้น <code>/doc/</code> และ <code>/docs/</code> ไปที่แอปหรือยัง</p>` +
+        `<p style="margin:0;">ระหว่างนี้อ่านไฟล์ได้จากในโปรเจกต์ที่ <code>docs/${escapeHtml(name)}.md</code></p>`,
+    });
+  } catch (e) {
+    _showInfoModal({
+      title: "เปิดเอกสารไม่ได้",
+      bodyHtml: `<p style="margin:0 0 10px;">ติดต่อ <code>${escapeHtml(url)}</code> ไม่สำเร็จ</p>` +
+        `<p style="margin:0;">${escapeHtml(_userFacingError(e, "ไม่ทราบสาเหตุ"))}</p>`,
+    });
+  }
+}
+
 /** ข้อมูลชุดล่าสุดของหน้าแหล่งข้อมูล — โมดัลรายละเอียดอ่านจากตรงนี้ */
 let _adminInvData = null;
 
