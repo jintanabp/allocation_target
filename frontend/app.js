@@ -15566,6 +15566,34 @@ async function adminExportUserAccess() {
   }
 }
 
+/**
+ * ชุดข้อมูลของ server สำหรับเอาไปพัฒนาต่อในเครื่อง (dev เท่านั้น)
+ *
+ * ชุดเบา = config + แคชโครงสร้าง · ชุดเต็ม = บวกผลกระจายกับเป้าตั้งต้นซึ่งเป็นก้อนใหญ่
+ * ให้เวลานานหน่อยเพราะฝั่ง server ต้องอ่านไฟล์ทั้งโฟลเดอร์แล้วบีบอัด
+ */
+async function adminDownloadDevBundle(light) {
+  const btn = document.getElementById(light ? "devBundleLightBtn" : "devBundleFullBtn");
+  const label = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "กำลังเตรียม…"; }
+  try {
+    const res = await fetchWithTimeout(
+      `${API_BASE_URL}/admin/dev-bundle${light ? "?light=1" : ""}`, {}, 180000
+    );
+    if (!res.ok) throw new Error(_userFacingError(null, "ดาวน์โหลดชุดพัฒนาไม่สำเร็จ"));
+    const blob = await res.blob();
+    const cd = res.headers.get("Content-Disposition") || "";
+    const m = cd.match(/filename="?([^";]+)"?/i);
+    dl(blob, (m && m[1]) || "dev_bundle.zip");
+    const mb = (blob.size / 1024 / 1024).toFixed(1);
+    toast(`ดาวน์โหลดชุดพัฒนาแล้ว (${mb} MB) — อ่าน MANIFEST.txt ในไฟล์ก่อนใช้`, "green");
+  } catch (e) {
+    toast("❌ " + _userFacingError(e, "ดาวน์โหลดชุดพัฒนาไม่สำเร็จ"), "red");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = label; }
+  }
+}
+
 async function adminRunDeepHealth() {
   const el = document.getElementById("adminDeepHealthBody");
   if (el) el.textContent = "กำลังทดสอบการเชื่อมต่อ Fabric และ Target Sun…";

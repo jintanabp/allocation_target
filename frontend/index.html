@@ -1387,10 +1387,17 @@
               <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminRunDeepHealth()" title="ทดสอบว่าเชื่อม Fabric และอ่าน Target Sun ได้หรือไม่ — ไม่ส่งข้อมูล">ทดสอบการเชื่อมต่อ</button>
               <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminLoadInventory(true)" title="ดึงรายการตาราง/คอลัมน์จาก Fabric ใหม่ เพื่อดูว่าโครงข้อมูลยังตรงกับที่ระบบคาดไว้">ทดสอบ Fabric</button>
               <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminLoadInventory(false)">โหลดใหม่</button>
+              <button type="button" id="devBundleLightBtn" class="admin-btn-ghost admin-btn-ghost--sm"
+                      onclick="adminDownloadDevBundle(true)"
+                      title="config + แคชโครงสร้าง (ทีม/เป้า grain) — ไม่รวมผลกระจาย ไฟล์เล็ก">↓ ชุดพัฒนา (เบา)</button>
+              <button type="button" id="devBundleFullBtn" class="admin-btn-ghost admin-btn-ghost--sm"
+                      onclick="adminDownloadDevBundle(false)"
+                      title="บวกผลกระจายกับเป้าตั้งต้นทุกงวด — ไฟล์ใหญ่ ใช้เวลาสักครู่">↓ ชุดพัฒนา (เต็ม)</button>
             </div>
           </div>
           <div class="admin-help-strip admin-help-strip--compact">
             <p><strong>ทดสอบการเชื่อมต่อ</strong> = ยิงสั้นๆ ไป Fabric (ดึงเป้า TGA) และ Target Sun read ว่าตอบกลับปกติหรือไม่ — ใช้ไล่ปัญหาเมื่อ user โหลดทีมไม่ได้ (ไม่ส่งเป้าเข้า Target Sun)</p>
+            <p><strong>ชุดพัฒนา</strong> = ดาวน์โหลด config + แคชของเซิร์ฟเวอร์เป็น .zip ไว้พัฒนาในเครื่องด้วยข้อมูลชุดเดียวกับของจริง · <strong>มีอีเมลพนักงานทั้งองค์กร เก็บไว้ในเครื่องเท่านั้น</strong> · ไม่มี .env อยู่ในชุด · อ่าน MANIFEST.txt ในไฟล์ก่อนใช้ (มีวิธีวางไฟล์ที่ไม่ทับ config ของเครื่องตัวเอง)</p>
           </div>
           <div id="adminDeepHealthBody" class="admin-deep-health" aria-live="polite"></div>
           <div id="adminInventoryLoading" class="admin-loading" style="display:none;">กำลังโหลด…</div>
@@ -1677,7 +1684,7 @@
   <!-- ตรรกะล้วน (ตัวแปลงเลข/คณิตการเกลี่ย) — ต้องมาก่อน app.js
        ไฟล์นี้มีเทสจริงด้วย node --test tests/logic.test.js -->
   <script src="logic.js?v=2026090410"></script>
-  <script src="app.js?v=2026090702"></script>
+  <script src="app.js?v=2026090703"></script>
 </body>
 
 </html>
