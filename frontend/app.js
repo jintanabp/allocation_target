@@ -7224,16 +7224,48 @@ function _sortResultRowKeys(rowKeys, allocs, skusObjArr) {
   for (const e of _allocEligibleEmployees() || []) {
     nameByKey.set(_allocKey(e), String(e.emp_name || e.emp_id || "").trim());
   }
-  const labelOf = (rk) => (nameByKey.get(rk) || String(rk)).toLowerCase();
+  // rowKey ของคนที่มีหลายคลังเป็น "รหัส|คลัง" ซึ่งไม่มีในตารางชื่อ (คีย์ที่นั่นเป็นรหัสล้วน)
+  // เดิมจึงตกไปเทียบด้วยสตริงคีย์ คนกลุ่มนี้เลยไปกองท้ายตารางเวลาเรียงตามชื่อ
+  const labelOf = (rk) => {
+    const k = String(rk);
+    return (nameByKey.get(k) || nameByKey.get(k.split("|")[0]) || k).toLowerCase();
+  };
 
-  const sorted = [...rowKeys];
-  if (mode === "name") {
-    sorted.sort((x, y) => labelOf(x).localeCompare(labelOf(y), "th"));
-  } else if (mode === "boxes_desc") {
-    sorted.sort((x, y) => (stat.get(y)?.boxes || 0) - (stat.get(x)?.boxes || 0));
-  } else if (mode === "value_desc") {
-    sorted.sort((x, y) => (stat.get(y)?.value || 0) - (stat.get(x)?.value || 0));
+  /* โหมดรวมภาคต้องเรียง "ภายในกลุ่มทีม" เท่านั้น — แถวรวมทีมถูกแทรกตอนที่รหัสทีม
+     เปลี่ยน (_withSupSubtotalRows) ถ้าปล่อยให้เรียงข้ามทีม แถวของแต่ละทีมจะสลับกัน
+     จนแถวรวมทีมโผล่ซ้ำ ๆ ทั้งที่ยอดในนั้นเป็นยอดทั้งทีมเสมอ */
+  const groupAware = !!(S.compositeAllocView && S.aggregateMode);
+  const supByKey = new Map();
+  const supOrder = new Map();   // รหัสทีม -> ลำดับที่เจอครั้งแรก (คงลำดับทีมเดิมไว้)
+  if (groupAware) {
+    for (const a of allocs || []) {
+      const rk = _allocResultKey(a);
+      if (!rk || supByKey.has(rk)) continue;
+      const sup = String(_supervisorCodeForAllocRow(a) || "");
+      supByKey.set(rk, sup);
+      if (!supOrder.has(sup)) supOrder.set(sup, supOrder.size);
+    }
   }
+  const groupOf = (rk) =>
+    groupAware ? (supOrder.get(supByKey.get(rk) || "") ?? Number.MAX_SAFE_INTEGER) : 0;
+
+  // รหัสพนักงาน: เทียบแบบรู้จักตัวเลข (numeric) เพื่อให้ S9 มาก่อน S10 ไม่ใช่ตามหลัง
+  // rowKey เป็น "รหัส" หรือ "รหัส|คลัง" อยู่แล้ว คนเดียวหลายคลังจึงเรียงตามคลังต่อท้ายเอง
+  const byCode = (x, y) =>
+    String(x).localeCompare(String(y), "en", { numeric: true, sensitivity: "base" });
+
+  const cmp = {
+    name: (x, y) => labelOf(x).localeCompare(labelOf(y), "th"),
+    code: byCode,
+    boxes_desc: (x, y) => (stat.get(y)?.boxes || 0) - (stat.get(x)?.boxes || 0),
+    value_desc: (x, y) => (stat.get(y)?.value || 0) - (stat.get(x)?.value || 0),
+  }[mode];
+  if (!cmp) return rowKeys;
+
+  // ปิดท้ายด้วยรหัสเสมอ ลำดับจะได้นิ่ง (ชื่อซ้ำ/หีบเท่ากันไม่สลับไปมาทุกครั้งที่วาดใหม่)
+  // และคนที่มีหลายคลังจะเรียง W1 W2 W10 ตามธรรมชาติ
+  const sorted = [...rowKeys];
+  sorted.sort((x, y) => (groupOf(x) - groupOf(y)) || cmp(x, y) || byCode(x, y));
   return sorted;
 }
 
