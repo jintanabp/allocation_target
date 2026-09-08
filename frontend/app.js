@@ -5923,12 +5923,8 @@ async function runOptimization() {
     qs("#resultBlock").style.display = "block";
 
     try {
-      const reb = autoRebalance(true, { skipRender: true });
-      if (reb?.residuals?.length) {
-        S.rebalanceResiduals = reb.residuals;
-      } else {
-        S.rebalanceResiduals = [];
-      }
+      // autoRebalance เก็บ S.rebalanceResiduals ให้เองแล้วทุกครั้งที่วิ่ง
+      autoRebalance(true, { skipRender: true });
     } catch (e) {
       console.error("autoRebalance:", e);
     }
@@ -7944,7 +7940,10 @@ function _rebalanceTargetOverride() {
 
 function autoRebalance(silent = false, opts = {}) {
   const skipRender = !!(opts && opts.skipRender);
-  if (!S.allocations || S.allocations.length === 0) return { changed: false, residuals: [] };
+  if (!S.allocations || S.allocations.length === 0) {
+    S.rebalanceResiduals = [];
+    return { changed: false, residuals: [] };
+  }
 
   // Index ครั้งเดียว — เลี่ยง filter/find ต่อ SKU (เดิม O(skus×allocations))
   const allocsBySku = new Map();
@@ -8043,6 +8042,11 @@ function autoRebalance(silent = false, opts = {}) {
   }
   if (changed && !silent) toast("⚖️ เกลี่ยส่วนต่างหีบสำเร็จ (แจกจ่ายให้พนักงานอื่นแล้ว)", "green");
   if (changed) saveDraft(true);
+  // เก็บผลไว้ที่นี่จุดเดียว — แผง "ขอให้รีเช็ค" จะได้บอกสถานะล่าสุดเสมอ
+  // เดิมเก็บเฉพาะตอนกดคำนวณครั้งแรก (จุดเดียวใน _doOptimize) อีก 5 ทางที่เรียกตัวนี้
+  // (แก้เลข · คืนค่ารายช่อง · คืนค่าทั้งตาราง · คำนวณใหม่คงค่าที่แก้ · คำนวณใหม่เฉพาะ SKU)
+  // ทิ้งค่าทิ้งหมด บรรทัด "ยังไม่ตรงเป้าหีบ" จึงค้างที่ภาพตอนกดคำนวณครั้งแรกตลอด
+  S.rebalanceResiduals = residuals;
   return { changed, residuals };
 }
 
