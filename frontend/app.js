@@ -15128,7 +15128,7 @@ function _usageCell(value, pct, withBar) {
  * total = ตัวหาร ถ้าส่งมาจะเขียน "10 จาก 90" ไว้ในใบเดียวกัน — เดิมโชว์แค่ "10"
  * กับ "11.1%" คนอ่านต้องกวาดตาไปหาว่า 90 อยู่ใบไหนเองก่อนจะเข้าใจว่าเยอะหรือน้อย
  */
-function _usageTile(label, value, pct, sub, total) {
+function _usageTile(label, value, pct, sub, total, cls) {
   const hasPct = pct !== null && pct !== undefined;
   const width = Math.max(0, Math.min(100, Number(pct) || 0)).toFixed(0);
   const hasTotal = total !== null && total !== undefined && value !== null && value !== undefined;
@@ -15140,7 +15140,9 @@ function _usageTile(label, value, pct, sub, total) {
   // แถบสัดส่วนถูกตัดออก — เปอร์เซ็นต์เดียวกันนี้พิมพ์อยู่ข้างตัวเลขอยู่แล้ว
   // และตารางข้างล่างก็มีแถบ .usage-bar ให้เทียบภาคด้วยตาอยู่แล้ว
   void width;
-  return `<div class="usage-kpi__tile${unknown ? " usage-kpi__tile--unknown" : ""}">
+  return `<div class="usage-kpi__tile${unknown ? " usage-kpi__tile--unknown" : ""}${
+    cls ? " " + cls : ""
+  }">
     <span class="usage-kpi__head">
       <span class="usage-kpi__label">${escapeHtml(label)}</span>
       <span class="usage-kpi__sub">${escapeHtml(sub || "")}</span>
@@ -15151,10 +15153,12 @@ function _usageTile(label, value, pct, sub, total) {
   </div>`;
 }
 
-/** หัวข้อคั่นกลุ่มการ์ด — บอกว่าแถวนี้นับเป็นทีมหรือนับเป็นคน */
-function _usageGroup(title, tiles) {
-  return `<div class="usage-group"><span>${escapeHtml(title)}</span></div>
-    <div class="usage-kpi">${tiles}</div>`;
+/** การ์ดทั้งหกใบเรียงแถวเดียว — ตารางรายภาคจะได้ขึ้นมาอยู่ในจอโน้ตบุ๊ก 1366x768
+    เดิมแบ่งสองแถวโดยมีหัวข้อ "นับเป็นทีม"/"นับเป็นคน" คั่น ซึ่งกินความสูงไปสองหัวข้อ
+    กับอีกหนึ่งแถวการ์ด · ตอนนี้ป้ายของแต่ละใบบอกหน่วยในตัวเอง (ขึ้นต้นด้วย "ทีม"
+    หรือ "พนักงาน") และมีเส้นคั่นก่อนใบที่สี่แบบเดียวกับหัวตารางข้างล่าง */
+function _usageRow(tiles) {
+  return `<div class="usage-kpi usage-kpi--six">${tiles}</div>`;
 }
 
 /** บรรทัดล่างของการ์ด "พนักงานทั้งหมด" — บอกว่าใครอยู่นอกตัวหารบ้าง */
@@ -15216,23 +15220,23 @@ function _adminRenderUsageSummary(d) {
       ? `ตัวเลขนี้${_USAGE_METHOD_TH[e.method] || e.method}`
       : "นับรายคนจากบันทึกการส่ง";
     kpi.innerHTML =
-      _usageGroup("นับเป็นทีม",
+      _usageRow(
         _usageTile("ทีมที่กระจายได้", t.total, null,
           d.scope.scoped ? "เฉพาะทีมในขอบเขตที่ดูแล" : "ทั้งระบบ") +
-        _usageTile("เข้ามาใช้", t.used, t.used_pct,
+        _usageTile("ทีมที่เข้ามาใช้", t.used, t.used_pct,
           t.opened_no_boxes
             ? `อีก ${_usageNum(t.opened_no_boxes)} ทีมกระจายแล้วแต่ยังไม่มีหีบ`
             : "มีผลกระจายและมีหีบ", t.total) +
-        _usageTile("ส่ง Target Sun", t.sent, t.sent_pct,
-          "เคยส่งสำเร็จในงวดนี้", t.total)
-      ) +
-      _usageGroup("นับเป็นคน",
-        _usageTile("พนักงานทั้งหมด", e.total, null, _usageOutsideSub(e)) +
-        _usageTile("ถูกกระจายเป้า", e.allocated, e.allocated_pct,
+        _usageTile("ทีมที่ส่ง Target Sun", t.sent, t.sent_pct,
+          "เคยส่งสำเร็จในงวดนี้", t.total) +
+        // ใบที่สี่เริ่มกลุ่ม "นับเป็นคน" — เส้นคั่นทำหน้าที่แทนหัวข้อที่ถอดออก
+        _usageTile("พนักงานทั้งหมด", e.total, null, _usageOutsideSub(e), null,
+          "usage-kpi__tile--split") +
+        _usageTile("พนักงานถูกกระจายเป้า", e.allocated, e.allocated_pct,
           e.duplicate_emp_ids_across_teams
             ? `มีรหัสซ้ำข้ามทีม ${_usageNum(e.duplicate_emp_ids_across_teams)} รหัส — นับแยกทีม`
             : "ได้หีบมากกว่า 0", e.total) +
-        _usageTile("กระจาย+ส่ง Target Sun", e.sent, e.sent_pct, approx, e.total)
+        _usageTile("พนักงานกระจาย+ส่งแล้ว", e.sent, e.sent_pct, approx, e.total)
       ) +
       (d.scope.note
         ? `<p class="admin-inv-muted" style="margin:6px 2px 0;">${escapeHtml(d.scope.note)}</p>`

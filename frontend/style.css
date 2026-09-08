@@ -9478,6 +9478,52 @@ tr.emp-row--no-target .emp-tag {
 @media (max-width: 720px) {
   .usage-kpi { grid-template-columns: 1fr; }
 }
+/* หกใบเรียงแถวเดียว — คอลัมน์แคบเกินกว่าจะวางป้ายซ้ายตัวเลขขวาได้ จึงเรียงลงในการ์ด
+   ยังไม่ลดขนาดตัวอักษรสักจุด (ผู้ใช้กลุ่มนี้สูงวัย) ที่หายไปคือหัวข้อคั่นสองบรรทัด
+   กับระยะห่างระหว่างสองแถวการ์ด · จอแคบตกลงมาเป็น 3 แล้ว 1 คอลัมน์ตามเดิม
+   ต้องเขียนกฎจอแคบซ้ำที่นี่ เพราะ @media ไม่เพิ่ม specificity — .usage-kpi--six
+   ที่ประกาศทีหลังจะชนะกฎในบล็อกข้างบนทุกความกว้าง */
+.usage-kpi--six { grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 720px) {
+  .usage-kpi--six { grid-template-columns: 1fr; }
+}
+/* หกคอลัมน์เฉพาะจอที่กว้างพอจริง ๆ — แคบกว่านี้ตกลงมาเป็นสามคอลัมน์แบบเดิม
+   และการ์ดกลับไปเรียงป้ายซ้ายตัวเลขขวาเหมือนเดิมด้วย เพราะแบบนั้นเตี้ยกว่าเมื่อการ์ดกว้าง */
+@media (min-width: 1181px) {
+  .usage-kpi--six {
+    grid-template-columns: repeat(6, 1fr);
+    gap: 8px;
+  }
+  .usage-kpi--six .usage-kpi__tile {
+    flex-direction: column;
+    align-items: flex-start;
+    /* ตัวเลขเกาะขอบล่างของการ์ด — การ์ดทุกใบสูงเท่ากันอยู่แล้ว
+       เลขหกตัวจึงอยู่ระดับเดียวกัน กวาดตาเทียบได้ในทีเดียว
+       ถ้าปล่อยชิดบน เลขจะกระโดดขึ้นลงตามความยาวคำอธิบายของแต่ละใบ */
+    justify-content: space-between;
+    flex-wrap: nowrap;
+    gap: 4px;
+    padding: 8px 12px;
+  }
+  .usage-kpi--six .usage-kpi__head {
+    flex: 0 0 auto;
+    width: 100%;
+  }
+  .usage-kpi--six .usage-kpi__value {
+    min-height: 0;
+    flex-wrap: wrap;
+    row-gap: 0;
+  }
+}
+/* คอลัมน์แคบทำให้ "จาก 1,842" ถูกตัดกลางคำเป็นสองบรรทัด — ห้ามหักคำ ให้ตกไปทั้งก้อน */
+.usage-kpi__of,
+.usage-kpi__pct { white-space: nowrap; }
+/* ใบแรกของกลุ่ม "นับเป็นคน" — เส้นคั่นกับช่องไฟที่กว้างขึ้นทำหน้าที่แทนหัวข้อที่ถอดออก
+   ใช้เส้นแบบเดียวกับ .usage-split ในหัวตารางรายภาคข้างล่าง จะได้อ่านเป็นภาษาเดียวกัน */
+.usage-kpi--six .usage-kpi__tile--split {
+  margin-left: 8px;
+  border-left: 2px solid var(--border-md);
+}
 /* การ์ดเรียงแนวนอน — ป้าย+คำอธิบายซ้าย ตัวเลขขวา
    ไม่ลดขนาดตัวอักษรสักจุด (ผู้ใช้กลุ่มนี้สูงวัย) ที่ลดคือจำนวนบรรทัดในการ์ด
    flex-wrap ไว้ให้ตกลงมาเรียงแบบเดิมเองเมื่อการ์ดแคบ เช่นจอมือถือ */
@@ -9527,40 +9573,6 @@ tr.emp-row--no-target .emp-tag {
   font-size: 12px;
   font-weight: 600;
   color: var(--text-3);
-}
-/* หัวข้อคั่นกลุ่มการ์ด — เส้นยาวไปจนสุดขวา ตาจะได้รู้ว่าแถวนี้จบตรงไหน */
-.usage-group {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 2px 2px 4px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  color: var(--text-3);
-}
-.usage-group::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: var(--border);
-}
-.usage-group + .usage-kpi { margin-bottom: 8px; }
-.usage-kpi__meter {
-  display: block;
-  height: 8px;
-  max-width: 220px;
-  margin-top: 8px;
-  border-radius: 999px;
-  background: var(--border);
-  overflow: hidden;
-}
-.usage-kpi__meter-fill {
-  display: block;
-  height: 100%;
-  border-radius: 999px;
-  background: var(--accent);
-  transition: width 0.35s ease;
 }
 /* ยังไม่เคยดึงทะเบียนพนักงาน = "ไม่รู้" — ทำให้ดูเป็นช่องว่างที่ตั้งใจ ไม่ใช่ตัวเลขที่พัง */
 .usage-kpi__tile--unknown .usage-kpi__value { color: var(--text-3); font-weight: 600; }
