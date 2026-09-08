@@ -6713,6 +6713,7 @@ function renderResult(allocs) {
   syncStep3ResultReadOnlyUI();
   syncStep3TieredNote();
   syncStep3ReviewNotes();
+  _setRevertAllEnabled();
   const scaleNoteHost = document.getElementById("step3RevenueScaleNote");
   if (scaleNoteHost) {
     const html = _revenueScaleNoteHtml();
@@ -7383,6 +7384,97 @@ function _syncCellRevertButton(el, alloc) {
   } else if (!want && has) {
     has.remove();
   }
+  _setRevertAllEnabled();
+}
+
+/** แถวที่แก้มือหรือล็อกไว้ทั้งหมด — ใช้ทั้งเปิด/ปิดปุ่มและข้อความยืนยัน */
+function _editedAllocRows() {
+  return (S.allocations || []).filter(a => a.is_edited);
+}
+
+/** ค่าที่ระบบกระจายให้ของแถวนี้ — ในหน้าก่อน (`_engine_boxes`) หรือที่บันทึกไว้ในไฟล์ */
+function _allocEngineBoxes(a) {
+  if (!a) return null;
+  return a._engine_boxes != null ? a._engine_boxes : a.engine_boxes;
+}
+
+/**
+ * เปิด/ปิดปุ่มคืนค่าทั้งตาราง
+ *
+ * ห้ามผูกกับ `_setUndoEnabled` เพราะตัวนั้นถูกเรียกจาก `_pushUndoState`
+ * ซึ่งวิ่งก่อนจะเปลี่ยนค่าในแถว จำนวนที่นับได้จึงช้าไปหนึ่งก้าวเสมอ
+ */
+function _setRevertAllEnabled() {
+  const btn = document.getElementById("revertAllBtn");
+  if (!btn) return;
+  const n = _editedAllocRows().length;
+  const on = n > 0 && !(_isAllocReadOnlyView() || _aggregateBlocksWrite());
+  btn.disabled = !on;
+  btn.title = on
+    ? `คืนค่าที่ระบบคำนวณให้ทั้ง ${n.toLocaleString("th-TH")} ช่องที่แก้มือ/ล็อกไว้`
+    : "ยังไม่มีช่องที่แก้มือไว้";
+}
+
+/**
+ * คืนค่าที่ระบบกระจายให้ "ทั้งตาราง" ทีเดียว
+ *
+ * ปุ่ม ↺ รายช่องมีอยู่แล้ว แต่คนที่แก้ไปหลายสิบช่องแล้วอยากเริ่มใหม่ต้องกดทีละช่อง
+ * — ผลสำรวจ 53 คนขอ "ปุ่มรีเซ็ตกลับค่าที่ระบบคำนวณ" ไว้คู่กับหน้าตรวจก่อนส่ง
+ * (กดคำนวณใหม่ไม่ใช่คำตอบเดียวกัน เพราะช่องที่ล็อกไว้จะถูกส่งไปเป็น locked_edits
+ * รอบคำนวณใหม่จึงยังยึดเลขที่พิมพ์เองอยู่ดี)
+ */
+async function revertAllResultCells() {
+  if (_isAllocReadOnlyView() || _aggregateBlocksWrite()) return;
+  const edited = _editedAllocRows();
+  if (!edited.length) {
+    toast("ยังไม่มีช่องที่แก้มือไว้", "amber");
+    return;
+  }
+  // แยกให้ชัดว่าอันไหน "คืนเลขเดิม" อันไหนแค่ "ปลดล็อก" (ล็อกเฉย ๆ เลขไม่เคยเปลี่ยน)
+  // และอันไหนไม่มีค่าเดิมเก็บไว้เลย — แถวกลุ่มหลังคืนเลขให้ไม่ได้ ต้องบอกตามตรง
+  let willRestore = 0;
+  let lockOnly = 0;
+  let noEngine = 0;
+  for (const a of edited) {
+    const eng = _allocEngineBoxes(a);
+    if (eng == null) noEngine++;
+    else if ((Number(eng) || 0) === (Number(a.allocated_boxes) || 0)) lockOnly++;
+    else willRestore++;
+  }
+  const th = (n) => n.toLocaleString("th-TH");
+  const detail = [
+    willRestore ? `${th(willRestore)} ช่องกลับไปเป็นเลขที่ระบบคำนวณ` : "",
+    lockOnly ? `${th(lockOnly)} ช่องล็อกไว้เฉย ๆ จะถูกปลดล็อก เลขไม่เปลี่ยน` : "",
+    noEngine ? `${th(noEngine)} ช่องไม่มีค่าเดิมเก็บไว้ ปลดล็อกให้อย่างเดียว` : "",
+  ].filter(Boolean).join("\n");
+  const ok = await _confirmDialog(
+    `จะคืนค่าให้ ${th(edited.length)} ช่องที่แก้มือ/ล็อกไว้ในตารางนี้\n\n${detail}`
+    + "\n\nกด ↩️ Undo ย้อนกลับได้ 1 ครั้ง",
+    { title: "คืนค่าที่ระบบคำนวณทั้งตาราง", okLabel: "คืนค่าทั้งตาราง", cancelLabel: "ยกเลิก" }
+  );
+  if (!ok) return;
+
+  _pushUndoState("revert-all");
+  for (const a of edited) {
+    const eng = _allocEngineBoxes(a);
+    if (eng != null) a.allocated_boxes = Number(eng) || 0;
+    a.is_edited = false;
+    delete a._engine_boxes;
+  }
+  S._hasUnsaved = true;
+  // เกลี่ยใหม่ให้ยอดต่อ SKU ตรงเป้าเหมือนทุกครั้งที่ตัวเลขขยับ แล้ววาดตารางใหม่ทั้งใบ
+  // (ไม่ใช้ทางลัด sync เหมือนปุ่มรายช่อง เพราะคราวนี้คลาส is-edited กับปุ่ม ↺
+  //  ต้องหายพร้อมกันหลายสิบช่อง)
+  autoRebalance(true, { skipRender: true });
+  renderResult(S.allocations);
+  updateValidation();
+  _persistAfterCellLock();   // ตัวเดียวกับที่ปุ่มล็อกใช้ — เลือกบันทึกรวมภาค/รายทีมให้เอง
+  toast(
+    willRestore
+      ? `คืนค่าที่ระบบคำนวณให้ ${th(edited.length)} ช่องแล้ว`
+      : `ปลดล็อก ${th(edited.length)} ช่องแล้ว — ระบบเกลี่ยช่องเหล่านี้ได้อีกครั้ง`,
+    "green",
+  );
 }
 
 /** บันทึกหลัง "ล็อกเฉย ๆ" — ตัวเลขไม่ขยับ จึงไม่ต้องเรียกตัวเกลี่ย */
@@ -7798,6 +7890,7 @@ function _syncResultTableAfterRebalance() {
     renderResultFooter(skus, skuTotals);
   }
   syncStep3ReviewNotes();
+  _setRevertAllEnabled();
   requestAnimationFrame(() => {
     adjustResultStickyGap();
     // path นี้ไม่ rebuild ตาราง แต่แก้ข้อความ .emp-dev-line ได้ → ความสูงแถว/ท้ายเปลี่ยน
