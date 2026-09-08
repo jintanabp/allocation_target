@@ -7166,7 +7166,20 @@ function renderResultFooter(skus, skuTotals) {
     const t = _footerSkuTargetBoxes(skus[i]);
     const isMatch = tot === t;
     const color = isMatch ? "var(--green)" : "var(--red)";
-    botRow += `<td class="r tfoot-val" style="color:${color};">${tot} <span style="font-size:10px;">${isMatch ? "✓" : "⚠️"}</span></td>`;
+    // ส่วนต่างเป็นตัวเลข ไม่ใช่แค่ ⚠️ — เดิมต้องกวาดตาขึ้นไปแถว "เป้ารวม (หีบ)" แล้วลบเอง
+    // ใช้กฎสีชุดเดียวกับแถวรวมทีมของโหมดรวมภาค (ส้ม = เกิน · น้ำเงิน = ขาด)
+    // ซึ่งคู่มือสอนไว้แล้ว จะได้จำกฎเดียวทั้งสองที่
+    const diff = tot - t;
+    const showDiff = t > 0 && diff !== 0;
+    const title = `SKU ${skus[i]}: จัดสรร ${tot.toLocaleString("th-TH")} หีบ`
+      + ` / เป้ารวม ${t.toLocaleString("th-TH")} หีบ`
+      + (showDiff ? ` (${diff > 0 ? "เกิน" : "ขาด"} ${Math.abs(diff).toLocaleString("th-TH")})` : "");
+    const diffHtml = showDiff
+      ? `<div class="tfoot-diff tfoot-diff--${diff > 0 ? "over" : "under"}">`
+        + `${diff > 0 ? "+" : "-"}${Math.abs(diff).toLocaleString("th-TH")}</div>`
+      : "";
+    botRow += `<td class="r tfoot-val" style="color:${color};" title="${escH(title)}">`
+      + `<div>${tot} <span style="font-size:10px;">${isMatch ? "✓" : "⚠️"}</span></div>${diffHtml}</td>`;
   });
   botRow += `<td class="sticky-gap"></td>`;
   if (isFiltered) {

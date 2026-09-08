@@ -4556,6 +4556,16 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
   color: var(--text-1);
   font-size: 14px;
 }
+/* ส่วนต่างใต้ยอดรวมท้ายตาราง — สีชุดเดียวกับ .sup-subtotal-diff ของแถวรวมทีม
+   (ส้ม = เกินเป้า · น้ำเงิน = ขาดเป้า) คู่มือสอนกฎนี้ไว้แล้ว จะได้ไม่ต้องจำสองชุด */
+.tfoot-diff {
+  font-size: 10px;
+  font-weight: 700;
+  margin-top: 1px;
+  line-height: 1.2;
+}
+.tfoot-diff--over { color: var(--amber); }
+.tfoot-diff--under { color: var(--accent); }
 
 /* ── Tags ── */
 .emp-tag {
