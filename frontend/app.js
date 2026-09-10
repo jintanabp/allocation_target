@@ -6776,6 +6776,7 @@ function renderResult(allocs) {
   syncStep3ResultReadOnlyUI();
   syncStep3TieredNote();
   syncStep3ReviewNotes();
+  syncPendingTopupBanner();
   _setRevertAllEnabled();
   const scaleNoteHost = document.getElementById("step3RevenueScaleNote");
   if (scaleNoteHost) {
@@ -9013,6 +9014,129 @@ function _scrollToResultCell(sku, empId) {
  * onConfirm = ส่งซ้ำด้วย confirm_manual_topup: true
  * ถ้าไม่ส่ง onConfirm มา (เช่นเรียกจากหน้าจอ "ส่งสำเร็จแล้ว") จะโชว์เป็นรายการให้ทำต่ออย่างเดียว
  */
+/* ══════════════════════════════════════════════
+   รายการที่ต้องไปแก้เองใน Target Sun — ต้องไม่หายไปพร้อมกับกล่อง
+
+   SKU ที่ส่งไม่ได้จะถูกตัดทั้งตัว ผู้ใช้ต้องไปแก้เองที่ปลายทาง แต่เดิมรายการนี้
+   ขึ้นครั้งเดียวหลังส่ง ปิดแล้วหายเลย ไม่มีทางเปิดดูซ้ำ — คนที่แก้ไม่ครบจึงไม่มีอะไรเตือน
+   (และในเส้นทาง "ยอดลงจริงไม่ตรงไฟล์" รายการนี้ถูกพูดถึงเป็นประโยคเดียว ไม่เคยแสดงเลย)
+══════════════════════════════════════════════ */
+const TOPUP_KEY_PREFIX = "AllocTopup_v1";
+
+function _topupKey(supId) {
+  const sid = String(supId || S.supId || "").trim().toUpperCase();
+  return `${TOPUP_KEY_PREFIX}_${sid}_${S.targetYear}_${S.targetMonth}`;
+}
+
+/** เก็บรายการไว้ในเครื่อง — ลิสต์ว่าง = ล้างของเดิมทิ้ง (ส่งรอบใหม่แล้วไม่เหลืออะไรต้องแก้) */
+function _savePendingTopup(list, supId) {
+  const items = Array.isArray(list) ? list : [];
+  try {
+    if (!items.length) {
+      localStorage.removeItem(_topupKey(supId));
+      return;
+    }
+    // ตัดให้พอดีกับที่กล่องแสดงจริง — รายชื่อคนยาวมากไม่ได้ช่วยอะไรและกินที่เก็บ
+    const slim = items.slice(0, 50).map((s) => ({
+      sku: s.sku,
+      missing_boxes: Number(s.missing_boxes) || 0,
+      excluded_boxes: Number(s.excluded_boxes) || 0,
+      sending_boxes: Number(s.sending_boxes) || 0,
+      expected_boxes: s.expected_boxes ?? null,
+      current_targetsun_boxes: s.current_targetsun_boxes ?? null,
+      excluded_whole_sku: !!s.excluded_whole_sku,
+      pair_count: Number(s.pair_count) || (Array.isArray(s.pairs) ? s.pairs.length : 0),
+      pairs: (Array.isArray(s.pairs) ? s.pairs : []).slice(0, 25),
+    }));
+    localStorage.setItem(
+      _topupKey(supId),
+      JSON.stringify({ saved_at: new Date().toISOString(), shortfall: slim })
+    );
+  } catch (_) {
+    /* เก็บไม่ได้ก็ยังเห็นกล่องรอบนี้ตามปกติ */
+  }
+}
+
+function _loadPendingTopup(supId) {
+  try {
+    const raw = localStorage.getItem(_topupKey(supId));
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    const list = Array.isArray(obj?.shortfall) ? obj.shortfall : [];
+    return list.length ? { savedAt: obj.saved_at || "", shortfall: list } : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function _clearPendingTopup(supId) {
+  try {
+    localStorage.removeItem(_topupKey(supId));
+  } catch (_) {
+    /* ไม่เป็นไร — แถบจะหายรอบนี้อยู่ดี */
+  }
+  syncPendingTopupBanner();
+}
+
+/** แถบค้างบนหน้าผลลัพธ์ — วาดใหม่ทุกครั้งที่ตารางผลถูกวาด */
+function syncPendingTopupBanner() {
+  const el = document.getElementById("step3TopupBanner");
+  if (!el) return;
+  const saved = _loadPendingTopup();
+  if (!saved) {
+    el.style.display = "none";
+    el.innerHTML = "";
+    return;
+  }
+  const n = saved.shortfall.length;
+  const when = saved.savedAt ? _formatAllocUpdatedAt(saved.savedAt) : "";
+  el.innerHTML =
+    `<div class="topup-banner__text">`
+    + `<strong>⚠️ ครั้งล่าสุดที่ส่ง มี ${n.toLocaleString("th-TH")} SKU ที่ต้องไปแก้เองใน Target Sun</strong>`
+    + (when ? `<span class="topup-banner__when">ส่งเมื่อ ${escapeHtml(when)}</span>` : "")
+    + `</div>`
+    + `<div class="topup-banner__actions">`
+    + `<button type="button" class="btn-dl" onclick="showPendingTopupList()">ดูรายการ</button>`
+    + `<button type="button" class="btn-dl topup-banner__done" onclick="confirmPendingTopupDone()">แก้ครบแล้ว</button>`
+    + `</div>`;
+  el.style.display = "flex";
+}
+
+/** เปิดกล่องเดิมเป๊ะ — ผู้ใช้ไม่ต้องเรียนรู้หน้าตาใหม่ */
+function showPendingTopupList() {
+  const saved = _loadPendingTopup();
+  if (!saved) {
+    syncPendingTopupBanner();
+    return;
+  }
+  _showShortfallModal(
+    {
+      shortfall: saved.shortfall,
+      whole_sku_excluded: saved.shortfall.some((s) => s.excluded_whole_sku),
+      excluded_boxes: saved.shortfall.reduce(
+        (t, x) => t + (Number(x.excluded_boxes) || Number(x.missing_boxes) || 0), 0
+      ),
+      shortfall_boxes: saved.shortfall.reduce((t, x) => t + (Number(x.missing_boxes) || 0), 0),
+    },
+    { alreadySent: true, title: "รายการที่ต้องไปแก้เองใน Target Sun" }
+  );
+}
+
+function confirmPendingTopupDone() {
+  _showInfoModal({
+    title: "แก้ครบแล้ว?",
+    bodyHtml:
+      `<p style="margin:0;line-height:1.6;">แถบเตือนจะหายไป และ<strong>เปิดรายการนี้กลับมาดูอีกไม่ได้</strong>`
+      + ` — ถ้ายังไม่แน่ใจ ให้กด「ดูรายการ」ตรวจอีกครั้งก่อน</p>`,
+    primaryLabel: "แก้ครบแล้ว",
+    secondaryLabel: "ยังไม่ครบ",
+    onPrimary: () => {
+      _clearPendingTopup();
+      toast("ปิดรายการที่ต้องไปแก้เองแล้ว", "green");
+    },
+  });
+}
+
 function _showShortfallModal(detail, { onConfirm = null, onCancel = null, alreadySent = false, noteHtml = "", title = "" } = {}) {
   const list = Array.isArray(detail?.shortfall) ? detail.shortfall : [];
   if (!list.length) return;
@@ -10100,6 +10224,14 @@ async function _doLakehouseUploadInner() {
   // ส่งเสร็จแล้วค่อยเตือน — รายการที่ต้องไปเพิ่มจำนวนเองใน Target Sun
   // ต้องอยู่หลัง popGlobalBusy ไม่งั้น modal จะโดน overlay บัง
   const pending = _mergeShortfall([...shortfallBySup.values()]);
+
+  // เก็บรายการไว้ก่อนโชว์กล่อง — ปิดกล่องแล้วต้องยังเปิดดูซ้ำได้จากแถบบนหน้าผลลัพธ์
+  // จุดนี้จุดเดียวครอบทุกทางออกด้านล่าง (ส่งครบ · หยุดกลางคัน · ยอดลงไม่ตรงไฟล์)
+  // ส่งสำเร็จแล้วไม่เหลืออะไรต้องแก้ = ล้างของเดิมทิ้งด้วย
+  if (sentCount > 0) {
+    _savePendingTopup(pending);
+    syncPendingTopupBanner();
+  }
 
   // ส่งไม่ครบทุกทีม — บอกให้ชัดว่าอะไรเข้าไปแล้วบ้าง เพราะย้อนคืนไม่ได้
   if (failedSup) {
