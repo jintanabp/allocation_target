@@ -1024,6 +1024,8 @@ function _clearCompositeAllocState() {
   S.allocSourceBySup = {};
   S.resultFooterSkuMap = null;
   S.resultFooterScopeSup = null;
+  // เปลี่ยนทีม/งวด/ขอบเขต = ของบน server อาจไม่ใช่ชุดที่เราจำลายเซ็นไว้อีกต่อไป
+  _resetRegionalSaveFingerprints();
   const leg = document.getElementById("compositeAllocLegend");
   if (leg) {
     leg.style.display = "none";
@@ -10678,6 +10680,8 @@ function queueServerAllocationSave(status = "draft") {
  */
 async function _handleSnapshotConflict(httpStatus, j, supId, status, opts) {
   const sid = String(supId || S.supId || "").trim().toUpperCase();
+  // มีคนอื่นเขียนทับ — ที่เราจำว่า "บน server เป็นชุดนี้" ใช้ไม่ได้แล้ว
+  _resetRegionalSaveFingerprints();
   const cur = j?.detail?.current || {};
   const who = String(cur.updated_by || "").trim() || "ไม่ระบุ";
   const when = cur.updated_at ? _formatAllocUpdatedAt(cur.updated_at) : "ไม่ทราบเวลา";
@@ -10842,6 +10846,49 @@ async function saveServerAllocationSnapshot(status = "draft", opts = {}) {
   return attempt.saved;
 }
 
+/**
+ * ลายเซ็นของผลกระจายทีมหนึ่ง — ใช้ข้ามการเขียนซ้ำที่เนื้อหาเหมือนเดิมเป๊ะ
+ *
+ * ทำเป็น hash แบบไล่ทีละตัวอักษร (FNV-1a) ไม่ต่อสตริงยาว ๆ เก็บไว้
+ * ต้นทุนต่ำกว่าการ PUT ก้อนเดิมซ้ำหลายเท่า และไม่กินหน่วยความจำเพิ่มตามจำนวนแถว
+ */
+function _allocFingerprint(rows, status) {
+  let h = 0x811c9dc5;
+  const mix = (s) => {
+    const t = String(s);
+    for (let i = 0; i < t.length; i++) {
+      h ^= t.charCodeAt(i);
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+  };
+  mix(status);
+  for (const a of rows || []) {
+    mix(`${a.emp_id}${a.sku}${a.warehouse_code || ""}`);
+    mix(`${a.allocated_boxes}${a.is_edited ? 1 : 0}`);
+  }
+  return `${(rows || []).length}:${h}`;
+}
+
+/**
+ * ทีมไหนเพิ่งบันทึกไปแล้วด้วยเนื้อหาชุดไหน — คีย์เป็น "ทีม|งวด"
+ *
+ * ผลตรวจรอบ 0: ในชั่วโมงเดียว SL523 ถูกบันทึก 220 ครั้งโดยผู้ใช้คนเดียว
+ * (SL406/SL532 ทีมละ 154 ครั้ง) เพราะลูปรวมภาคบันทึก **ทุกทีมในภาค** ทุกครั้งที่
+ * autosave เด้ง ทั้งที่ผู้ใช้แก้ช่องเดียวซึ่งกระทบทีมเดียว · การบันทึกหนึ่งครั้ง
+ * เขียนไฟล์ผลกระจายทั้งก้อนใหม่ (มัธยฐาน 3,230 แถว/ทีม) จึงเป็นทั้งเรื่องช้า
+ * และทำให้บันทึกการใช้งานเต็มไปด้วยรายการบันทึกจนหาเรื่องอื่นไม่เจอ (72% ของทั้งหมด)
+ */
+const _lastRegionalSaveFp = new Map();
+
+function _regionalSaveFpKey(supId) {
+  return `${String(supId || "").trim().toUpperCase()}|${S.targetYear}-${S.targetMonth}`;
+}
+
+/** ลืมลายเซ็นทั้งหมด — ต้องเรียกทุกครั้งที่ของบน server อาจไม่ตรงกับที่เราจำไว้ */
+function _resetRegionalSaveFingerprints() {
+  _lastRegionalSaveFp.clear();
+}
+
 async function saveRegionalAllocationSnapshots(allocs, status = "optimized") {
   // ทีมที่อยู่ในขอบเขตรวมภาคจริง ๆ — กันแถวไร้เจ้าของไปตกที่รหัสผู้จัดการ (R2)
   const inScope = new Set(_aggregateSupervisorOrder());
@@ -10864,24 +10911,43 @@ async function saveRegionalAllocationSnapshots(allocs, status = "optimized") {
     );
   }
   const saved = [];
+  let wrote = 0;
+  let skipped = 0;
   for (const [supId, rows] of bySup) {
     try {
       // สถานะต้องดูจากแถวของทีมนั้น ๆ ไม่ใช่ค่าเดียวเหมารวมทั้งภาค
       // (บางทีมอาจมีแก้มือ บางทีมไม่มี — sent_targetsun ยังใช้ค่าที่ส่งเข้ามาตรง ๆ)
       const supStatus = status === "sent_targetsun" ? status : _deriveAllocStatus(rows);
+      // ไม่มีอะไรเปลี่ยนตั้งแต่ครั้งที่แล้ว = ไม่ต้องเขียนไฟล์ทั้งก้อนซ้ำ
+      // (ยังนับว่า "บันทึกแล้ว" เพราะของบน server ตรงกับที่เห็นบนจออยู่)
+      const fpKey = _regionalSaveFpKey(supId);
+      const fp = _allocFingerprint(rows, supStatus);
+      if (_lastRegionalSaveFp.get(fpKey) === fp) {
+        skipped++;
+        saved.push(supId);
+        continue;
+      }
       await saveServerAllocationSnapshot(supStatus, {
         supId,
         allocations: rows,
         forceRegional: true,
         silentSummary: true,
       });
+      // จำหลังบันทึกสำเร็จเท่านั้น — ล้มแล้วต้องได้ลองใหม่รอบหน้า
+      _lastRegionalSaveFp.set(fpKey, fp);
+      wrote++;
       saved.push(supId);
     } catch (e) {
+      _lastRegionalSaveFp.delete(_regionalSaveFpKey(supId));
       console.warn("saveRegionalAllocationSnapshots:", supId, e);
       toast(`บันทึก ${supId} ไม่สำเร็จ — ${e.message}`, "amber");
     }
   }
-  if (saved.length) {
+  if (skipped) {
+    console.debug(`saveRegionalAllocationSnapshots: เขียน ${wrote} ทีม · ข้าม ${skipped} ทีมที่ไม่มีอะไรเปลี่ยน`);
+  }
+  // สรุปการใช้งานเปลี่ยนก็ต่อเมื่อมีการเขียนจริง
+  if (wrote) {
     loadAllocationSummary(true);
   }
   return saved;
@@ -10918,6 +10984,7 @@ function confirmRestartAllocation() {
 async function restartAllocation() {
   const sid = String(S.supId || "").trim();
   await deleteServerAllocationSnapshot(sid);
+  _resetRegionalSaveFingerprints();
   _removeDraftKeysBothLocals();
   try {
     localStorage.removeItem(`Snap_${sid}_${S.targetMonth}_${S.targetYear}`);
