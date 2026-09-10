@@ -9096,8 +9096,10 @@ function syncPendingTopupBanner() {
     + (when ? `<span class="topup-banner__when">ส่งเมื่อ ${escapeHtml(when)}</span>` : "")
     + `</div>`
     + `<div class="topup-banner__actions">`
-    + `<button type="button" class="btn-dl" onclick="showPendingTopupList()">ดูรายการ</button>`
-    + `<button type="button" class="btn-dl topup-banner__done" onclick="confirmPendingTopupDone()">แก้ครบแล้ว</button>`
+    + `<button type="button" class="btn-dl" onclick="showPendingTopupList()"`
+    + ` title="เปิดรายการเดิม — SKU ไหนบ้าง ปลายทางถืออยู่กี่หีบ และต้องแก้เป็นเท่าไร">ดูรายการ</button>`
+    + `<button type="button" class="btn-dl topup-banner__done" onclick="confirmPendingTopupDone()"`
+    + ` title="ปิดแถบนี้เมื่อไปแก้ใน Target Sun ครบแล้ว — เปิดรายการกลับมาดูอีกไม่ได้">แก้ครบแล้ว</button>`
     + `</div>`;
   el.style.display = "flex";
 }
