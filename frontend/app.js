@@ -8542,9 +8542,30 @@ async function _pendingReallocateTeams() {
     const items = await _getAllocSummaryItems();
     return (items || []).filter((it) => {
       if (!it?.has_snapshot) return false;
+      // ทีมที่เคยส่งเข้า Target Sun แล้วไปอยู่ในคำเตือนอีกใบซึ่งหนักกว่า — ไม่เอามาซ้ำ
+      if (it.target_sun_sent_at) return false;
       const st = String(it.status || "").toLowerCase();
       return st === "optimized" || st === "draft";
     });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * ทีมในภาคที่ "ส่งเข้า Target Sun ไปแล้ว" — กระจายใหม่ทับแล้วสองฝั่งจะไม่ตรงกัน
+ *
+ * ผลตรวจรอบ 0 §6 (เรื่องที่ร้ายที่สุด): มี 8 ทีมที่สถานะกลับเป็น "แบบร่าง" ทั้งที่เคยส่งแล้ว
+ * เช่น SL523 ถูกทับหลังส่งไป 29 นาที · เกิดจากลูปกระจายทั้งภาคซึ่งข้ามด่านกันเขียนทับ
+ * โดยตั้งใจ (ไม่งั้นจะเด้งถามทีละทีมกลางลูป) ผู้กดจึงไม่มีทางรู้ว่ากำลังทับงานที่ส่งไปแล้ว
+ *
+ * ใช้ `target_sun_sent_at` เป็นตัวชี้ ไม่ใช่สถานะ — เพราะทีมที่ส่งแล้วกลับมาแก้ต่อ
+ * สถานะจะกลายเป็น "แบบร่าง" แต่ของที่อยู่ใน Target Sun ยังเป็นของจริงที่ทับได้อยู่ดี
+ */
+async function _sentToTargetSunTeams() {
+  try {
+    const items = await _getAllocSummaryItems();
+    return (items || []).filter((it) => it?.has_snapshot && it.target_sun_sent_at);
   } catch {
     return [];
   }
@@ -8567,6 +8588,7 @@ async function openAllocScopeModal(opts = {}) {
   const grouped = _employeesGroupedBySupervisor();
   const empTotal = supOrder.reduce((n, sid) => n + (grouped.get(sid) || []).length, 0);
   const pending = run ? await _pendingReallocateTeams() : [];
+  const sent = run ? await _sentToTargetSunTeams() : [];
   const cur = _selectedAllocScope();
 
   const opt = (value, title, desc) => `
@@ -8604,7 +8626,30 @@ async function openAllocScopeModal(opts = {}) {
       `<ul>${pending
         .map((it) => `<li><code>${escH(String(it.sup_id || ""))}</code> — ${escH(_allocationStatusLabel(it.status))}</li>`)
         .join("")}</ul>` +
-      `<div class="scope-modal__warn-foot">ทีมที่ส่ง Target Sun แล้วจะใช้เป้าจาก Target Sun เป็นฐานใหม่</div></div>`;
+      `<div class="scope-modal__warn-foot">ทีมเหล่านี้ยังไม่ได้ส่ง — ทับแล้วไม่กระทบเลขใน Target Sun</div></div>`;
+  }
+
+  // ทีมที่ส่งไปแล้วเป็นคนละเรื่องกับทีมที่ยังไม่ส่ง — ต้องเห็นแยก และต้องกดยืนยันเอง
+  if (sent.length) {
+    bodyHtml +=
+      `<div class="scope-modal__warn scope-modal__warn--danger">` +
+      `<strong>🔴 ${sent.length} ทีมนี้ส่งเข้า Target Sun ไปแล้ว</strong>` +
+      `<ul>${sent
+        .map((it) => {
+          const when = it.target_sun_sent_at ? _formatAllocUpdatedAt(it.target_sun_sent_at) : "—";
+          const st = String(it.status || "").toLowerCase();
+          const note = st === "sent_targetsun" ? "" : " · หลังส่งมีการแก้เพิ่ม";
+          return `<li><code>${escH(String(it.sup_id || ""))}</code> — ส่งเมื่อ ${escH(when)}${escH(note)}</li>`;
+        })
+        .join("")}</ul>` +
+      `<div class="scope-modal__warn-foot">` +
+      `ถ้ากระจายใหม่ ผลของทีมเหล่านี้<strong>ในแอปจะถูกทับ</strong> แต่เลขที่อยู่ใน Target Sun ` +
+      `<strong>ยังเป็นของเดิม</strong> — สองฝั่งจะไม่ตรงกันจนกว่าจะส่งใหม่` +
+      `</div>` +
+      `<label class="scope-modal__ack">` +
+      `<input type="checkbox" id="allocScopeAckSent" />` +
+      `<span>รับทราบ — จะกระจายใหม่ทับทีมที่ส่งไปแล้ว</span>` +
+      `</label></div>`;
   }
 
   return new Promise((resolve) => {
@@ -8629,6 +8674,19 @@ async function openAllocScopeModal(opts = {}) {
         });
       });
     });
+    // มีทีมที่ส่งไปแล้ว → ปุ่ม "เริ่มกระจายหีบ" กดไม่ได้จนกว่าจะติ๊กรับทราบ
+    // (ยืนยันครั้งเดียวก่อนเริ่มลูป ไม่ใช่ถามทีละทีมกลางทาง)
+    const ack = document.getElementById("allocScopeAckSent");
+    if (ack) {
+      const runBtn = document.getElementById("infoModalPrimaryBtn");
+      if (runBtn) {
+        // `.btn-run:disabled` มีสไตล์อยู่แล้ว ไม่ต้องเพิ่มคลาส
+        runBtn.disabled = true;
+        ack.addEventListener("change", () => {
+          runBtn.disabled = !ack.checked;
+        });
+      }
+    }
   });
 }
 
