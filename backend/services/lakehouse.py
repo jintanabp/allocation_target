@@ -16,6 +16,7 @@ from ..core.atomic_io import read_locked
 from ..core.paths import safe_id, target_boxes_cache_path, tga_grain_cache_path
 from ..fabric_dax_connector import FabricDAXConnector
 from ..schemas import LakehouseUploadRequest
+from . import no_target_store
 
 logger = logging.getLogger("target_allocation")
 
@@ -978,6 +979,77 @@ def _ensure_zero_pairs_have_rows(
         return df
     logger.info("added %d zero rows from TGA grain", len(extra))
     return pd.concat([df, pd.DataFrame(extra)], ignore_index=True)
+
+
+def _clear_no_target_employees_in_tga(
+    df: pd.DataFrame,
+    sup_id: str,
+    *,
+    dg: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, list[str]]:
+    """
+    ล้างเป้าเดิมของคนใน「ไม่ต้องตั้งเป้า」ที่ยังค้างอยู่ใน Target Sun
+
+    คนกลุ่มนี้ถูกตัดออกตั้งแต่ตอนกระจาย (`_drop_no_target_employees`) จึงไม่มีแถวใน
+    ผลกระจาย → ไม่มีอะไรถูกส่ง → **Target Sun ยังถือเป้าของงวดก่อนไว้เหมือนเดิม**
+    ผลคือคนที่ตั้งใจให้ไม่มีเป้า กลับมีเป้าค้างอยู่ปลายทาง (ค้างมาตั้งแต่ 26 ส.ค. 2026)
+
+    ปลายทางลบแถวจากฝั่งเราไม่ได้ ทางเดียวที่ล้างได้คือ **ส่งหีบ 0 ไปทับ** — กลไก
+    เดียวกับแถวหีบ 0 ปกติ · ใช้ dim จาก grain ของ TGA เท่านั้น (คือเป้าที่ปลายทาง
+    มีอยู่จริงตอนนี้) จึงไม่มีทางไปสร้างแถวใหม่ให้ใคร ถ้าเขาไม่เคยมีเป้าก็ไม่มีอะไรให้ล้าง
+
+    ขอบเขต: เฉพาะรายชื่อของทีม `sup_id` ที่กำลังส่งเท่านั้น — ไม่ไปยุ่งกับคนของทีมอื่น
+    ที่อาจติดมาในคำขอเดียวกันตอนกระจายรวมภาค (ทีมนั้นจะล้างของตัวเองตอนถึงคิวส่ง)
+    """
+    sup_key = no_target_store.norm_sup(sup_id)
+    if not sup_key or dg is None or dg.empty or "emp_id" not in dg.columns:
+        return df, []
+    try:
+        blocked = no_target_store.no_target_emp_ids(sup_key)
+    except Exception as e:
+        logger.error("อ่านรายชื่อไม่ต้องตั้งเป้าไม่ได้ — ไม่ล้างแถวค้างรอบนี้: %s", e)
+        return df, []
+    if not blocked:
+        return df, []
+
+    present = set(
+        zip(
+            df["emp_id"].astype(str).str.strip(),
+            df["sku"].astype(str).str.strip(),
+        )
+    )
+    extra: list[dict] = []
+    cleared: set[str] = set()
+    for _, r in dg.iterrows():
+        emp = no_target_store.norm_emp(r.get("emp_id"))
+        sku = str(r.get("sku") or "").strip()
+        if not emp or not sku or emp not in blocked:
+            continue
+        if (emp, sku) in present:
+            # มีแถวอยู่ในผลกระจายแล้ว (เช่นผู้ใช้ปลดออกจากรายชื่อกลางคัน) — อย่าไปทับ
+            continue
+        extra.append(
+            {
+                "emp_id": emp,
+                "sku": sku,
+                "allocated_boxes": 0,
+                "salestype": _cell_str(r.get("salestype", "")),
+                "divisioncode": _cell_str(r.get("divisioncode", "")),
+                "areacode": _areacode_str(r.get("areacode", "")),
+                "provincecode": _cell_str(r.get("provincecode", "")),
+                "warehouse_code": _cell_str(r.get("warehouse_code", "")),
+            }
+        )
+        cleared.add(emp)
+    if not extra:
+        return df, []
+    logger.info(
+        "ล้างเป้าค้างของคนไม่ต้องตั้งเป้า %s: %d คน %d แถว (ส่งหีบ 0 ไปทับ)",
+        sup_key,
+        len(cleared),
+        len(extra),
+    )
+    return pd.concat([df, pd.DataFrame(extra)], ignore_index=True), sorted(cleared)
 
 
 def _preview_not_in_targetsun(df: pd.DataFrame, limit: int = 80) -> list[dict]:
@@ -2042,6 +2114,11 @@ def _build_tga_upload_dataframe(
         dg=grain_dg,
         grain_lookup=grain_lookup,
     )
+    # เฉพาะเส้นทางส่งจริง — ไฟล์ Excel ที่ผู้ใช้โหลดไปดูไม่ต้องมีแถวล้างค่าปนมาให้งง
+    if drop_incomplete_rows:
+        df, _no_target_cleared = _clear_no_target_employees_in_tga(
+            df, req.sup_id, dg=grain_dg
+        )
     t_expand = time.perf_counter()
 
     # grain จากขั้นที่ 1 ครบทุกแถว → ไม่ยิง Fabric ซ้ำ (เร็วขึ้น ~2–3s)
