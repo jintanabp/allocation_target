@@ -819,11 +819,12 @@
                 <option value="price_desc">เรียงตาม ราคา/หีบ (มากไปน้อย)</option>
               </select>
 
-              <button type="button" id="toggleSkuProductNamesBtn" class="btn-dl btn-dl--toggle"
+              <!-- ค่าเริ่มต้นคือ "เปิด" — initSkuProductNames() จะซิงก์ปุ่มตามค่าที่ผู้ใช้เคยกดไว้ -->
+              <button type="button" id="toggleSkuProductNamesBtn" class="btn-dl btn-dl--toggle btn-dl--toggle-on"
                 style="color:var(--text-2); border-color:var(--border-md); background:var(--bg-main);"
                 onclick="toggleSkuProductNames()"
-                aria-pressed="false"
-                title="แสดง/ซ่อนแถวชื่อสินค้าในหัวตาราง">ชื่อสินค้า ▶</button>
+                aria-pressed="true"
+                title="แสดง/ซ่อนแถวชื่อสินค้าในหัวตาราง">ชื่อสินค้า ▼</button>
 
               <select id="brandSelect" class="field-select"
                 style="min-width: 180px; padding: 6px 30px 6px 12px; height: auto; border-radius: 6px; font-weight: 600; color: var(--accent); border-color: var(--accent-brd); background-color: var(--accent-bg);"
@@ -1700,7 +1701,7 @@
   <!-- ตรรกะล้วน (ตัวแปลงเลข/คณิตการเกลี่ย) — ต้องมาก่อน app.js
        ไฟล์นี้มีเทสจริงด้วย node --test tests/logic.test.js -->
   <script src="logic.js?v=2026090410"></script>
-  <script src="app.js?v=2026090807"></script>
+  <script src="app.js?v=2026091001"></script>
 </body>
 
 </html>

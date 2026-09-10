@@ -55,6 +55,8 @@ let msalInstance = null;
    หน้าจอเดิม จอที่เปลี่ยนเองโดยไม่ได้สั่งจะสร้างความสับสนมากกว่าช่วย
    จำไว้เฉพาะเครื่องนั้น (localStorage) ไม่ผูกกับบัญชี                        */
 const THEME_KEY = "AllocTheme_v1";
+/** จำว่าผู้ใช้เลือกเปิด/ปิดแถวชื่อสินค้าไว้ — "0" = ปิด · ไม่มีค่า = เปิด (ค่าเริ่มต้น) */
+const SKU_NAMES_KEY = "AllocSkuNames_v1";
 
 function _applyTheme(theme) {
   const dark = theme === "dark";
@@ -721,8 +723,8 @@ let S = {
   activeBrand: "ALL",
   /** null | "near" | "far" — กรองคอลัมน์ SKU ในตารางผลตามสัญลักษณ์ ◆ / ⚠ */
   histDevFilter: null,
-  /** แสดงแถวชื่อสินค้าในหัวตารางผลขั้น 3 */
-  showSkuProductNames: false,
+  /** แสดงแถวชื่อสินค้าในหัวตารางผลขั้น 3 — เปิดไว้เป็นค่าเริ่มต้น (จำค่าที่ผู้ใช้กดไว้ใน localStorage) */
+  showSkuProductNames: true,
   targetMonth: null,
   targetYear: null,
   supId: null,
@@ -948,6 +950,23 @@ function _logClientAction(action, message, detail = "", level = "info") {
 
 function _logClientError(action, message, detail = "") {
   _logClientAction(action, message, detail, "error");
+}
+
+/**
+ * บันทึกว่าขั้นไหนใช้เวลาเท่าไร — ตอบเสียง "ช้า โหลดนาน" 6 เสียงในผลสำรวจ
+ *
+ * ผลสำรวจบอกว่าช้า แต่เราไม่มีตัวเลขสักตัวว่าช้าตรงไหน (โหลดข้อมูล หรือกระจาย)
+ * และช้าเท่าไรถึงเรียกว่าช้า · บันทึกอย่างเดียว ไม่เปลี่ยนพฤติกรรมอะไรทั้งสิ้น
+ * `ms` เป็นเวลาที่ผู้ใช้รอจริงฝั่งเบราว์เซอร์ = เวลาเซิร์ฟเวอร์ + เน็ต ซึ่งเป็นตัวที่ผู้ใช้รู้สึก
+ */
+function _logTiming(step, ms, detail = "") {
+  const sec = Math.round(Number(ms) || 0) / 1000;
+  _logClientAction(
+    "timing",
+    `${step} ใช้เวลา ${sec.toFixed(1)} วินาที`,
+    `ms=${Math.round(Number(ms) || 0)}${detail ? " · " + detail : ""}`,
+    "info"
+  );
 }
 
 function _formatAllocateDurationRange(lowSec, highSec) {
@@ -2728,6 +2747,7 @@ function setBusyStatus(state, msg) {
 ══════════════════════════════════════════════ */
 document.addEventListener("DOMContentLoaded", async () => {
   initTheme();
+  initSkuProductNames();
   _primeMsAuthBlock();
 
   // ปุ่ม login อย่าใส่ onclick ใน HTML ด้วย — ถ้ามีซ้ำจะเรียก handleLogin สองครั้งต่อคลิก
@@ -4578,6 +4598,7 @@ async function loadData(supId, targetMonth, targetYear, refresh = false) {
     });
     if (refresh) q.set("refresh", "true");
     const url = `${API_BASE_URL}/data/employees?${q}`;
+    const _t0 = Date.now();
     const res = await fetchWithTimeout(url, {}, 120000);
     if (!res.ok) {
       let detail = "ดึงข้อมูลไม่สำเร็จ";
@@ -4652,6 +4673,13 @@ async function loadData(supId, targetMonth, targetYear, refresh = false) {
       showLoginError("❌ ระบบตอบกลับข้อมูลไม่ถูกต้อง — กรุณาลองใหม่หรือติดต่อ IT");
       return false;
     }
+    _logTiming(
+      "โหลดข้อมูลขั้นที่ 1",
+      Date.now() - _t0,
+      `sup=${supId} · งวด ${targetYear}-${String(targetMonth).padStart(2, "0")}`
+      + ` · พนักงาน ${(data.employees || []).length} · SKU ${(data.skus || []).length}`
+      + (refresh ? " · กดโหลดใหม่" : "")
+    );
     return applyDataPayload(data);
   } catch (err) {
     const isFetch = err instanceof TypeError && err.message.toLowerCase().includes("fetch");
@@ -5989,6 +6017,8 @@ async function _callOptimizeApi(supId, payload) {
   const url =
     `${API_BASE_URL}/optimize?sup_id=${encodeURIComponent(supId)}` +
     `&target_month=${S.targetMonth}&target_year=${S.targetYear}`;
+  // จุดเดียวที่ทุกทางเรียก /optimize ผ่าน — ทั้งทีมเดี่ยวและลูปรวมภาค (ทีมละครั้ง)
+  const _t0 = Date.now();
   const res = await fetchWithTimeout(
     url,
     {
@@ -5997,6 +6027,13 @@ async function _callOptimizeApi(supId, payload) {
       body: JSON.stringify(payload),
     },
     _optimizeTimeoutMs()
+  );
+  _logTiming(
+    "กระจายหีบ",
+    Date.now() - _t0,
+    `sup=${supId} · วิธี ${payload?.strategy || "-"}`
+    + (S.aggregateMode ? " · โหมดรวมภาค" : "")
+    + (res.ok ? "" : ` · ไม่สำเร็จ (${res.status})`)
   );
   if (!res.ok) {
     const j = await res.json().catch(() => ({}));
@@ -6372,13 +6409,32 @@ function _skuDisplayName(info) {
   return th || en || "";
 }
 
+/** ปรับหน้าตาปุ่ม「ชื่อสินค้า」ให้ตรงกับสถานะจริง — ปุ่มอยู่ใน index.html ตายตัว จึงต้องซิงก์ตอนเปิดหน้าด้วย */
+function _syncSkuProductNamesBtn() {
+  const btn = document.getElementById("toggleSkuProductNamesBtn");
+  if (!btn) return;
+  btn.textContent = S.showSkuProductNames ? "ชื่อสินค้า ▼" : "ชื่อสินค้า ▶";
+  btn.setAttribute("aria-pressed", S.showSkuProductNames ? "true" : "false");
+  btn.classList.toggle("btn-dl--toggle-on", S.showSkuProductNames);
+}
+
+/** อ่านค่าที่ผู้ใช้เคยเลือกไว้ — ไม่เคยกด = เปิด (ค่าเริ่มต้นใหม่ตั้งแต่ 10 ก.ย. 2026) */
+function initSkuProductNames() {
+  try {
+    S.showSkuProductNames = localStorage.getItem(SKU_NAMES_KEY) !== "0";
+  } catch (_) {
+    /* โหมดส่วนตัว/บล็อก storage — ใช้ค่าเริ่มต้น */
+  }
+  _syncSkuProductNamesBtn();
+}
+
 function toggleSkuProductNames() {
   S.showSkuProductNames = !S.showSkuProductNames;
-  const btn = document.getElementById("toggleSkuProductNamesBtn");
-  if (btn) {
-    btn.textContent = S.showSkuProductNames ? "ชื่อสินค้า ▼" : "ชื่อสินค้า ▶";
-    btn.setAttribute("aria-pressed", S.showSkuProductNames ? "true" : "false");
-    btn.classList.toggle("btn-dl--toggle-on", S.showSkuProductNames);
+  _syncSkuProductNamesBtn();
+  try {
+    localStorage.setItem(SKU_NAMES_KEY, S.showSkuProductNames ? "1" : "0");
+  } catch (_) {
+    /* จำไม่ได้ก็ไม่เป็นไร — รอบนี้ยังสลับให้ตามที่กด */
   }
   if (S.allocations?.length) renderResult(S.allocations);
 }
