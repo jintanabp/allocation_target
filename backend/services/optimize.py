@@ -49,7 +49,7 @@ from ..core.targets import (
 from ..generate_excel import create_target_excel
 from ..schemas import OptimizeRequest
 from ..fabric_dax_connector import FabricDAXConnector
-from . import no_target_store
+from . import alloc_rules_store, no_target_store
 from .sku_link_store import collapse_hist_to_canonical
 from .wh_split import (
     _norm_wh,
@@ -344,6 +344,7 @@ def _post_merge_revenue_balance(
     tiered_allocation: bool,
     tier_pct: float,
     revenue_tolerance_baht: float,
+    zero_pairs: set | frozenset | None = None,
 ) -> pd.DataFrame:
     """ปรับมูลค่ารายคนรวมทั้งตะกร้า — โยนหีบได้เฉพาะ SKU หลัก."""
     if df_allocation.empty or not tiered_allocation:
@@ -405,6 +406,7 @@ def _post_merge_revenue_balance(
         strict_band_pct=_TIER_STRICT_BAND_PCT,
         default_band_pct=_DEFAULT_HIST_BAND_PCT,
         even_skus=even_skus,
+        zero_pairs=zero_pairs,
     )
 
     alloc_idx = {
@@ -747,6 +749,36 @@ def run_optimization_service(
 
     df_hist_prev = _maybe_split_hist(df_hist_prev, reverse_map, value_shares)
 
+    # ── ประวัติ 12 เดือน — ใช้ตอบว่า "คู่นี้เคยขายกันไหมในรอบปี" (กติกาไม่เคยขาย = เป้า 0)
+    #
+    # ต้องมองยาวถึงเดือนเดียวกันปีที่แล้ว ไม่งั้นสินค้าเทศกาลจะถูกตัดสินว่าไม่เคยขาย
+    # ไฟล์แคชนี้คืนเฉพาะคู่ที่ขายจริง (hist_boxes > 0) จึงเป็นชุด "ใครเคยขายอะไร" ตรง ๆ
+    #
+    # **ไม่มีไฟล์ = ไม่รู้ ต้องไม่ใช่ "ไม่เคยขาย"** — ถ้าเผลอตีความว่าไม่เคยขาย
+    # ทีมที่แคชยังไม่มาจะถูกตัดเป้าเป็น 0 เกือบทั้งทีมในคลิกเดียว
+    never_sold_on = alloc_rules_store.never_sold_zero_enabled(sup_id)
+    df_hist_12 = pd.DataFrame()
+    if never_sold_on:
+        try:
+            df_hist_12 = _read_hist_cache_across_teams(
+                lambda sid: hist_cache_path(sid, target_month, target_year, n_months=12),
+                hist_sup_ids,
+                real_emp_list,
+            )
+        except Exception as e:
+            logger.warning("hist 12-month cache read failed: %s", e)
+            df_hist_12 = pd.DataFrame()
+        df_hist_12 = _maybe_split_hist(df_hist_12, reverse_map, value_shares)
+        if df_hist_12.empty:
+            never_sold_on = False
+            logger.warning(
+                "กติกาไม่เคยขาย=เป้า 0 ปิดตัวเองรอบนี้ (%s): ไม่มีประวัติ 12 เดือนให้ตัดสิน "
+                "— โหลดข้อมูลขั้นที่ 1 ใหม่เพื่อดึงเข้ามา",
+                sup_id,
+            )
+        else:
+            logger.info("hist 12-month loaded: %d rows (กติกาไม่เคยขาย=เป้า 0 ทำงาน)", len(df_hist_12))
+
     logger.info(
         "Running strategy=%s for sup=%s (eligible emps for boxes: %d)",
         req.strategy,
@@ -862,6 +894,10 @@ def run_optimization_service(
     distinct_strategies = {s for s in brand_map.values() if s}
     multi_strategy_run = False
     optimization_fallback = False
+    # แผนกติกาไม่เคยขายของทุกกลุ่มกลยุทธ์รวมกัน — ใช้กันรอบเกลี่ยเงินหลังรวมผล
+    # ยกหีบกลับเข้าช่องที่เพิ่งตัดไป
+    never_sold_pairs_all: set = set()
+    never_sold_summary_all: dict = {}
     sku_strategy_map: dict[str, str] = {}
     hist_by_strategy: dict[str, pd.DataFrame] = {}
     if brand_map and len(distinct_strategies) > 1 and not df_sku.empty:
@@ -957,9 +993,13 @@ def run_optimization_service(
                 revenue_tolerance_baht=float(req.revenue_tolerance_baht),
                 tiered_allocation=bool(req.tiered_allocation),
                 tier_pct=float(req.tier_pct),
+                df_sold_12m=df_hist_12 if never_sold_on else None,
+                push_multiple=alloc_rules_store.push_multiple(),
             )
             if df_alloc_grp.attrs.get("optimization_fallback"):
                 optimization_fallback = True
+            never_sold_pairs_all |= set(df_alloc_grp.attrs.get("never_sold_zero_pairs") or ())
+            never_sold_summary_all.update(df_alloc_grp.attrs.get("never_sold_summary") or {})
             alloc_parts.append(df_alloc_grp)
         df_allocation = (
             pd.concat(alloc_parts, ignore_index=True)
@@ -980,6 +1020,7 @@ def run_optimization_service(
                 tiered_allocation=bool(req.tiered_allocation),
                 tier_pct=float(req.tier_pct),
                 revenue_tolerance_baht=float(req.revenue_tolerance_baht),
+                zero_pairs=never_sold_pairs_all,
             )
             logger.info("multi-strategy: post-merge revenue balance applied")
     else:
@@ -999,8 +1040,12 @@ def run_optimization_service(
             revenue_tolerance_baht=float(req.revenue_tolerance_baht),
             tiered_allocation=bool(req.tiered_allocation),
             tier_pct=float(req.tier_pct),
+            df_sold_12m=df_hist_12 if never_sold_on else None,
+            push_multiple=alloc_rules_store.push_multiple(),
         )
         optimization_fallback = bool(df_allocation.attrs.get("optimization_fallback"))
+        never_sold_pairs_all |= set(df_allocation.attrs.get("never_sold_zero_pairs") or ())
+        never_sold_summary_all.update(df_allocation.attrs.get("never_sold_summary") or {})
 
     tier_flex_skus: list[str] = []
     if req.tiered_allocation:
@@ -1204,4 +1249,7 @@ def run_optimization_service(
         "no_target_excluded": dropped_no_target,
         "dropped_locks": dropped_locks,
         "hist_fallbacks": hist_fallbacks,
+        # กติกาไม่เคยขาย = เป้า 0 ทำอะไรไปบ้าง — หน้าจอต้องบอกผู้ใช้ได้ว่าทำไมเลขเปลี่ยน
+        # โดยเฉพาะ SKU ที่เป้าไปกองที่คนเคยขายไม่กี่คน ซึ่งผู้ใช้ขอให้ "แจ้งบอก" ไว้
+        "never_sold_summary": never_sold_summary_all,
     }
