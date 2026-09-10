@@ -16,7 +16,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=2026091002" />
+  <link rel="stylesheet" href="style.css?v=2026091003" />
 </head>
 
 <body>
@@ -856,6 +856,9 @@
           <div id="histDevSummary" class="hist-dev-bar" style="display:none;" aria-live="polite"></div>
 
           <div id="step3SnapshotBadge" class="alloc-snapshot-badge" style="display:none;" aria-live="polite"></div>
+          <!-- SKU ที่ส่งไม่ได้และต้องไปแก้เองใน Target Sun — ค้างไว้จนกว่าจะกด "แก้ครบแล้ว"
+               เดิมรายการนี้อยู่แต่ในกล่องหลังส่ง ปิดแล้วหายเลย ไม่มีทางเปิดดูซ้ำ -->
+          <div id="step3TopupBanner" class="topup-banner" style="display:none;" aria-live="polite"></div>
           <div id="step3ResultTargetNote" class="fabric-change-inline" style="display:none;margin-bottom:12px;" aria-live="polite"></div>
           <div id="compositeAllocLegend" class="composite-alloc-legend" style="display:none;margin-bottom:12px;" role="note" aria-live="polite"></div>
           <div id="rebalanceExplain" class="rebalance-explain" style="display:none;margin-bottom:12px;" role="status" aria-live="polite"></div>
@@ -1701,7 +1704,7 @@
   <!-- ตรรกะล้วน (ตัวแปลงเลข/คณิตการเกลี่ย) — ต้องมาก่อน app.js
        ไฟล์นี้มีเทสจริงด้วย node --test tests/logic.test.js -->
   <script src="logic.js?v=2026090410"></script>
-  <script src="app.js?v=2026091004"></script>
+  <script src="app.js?v=2026091005"></script>
 </body>
 
 </html>

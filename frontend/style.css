@@ -2236,6 +2236,50 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
   font-size: 12px;
   line-height: 1.55;
 }
+
+/* แถบ "ต้องไปแก้เองใน Target Sun" — ค้างอยู่จนกว่าผู้ใช้จะกดว่าแก้ครบแล้ว
+   ตัวอักษรใหญ่กว่าแบนเนอร์อื่นเพราะเป็นงานค้างที่ต้องไปทำต่อ ไม่ใช่ข้อสังเกต */
+.topup-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--amber-bg);
+  border: 1px solid var(--amber-brd);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.topup-banner__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 220px;
+  flex: 1 1 260px;
+}
+
+.topup-banner__text strong { color: var(--amber); }
+
+.topup-banner__when {
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.topup-banner__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.topup-banner__done {
+  color: var(--text-2);
+  border-color: var(--border-md);
+  background: var(--bg-main);
+}
 .step3-review-notes ul {
   margin: 6px 0 0;
   padding-left: 1.2em;
