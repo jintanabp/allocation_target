@@ -390,5 +390,103 @@ class TestFrontend(unittest.TestCase):
         self.assertIn("_noTargetEmployees", body)
 
 
+class TestClearStaleTargetSunRows(_TmpStore):
+    """
+    เป้าเดิมของคนไม่ต้องตั้งเป้า ที่ค้างอยู่ใน Target Sun ต้องถูกล้างด้วยการส่งหีบ 0
+
+    คนกลุ่มนี้ไม่มีแถวในผลกระจาย (ถูกตัดตั้งแต่ตอนคำนวณ) ถ้าไม่ส่งอะไรเลย
+    ปลายทางก็ถือเป้าของงวดก่อนไว้เหมือนเดิม — ตั้งใจกันเขาออก แต่เขากลับยังมีเป้า
+    """
+
+    def setUp(self):
+        super().setUp()
+        from backend.services import lakehouse
+
+        self.lh = lakehouse
+
+    @staticmethod
+    def _grain(rows):
+        return pd.DataFrame(
+            [
+                {
+                    "emp_id": e,
+                    "sku": s,
+                    "salestype": "S",
+                    "divisioncode": "D1",
+                    "areacode": "A1",
+                    "provincecode": "P1",
+                    "warehouse_code": w,
+                }
+                for e, s, w in rows
+            ]
+        )
+
+    @staticmethod
+    def _alloc(rows):
+        return pd.DataFrame(
+            [{"emp_id": e, "sku": s, "allocated_boxes": b} for e, s, b in rows]
+        )
+
+    def test_sends_zero_rows_for_blocked_employee(self):
+        self._write([{"super_code": "SL509", "emp_id": "C444"}])
+        df = self._alloc([("C450", "111111", 10)])
+        dg = self._grain([("C444", "111111", "W1"), ("C450", "111111", "W1")])
+        out, cleared = self.lh._clear_no_target_employees_in_tga(df, "SL509", dg=dg)
+        self.assertEqual(cleared, ["C444"])
+        added = out[out["emp_id"] == "C444"]
+        self.assertEqual(len(added), 1, "ต้องมีแถวล้างค่าให้ C444 หนึ่งแถว")
+        self.assertEqual(int(added.iloc[0]["allocated_boxes"]), 0)
+        self.assertEqual(added.iloc[0]["warehouse_code"], "W1", "ต้องยกคลังจาก grain มาด้วย")
+        self.assertEqual(len(out[out["emp_id"] == "C450"]), 1, "คนอื่นต้องไม่ถูกแตะ")
+
+    def test_one_row_per_warehouse(self):
+        """คนละคลังคือคนละแถวในคีย์ทับข้อมูล — ล้างคลังเดียวแล้วอีกคลังจะค้าง"""
+        self._write([{"super_code": "SL509", "emp_id": "C444"}])
+        dg = self._grain([("C444", "111111", "W1"), ("C444", "111111", "W9")])
+        out, _ = self.lh._clear_no_target_employees_in_tga(
+            self._alloc([("C450", "111111", 5)]), "SL509", dg=dg
+        )
+        self.assertEqual(
+            sorted(out[out["emp_id"] == "C444"]["warehouse_code"].tolist()), ["W1", "W9"]
+        )
+
+    def test_never_creates_rows_targetsun_does_not_have(self):
+        """ยึด grain เป็นความจริง — ไม่มีเป้าเดิมอยู่ ก็ไม่มีอะไรต้องล้าง"""
+        self._write([{"super_code": "SL509", "emp_id": "C444"}])
+        dg = self._grain([("C450", "111111", "W1")])
+        out, cleared = self.lh._clear_no_target_employees_in_tga(
+            self._alloc([("C450", "111111", 5)]), "SL509", dg=dg
+        )
+        self.assertEqual(cleared, [])
+        self.assertEqual(len(out), 1)
+
+    def test_other_teams_list_is_not_applied(self):
+        """ส่งของทีมไหนก็ล้างของทีมนั้น — ห้ามไปล้างเป้าคนของทีมอื่นที่ติดมาในคำขอเดียวกัน"""
+        self._write([{"super_code": "SL397", "emp_id": "C444"}])
+        dg = self._grain([("C444", "111111", "W1")])
+        out, cleared = self.lh._clear_no_target_employees_in_tga(
+            self._alloc([("C450", "111111", 5)]), "SL509", dg=dg
+        )
+        self.assertEqual(cleared, [])
+        self.assertEqual(len(out), 1)
+
+    def test_row_already_in_payload_is_left_alone(self):
+        """ปลดออกจากรายชื่อกลางคันแล้วเขามีเป้าจริง — ห้ามส่ง 0 ไปทับของที่เพิ่งกระจาย"""
+        self._write([{"super_code": "SL509", "emp_id": "C444"}])
+        dg = self._grain([("C444", "111111", "W1")])
+        out, cleared = self.lh._clear_no_target_employees_in_tga(
+            self._alloc([("C444", "111111", 7)]), "SL509", dg=dg
+        )
+        self.assertEqual(cleared, [])
+        self.assertEqual(int(out.iloc[0]["allocated_boxes"]), 7)
+
+    def test_only_on_the_real_send_path(self):
+        """ไฟล์ Excel ที่ผู้ใช้โหลดไปตรวจ ไม่ควรมีแถวล้างค่าปนมา"""
+        src = inspect.getsource(self.lh._build_tga_upload_dataframe)
+        i = src.index("_clear_no_target_employees_in_tga(")
+        head = src[max(0, i - 260):i]
+        self.assertIn("if drop_incomplete_rows:", head)
+
+
 if __name__ == "__main__":
     unittest.main()

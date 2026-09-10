@@ -463,6 +463,37 @@ def _flex_skus_by_target_value(df_sku: pd.DataFrame, tier_pct: float = _TIER_DEF
     return frozenset(flex)
 
 
+def _fair_rank(employees, hist_by_emp: dict | None = None) -> dict:
+    """
+    ลำดับ "ใครควรได้เศษหีบก่อน" — คนที่ขายสินค้านั้นได้มากกว่ามาก่อน เท่ากันเรียงตามรหัส
+
+    เดิมเศษหีบตกที่คนแถวบนสุดของตารางเสมอ เพราะ `sorted()` ของ Python เป็น stable
+    พอน้ำหนักเท่ากัน (ไม่มีใครมีประวัติ SKU นั้น หรือกลยุทธ์ EVEN) ลำดับที่เหลือจึงเป็น
+    ลำดับในทะเบียนพนักงาน — คนเดิมได้เศษทุกงวด คนท้ายตารางไม่เคยได้เลย
+    SL384 รายงานเรื่องนี้ และผลตรวจรอบ 0 นับได้ 3,820 คู่ (19.5% ของคู่สินค้า×ทีม)
+    """
+    hist_by_emp = hist_by_emp or {}
+    ordered = sorted(
+        employees,
+        key=lambda e: (-float(hist_by_emp.get(e, 0.0) or 0.0), str(e)),
+    )
+    return {e: i for i, e in enumerate(ordered)}
+
+
+def _spread_one_each(total_target, n_emps) -> bool:
+    """
+    เป้ารวมของ SKU น้อยกว่าจำนวนคนในทีม → ต้องกระจายให้ทั่ว คนละไม่เกิน 1 หีบ
+
+    เช่น SL540 สินค้า 111336 เป้ารวม 4 หีบ ทีมมี 11 คน — ของเดิมมีสิทธิ์ตกที่คนเดียว
+    4 หีบ (หรือกองที่คนแถวบน) ทั้งที่งานจริงคือ "ให้ 4 คนไปขายคนละหีบ"
+    ใครได้ตัดสินด้วยประวัติการขายผ่าน _fair_rank ไม่ใช่ตำแหน่งในตาราง
+    """
+    try:
+        return 0 < int(total_target) < int(n_emps)
+    except (TypeError, ValueError):
+        return False
+
+
 def _distribute_even_integers(total: int, n_slots: int) -> list[int]:
     """แบ่งจำนวนเต็มให้เท่าที่สุด (ต่างกันได้ไม่เกิน 1)"""
     n = max(0, int(n_slots))
@@ -690,11 +721,14 @@ def _lp_weights_from_balance(hist_balance: float) -> tuple[float, float, float]:
     excess_w = 1.875 - hb * 1.5
     return shortfall_w, excess_w, hist_anchor
 
-def _cap_and_redistribute(raw: dict, total: int, cap_multiplier: float = None) -> dict:
+def _cap_and_redistribute(
+    raw: dict, total: int, cap_multiplier: float = None, tie_rank: dict | None = None
+) -> dict:
     """
     จำกัด weight outlier: ถ้าใครได้ > mean * CAP ให้ cap แล้วกระจายส่วนเกินให้คนที่เหลือ
     ทำซ้ำจนไม่มีคนเกิน cap (max 10 รอบ)
     cap_multiplier: override _CAP_MULTIPLIER ถ้า Custom strategy ส่งมา
+    tie_rank: ลำดับตัดสินเมื่อเศษทศนิยมเท่ากัน (ดู _fair_rank) — ไม่ส่งมา = ลำดับเดิมในลิสต์
     """
     effective_cap_mult = cap_multiplier if cap_multiplier is not None else _CAP_MULTIPLIER
     emps = list(raw.keys())
@@ -728,7 +762,9 @@ def _cap_and_redistribute(raw: dict, total: int, cap_multiplier: float = None) -
     # floor + remainder distribution
     floored = {e: int(allocated[e]) for e in emps}
     remain = total - sum(floored.values())
-    order = sorted(emps, key=lambda e: -(allocated[e] - floored[e]))
+    # เศษเท่ากันตัดสินด้วยประวัติ ไม่ใช่ลำดับแถวในทะเบียน (ดู _fair_rank)
+    rank = tie_rank or {}
+    order = sorted(emps, key=lambda e: (-(allocated[e] - floored[e]), rank.get(e, 0)))
     for i in range(max(0, remain)):
         floored[order[i % len(order)]] += 1
     return floored
@@ -798,11 +834,18 @@ def _proportional(
         }
 
         hist_sum = sum(hist_by_emp.values())
+        rank = _fair_rank(active_employees, hist_by_emp)
 
         # สินค้าใหม่: แบ่งเท่าโดยไม่ผ่าน cap (กันหีบเบี้ยวในโหมดหลัก/รอง)
         if sku_key in even_skus:
             parts = _distribute_even_integers(total, len(active_employees))
             floored = {e: parts[i] for i, e in enumerate(active_employees)}
+        elif _spread_one_each(total_orig, len(employees)):
+            # เป้าน้อยกว่าจำนวนคน → คนละไม่เกิน 1 หีบ ให้ทั่วถึงตามลำดับประวัติการขาย
+            # (เทียบกับ "จำนวนคนทั้งทีม" ไม่ใช่คนที่เหลือหลังหักล็อก — นิยามเดียวกับที่
+            #  ผลตรวจรอบ 0 นับ และไม่แกว่งตามว่าผู้ใช้ล็อกช่องไปแล้วกี่ช่อง)
+            picked = set(sorted(active_employees, key=lambda e: rank[e])[:total])
+            floored = {e: (1 if e in picked else 0) for e in active_employees}
         else:
             if strategy == "EVEN" or hist_sum == 0:
                 weights = {e: 1.0 for e in active_employees}
@@ -817,7 +860,9 @@ def _proportional(
             total_w = sum(weights.values())
             if total_w > 0 and total > 0:
                 raw = {e: total * weights[e] / total_w for e in active_employees}
-                floored = _cap_and_redistribute(raw, total, cap_multiplier=cap_multiplier)
+                floored = _cap_and_redistribute(
+                    raw, total, cap_multiplier=cap_multiplier, tie_rank=rank
+                )
             else:
                 floored = {e: 0 for e in active_employees}
 
@@ -886,6 +931,23 @@ def _greedy_revenue_balancer(
         return _v
 
     def _cell_bounds_uncached(emp: str, sku: str) -> tuple[int, int] | None:
+        """รั้วประวัติ + เพดาน "เป้าน้อยกว่าจำนวนคน" — ตัวหลังต้องมีผลแม้ไม่มี base_map"""
+        if (emp, sku) in locked_map:
+            return None
+        if _norm_sku(sku) in even_skus:
+            return None
+        bounds = _cell_bounds_by_history(emp, sku)
+        if not _spread_one_each(target_boxes.get(sku, 0), n_emps):
+            return bounds
+        # ตัวเกลี่ยเงินย้ายหีบทีละใบ ถ้าไม่กั้นตรงนี้มันจะยกหีบไปกองคืนที่คนเดียวได้
+        # ทั้งที่ LP/ตัวกระจายตั้งใจแบ่งให้คนละใบ
+        if bounds is None:
+            floor_min = _min_floor_boxes(sku)
+            return (floor_min, max(floor_min, 1))
+        lo, hi = bounds
+        return (lo, max(lo, min(hi, 1)))
+
+    def _cell_bounds_by_history(emp: str, sku: str) -> tuple[int, int] | None:
         if not base_map:
             return None
         if (emp, sku) in locked_map:
@@ -1295,6 +1357,9 @@ def _lp_optimize(
                 dpos[(emp, sku)] = pulp.LpVariable(_vname("dp", emp, sku), lowBound=0, cat="Continuous")
                 dneg[(emp, sku)] = pulp.LpVariable(_vname("dn", emp, sku), lowBound=0, cat="Continuous")
 
+        # ขอบล่างที่ถูกบังคับไว้จริงต่อเซลล์ — เพดาน "เป้าน้อยกว่าจำนวนคน" ด้านล่างต้องรู้
+        # ไม่งั้นจะไปทับขอบล่างของรั้วประวัติแล้วโจทย์กลายเป็น infeasible ทั้งทีม
+        cell_lo: dict[tuple, int] = {}
         if band_pct > 0 and base_map:
             for emp in employees:
                 for sku in skus:
@@ -1324,6 +1389,23 @@ def _lp_optimize(
                     lo, hi = _hist_band_int_bounds(base, cell_band, min_box)
                     prob += x[(emp, sku)] >= lo
                     prob += x[(emp, sku)] <= hi
+                    cell_lo[(emp, sku)] = lo
+
+        # เป้ารวมของ SKU น้อยกว่าจำนวนคน → คนละไม่เกิน 1 หีบ (ดู _spread_one_each)
+        #
+        # LP ตัดสินด้วย "เงินรายคนห่างเป้าเท่าไร" ล้วน ๆ เป้า 4 หีบในทีม 11 คนจึงลงที่
+        # คนเดียวได้ถ้าบังเอิญช่วยให้เงินเข้าเป้ากว่า · ใช้ max(1, ขอบล่างของเซลล์) เสมอ
+        # เพื่อไม่ให้ชนกับรั้วประวัติ (เช่นคนที่ baseline 3 ถูกบังคับ >= 2 อยู่แล้ว)
+        # ซึ่งจะทำให้โจทย์แก้ไม่ได้แล้วตกไป fallback ทั้งทีม
+        for sku in skus:
+            if not _spread_one_each(target_boxes[sku], len(employees)):
+                continue
+            if _norm_sku(sku) in even_skus:
+                continue
+            for emp in employees:
+                if (emp, sku) in locked_map:
+                    continue
+                prob += x[(emp, sku)] <= max(1, cell_lo.get((emp, sku), 0))
 
         # LpVariable.dicts จะเอา emp_id ไปต่อเป็นชื่อ ("sf_E001|WH2") — มีปัญหาเดียวกับ x
         # จึงสร้างเองด้วยชื่อเลขล้วน แต่ยังคีย์ด้วย emp เหมือนเดิม

@@ -55,6 +55,8 @@ let msalInstance = null;
    หน้าจอเดิม จอที่เปลี่ยนเองโดยไม่ได้สั่งจะสร้างความสับสนมากกว่าช่วย
    จำไว้เฉพาะเครื่องนั้น (localStorage) ไม่ผูกกับบัญชี                        */
 const THEME_KEY = "AllocTheme_v1";
+/** จำว่าผู้ใช้เลือกเปิด/ปิดแถวชื่อสินค้าไว้ — "0" = ปิด · ไม่มีค่า = เปิด (ค่าเริ่มต้น) */
+const SKU_NAMES_KEY = "AllocSkuNames_v1";
 
 function _applyTheme(theme) {
   const dark = theme === "dark";
@@ -721,8 +723,8 @@ let S = {
   activeBrand: "ALL",
   /** null | "near" | "far" — กรองคอลัมน์ SKU ในตารางผลตามสัญลักษณ์ ◆ / ⚠ */
   histDevFilter: null,
-  /** แสดงแถวชื่อสินค้าในหัวตารางผลขั้น 3 */
-  showSkuProductNames: false,
+  /** แสดงแถวชื่อสินค้าในหัวตารางผลขั้น 3 — เปิดไว้เป็นค่าเริ่มต้น (จำค่าที่ผู้ใช้กดไว้ใน localStorage) */
+  showSkuProductNames: true,
   targetMonth: null,
   targetYear: null,
   supId: null,
@@ -950,6 +952,23 @@ function _logClientError(action, message, detail = "") {
   _logClientAction(action, message, detail, "error");
 }
 
+/**
+ * บันทึกว่าขั้นไหนใช้เวลาเท่าไร — ตอบเสียง "ช้า โหลดนาน" 6 เสียงในผลสำรวจ
+ *
+ * ผลสำรวจบอกว่าช้า แต่เราไม่มีตัวเลขสักตัวว่าช้าตรงไหน (โหลดข้อมูล หรือกระจาย)
+ * และช้าเท่าไรถึงเรียกว่าช้า · บันทึกอย่างเดียว ไม่เปลี่ยนพฤติกรรมอะไรทั้งสิ้น
+ * `ms` เป็นเวลาที่ผู้ใช้รอจริงฝั่งเบราว์เซอร์ = เวลาเซิร์ฟเวอร์ + เน็ต ซึ่งเป็นตัวที่ผู้ใช้รู้สึก
+ */
+function _logTiming(step, ms, detail = "") {
+  const sec = Math.round(Number(ms) || 0) / 1000;
+  _logClientAction(
+    "timing",
+    `${step} ใช้เวลา ${sec.toFixed(1)} วินาที`,
+    `ms=${Math.round(Number(ms) || 0)}${detail ? " · " + detail : ""}`,
+    "info"
+  );
+}
+
 function _formatAllocateDurationRange(lowSec, highSec) {
   const loMin = Math.max(1, Math.ceil(Number(lowSec) / 60));
   const hiMin = Math.max(loMin + 1, Math.ceil(Number(highSec) / 60));
@@ -1005,6 +1024,8 @@ function _clearCompositeAllocState() {
   S.allocSourceBySup = {};
   S.resultFooterSkuMap = null;
   S.resultFooterScopeSup = null;
+  // เปลี่ยนทีม/งวด/ขอบเขต = ของบน server อาจไม่ใช่ชุดที่เราจำลายเซ็นไว้อีกต่อไป
+  _resetRegionalSaveFingerprints();
   const leg = document.getElementById("compositeAllocLegend");
   if (leg) {
     leg.style.display = "none";
@@ -2728,6 +2749,7 @@ function setBusyStatus(state, msg) {
 ══════════════════════════════════════════════ */
 document.addEventListener("DOMContentLoaded", async () => {
   initTheme();
+  initSkuProductNames();
   _primeMsAuthBlock();
 
   // ปุ่ม login อย่าใส่ onclick ใน HTML ด้วย — ถ้ามีซ้ำจะเรียก handleLogin สองครั้งต่อคลิก
@@ -4578,6 +4600,7 @@ async function loadData(supId, targetMonth, targetYear, refresh = false) {
     });
     if (refresh) q.set("refresh", "true");
     const url = `${API_BASE_URL}/data/employees?${q}`;
+    const _t0 = Date.now();
     const res = await fetchWithTimeout(url, {}, 120000);
     if (!res.ok) {
       let detail = "ดึงข้อมูลไม่สำเร็จ";
@@ -4652,6 +4675,13 @@ async function loadData(supId, targetMonth, targetYear, refresh = false) {
       showLoginError("❌ ระบบตอบกลับข้อมูลไม่ถูกต้อง — กรุณาลองใหม่หรือติดต่อ IT");
       return false;
     }
+    _logTiming(
+      "โหลดข้อมูลขั้นที่ 1",
+      Date.now() - _t0,
+      `sup=${supId} · งวด ${targetYear}-${String(targetMonth).padStart(2, "0")}`
+      + ` · พนักงาน ${(data.employees || []).length} · SKU ${(data.skus || []).length}`
+      + (refresh ? " · กดโหลดใหม่" : "")
+    );
     return applyDataPayload(data);
   } catch (err) {
     const isFetch = err instanceof TypeError && err.message.toLowerCase().includes("fetch");
@@ -5989,6 +6019,8 @@ async function _callOptimizeApi(supId, payload) {
   const url =
     `${API_BASE_URL}/optimize?sup_id=${encodeURIComponent(supId)}` +
     `&target_month=${S.targetMonth}&target_year=${S.targetYear}`;
+  // จุดเดียวที่ทุกทางเรียก /optimize ผ่าน — ทั้งทีมเดี่ยวและลูปรวมภาค (ทีมละครั้ง)
+  const _t0 = Date.now();
   const res = await fetchWithTimeout(
     url,
     {
@@ -5997,6 +6029,13 @@ async function _callOptimizeApi(supId, payload) {
       body: JSON.stringify(payload),
     },
     _optimizeTimeoutMs()
+  );
+  _logTiming(
+    "กระจายหีบ",
+    Date.now() - _t0,
+    `sup=${supId} · วิธี ${payload?.strategy || "-"}`
+    + (S.aggregateMode ? " · โหมดรวมภาค" : "")
+    + (res.ok ? "" : ` · ไม่สำเร็จ (${res.status})`)
   );
   if (!res.ok) {
     const j = await res.json().catch(() => ({}));
@@ -6372,13 +6411,32 @@ function _skuDisplayName(info) {
   return th || en || "";
 }
 
+/** ปรับหน้าตาปุ่ม「ชื่อสินค้า」ให้ตรงกับสถานะจริง — ปุ่มอยู่ใน index.html ตายตัว จึงต้องซิงก์ตอนเปิดหน้าด้วย */
+function _syncSkuProductNamesBtn() {
+  const btn = document.getElementById("toggleSkuProductNamesBtn");
+  if (!btn) return;
+  btn.textContent = S.showSkuProductNames ? "ชื่อสินค้า ▼" : "ชื่อสินค้า ▶";
+  btn.setAttribute("aria-pressed", S.showSkuProductNames ? "true" : "false");
+  btn.classList.toggle("btn-dl--toggle-on", S.showSkuProductNames);
+}
+
+/** อ่านค่าที่ผู้ใช้เคยเลือกไว้ — ไม่เคยกด = เปิด (ค่าเริ่มต้นใหม่ตั้งแต่ 10 ก.ย. 2026) */
+function initSkuProductNames() {
+  try {
+    S.showSkuProductNames = localStorage.getItem(SKU_NAMES_KEY) !== "0";
+  } catch (_) {
+    /* โหมดส่วนตัว/บล็อก storage — ใช้ค่าเริ่มต้น */
+  }
+  _syncSkuProductNamesBtn();
+}
+
 function toggleSkuProductNames() {
   S.showSkuProductNames = !S.showSkuProductNames;
-  const btn = document.getElementById("toggleSkuProductNamesBtn");
-  if (btn) {
-    btn.textContent = S.showSkuProductNames ? "ชื่อสินค้า ▼" : "ชื่อสินค้า ▶";
-    btn.setAttribute("aria-pressed", S.showSkuProductNames ? "true" : "false");
-    btn.classList.toggle("btn-dl--toggle-on", S.showSkuProductNames);
+  _syncSkuProductNamesBtn();
+  try {
+    localStorage.setItem(SKU_NAMES_KEY, S.showSkuProductNames ? "1" : "0");
+  } catch (_) {
+    /* จำไม่ได้ก็ไม่เป็นไร — รอบนี้ยังสลับให้ตามที่กด */
   }
   if (S.allocations?.length) renderResult(S.allocations);
 }
@@ -10622,6 +10680,8 @@ function queueServerAllocationSave(status = "draft") {
  */
 async function _handleSnapshotConflict(httpStatus, j, supId, status, opts) {
   const sid = String(supId || S.supId || "").trim().toUpperCase();
+  // มีคนอื่นเขียนทับ — ที่เราจำว่า "บน server เป็นชุดนี้" ใช้ไม่ได้แล้ว
+  _resetRegionalSaveFingerprints();
   const cur = j?.detail?.current || {};
   const who = String(cur.updated_by || "").trim() || "ไม่ระบุ";
   const when = cur.updated_at ? _formatAllocUpdatedAt(cur.updated_at) : "ไม่ทราบเวลา";
@@ -10786,6 +10846,49 @@ async function saveServerAllocationSnapshot(status = "draft", opts = {}) {
   return attempt.saved;
 }
 
+/**
+ * ลายเซ็นของผลกระจายทีมหนึ่ง — ใช้ข้ามการเขียนซ้ำที่เนื้อหาเหมือนเดิมเป๊ะ
+ *
+ * ทำเป็น hash แบบไล่ทีละตัวอักษร (FNV-1a) ไม่ต่อสตริงยาว ๆ เก็บไว้
+ * ต้นทุนต่ำกว่าการ PUT ก้อนเดิมซ้ำหลายเท่า และไม่กินหน่วยความจำเพิ่มตามจำนวนแถว
+ */
+function _allocFingerprint(rows, status) {
+  let h = 0x811c9dc5;
+  const mix = (s) => {
+    const t = String(s);
+    for (let i = 0; i < t.length; i++) {
+      h ^= t.charCodeAt(i);
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+  };
+  mix(status);
+  for (const a of rows || []) {
+    mix(`${a.emp_id}${a.sku}${a.warehouse_code || ""}`);
+    mix(`${a.allocated_boxes}${a.is_edited ? 1 : 0}`);
+  }
+  return `${(rows || []).length}:${h}`;
+}
+
+/**
+ * ทีมไหนเพิ่งบันทึกไปแล้วด้วยเนื้อหาชุดไหน — คีย์เป็น "ทีม|งวด"
+ *
+ * ผลตรวจรอบ 0: ในชั่วโมงเดียว SL523 ถูกบันทึก 220 ครั้งโดยผู้ใช้คนเดียว
+ * (SL406/SL532 ทีมละ 154 ครั้ง) เพราะลูปรวมภาคบันทึก **ทุกทีมในภาค** ทุกครั้งที่
+ * autosave เด้ง ทั้งที่ผู้ใช้แก้ช่องเดียวซึ่งกระทบทีมเดียว · การบันทึกหนึ่งครั้ง
+ * เขียนไฟล์ผลกระจายทั้งก้อนใหม่ (มัธยฐาน 3,230 แถว/ทีม) จึงเป็นทั้งเรื่องช้า
+ * และทำให้บันทึกการใช้งานเต็มไปด้วยรายการบันทึกจนหาเรื่องอื่นไม่เจอ (72% ของทั้งหมด)
+ */
+const _lastRegionalSaveFp = new Map();
+
+function _regionalSaveFpKey(supId) {
+  return `${String(supId || "").trim().toUpperCase()}|${S.targetYear}-${S.targetMonth}`;
+}
+
+/** ลืมลายเซ็นทั้งหมด — ต้องเรียกทุกครั้งที่ของบน server อาจไม่ตรงกับที่เราจำไว้ */
+function _resetRegionalSaveFingerprints() {
+  _lastRegionalSaveFp.clear();
+}
+
 async function saveRegionalAllocationSnapshots(allocs, status = "optimized") {
   // ทีมที่อยู่ในขอบเขตรวมภาคจริง ๆ — กันแถวไร้เจ้าของไปตกที่รหัสผู้จัดการ (R2)
   const inScope = new Set(_aggregateSupervisorOrder());
@@ -10808,24 +10911,43 @@ async function saveRegionalAllocationSnapshots(allocs, status = "optimized") {
     );
   }
   const saved = [];
+  let wrote = 0;
+  let skipped = 0;
   for (const [supId, rows] of bySup) {
     try {
       // สถานะต้องดูจากแถวของทีมนั้น ๆ ไม่ใช่ค่าเดียวเหมารวมทั้งภาค
       // (บางทีมอาจมีแก้มือ บางทีมไม่มี — sent_targetsun ยังใช้ค่าที่ส่งเข้ามาตรง ๆ)
       const supStatus = status === "sent_targetsun" ? status : _deriveAllocStatus(rows);
+      // ไม่มีอะไรเปลี่ยนตั้งแต่ครั้งที่แล้ว = ไม่ต้องเขียนไฟล์ทั้งก้อนซ้ำ
+      // (ยังนับว่า "บันทึกแล้ว" เพราะของบน server ตรงกับที่เห็นบนจออยู่)
+      const fpKey = _regionalSaveFpKey(supId);
+      const fp = _allocFingerprint(rows, supStatus);
+      if (_lastRegionalSaveFp.get(fpKey) === fp) {
+        skipped++;
+        saved.push(supId);
+        continue;
+      }
       await saveServerAllocationSnapshot(supStatus, {
         supId,
         allocations: rows,
         forceRegional: true,
         silentSummary: true,
       });
+      // จำหลังบันทึกสำเร็จเท่านั้น — ล้มแล้วต้องได้ลองใหม่รอบหน้า
+      _lastRegionalSaveFp.set(fpKey, fp);
+      wrote++;
       saved.push(supId);
     } catch (e) {
+      _lastRegionalSaveFp.delete(_regionalSaveFpKey(supId));
       console.warn("saveRegionalAllocationSnapshots:", supId, e);
       toast(`บันทึก ${supId} ไม่สำเร็จ — ${e.message}`, "amber");
     }
   }
-  if (saved.length) {
+  if (skipped) {
+    console.debug(`saveRegionalAllocationSnapshots: เขียน ${wrote} ทีม · ข้าม ${skipped} ทีมที่ไม่มีอะไรเปลี่ยน`);
+  }
+  // สรุปการใช้งานเปลี่ยนก็ต่อเมื่อมีการเขียนจริง
+  if (wrote) {
     loadAllocationSummary(true);
   }
   return saved;
@@ -10862,6 +10984,7 @@ function confirmRestartAllocation() {
 async function restartAllocation() {
   const sid = String(S.supId || "").trim();
   await deleteServerAllocationSnapshot(sid);
+  _resetRegionalSaveFingerprints();
   _removeDraftKeysBothLocals();
   try {
     localStorage.removeItem(`Snap_${sid}_${S.targetMonth}_${S.targetYear}`);
