@@ -189,6 +189,37 @@ class PairsNotYetInTargetSun(_SendHarness):
         self.assertTrue(shortfall, "ต้องมีรายงานบอกผู้ใช้ว่า SKU ไหนไม่ถูกส่ง")
         self.assertEqual(str(shortfall[0]["sku"]).strip(), "A")
 
+    def test_report_says_what_target_sun_is_holding_right_now(self):
+        """
+        ตัวเลขที่ผู้ใช้ต้องใช้ไปแก้มือ — **ปลายทางถืออยู่เท่าไรตอนนี้**
+
+        รู้แค่ "ขาดกี่หีบ" ไม่พอ เพราะแถวเก่าของ SKU ที่ถูกตัดยังอยู่ครบ
+        คนที่ไปเติมแต่ส่วนที่ขาดจะได้ยอดรวมเกินเป้าเสมอ
+        กรณีนี้: ปลายทางถือ 10 + 4 = 14 หีบ ขณะที่เป้าทีมคือ 15
+        """
+        self.write_grain(
+            [
+                grain_row("C001", "A", qty=10),
+                grain_row("C002", "A", qty=4),
+                grain_row("C001", "B"),
+            ]
+        )
+        self.write_targets({"A": 15, "B": 7})
+        _out, _dropped, _preview, shortfall = self.send(
+            [("C001", "A", 15), ("C777", "A", 5), ("C001", "B", 7)]
+        )
+        item = next(s for s in shortfall if str(s["sku"]).strip() == "A")
+        self.assertEqual(item["current_targetsun_boxes"], 14, f"ได้ {item}")
+        self.assertEqual(item["expected_boxes"], 15)
+
+    def test_current_holding_is_none_when_the_cache_cannot_say(self):
+        """ไม่มีแคชให้อ่าน = ไม่รู้ ต้องเป็น None ไม่ใช่ 0 (0 แปลว่า 'ปลายทางว่าง' ซึ่งคนละเรื่อง)"""
+        self.write_grain([grain_row("C001", "B")])
+        self.write_targets({"B": 7})
+        now = lh._targetsun_boxes_now_by_sku(SUP, MONTH, YEAR)
+        self.assertIsNone(now.get("A"))
+        self.assertEqual(now.get("B"), 10)
+
     def test_a_clean_sku_still_goes_through_when_another_one_is_dropped(self):
         """ตัดเป็นราย SKU ไม่ใช่ทั้งไฟล์ — SKU ที่ไม่มีปัญหาต้องยังส่งได้ตามปกติ"""
         self.write_grain([grain_row("C001", "A"), grain_row("C001", "B")])
@@ -233,6 +264,39 @@ class NoTargetEmployeeStaleRows(_SendHarness):
         self.write_targets({"A": 15})
         out, _dropped, _preview, _shortfall = self.send([("C001", "A", 15)])
         self.assertEqual(int(out["QUANTITYCASE"].sum()), 15)
+
+
+class FrontendShowsTheHolding(unittest.TestCase):
+    """ตัวเลขที่ backend ส่งมาต้องไปโผล่บนจอจริง ไม่ใช่มีแต่ใน payload"""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(REPO, "frontend", "app.js"), encoding="utf-8") as f:
+            cls.src = f.read()
+        i = cls.src.index("function _showShortfallModal(")
+        cls.body = cls.src[i : i + 4000]
+
+    def test_modal_renders_the_current_holding(self):
+        self.assertIn("current_targetsun_boxes", self.body)
+        self.assertIn("ตอนนี้ Target Sun ถืออยู่", self.body)
+        self.assertIn("staleLine", self.body)
+
+    def test_only_for_skus_that_were_dropped_whole(self):
+        """SKU ที่ส่งไปครบแล้วไม่ต้องมีบรรทัดนี้ — ปลายทางถูกทับด้วยเลขใหม่ไปแล้ว"""
+        i = self.body.index("const staleLine")
+        self.assertIn("s.excluded_whole_sku", self.body[i : i + 200])
+
+    def test_missing_value_is_not_printed_as_zero(self):
+        """ไม่รู้ กับ ปลายทางว่าง คนละเรื่อง — ห้ามโชว์ 0 เมื่ออ่านค่าไม่ได้"""
+        i = self.body.index("const staleLine")
+        seg = self.body[i : i + 300]
+        self.assertIn("!= null", seg)
+        self.assertIn("Number.isFinite(nowTs)", seg)
+
+    def test_it_tells_the_user_the_number_to_fix_it_to(self):
+        """บอกแค่ 'ถืออยู่เท่าไร' ยังไม่พอ ต้องบอกด้วยว่าต้องแก้ให้เป็นเท่าไร"""
+        i = self.body.index("const staleLine")
+        self.assertIn("ต้องแก้ให้เป็น", self.body[i : i + 700])
 
 
 if __name__ == "__main__":

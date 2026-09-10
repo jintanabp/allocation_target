@@ -9035,6 +9035,19 @@ function _showShortfallModal(detail, { onConfirm = null, onCancel = null, alread
       `<code>${escH(String(p.emp_id || ""))}</code> · ${Number(p.allocated_boxes) || 0} หีบ ▸</button></div>`
     ).join("");
     const more = (Number(s.pair_count) || pairs.length) - pairs.length;
+    // SKU ที่ถูกตัดทั้งตัว = ไม่มีแถวไหนของมันถูกส่งเลย รวมทั้งแถวหีบ 0 ที่ตั้งใจไปล้างเป้าเดิม
+    // เลขงวดก่อนจึงค้างอยู่ปลายทางทั้งก้อน · ถ้าไม่บอกตัวเลขนี้ ผู้ใช้จะไปเติมแต่ "ส่วนที่ขาด"
+    // แล้วเลขเก่าบวกทับอยู่ดี ยอดรวมของ SKU นั้นไม่มีวันตรงเป้า
+    const nowTs = Number(s.current_targetsun_boxes);
+    const staleLine =
+      s.excluded_whole_sku && s.current_targetsun_boxes != null && Number.isFinite(nowTs)
+        ? `<div class="shortfall-sku__stale">ตอนนี้ Target Sun ถืออยู่ `
+          + `<strong>${nowTs.toLocaleString("th-TH")}</strong> หีบ (เลขงวดก่อน ไม่ถูกทับ)`
+          + (s.expected_boxes != null
+              ? ` · ต้องแก้ให้เป็น <strong>${Number(s.expected_boxes).toLocaleString("th-TH")}</strong> หีบ`
+              : "")
+          + `</div>`
+        : "";
     return `<div class="shortfall-sku">
       <div class="shortfall-sku__head">
         <div>
@@ -9047,7 +9060,9 @@ function _showShortfallModal(detail, { onConfirm = null, onCancel = null, alread
               : `ขาด <strong>${(Number(s.missing_boxes) || 0).toLocaleString("th-TH")}</strong> หีบ`
                 + ` · จะส่งจริง ${(Number(s.sending_boxes) || 0).toLocaleString("th-TH")}`)
           + (s.expected_boxes != null ? ` / เป้าทีม ${Number(s.expected_boxes).toLocaleString("th-TH")}` : "")
-          + `</div>
+          + `</div>`
+          + staleLine
+          + `
         </div>
         <button type="button" class="shortfall-jump shortfall-jump--col" onclick="jumpToResultCell('${escH(sku)}','')">ไปที่คอลัมน์ ▸</button>
       </div>

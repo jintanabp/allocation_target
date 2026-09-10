@@ -1097,6 +1097,26 @@ def _drop_rows_missing_tga_import_key(
     return kept, dropped, preview
 
 
+def _targetsun_boxes_now_by_sku(sup_id: str, month: int, year: int) -> dict[str, int]:
+    """
+    เป้าที่ Target Sun "ถืออยู่ตอนนี้" ต่อ SKU ของทีมนี้ — อ่านจากแคช grain ขั้นที่ 1
+
+    ใช้ตอน SKU ถูกตัดทั้งตัว: แถวของ SKU นั้นจะไม่ถูกส่งเลยสักแถว **รวมทั้งแถวหีบ 0
+    ที่ตั้งใจไปล้างเป้าเดิม** เลขงวดก่อนจึงค้างอยู่ปลายทางทั้งก้อน
+    ถ้าไม่บอกตัวเลขนี้ คนที่ไปเพิ่มมือใน Target Sun จะเติมแต่ "ส่วนที่ขาด"
+    แล้วเลขเก่าบวกทับอยู่ดี — ยอดรวมของ SKU นั้นจึงไม่มีวันตรงเป้า
+    """
+    try:
+        dg = _read_tga_grain_cache(sup_id, month, year)
+    except Exception as e:
+        logger.warning("อ่านแคช grain เพื่อรายงานเป้าปลายทางไม่ได้ (%s): %s", sup_id, e)
+        return {}
+    if dg is None or dg.empty or not {"sku", "qty"} <= set(dg.columns):
+        return {}
+    qty = pd.to_numeric(dg["qty"], errors="coerce").fillna(0)
+    return qty.groupby(dg["sku"].astype(str).str.strip()).sum().astype(int).to_dict()
+
+
 def _shortfall_from_dropped_rows(
     df: pd.DataFrame,
     sup_id: str,
@@ -1150,6 +1170,7 @@ def _shortfall_from_dropped_rows(
 
     # อ่านเป้าไม่ได้ก็ยังรายงานได้ — จำนวนหีบที่หายไม่ได้ขึ้นกับไฟล์เป้า
     targets = _sup_target_boxes_by_sku(sup_id, month, year) or {}
+    now_by_sku = _targetsun_boxes_now_by_sku(sup_id, month, year)
 
     out: list[dict] = []
     for sku, grp in bad.groupby("_sku", sort=False):
@@ -1162,6 +1183,8 @@ def _shortfall_from_dropped_rows(
                 "missing_boxes": int(grp["_boxes"].sum()),
                 "sending_boxes": int(sending.get(str(sku), 0)),
                 "expected_boxes": targets.get(str(sku)),
+                # เลขที่ปลายทางถืออยู่ตอนนี้ — ตัวที่บอกว่าต้องไปแก้มือเท่าไรจริง ๆ
+                "current_targetsun_boxes": now_by_sku.get(str(sku)),
                 "pairs": [
                     {"emp_id": str(e), "allocated_boxes": int(b)} for e, b in pairs.items()
                 ],
@@ -2163,6 +2186,11 @@ def _build_tga_upload_dataframe(
             str(s).strip() for s in (getattr(req, "exclude_skus", None) or []) if str(s).strip()
         }
         _payload_skus = set(payload_by_sku)
+        _now_by_sku = (
+            _targetsun_boxes_now_by_sku(req.sup_id, int(req.target_month), int(req.target_year))
+            if (_from_batch & _payload_skus)
+            else {}
+        )
         for _sku in sorted(_from_batch & _payload_skus):
             if _sku in excluded_skus:
                 continue
@@ -2175,6 +2203,7 @@ def _build_tga_upload_dataframe(
                     "excluded_boxes": int(payload_by_sku.get(_sku, 0)),
                     "sending_boxes": 0,
                     "expected_boxes": None,
+                    "current_targetsun_boxes": _now_by_sku.get(_sku),
                     "pairs": [],
                     "pair_count": 0,
                     "excluded_whole_sku": True,
