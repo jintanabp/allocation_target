@@ -6609,6 +6609,43 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
   color: var(--text-3);
 }
 
+/* ทีมที่ส่งเข้า Target Sun ไปแล้ว — คนละน้ำหนักกับทีมที่ยังไม่ส่ง จึงต้องอ่านออกทันที
+   ว่าอันไหนคืออันที่ทับแล้วสองฝั่งไม่ตรงกัน (ผลตรวจรอบ 0 §6: โดนไปแล้ว 8 ทีม) */
+.scope-modal__warn--danger {
+  border-color: var(--red-brd);
+  background: var(--red-bg);
+  color: var(--text-2);
+}
+
+.scope-modal__warn--danger strong {
+  color: var(--red);
+}
+
+.scope-modal__warn--danger .scope-modal__warn-foot {
+  color: var(--text-2);
+}
+
+.scope-modal__ack {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--red-brd);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+  cursor: pointer;
+}
+
+.scope-modal__ack input {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  flex: none;
+  cursor: pointer;
+}
+
 /* ตัวเลือกในแถบเครื่องมือของตารางผล (เช็คบ็อกซ์ "แสดงเฉพาะที่พบ") */
 .result-toolbar-check {
   display: inline-flex;
