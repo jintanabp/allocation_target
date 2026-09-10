@@ -8983,6 +8983,22 @@ tr.emp-row--no-target .emp-tag {
   color: var(--text-2);
 }
 
+/* เลขที่ปลายทางถืออยู่ตอนนี้ของ SKU ที่ไม่ถูกส่ง — ตัวที่บอกว่าต้องไปแก้มือเท่าไรจริง ๆ */
+.shortfall-sku__stale {
+  margin-top: 5px;
+  padding: 5px 8px;
+  border-left: 3px solid var(--amber);
+  background: var(--amber-bg);
+  border-radius: 0 6px 6px 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-2);
+}
+
+.shortfall-sku__stale strong {
+  color: var(--text-1);
+}
+
 .shortfall-pair {
   margin-top: 5px;
   padding-left: 10px;
