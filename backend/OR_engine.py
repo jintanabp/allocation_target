@@ -242,6 +242,8 @@ def allocate_boxes(
     revenue_tolerance_baht: float = 1000.0,
     tiered_allocation: bool = True,
     tier_pct: float = _TIER_DEFAULT_PCT,
+    df_sold_12m: pd.DataFrame | None = None,
+    push_multiple: float = 5.0,
 ) -> pd.DataFrame:
     strategy = strategy.upper()
     valid = ("L3M", "L6M", "LY", "EVEN", "PUSH", "LP")
@@ -283,6 +285,27 @@ def allocate_boxes(
         len(zero_hist_skus),
     )
 
+    # ── กติกา "หน่วยไม่เคยขายสินค้านั้น = เป้า 0" ─────────────────────────
+    #
+    # ต้องคิดก่อน _proportional เพราะ baseline ที่ใช้เป็นรั้ว ±% ของ LP มาจากรอบนั้น
+    # ถ้าเอากติกาไปใส่เฉพาะ LP รั้วจะอ้างอิง baseline คนละชุดกับคำตอบที่ต้องการ
+    # แล้วโจทย์กลายเป็นแก้ไม่ได้ ตกกลับไป fallback ทั้งทีม
+    never_sold_zero_pairs, never_sold_even, never_sold_summary = _never_sold_plan(
+        df_sold_12m, df_emp_targets, df_sku, locked_map, float(push_multiple or 5.0)
+    )
+    if never_sold_even:
+        # SKU ที่ทีมไม่เคยขาย/ถูกดันเป้า ใช้กลไก "แบ่งเท่า" ตัวเดียวกับสินค้าใหม่
+        # ซึ่งบังคับได้ครบทั้ง LP · proportional · ตัวเกลี่ยเงิน อยู่แล้ว
+        even_skus = frozenset(even_skus) | never_sold_even
+    if never_sold_summary:
+        logger.info(
+            "กติกาไม่เคยขาย=เป้า 0: ตัด %d คู่ · เฉลี่ยแทน %d SKU (ไม่มีคนเคยขาย %d · ดันเป้า %d)",
+            len(never_sold_zero_pairs),
+            len(never_sold_even),
+            sum(1 for v in never_sold_summary.values() if v["reason"] == "no_seller"),
+            sum(1 for v in never_sold_summary.values() if v["reason"] == "push_target"),
+        )
+
     # ถ้า custom strategy ส่ง cap_multiplier มา ให้ใช้ค่านั้นแทน default
     effective_cap = cap_multiplier if cap_multiplier is not None else _CAP_MULTIPLIER
     hb = max(0.0, min(1.0, float(hist_balance if hist_balance is not None else 0.85)))
@@ -315,6 +338,7 @@ def allocate_boxes(
             locked_map,
             effective_cap,
             even_skus=even_skus,
+            zero_pairs=never_sold_zero_pairs,
         )
         base_map = _baseline_map_from_df(df_base, df_emp_targets, df_sku)
         df_out = _lp_optimize(
@@ -334,6 +358,7 @@ def allocate_boxes(
             flex_skus=flex_skus,
             flex_band_pct=_TIER_FLEX_BAND_PCT,
             strict_band_pct=_TIER_STRICT_BAND_PCT,
+            zero_pairs=never_sold_zero_pairs,
             _meta=opt_meta,
         )
     else:
@@ -346,6 +371,7 @@ def allocate_boxes(
             locked_map,
             effective_cap,
             even_skus=even_skus,
+            zero_pairs=never_sold_zero_pairs,
         )
 
     if tiered_allocation and flex_skus and base_map:
@@ -371,6 +397,7 @@ def allocate_boxes(
             default_band_pct=_DEFAULT_HIST_BAND_PCT,
             even_skus=even_skus,
             cap_multiplier=effective_cap,
+            zero_pairs=never_sold_zero_pairs,
         )
 
     if even_skus:
@@ -397,6 +424,7 @@ def allocate_boxes(
             locked_map,
             effective_cap,
             even_skus=even_skus,
+            zero_pairs=never_sold_zero_pairs,
         )
         base_map = _baseline_map_from_df(df_base, df_emp_targets, df_sku)
     if base_map:
@@ -407,6 +435,10 @@ def allocate_boxes(
             even_skus=even_skus,
         )
     df_expanded.attrs["optimization_fallback"] = opt_meta.get("optimization_fallback", False)
+    # ส่งแผนกติกาไม่เคยขายกลับไปด้วย — โหมดหลายกลยุทธ์มีรอบเกลี่ยเงินอีกรอบหลังรวมผล
+    # (`_post_merge_revenue_balance`) ถ้าไม่บอกมัน มันจะยกหีบกลับเข้าช่องที่เพิ่งตัดไป
+    df_expanded.attrs["never_sold_zero_pairs"] = never_sold_zero_pairs
+    df_expanded.attrs["never_sold_summary"] = never_sold_summary
     return df_expanded
 
 
@@ -461,6 +493,108 @@ def _flex_skus_by_target_value(df_sku: pd.DataFrame, tier_pct: float = _TIER_DEF
     if not flex:
         flex = [ordered[0][0]]
     return frozenset(flex)
+
+
+def _never_sold_plan(
+    df_sold_12m,
+    df_emp_targets,
+    df_sku,
+    locked_map: dict,
+    push_multiple: float,
+) -> tuple[set, frozenset, dict]:
+    """
+    วางแผนกติกา "หน่วยไม่เคยขายสินค้านั้น = เป้า 0" — คืน (คู่ที่ต้องเป็น 0, SKU ที่ให้เฉลี่ย, สรุป)
+
+    กติกาที่ผู้ใช้เคาะไว้ 10 ก.ย. 2026:
+      1. คู่ (พนักงาน × สินค้า) ที่ไม่เคยขายกันเลยใน 12 เดือนล่าสุด -> ไม่ได้รับหีบ
+      2. ถ้าทั้งทีมไม่มีใครเคยขาย SKU นั้นเลย -> **เฉลี่ยทุกคน** ไม่ใช่กองที่คนเดียว
+         (วัดจากงวด 09/2026: เจอเคสนี้ครบทั้ง 55 ทีม จึงไม่ใช่กรณียกเว้นหายาก)
+      3. ถ้าเป้าของ SKU ใหญ่เกิน `push_multiple` เท่าของประวัติรวมของคนที่เคยขาย ->
+         ถือว่าเป็น "สินค้าดันเป้า" ที่ประวัติใช้ตัดสินไม่ได้ -> เฉลี่ยทุกคนเช่นกัน
+
+    ข้อ 3 มาจากของจริง: SL531 สินค้า 351320 เป้า 2,052 หีบ ทีม 5 คน มีคนเคยขายคนเดียว
+    ประวัติ 1 หีบ — ถ้าไม่มีข้อนี้ หีบทั้งก้อนจะตกที่คนเดียว ซึ่งแย่กว่าเดิม
+
+    ตัวหารของข้อ 3 ใช้ **สเกลรายเดือน** ให้เทียบกับเป้ารายเดือนได้: ยอด 12 เดือนหารด้วย 12
+    เทียบกับเป้าตรง ๆ ไม่ได้ เพราะเป้าเป็นของเดือนเดียว
+
+    ช่องที่ผู้ใช้ล็อกไว้ไม่ถูกแตะ (กฎ I2) — การล็อกคือเจตนาที่ชัดเจนกว่ากติกาอัตโนมัติ
+    """
+    if df_sold_12m is None or df_sold_12m.empty:
+        return set(), frozenset(), {}
+    if not {"emp_id", "sku"} <= set(df_sold_12m.columns):
+        return set(), frozenset(), {}
+
+    employees = [str(e).strip() for e in df_emp_targets["emp_id"].tolist() if str(e).strip()]
+    if not employees:
+        return set(), frozenset(), {}
+    emp_set = set(employees)
+    skus = _skus_with_target_boxes(df_sku)
+    target_boxes = dict(zip(df_sku["sku"], df_sku["supervisor_target_boxes"]))
+
+    # เดือนละกี่หีบโดยเฉลี่ยใน 12 เดือน — คู่ที่ไม่อยู่ในตารางนี้คือ "ไม่เคยขาย"
+    monthly: dict[tuple[str, str], float] = {}
+    boxes_col = "hist_boxes" if "hist_boxes" in df_sold_12m.columns else None
+    for _, r in df_sold_12m.iterrows():
+        e = str(r.get("emp_id") or "").strip()
+        s = _norm_sku(r.get("sku"))
+        if not e or not s or e not in emp_set:
+            continue
+        try:
+            tot = float(r.get(boxes_col, 0) or 0) if boxes_col else 1.0
+        except (TypeError, ValueError):
+            tot = 0.0
+        if tot <= 0:
+            continue
+        monthly[(e, s)] = monthly.get((e, s), 0.0) + tot / 12.0
+
+    zero_pairs: set[tuple[str, str]] = set()
+    even_skus: set[str] = set()
+    summary: dict[str, dict] = {}
+
+    for sku in skus:
+        sku_key = _norm_sku(sku)
+        sellers = [e for e in employees if (e, sku_key) in monthly]
+        try:
+            tgt = max(0, int(round(float(target_boxes.get(sku, 0) or 0))))
+        except (TypeError, ValueError):
+            tgt = 0
+        if tgt <= 0:
+            continue
+
+        capacity = sum(monthly[(e, sku_key)] for e in sellers)
+        if not sellers:
+            even_skus.add(sku_key)
+            summary[sku_key] = {"reason": "no_seller", "sellers": 0, "team": len(employees)}
+            continue
+        if capacity > 0 and tgt > push_multiple * capacity:
+            even_skus.add(sku_key)
+            summary[sku_key] = {
+                "reason": "push_target",
+                "sellers": len(sellers),
+                "team": len(employees),
+                "target_boxes": tgt,
+                "seller_capacity": round(capacity, 1),
+                "multiple": round(tgt / capacity, 1),
+            }
+            continue
+
+        blocked = [
+            e for e in employees
+            if (e, sku_key) not in monthly and (e, sku_key) not in locked_map
+        ]
+        if not blocked:
+            continue
+        zero_pairs.update((e, sku_key) for e in blocked)
+        summary[sku_key] = {
+            "reason": "zeroed",
+            "sellers": len(sellers),
+            "team": len(employees),
+            "blocked": len(blocked),
+            "target_boxes": tgt,
+        }
+
+    return zero_pairs, frozenset(even_skus), summary
 
 
 def _fair_rank(employees, hist_by_emp: dict | None = None) -> dict:
@@ -779,9 +913,11 @@ def _proportional(
     locked_map=None,
     cap_multiplier=None,
     even_skus: frozenset | None = None,
+    zero_pairs: set | frozenset | None = None,
 ):
     locked_map = locked_map or {}
     even_skus = even_skus or frozenset()
+    zero_pairs = zero_pairs or frozenset()
     employees = df_emp_targets["emp_id"].tolist()
     target_boxes = dict(zip(df_sku["sku"], df_sku["supervisor_target_boxes"]))
 
@@ -816,6 +952,15 @@ def _proportional(
 
         total = max(0, total_orig - locked_sum)
         active_employees = [e for e in employees if e not in locked_emps]
+
+        # กติกาไม่เคยขาย: คนที่ไม่เคยขาย SKU นี้ไม่เข้าร่วมแบ่งเลย
+        # (SKU ที่ทีมไม่เคยขาย/ถูกดันเป้า ไม่เข้ามาทางนี้ — อยู่ในสาขา even_skus)
+        if zero_pairs:
+            sku_key_zp = _norm_sku(sku)
+            eligible = [e for e in active_employees if (e, sku_key_zp) not in zero_pairs]
+            # ตัดจนไม่เหลือใครแปลว่าแผนคำนวณผิด — ปล่อยตามเดิมดีกว่าคืนผลว่าง
+            if eligible:
+                active_employees = eligible
 
         if total <= 0 or not active_employees:
             continue
@@ -891,12 +1036,14 @@ def _greedy_revenue_balancer(
     default_band_pct: float = _DEFAULT_HIST_BAND_PCT,
     even_skus: frozenset | None = None,
     cap_multiplier: float | None = None,
+    zero_pairs: set | frozenset | None = None,
 ) -> pd.DataFrame:
     if df_out.empty:
         return df_out
     locked_map = locked_map or {}
     skip_balance_skus = skip_balance_skus or set()
     even_skus = even_skus or frozenset()
+    zero_pairs = zero_pairs or frozenset()
     target_rev = dict(zip(df_emp_targets["emp_id"], df_emp_targets["yellow_target"]))
     sku_prices = dict(zip(df_sku["sku"], df_sku["price_per_box"]))
     target_boxes = dict(zip(df_sku["sku"], df_sku["supervisor_target_boxes"]))
@@ -936,6 +1083,10 @@ def _greedy_revenue_balancer(
             return None
         if _norm_sku(sku) in even_skus:
             return None
+        # กติกาไม่เคยขาย — ตรึงไว้ที่ขอบล่าง ไม่ให้ตัวเกลี่ยเงินยกหีบกลับเข้ามา
+        if zero_pairs and (emp, _norm_sku(sku)) in zero_pairs:
+            floor_zero = _min_floor_boxes(sku)
+            return (floor_zero, floor_zero)
         bounds = _cell_bounds_by_history(emp, sku)
         if not _spread_one_each(target_boxes.get(sku, 0), n_emps):
             return bounds
@@ -1214,10 +1365,12 @@ def _lp_optimize(
     flex_skus: frozenset[str] | None = None,
     flex_band_pct: float = _TIER_FLEX_BAND_PCT,
     strict_band_pct: float = _TIER_STRICT_BAND_PCT,
+    zero_pairs: set | frozenset | None = None,
     _meta: dict | None = None,
 ):
     locked_map = locked_map or {}
     even_skus = even_skus or frozenset()
+    zero_pairs = zero_pairs or frozenset()
     baseline_strategy = (baseline_strategy or "L3M").upper()
     if baseline_strategy not in ("L3M", "L6M", "LY", "EVEN", "PUSH"):
         baseline_strategy = "L3M"
@@ -1234,6 +1387,7 @@ def _lp_optimize(
             locked_map,
             cap_multiplier,
             even_skus=even_skus,
+            zero_pairs=zero_pairs,
         )
 
     try:
@@ -1349,6 +1503,14 @@ def _lp_optimize(
                     # SKU ใหม่แบ่งเท่า — ล็อกตาม baseline เกลี่ยเท่า ไม่ให้ LP/ทดลอง 80/20 ดึงไปปรับเงิน
                     x[(emp, sku)] = pulp.LpVariable(
                         _vname("x", emp, sku), lowBound=even_base, upBound=even_base, cat="Integer"
+                    )
+                    continue
+                if (emp, sku_key) in zero_pairs:
+                    # กติกาไม่เคยขาย — ล็อกไว้ที่ขอบล่างเลย
+                    # ปกติ min_box = 0 · แต่ถ้าผู้ใช้ติ๊ก "ทุกคนอย่างน้อย 1 หีบ" ไว้
+                    # เขาสั่งชัดกว่ากติกาอัตโนมัติ คนไม่เคยขายจึงได้พอดี 1 หีบ ไม่ใช่ 0
+                    x[(emp, sku)] = pulp.LpVariable(
+                        _vname("x", emp, sku), lowBound=min_box, upBound=min_box, cat="Integer"
                     )
                     continue
                 x[(emp, sku)] = pulp.LpVariable(
