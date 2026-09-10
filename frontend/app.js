@@ -782,6 +782,8 @@ let S = {
   droppedLocks: [],
   // วิธีคิดประวัติที่ถูกถอยไปใช้ตัวอื่น เพราะไฟล์ของวิธีที่เลือกไม่มี (เช่น "LY→3M")
   histFallbacks: [],
+  /** กติกา「ไม่เคยขาย = เป้า 0」ทำอะไรไปบ้าง — คีย์เป็น sku (ทีมเดียว) หรือ "ทีม|sku" (รวมภาค) */
+  neverSoldSummary: {},
   // ผลตรวจ "เป้าใน Target Sun เปลี่ยนหลังโหลดข้อมูล" — null = ยังไม่เคยตรวจรอบนี้
   targetDrift: null,
   // หน่วยขายที่เลือกดูอยู่ ("" = ทุกหน่วย ซึ่งกระจายรวมกันไม่ได้)
@@ -6064,6 +6066,10 @@ function _applyOptimizeMetaFromJson(json) {
   S.optimizationFallback = !!json.optimization_fallback;
   S.droppedLocks = Array.isArray(json.dropped_locks) ? json.dropped_locks : [];
   S.histFallbacks = Array.isArray(json.hist_fallbacks) ? json.hist_fallbacks : [];
+  S.neverSoldSummary =
+    json.never_sold_summary && typeof json.never_sold_summary === "object"
+      ? json.never_sold_summary
+      : {};
   // เส้นทางซุปเดียว — ไม่มีรายชื่อทีมให้ระบุ ล้างค่าจากรอบรวมภาคก่อนหน้าทิ้ง
   S.optimizationFallbackSups = [];
   S.regionalFailedSups = [];
@@ -6090,9 +6096,16 @@ function _applyOptimizeMetaFromSups(metaBySup) {
 
   const droppedLocks = [];
   const histFallbacks = new Set();
+  // กติกาไม่เคยขายคิดแยกรายทีม — รวมทุกทีมไว้ก้อนเดียวเพื่อบอกผู้ใช้ทีเดียว
+  const neverSold = {};
   for (const [supId, json] of entries) {
     if (!json) continue;
     if (json.optimization_fallback) fallbackSups.push(supId);
+    if (json.never_sold_summary && typeof json.never_sold_summary === "object") {
+      for (const [sku, info] of Object.entries(json.never_sold_summary)) {
+        neverSold[`${supId}|${sku}`] = { ...info, supervisor_code: supId };
+      }
+    }
     if (Array.isArray(json.dropped_locks)) {
       json.dropped_locks.forEach((d) => droppedLocks.push({ ...d, supervisor_code: supId }));
     }
@@ -6127,6 +6140,7 @@ function _applyOptimizeMetaFromSups(metaBySup) {
   S.histWindowMonths = months || 3;
   S.newProductsEvenMode = evenMode;
   S.newProductSkus = newSkus;
+  S.neverSoldSummary = neverSold;
   S.tierFlexSkus = flexSkus;
   S.tierStrictSkuCount = strictCount;
   // อัตราส่วนต่อทีมไม่เท่ากัน — ใช้ค่าเฉลี่ยเพื่อแสดงผลรวมภาค
@@ -6992,6 +7006,62 @@ function pinStickyLeftColumns(scroller) {
   }
 }
 
+/**
+ * กติกา「ไม่เคยขาย = เป้า 0」ทำอะไรไปบ้าง — ผู้ใช้ขอให้ "แจ้งบอก" ไว้ตอนตกลงกติกา
+ *
+ * สิ่งที่ต้องบอกมีสองเรื่องคนละน้ำหนัก:
+ *   - ตัดเป้าของคนที่ไม่เคยขาย = ผลปกติของกติกา บอกให้รู้ว่าทำไมเลขเปลี่ยน
+ *   - **เป้าไปกองที่คนเคยขายไม่กี่คน** = เรื่องที่ต้องเข้าไปดูจริง ๆ จึงบอกเป็นราย SKU
+ */
+function _neverSoldReviewLines() {
+  const summary = S.neverSoldSummary || {};
+  const items = Object.entries(summary);
+  if (!items.length) return [];
+
+  const out = [];
+  const zeroed = items.filter(([, v]) => v?.reason === "zeroed");
+  const evened = items.filter(([, v]) => v?.reason === "no_seller" || v?.reason === "push_target");
+
+  // เป้าลงที่คนน้อยราย — เรียงจากหนักสุด แล้วบอกไม่เกิน 5 ตัวพอ
+  const heavy = zeroed
+    .map(([key, v]) => ({
+      sku: String(key).includes("|") ? String(key).split("|")[1] : String(key),
+      sup: v.supervisor_code || "",
+      sellers: Number(v.sellers) || 0,
+      team: Number(v.team) || 0,
+      boxes: Number(v.target_boxes) || 0,
+    }))
+    .filter((x) => x.sellers > 0 && x.sellers <= 2 && x.boxes > 0)
+    .sort((a, b) => b.boxes - a.boxes);
+
+  if (zeroed.length) {
+    out.push(
+      `กติกา「ไม่เคยขาย = ไม่มีเป้า」ทำงานกับ ${zeroed.length.toLocaleString("th-TH")} สินค้า — `
+      + `คนที่ไม่เคยขายสินค้านั้นในรอบ 12 เดือนได้ 0 หีบ หีบไปอยู่กับคนที่เคยขาย`
+    );
+  }
+  if (heavy.length) {
+    const list = heavy
+      .slice(0, 5)
+      .map((x) => `${x.sup ? x.sup + " " : ""}${x.sku} (${x.boxes.toLocaleString("th-TH")} หีบ → ${x.sellers} คน)`)
+      .join(" · ");
+    out.push(
+      `⚠ เป้าไปกองที่คนเคยขายไม่กี่คน ควรเข้าไปดู: ${list}`
+      + (heavy.length > 5 ? ` … และอีก ${heavy.length - 5} สินค้า` : "")
+    );
+  }
+  if (evened.length) {
+    const noSeller = evened.filter(([, v]) => v.reason === "no_seller").length;
+    const push = evened.length - noSeller;
+    const why = [
+      noSeller ? `${noSeller} สินค้าที่ทั้งทีมไม่เคยขาย` : "",
+      push ? `${push} สินค้าที่เป้าใหญ่กว่าที่ทีมเคยขายมาก` : "",
+    ].filter(Boolean).join(" และ ");
+    out.push(`เฉลี่ยให้ทุกคนเท่า ๆ กัน ${evened.length} สินค้า — ${why} (ใช้ประวัติตัดสินไม่ได้)`);
+  }
+  return out;
+}
+
 /** แบนเนอร์ขอให้รีเช็ค — LP fallback, เกลี่ยหีบค้าง, SKU เบี่ยงประวัติ */
 function syncStep3ReviewNotes() {
   const el = document.getElementById("step3ReviewNotes");
@@ -7060,6 +7130,7 @@ function syncStep3ReviewNotes() {
   if (neg.length) {
     lines.push(`พนักงานที่ตั้งเป้าเติบโตติดลบ ${neg.length} คน — ตรวจเหตุผลที่บันทึกไว้`);
   }
+  lines.push(..._neverSoldReviewLines());
   if (!lines.length) {
     el.style.display = "none";
     el.innerHTML = "";

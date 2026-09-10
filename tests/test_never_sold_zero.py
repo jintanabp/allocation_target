@@ -264,5 +264,58 @@ class NeverSoldZeroTest(unittest.TestCase):
         self.assertTrue(out.attrs.get("never_sold_zero_pairs"))
 
 
+class TellsTheUserWhatHappened(unittest.TestCase):
+    """
+    ผู้ใช้ตกลงกติกาโดยมีเงื่อนไขว่า "อาจจะต้องมีการแจ้งบอก"
+    โดยเฉพาะข้อ 3 ที่คนเคยขายจะรับหนักขึ้น — ถ้าเลขเปลี่ยนแล้วไม่มีใครอธิบาย
+    ซุปจะนึกว่าระบบคำนวณผิด แล้วกลับไปแก้มือเหมือนเดิม ซึ่งสวนทางกับเป้าหมายทั้งหมด
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(REPO, "frontend", "app.js"), encoding="utf-8") as f:
+            cls.js = f.read()
+        with open(
+            os.path.join(REPO, "backend", "services", "optimize.py"), encoding="utf-8"
+        ) as f:
+            cls.py = f.read()
+
+    def test_backend_sends_the_summary_back(self):
+        self.assertIn('"never_sold_summary": never_sold_summary_all', self.py)
+
+    def test_both_paths_read_it(self):
+        """ทีมเดียวกับรวมภาคเป็นคนละเส้นทาง — พลาดเส้นไหนเส้นนั้นจะเงียบ"""
+        self.assertIn("S.neverSoldSummary =", self.js)
+        i = self.js.index("const neverSold = {}")
+        self.assertIn("never_sold_summary", self.js[i : i + 500], "เส้นรวมภาคต้องรวมทุกทีม")
+        self.assertIn("S.neverSoldSummary = neverSold;", self.js)
+
+    def test_the_panel_actually_shows_it(self):
+        """บทเรียน 8 ก.ย. — มีฟังก์ชันแต่ไม่มีใครเรียก = ฟีเจอร์ตายเงียบ"""
+        i = self.js.index("function syncStep3ReviewNotes(")
+        j = self.js.index("function syncStep3TieredNote(", i)
+        self.assertIn("_neverSoldReviewLines()", self.js[i:j])
+
+    def test_it_flags_only_the_concentrated_ones(self):
+        """
+        บอกทุก SKU ที่กติกาทำงาน = ท่วมจนไม่มีใครอ่าน
+        ที่ต้องเข้าไปดูจริงคือ SKU ที่เป้าไปกองที่คนเคยขาย 1-2 คน
+        """
+        i = self.js.index("function _neverSoldReviewLines(")
+        body = self.js[i : i + 2600]
+        self.assertIn("x.sellers <= 2", body)
+        self.assertIn("slice(0, 5)", body, "ยาวเกินต้องตัด ไม่งั้นแผงยาวเป็นหางว่าว")
+        self.assertIn("b.boxes - a.boxes", body, "เรียงจากก้อนใหญ่ก่อน")
+
+    def test_it_separates_the_two_kinds_of_even_split(self):
+        """'ทีมไม่เคยขาย' กับ 'เป้าใหญ่เกินไป' คนละเรื่อง ผู้ใช้ต้องแยกออก"""
+        i = self.js.index("function _neverSoldReviewLines(")
+        body = self.js[i : i + 2600]
+        self.assertIn("no_seller", body)
+        self.assertIn("push_target", body)
+        self.assertIn("ทั้งทีมไม่เคยขาย", body)
+        self.assertIn("เป้าใหญ่กว่าที่ทีมเคยขายมาก", body)
+
+
 if __name__ == "__main__":
     unittest.main()

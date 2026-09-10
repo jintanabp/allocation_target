@@ -1044,6 +1044,8 @@ def run_optimization_service(
             push_multiple=alloc_rules_store.push_multiple(),
         )
         optimization_fallback = bool(df_allocation.attrs.get("optimization_fallback"))
+        never_sold_pairs_all |= set(df_allocation.attrs.get("never_sold_zero_pairs") or ())
+        never_sold_summary_all.update(df_allocation.attrs.get("never_sold_summary") or {})
 
     tier_flex_skus: list[str] = []
     if req.tiered_allocation:
@@ -1247,4 +1249,7 @@ def run_optimization_service(
         "no_target_excluded": dropped_no_target,
         "dropped_locks": dropped_locks,
         "hist_fallbacks": hist_fallbacks,
+        # กติกาไม่เคยขาย = เป้า 0 ทำอะไรไปบ้าง — หน้าจอต้องบอกผู้ใช้ได้ว่าทำไมเลขเปลี่ยน
+        # โดยเฉพาะ SKU ที่เป้าไปกองที่คนเคยขายไม่กี่คน ซึ่งผู้ใช้ขอให้ "แจ้งบอก" ไว้
+        "never_sold_summary": never_sold_summary_all,
     }
