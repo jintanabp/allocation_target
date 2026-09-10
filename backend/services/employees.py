@@ -1004,6 +1004,19 @@ def load_employees_payload(
         ),
         sku_links, sup_id,
     )
+    # 12 เดือน — ใช้ตอบคำถามเดียว: "คู่นี้เคยขายกันบ้างไหมในรอบปี"
+    #
+    # กติกา "หน่วยไม่เคยขายสินค้านั้น = เป้า 0" ต้องมองยาวถึงเดือนเดียวกันปีที่แล้ว
+    # ไม่งั้นสินค้าเทศกาลจะถูกตัดสินว่า "ไม่เคยขาย" ทั้งที่ขายทุกปี
+    # คิวรีเดียวกับ 3M/6M แค่เปลี่ยนจำนวนเดือน และคืนเฉพาะคู่ที่ขายจริง (hist_boxes > 0)
+    df_hist12 = _load_history(
+        "12 เดือน", hist_cache_path(sup_id, target_month, target_year, n_months=12),
+        lambda: fabric.get_historical_sales(
+            target_month, target_year,
+            sku_list=dax_sku_list, emp_list=emp_list, n_months=12,
+        ),
+        sku_links, sup_id,
+    )
     df_lysm = _load_history(
         "ปีที่แล้วเดือนเดียวกัน",
         hist_ly_same_month_cache_path(sup_id, target_month, target_year),
