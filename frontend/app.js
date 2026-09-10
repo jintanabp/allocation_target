@@ -926,9 +926,14 @@ function _userFacingError(err, fallback = "เกิดข้อผิดพล�
   return msg.replace(/^HTTP\s*\d+\s*[-–:]?\s*/i, "").trim() || fallback;
 }
 
-function _logClientError(action, message, detail = "") {
+/**
+ * ส่งบันทึกการใช้งานจากหน้าเว็บ (POST /admin/usage-logs — ผู้ใช้ทั่วไปยิงได้ ไม่ใช่เฉพาะแอดมิน)
+ *
+ * ยิงแบบทิ้ง ไม่รอผล และกลืน error ทั้งหมด — การบันทึกล้มต้องไม่ทำให้สิ่งที่ผู้ใช้กำลังทำพัง
+ */
+function _logClientAction(action, message, detail = "", level = "info") {
   const body = {
-    level: "error",
+    level: String(level || "info"),
     action: String(action || "client"),
     message: String(message || "").slice(0, 500),
     detail: String(detail || "").slice(0, 2000),
@@ -939,6 +944,10 @@ function _logClientError(action, message, detail = "") {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   }, 8000).catch(() => {});
+}
+
+function _logClientError(action, message, detail = "") {
+  _logClientAction(action, message, detail, "error");
 }
 
 function _formatAllocateDurationRange(lowSec, highSec) {
@@ -10093,6 +10102,16 @@ async function doLakehouseValidateOnly() {
     }</ul><p style="margin:12px 0 0;font-size:12px;color:var(--text-3);">ตรวจเท่านั้น — ยังไม่ส่งเข้า Target Sun</p>`;
 
     const merged = _mergeShortfall(shortfallChunks);
+    // บันทึกไว้ว่ามีคนใช้ปุ่มนี้จริงไหม และตรวจแล้วเจออะไร — ไม่มีทางรู้จากที่อื่นเลย
+    // เพราะขั้นเตรียมไฟล์บันทึกเฉพาะตอน "ตีกลับ" (prepare_targetsun_blocked)
+    _logClientAction(
+      "validate_targetsun",
+      `ตรวจไฟล์ก่อนส่ง ${supIds.length} ทีม`,
+      `งวด ${S.targetYear}-${String(S.targetMonth).padStart(2, "0")}`
+      + ` · แบรนด์ ${brand || "ALL"}`
+      + ` · SKU ที่เป้าจะขาด ${merged.length}`
+      + ` · ${lines.join(" | ")}`,
+    );
     if (merged.length) {
       _showShortfallModal(
         { shortfall: merged, shortfall_boxes: merged.reduce((s, x) => s + x.missing_boxes, 0) },
