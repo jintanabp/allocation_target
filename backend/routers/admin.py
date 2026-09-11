@@ -2333,9 +2333,30 @@ def _sup_attrs() -> dict[str, dict[str, str]]:
     return out
 
 
-def _employee_directory() -> list[dict]:
+#: ป้ายงวดของคนที่มาจากทะเบียนบริษัท — ไม่ผูกงวด จึงไม่ใช่ "YYYY-MM"
+#: เทียบ string กับงวดจริงแล้วต้องแพ้เสมอ (ค่าว่างน้อยกว่าทุกอย่าง) ของจากแคชไฟล์จึงชนะ
+_ROSTER_STAMP = ""
+
+
+def _company_roster_status() -> dict:
     """
-    พนักงานทุกคนที่ระบบเคยเห็น พร้อมทีมที่สังกัดจริง — อ่านจากไฟล์แคชรายชื่อในเครื่อง
+    ทะเบียนพนักงานทั้งบริษัทจากแคช — ไม่ออกเน็ต และพังแล้วต้องไม่ลามไปทั้งหน้า
+
+    แยกเป็นฟังก์ชันของตัวเองเพราะหน้าย้ายพนักงานต้องใช้ 2 อย่างจากก้อนเดียวกัน:
+    รายชื่อไว้เติมตาราง และสถานะไว้บอกผู้ใช้ว่าทำไมยังไม่เห็นคนที่ตามหา
+    """
+    try:
+        from ..services import company_roster
+
+        return company_roster.get_company_roster()
+    except Exception as e:                      # แคชหาย/พัง ต้องไม่ทำให้หน้านี้เปิดไม่ได้
+        logger.warning("อ่านทะเบียนพนักงานทั้งบริษัทไม่ได้ (%s) — ใช้เฉพาะแคชไฟล์", e)
+        return {"available": False, "rows": [], "row_count": 0, "error": str(e)}
+
+
+def _employee_directory(roster: dict | None = None) -> list[dict]:
+    """
+    พนักงานทุกคนที่ระบบรู้จัก พร้อมทีมที่สังกัดจริง — อ่านแคชในเครื่องล้วน
 
     ไม่ยิง Fabric เพราะหน้านี้ต้องเปิดได้แม้ตอน Fabric ล่ม (ซึ่งเป็นตอนที่คนอยาก
     เข้ามาดูว่าใครอยู่ทีมไหนพอดี) · แคชรายชื่อเก็บ "โครงสร้างจริง" ไว้เสมอ
@@ -2380,6 +2401,39 @@ def _employee_directory() -> list[dict]:
             if cur is None or stamp > cur[0]:
                 newest[emp] = (stamp, sup)
 
+    # แหล่งที่ 3: ทะเบียนพนักงานทั้งบริษัท — เติมเฉพาะคนที่ไม่มีในแคชไฟล์เลย
+    #
+    # สองแหล่งข้างบนมีแต่ทีมที่ "เคยถูกเปิดใช้งาน" คนของทีมที่ยังไม่มีใครเปิดจึงไม่โผล่
+    # ที่นี่ แล้วย้ายไม่ได้ทั้งที่เป็นคำขอจริง — เคสที่ทำให้ต้องมาแก้: **S556 อยู่ใต้
+    # ทีม SL394 ซึ่งยังไม่เคยถูกเปิดบนเซิร์ฟเวอร์** SL225 ขอย้ายมาตั้งแต่ผลสำรวจ
+    # (1-2 ก.ย. 2026) แต่หน้านี้ไม่มีแถวให้กด ทางแก้เดิมคือ "ให้ใครสักคนไปเปิดทีม
+    # SL394 หนึ่งครั้ง" ซึ่งเป็นขั้นตอนที่คนนอกทีมพัฒนาไม่มีทางเดาได้เอง
+    #
+    # ทะเบียนนี้ยิง Fabric **คำสั่งเดียวทั้งบริษัท** และมีแคชของตัวเองอยู่แล้ว
+    # (หน้าสรุปการใช้งานใช้อยู่ · ปุ่มรีเฟรช layer=roster) จึงถูกกว่าการไล่ดึงเป้า
+    # รายทีมมาเก็บไว้เฉย ๆ มาก — ที่นี่อ่านแคชล้วน refresh=False ไม่ออกเน็ต
+    #
+    # **เป็นตัวเติมเท่านั้น** ของจากแคชไฟล์ชนะเสมอ เพราะมีงวดกำกับและตรงกับที่แอป
+    # ใช้คำนวณจริง ถ้าให้ทะเบียนทับ คนที่ย้ายทีมในทะเบียนแต่แอปยังคำนวณด้วยทีมเดิม
+    # จะแสดงต้นทางผิด แล้วแอดมินกดย้ายจากทีมที่ไม่ใช่ต้นทางจริง
+    roster_rows = list((roster or _company_roster_status()).get("rows") or [])
+    added_from_roster = 0
+    for r in roster_rows:
+        emp = str(r.get("emp_id") or "").strip().upper()
+        sup = str(r.get("super_code") or "").strip().upper()
+        if not emp or not sup or emp in newest:
+            continue
+        nm = str(r.get("emp_name") or "").strip()
+        if nm:
+            names.setdefault(emp, nm)
+        newest[emp] = (_ROSTER_STAMP, sup)
+        added_from_roster += 1
+    if added_from_roster:
+        logger.info(
+            "หน้าย้ายพนักงาน: เติมจากทะเบียนบริษัท %d คน (ทีมที่ยังไม่เคยถูกเปิด)",
+            added_from_roster,
+        )
+
     attrs = _sup_attrs()
     moves = {r["emp_id"]: r for r in emp_assignment_store.read_rows()}
     out: list[dict] = []
@@ -2395,7 +2449,9 @@ def _employee_directory() -> list[dict]:
             "home_division": a.get("division", ""),
             "home_region": a.get("region", ""),
             "home_unit": a.get("unit", ""),
-            "seen_period": stamp,
+            # คนจากทะเบียนบริษัทไม่ผูกงวด — บอกที่มาแทนที่จะโชว์ค่าว่าง
+            "seen_period": stamp or "ทะเบียนบริษัท",
+            "from_roster": stamp == _ROSTER_STAMP,
             "to_sup": to_sup,
             "to_division": b.get("division", ""),
             "to_region": b.get("region", ""),
@@ -2474,9 +2530,17 @@ def admin_my_permissions(user: dict = Depends(require_admin_or_marketing_team)):
 def admin_emp_assignments(_admin: dict = Depends(require_capability("emp_moves"))):
     """รายชื่อพนักงาน + ทีมที่สังกัดจริง + ทีมที่ย้ายไปเกลี่ยเป้าด้วย (ถ้ามี)"""
     sups = _sup_attrs()
+    roster = _company_roster_status()
     return {
-        "employees": _employee_directory(),
+        "employees": _employee_directory(roster),
         "assignments": emp_assignment_store.read_rows(),
+        # บอกหน้าจอว่าทะเบียนบริษัทพร้อมใช้ไหม — ถ้ายังไม่เคยดึง คนของทีมที่ไม่เคย
+        # ถูกเปิดจะยังไม่โผล่ และผู้ใช้ต้องรู้ว่าต้องไปกดอะไร ไม่ใช่หาไม่เจอแล้วเงียบ
+        "roster": {
+            "available": bool(roster.get("available")),
+            "row_count": int(roster.get("row_count") or 0),
+            "cached_at": roster.get("cached_at"),
+        },
         "supervisors": [
             {"code": c, **v}
             for c, v in sorted(sups.items())

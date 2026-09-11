@@ -13221,7 +13221,19 @@ function renderEmpMoves() {
   const movedCount = (_empMoveData.employees || [])
     .filter((r) => r.to_sup && r.to_sup !== r.home_sup).length;
   const shownMovedCount = shown.filter((r) => r.to_sup && r.to_sup !== r.home_sup).length;
+  // ทะเบียนบริษัทคือตัวที่ทำให้เห็นคนของทีมที่ยังไม่เคยถูกเปิดใช้งาน (เช่น S556 ใต้ SL394)
+  // ถ้ายังไม่เคยดึง ต้องบอกตรง ๆ ว่าต้องไปกดที่ไหน ไม่ใช่ปล่อยให้หาคนไม่เจอแล้วงง
+  const rosterInfo = _empMoveData.roster || {};
+  const rosterNote = rosterInfo.available === false
+    ? `<div class="admin-card__note admin-note-warn" style="margin-bottom:10px;">`
+      + `ยังไม่เคยดึงทะเบียนพนักงานทั้งบริษัท — รายชื่อด้านล่างมีเฉพาะทีมที่เคยเปิดใช้งานระบบ `
+      + `ถ้าหาคนที่ต้องการไม่เจอ ให้ไปที่แท็บ <strong>สรุปการใช้งาน</strong> แล้วกดปุ่ม `
+      + `<strong>「ดึงข้อมูลพนักงาน」</strong> หนึ่งครั้ง แล้วกลับมากด「โหลดใหม่」ที่หน้านี้`
+      + `</div>`
+    : "";
+
   body.innerHTML =
+    rosterNote +
     (movedCount
       ? `<div class="admin-card__note" style="margin-bottom:10px;">ตอนนี้ย้ายไว้ <strong>${movedCount}</strong> คน${
           onlyMoved
