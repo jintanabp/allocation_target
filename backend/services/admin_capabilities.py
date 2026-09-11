@@ -79,6 +79,24 @@ CAPABILITIES: dict[str, dict[str, Any]] = {
         "tab": "empMoves",
         "allowed_roles": ("head_admin", "admin"),
     },
+    "feedback": {
+        "label": "ข้อเสนอแนะจากผู้ใช้",
+        "desc": (
+            "อ่านข้อความที่ซุปส่งมาจากปุ่มมุมขวาล่าง — มีอีเมลผู้ส่งติดมาด้วยทุกข้อความ "
+            "จึงเป็นข้อมูลระดับบริษัท ไม่แบ่งตามขอบเขตของแอดมินภาค"
+        ),
+        "tab": "feedback",
+        "allowed_roles": ("head_admin",),
+    },
+    "alloc_rules": {
+        "label": "กติกาการเกลี่ย",
+        "desc": (
+            "เปิด/ปิดกติกา「ไม่เคยขาย = เป้า 0」ทั้งระบบหรือรายทีม และปรับเกณฑ์สินค้าดันเป้า — "
+            "เปลี่ยนตัวเลขที่ซุปเห็นในการคำนวณครั้งถัดไปของทุกทีมที่เกี่ยวข้อง"
+        ),
+        "tab": "allocRules",
+        "allowed_roles": ("head_admin",),
+    },
     "data_source": {
         "label": "แหล่งข้อมูล",
         "desc": (
@@ -91,6 +109,11 @@ CAPABILITIES: dict[str, dict[str, Any]] = {
 }
 
 # ค่าตั้งต้น = พฤติกรรมก่อนมีตารางสิทธิ์ (ยกมาจาก ADMIN_TABS_* ใน frontend/app.js)
+#
+# สิทธิ์ที่เพิ่มมาทีหลัง (emp_moves · feedback · alloc_rules) **จงใจไม่อยู่ในตารางนี้** —
+# ตารางนี้ใช้เฉพาะตอนไฟล์ config/admin_permissions.json หายเท่านั้น ของจริงบนเซิร์ฟเวอร์
+# อ่านจากไฟล์นั้น (ซึ่ง track ใน git และถูก pull ทับทุกครั้งที่ deploy) การจะให้ head_admin
+# เห็นแท็บใหม่จึงต้องใส่คีย์ลงไฟล์นั้นแล้ว commit ไม่ใช่แก้ตรงนี้
 DEFAULT_ROLE_CAPABILITIES: dict[str, tuple[str, ...]] = {
     "head_admin": (
         "users", "roles", "sl_links", "sku_links",

@@ -78,6 +78,9 @@ _PROTECTED_CONFIGS = (
     "config/emp_assignments.json",
     # ตารางสิทธิ์หน้าแอดมิน — เทสที่เขียนทับจะเปลี่ยนว่าใครเข้าหน้าไหนได้บนของจริง
     "config/admin_permissions.json",
+    # ค่าตั้งต้นของกติกาการเกลี่ย — ตัวเขียนของจริงลง data/alloc_rules.json ไม่ใช่ไฟล์นี้
+    # ถ้าไฟล์นี้เปลี่ยนหลังรันเทส แปลว่ามีใครเขียนผิดที่ ซึ่งจะไปโผล่ตอน deploy
+    "config/allocation_rules.json",
 )
 
 

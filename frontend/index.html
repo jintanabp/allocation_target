@@ -16,7 +16,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=2026091003" />
+  <link rel="stylesheet" href="style.css?v=2026091101" />
 </head>
 
 <body>
@@ -217,6 +217,15 @@
       title="ดูคู่มือการใช้งานทีละขั้นตอน">
       <span class="btn-manual__icon" aria-hidden="true">📖</span>
       <span class="btn-manual__text">คู่มือ</span>
+    </button>
+
+    <!-- ส่งความเห็น — โผล่หลังล็อกอิน Microsoft แล้ว (เส้นส่งต้องมี token)
+         ต่างจากปุ่มคู่มือตรงที่ต้องขึ้นในหน้าแอดมินด้วย จึงไม่มีกฎซ่อนตอน body.is-admin -->
+    <button type="button" id="openFeedbackBtn" class="btn-manual btn-feedback--floating" style="display:none;"
+      onclick="showFeedbackModal()"
+      title="ส่งความเห็น แจ้งปัญหา หรือสอบถามถึงทีมพัฒนา — ใช้ได้ทุกหน้า">
+      <span class="btn-manual__icon" aria-hidden="true">💬</span>
+      <span class="btn-manual__text">ส่งความเห็น</span>
     </button>
 
     <!-- ─── DASHBOARD VIEW ─── -->
@@ -1037,6 +1046,10 @@
           <button type="button" class="admin-nav-item" role="tab" data-tab="team" aria-selected="false" onclick="adminSwitchTab('team')">ทีมพนักงาน <span id="adminTeamReadOnlyBadge" class="admin-ro-badge" style="display:none;">ดูอย่างเดียว</span></button>
           <button type="button" class="admin-nav-item" role="tab" data-tab="empMoves" aria-selected="false" onclick="adminSwitchTab('empMoves')">ย้ายพนักงาน</button>
         </div>
+        <div class="admin-nav-group">
+          <div class="admin-nav-group__label">ระบบ</div>
+          <button type="button" class="admin-nav-item" role="tab" data-tab="feedback" aria-selected="false" onclick="adminSwitchTab('feedback')" title="อ่านข้อความที่ผู้ใช้ส่งมาจากปุ่มมุมขวาล่าง (เฉพาะหัวหน้าแอดมิน)">ข้อเสนอแนะจากผู้ใช้ <span id="adminFeedbackNewBadge" class="admin-ro-badge" style="display:none;">0</span></button>
+        </div>
       </nav>
 
       <div class="admin-content">
@@ -1529,6 +1542,57 @@
         </section>
       </div>
 
+      <div id="adminPanelFeedback" class="admin-panel" data-panel="feedback" style="display:none;">
+        <section class="admin-card admin-card--panel">
+          <div class="admin-card-header">
+            <div>
+              <h2 class="admin-card__title">ข้อเสนอแนะจากผู้ใช้</h2>
+              <p class="admin-card__hint">ข้อความที่ซุปกดส่งจากปุ่ม 💬 มุมขวาล่างของหน้าเว็บ — ใหม่สุดอยู่บน</p>
+            </div>
+            <div class="admin-period-bar">
+              <label class="admin-period-bar__field">สถานะ
+                <select id="adminFeedbackStatus" class="admin-select admin-select--sm" onchange="adminLoadFeedback()">
+                  <option value="">ทุกสถานะ</option>
+                  <option value="new">ใหม่</option>
+                  <option value="read">อ่านแล้ว</option>
+                  <option value="done">จัดการแล้ว</option>
+                </select>
+              </label>
+              <label class="admin-period-bar__field">ประเภท
+                <select id="adminFeedbackCategory" class="admin-select admin-select--sm" onchange="adminLoadFeedback()">
+                  <option value="">ทุกประเภท</option>
+                  <option value="problem">แจ้งปัญหา</option>
+                  <option value="request">ขอให้เพิ่ม</option>
+                  <option value="question">สงสัย</option>
+                </select>
+              </label>
+              <button type="button" class="admin-btn-refresh admin-btn-refresh--sm" onclick="adminLoadFeedback()" title="โหลดข้อความล่าสุด">
+                <span class="admin-btn-refresh__icon" aria-hidden="true">↻</span>
+                <span>โหลดใหม่</span>
+              </button>
+              <span id="adminFeedbackCount" class="admin-period-bar__meta" aria-live="polite"></span>
+            </div>
+          </div>
+          <div class="admin-help-strip admin-help-strip--compact">
+            <p>ทุกข้อความมี<strong>อีเมลผู้ส่ง ทีม และงวด</strong>ติดมาด้วย จึงติดต่อกลับได้ทันที · กด <strong>อ่านแล้ว</strong> เพื่อบอกแอดมินคนอื่นว่ามีคนดูแล้ว และกด <strong>จัดการแล้ว</strong> เมื่อปิดเรื่องได้ — กดผิดถอยกลับเป็น「ใหม่」ได้ · ระบบ<strong>ไม่ได้ส่งอีเมลแจ้งผู้ส่ง</strong> ต้องติดต่อกลับเอง</p>
+          </div>
+          <div id="adminFeedbackBody" class="admin-table-wrap admin-table-wrap--panel">
+            <table class="admin-table admin-table--compact admin-table--zebra admin-table--feedback">
+              <thead><tr>
+                <th class="fb-col-time">เวลา</th>
+                <th class="fb-col-status">สถานะ</th>
+                <th class="fb-col-cat">ประเภท</th>
+                <th class="fb-col-user">ผู้ส่ง</th>
+                <th class="fb-col-sup">ทีม/งวด</th>
+                <th class="fb-col-msg">ข้อความ</th>
+                <th class="fb-col-act">จัดการ</th>
+              </tr></thead>
+              <tbody id="adminFeedbackTable"><tr><td colspan="7" class="admin-empty">กำลังโหลด…</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
       <div id="adminPanelAllocations" class="admin-panel" data-panel="allocations" style="display:none;">
         <section class="admin-card admin-card--panel">
           <div class="admin-card-header">
@@ -1704,7 +1768,7 @@
   <!-- ตรรกะล้วน (ตัวแปลงเลข/คณิตการเกลี่ย) — ต้องมาก่อน app.js
        ไฟล์นี้มีเทสจริงด้วย node --test tests/logic.test.js -->
   <script src="logic.js?v=2026090410"></script>
-  <script src="app.js?v=2026091007"></script>
+  <script src="app.js?v=2026091101"></script>
 </body>
 
 </html>

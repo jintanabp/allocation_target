@@ -485,6 +485,176 @@ function _showInfoModal({ title, bodyHtml, primaryLabel, onPrimary, secondaryLab
   }
 }
 
+/* ══════════════════════════════════════════════
+   กล่องส่งความเห็น — ปุ่ม 💬 มุมขวาล่าง มีทุกหน้าหลังล็อกอินแล้ว
+
+   ทำไมต้องมี: ก่อนหน้านี้ซุปที่เจอปัญหาระหว่างใช้งานไม่มีทางบอกใครได้ในจังหวะที่เจอ
+   เสียงผู้ใช้ทั้งหมดที่เคยเก็บได้มาจากแบบสำรวจนอกแอปครั้งเดียว (1-2 ก.ย. 2026)
+
+   ทำไมโชว์เฉพาะตอนล็อกอินแล้ว: เส้นส่งต้องมี token ถ้าโชว์ก่อนหน้านั้นจะกดแล้วเด้ง 401
+   ══════════════════════════════════════════════ */
+
+const FEEDBACK_DRAFT_KEY = "AllocFeedbackDraft_v1";
+const FEEDBACK_MAX_CHARS = 2000;
+const FEEDBACK_MIN_CHARS = 10;
+const FEEDBACK_CATEGORIES = [
+  { key: "problem", label: "แจ้งปัญหา", icon: "⚠️", hint: "ระบบทำงานผิด ตัวเลขเพี้ยน หรือทำงานต่อไม่ได้" },
+  { key: "request", label: "ขอให้เพิ่ม", icon: "➕", hint: "อยากให้มีปุ่ม ตัวเลข หรือรายงานอะไรเพิ่ม" },
+  { key: "question", label: "สงสัย", icon: "❓", hint: "ไม่แน่ใจว่าตัวเลขมาจากไหน หรือควรกดอะไรต่อ" },
+];
+
+let _feedbackSending = false;
+let _feedbackCooldownUntil = 0;
+
+/** ปุ่มโผล่เมื่อรู้แล้วว่าใครกำลังใช้อยู่ — เรียกซ้ำได้ตลอด */
+function _syncFeedbackBtn() {
+  const btn = document.getElementById("openFeedbackBtn");
+  if (!btn) return;
+  btn.style.display = S.userEmail ? "inline-flex" : "none";
+}
+
+/** หน้าที่ผู้ใช้เปิดอยู่ตอนกดส่ง — ไม่มีตัวแปรเก็บไว้ ต้องดูจากคลาสของ body */
+function _feedbackScreen() {
+  if (document.body.classList.contains("is-admin")) return "admin";
+  if (document.body.classList.contains("is-login")) return "login";
+  return "dashboard";
+}
+
+function _feedbackAppVersion() {
+  const src = document.querySelector('script[src*="app.js"]')?.getAttribute("src") || "";
+  const m = src.match(/[?&]v=([\w.-]+)/);
+  return m ? m[1] : "";
+}
+
+function _feedbackContext() {
+  const p = _effectiveTargetPeriod ? _effectiveTargetPeriod() : { month: S.targetMonth, year: S.targetYear };
+  return {
+    sup_id: String(S.supId || ""),
+    sup_name: String(S.supervisorName || ""),
+    target_month: p?.month || null,
+    target_year: p?.year || null,
+    screen: _feedbackScreen(),
+    app_version: _feedbackAppVersion(),
+  };
+}
+
+/** บอกผู้ใช้ตรง ๆ ว่าอะไรจะถูกแนบไปกับข้อความ — ไม่แอบส่งอะไรที่เขาไม่รู้ */
+function _feedbackAttachHtml(ctx) {
+  const bits = [];
+  bits.push(`อีเมลของคุณ (${escH(S.userEmail || "ไม่ทราบ")})`);
+  if (ctx.sup_id) bits.push(`ทีม ${escH(ctx.sup_id)}`);
+  if (ctx.target_month && ctx.target_year) bits.push(`งวด ${ctx.target_month}/${ctx.target_year}`);
+  const screenName = { admin: "หน้าแอดมิน", login: "หน้าเข้าสู่ระบบ", dashboard: "หน้ากระจายเป้า" }[ctx.screen] || "หน้าที่เปิดอยู่";
+  bits.push(screenName);
+  if (S.viewAsEmail) bits.push(`กำลังดูแทน ${escH(S.viewAsEmail)}`);
+  return `<div class="feedback-attach">📎 จะส่งไปพร้อมข้อความ: ${bits.join(" · ")}</div>`;
+}
+
+function showFeedbackModal() {
+  if (!S.userEmail) {
+    toast("ล็อกอิน Microsoft ก่อนจึงจะส่งความเห็นได้", "amber");
+    return;
+  }
+  const ctx = _feedbackContext();
+  let draft = "";
+  try {
+    draft = localStorage.getItem(FEEDBACK_DRAFT_KEY) || "";
+  } catch (_) { /* โหมดส่วนตัวอ่านไม่ได้ก็เริ่มจากช่องว่าง */ }
+
+  const cats = FEEDBACK_CATEGORIES.map(
+    (c, i) => `
+      <button type="button" class="feedback-cat${i === 0 ? " feedback-cat--on" : ""}" data-cat="${c.key}"
+        title="${escH(c.hint)}">
+        <span aria-hidden="true">${c.icon}</span> ${escH(c.label)}
+      </button>`,
+  ).join("");
+
+  _showInfoModal({
+    title: "ส่งความเห็นถึงทีมพัฒนา",
+    bodyHtml: `
+      <div class="feedback-box">
+        <div class="feedback-cats" role="group" aria-label="ประเภทของเรื่องที่จะส่ง">${cats}</div>
+        <div id="feedbackCatHint" class="feedback-cat-hint">${escH(FEEDBACK_CATEGORIES[0].hint)}</div>
+        <textarea id="feedbackText" class="feedback-text" maxlength="${FEEDBACK_MAX_CHARS}"
+          placeholder="เล่าให้ฟังได้เลยว่าเจออะไร เช่น «กดเริ่มคำนวณแล้วตัวเลขของ S123 เป็น 0 ทั้งแถว»"
+          aria-label="ข้อความที่จะส่ง">${escH(draft)}</textarea>
+        <div class="feedback-foot-line">
+          <span id="feedbackCount" class="feedback-count"></span>
+          <span class="feedback-note">ทีมพัฒนาอ่านทุกข้อความ แต่ระบบยังไม่ได้ตอบกลับอัตโนมัติ</span>
+        </div>
+        ${_feedbackAttachHtml(ctx)}
+      </div>`,
+    primaryLabel: "ส่ง",
+    onPrimary: () => {
+      const text = String(document.getElementById("feedbackText")?.value || "").trim();
+      const cat = document.querySelector(".feedback-cat--on")?.dataset.cat || "problem";
+      if (text.length < FEEDBACK_MIN_CHARS) {
+        toast(`พิมพ์อย่างน้อย ${FEEDBACK_MIN_CHARS} ตัวอักษรก่อนส่ง — ข้อความที่พิมพ์ไว้ยังอยู่`, "amber");
+        _feedbackSaveDraft(text);
+        return;
+      }
+      _submitFeedback({ ...ctx, category: cat, message: text });
+    },
+    secondaryLabel: "ปิด",
+    onSecondary: () => {
+      _feedbackSaveDraft(String(document.getElementById("feedbackText")?.value || "").trim());
+    },
+  });
+
+  // ผูกพฤติกรรมหลังกล่องถูกสร้างแล้ว (ท่าเดียวกับกล่องเพิ่มผู้ดูแลระบบ)
+  const card = document.querySelector("#infoModal .modal-card");
+  if (card) card.classList.add("modal-card--feedback");
+  const ta = document.getElementById("feedbackText");
+  const counter = document.getElementById("feedbackCount");
+  const primary = document.getElementById("infoModalPrimaryBtn");
+  const syncCount = () => {
+    const n = String(ta?.value || "").trim().length;
+    if (counter) counter.textContent = n < FEEDBACK_MIN_CHARS
+      ? `พิมพ์อีก ${FEEDBACK_MIN_CHARS - n} ตัวอักษรจึงจะส่งได้`
+      : `${n} / ${FEEDBACK_MAX_CHARS} ตัวอักษร`;
+    if (primary) primary.disabled = n < FEEDBACK_MIN_CHARS;
+  };
+  ta?.addEventListener("input", syncCount);
+  syncCount();
+  document.querySelectorAll(".feedback-cat").forEach((b) => {
+    b.addEventListener("click", () => {
+      document.querySelectorAll(".feedback-cat").forEach((x) => x.classList.remove("feedback-cat--on"));
+      b.classList.add("feedback-cat--on");
+      const hint = FEEDBACK_CATEGORIES.find((c) => c.key === b.dataset.cat)?.hint || "";
+      const el = document.getElementById("feedbackCatHint");
+      if (el) el.textContent = hint;
+    });
+  });
+  ta?.focus();
+}
+
+function _feedbackSaveDraft(text) {
+  try {
+    if (text) localStorage.setItem(FEEDBACK_DRAFT_KEY, text);
+    else localStorage.removeItem(FEEDBACK_DRAFT_KEY);
+  } catch (_) { /* บันทึกร่างไม่ได้ก็ไม่เป็นไร ข้อความยังส่งได้ */ }
+}
+
+async function _submitFeedback(payload) {
+  if (_feedbackSending || Date.now() < _feedbackCooldownUntil) {
+    toast("กำลังส่งอยู่ รอสักครู่", "amber");
+    return;
+  }
+  _feedbackSending = true;
+  try {
+    await _adminJsonFetch("/admin/feedback/submit", { method: "POST", body: payload, timeout: 15000 });
+    _feedbackSaveDraft("");
+    _feedbackCooldownUntil = Date.now() + 5000;
+    toast("ส่งให้ทีมพัฒนาแล้ว ขอบคุณมาก", "green");
+  } catch (e) {
+    // ส่งไม่สำเร็จห้ามให้ข้อความหาย — เก็บร่างไว้เติมกลับให้ตอนเปิดกล่องครั้งหน้า
+    _feedbackSaveDraft(payload.message);
+    toast(`ส่งไม่สำเร็จ: ${e.message || String(e)} — ข้อความที่พิมพ์ไว้ยังอยู่ กดปุ่ม 💬 แล้วส่งใหม่ได้`, "red");
+  } finally {
+    _feedbackSending = false;
+  }
+}
+
 // แสดง error บนหน้า (กันกรณีผู้ใช้ไม่เปิด Console แล้วดูเหมือน “กดแล้วไม่เกิดอะไร”)
 let _uiErrorInFlight = false;
 window.addEventListener("error", (e) => {
@@ -612,6 +782,7 @@ async function initEntraAuth() {
     const msOut = document.getElementById("msLogoutBtn");
     const line = document.getElementById("msUserLine");
     S.userEmail = String(acc.username || "").trim().toLowerCase();
+    _syncFeedbackBtn();   // รู้แล้วว่าใครใช้อยู่ → ปุ่ม 💬 มุมขวาล่างโผล่ได้
     if (line) {
       line.style.display = "block";
       line.textContent = acc.username || acc.name || "";
@@ -14766,6 +14937,11 @@ const ADMIN_TAB_META = {
     title: "ย้ายพนักงาน",
     sub: "กรณีพิเศษ เช่น ขายชายแดน — ให้ทีมอื่นเกลี่ยเป้าให้แทน โดยเขต/หน่วยของพนักงานยังเป็นของเดิม",
   },
+  feedback: {
+    group: "ระบบ",
+    title: "ข้อเสนอแนะจากผู้ใช้",
+    sub: "ข้อความที่ซุปส่งจากปุ่ม 💬 มุมขวาล่าง — มีอีเมล ทีม และงวดติดมาด้วย",
+  },
 };
 
 let _adminSkuLinkRows = [];
@@ -14818,6 +14994,7 @@ function adminSwitchTab(tab) {
   if (_adminActiveTab === "slLinks") adminInitSlLinksPanel();
   if (_adminActiveTab === "skuLinks") adminInitSkuLinksPanel();
   if (_adminActiveTab === "permissions") adminPermsLoad();
+  if (_adminActiveTab === "feedback") adminInitFeedbackPanel();
   // /admin/emp-assignments ใช้เวลา ~9 วินาทีและไม่มีแคชฝั่งไหนเลย
   // เดิมยิงใหม่ทุกครั้งที่เปิดแท็บ พร้อมล้างตารางที่โหลดไว้ทิ้งก่อน
   // ปุ่ม「โหลดใหม่」ยังบังคับดึงสดได้เหมือนเดิม
@@ -15138,6 +15315,125 @@ async function adminInvalidateCache(layer) {
     adminLoadCacheStatus();
   } catch (e) {
     toast(e.message, "red");
+  }
+}
+
+/* ── แท็บ「ข้อเสนอแนะจากผู้ใช้」 ─────────────────────────────────────────
+   โครงเดียวกับแท็บบันทึกการใช้งาน ต่างกันตรงที่แถวนี้ "เปลี่ยนสถานะได้"
+   จึงต้องส่ง rev ของแถวกลับไปด้วย กันแอดมินสองคนกดทับกันโดยไม่รู้ตัว */
+
+const FEEDBACK_STATUS_LABELS = { new: "ใหม่", read: "อ่านแล้ว", done: "จัดการแล้ว" };
+const FEEDBACK_CATEGORY_LABELS = { problem: "แจ้งปัญหา", request: "ขอให้เพิ่ม", question: "สงสัย" };
+
+function adminInitFeedbackPanel() {
+  adminLoadFeedback();
+}
+
+async function adminLoadFeedback() {
+  const tbody = document.getElementById("adminFeedbackTable");
+  const countEl = document.getElementById("adminFeedbackCount");
+  if (!tbody) return;
+  tbody.innerHTML = `<tr><td colspan="7" class="admin-empty">กำลังโหลด…</td></tr>`;
+  if (countEl) countEl.textContent = "";
+  try {
+    const q = new URLSearchParams();
+    const st = document.getElementById("adminFeedbackStatus")?.value || "";
+    const cat = document.getElementById("adminFeedbackCategory")?.value || "";
+    if (st) q.set("status", st);
+    if (cat) q.set("category", cat);
+    q.set("limit", "500");
+    const data = await _adminJsonFetch(`/admin/feedback?${q}`);
+    const items = Array.isArray(data.items) ? data.items : [];
+    const counts = data.counts || {};
+    _adminSyncFeedbackBadge(counts.new || 0);
+    if (countEl) {
+      countEl.textContent = `ใหม่ ${(counts.new || 0).toLocaleString("th-TH")} · ทั้งหมด ${(counts.total || 0).toLocaleString("th-TH")} รายการ`;
+    }
+    if (!items.length) {
+      tbody.innerHTML = `<tr><td colspan="7" class="admin-empty">ยังไม่มีข้อเสนอแนะตามตัวกรองนี้</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = items.map((r) => {
+      const id = escapeHtml(String(r.id || ""));
+      const rev = Number(r.rev || 0);
+      const status = String(r.status || "new");
+      const statusLabel = FEEDBACK_STATUS_LABELS[status] || status;
+      const catLabel = FEEDBACK_CATEGORY_LABELS[String(r.category || "")] || String(r.category || "—");
+      const period = r.target_month && r.target_year ? `งวด ${r.target_month}/${r.target_year}` : "";
+      const who = String(r.email || "—") + (r.acting_admin_email ? ` (ผ่าน ${r.acting_admin_email})` : "");
+      const msg = String(r.message || "");
+      const short = msg.length > 120 ? `${msg.slice(0, 120)}…` : msg;
+      const note = r.admin_note ? `<div class="fb-note">โน้ต: ${escapeHtml(String(r.admin_note))}</div>` : "";
+      const btn = (next, label, title) => `<button type="button" class="admin-btn-ghost admin-btn-ghost--sm"
+        onclick="adminSetFeedbackStatus('${id}', '${next}', ${rev})" title="${escapeHtml(title)}">${label}</button>`;
+      const actions = [
+        status !== "read" ? btn("read", "อ่านแล้ว", "บอกแอดมินคนอื่นว่ามีคนดูเรื่องนี้แล้ว") : "",
+        status !== "done" ? btn("done", "จัดการแล้ว", "ปิดเรื่องนี้ — ยังกดกลับเป็นใหม่ได้ภายหลัง") : "",
+        status !== "new" ? btn("new", "กลับเป็นใหม่", "กดผิด เอากลับเข้ารายการที่ยังไม่ได้ดู") : "",
+        `<button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminShowFeedbackDetail(this)"
+          data-detail="${escapeHtml(_adminFeedbackDetailText(r)).replace(/"/g, "&quot;")}" title="ดูข้อความเต็มและข้อมูลเครื่องของผู้ส่ง">เต็ม</button>`,
+      ].filter(Boolean).join(" ");
+      return `<tr>
+        <td>${escapeHtml(_fmtLogTimeBangkok(r.ts))}</td>
+        <td><span class="admin-log-level admin-fb-status--${escapeHtml(status)}">${escapeHtml(statusLabel)}</span></td>
+        <td>${escapeHtml(catLabel)}</td>
+        <td>${escapeHtml(who)}</td>
+        <td>${escapeHtml(String(r.sup_id || "—"))}${period ? `<div class="log-period">${escapeHtml(period)}</div>` : ""}</td>
+        <td class="log-msg">${escapeHtml(short)}${note}</td>
+        <td class="admin-td-actions">${actions}</td>
+      </tr>`;
+    }).join("");
+  } catch (e) {
+    if (countEl) countEl.textContent = "";
+    tbody.innerHTML = `<tr><td colspan="7" class="admin-empty">${escapeHtml(e.message || String(e))}</td></tr>`;
+  }
+}
+
+/** ตัวเลขบนเมนูซ้าย — ให้เห็นว่ามีของใหม่โดยไม่ต้องเปิดแท็บ */
+function _adminSyncFeedbackBadge(n) {
+  const badge = document.getElementById("adminFeedbackNewBadge");
+  if (!badge) return;
+  badge.textContent = String(n || 0);
+  badge.style.display = n > 0 ? "inline-block" : "none";
+}
+
+function _adminFeedbackDetailText(r) {
+  const lines = [
+    `ข้อความเต็ม:\n${String(r.message || "")}`,
+    `ผู้ส่ง: ${r.email || "—"}${r.role_hint ? ` (${r.role_hint})` : ""}`,
+    r.acting_admin_email ? `ส่งระหว่างดูแทนโดย: ${r.acting_admin_email}` : "",
+    `ทีม: ${r.sup_id || "—"}${r.sup_name ? ` ${r.sup_name}` : ""}`,
+    r.target_month && r.target_year ? `งวด: ${r.target_month}/${r.target_year}` : "",
+    `หน้าที่เปิดอยู่: ${r.screen || "—"}`,
+    r.app_version ? `เวอร์ชัน: ${r.app_version}` : "",
+    r.user_agent ? `เครื่อง/เบราว์เซอร์: ${r.user_agent}` : "",
+    r.handled_by ? `จัดการโดย: ${r.handled_by} เมื่อ ${_fmtLogTimeBangkok(r.handled_at)}` : "",
+    r.admin_note ? `โน้ตของแอดมิน: ${r.admin_note}` : "",
+  ];
+  return lines.filter(Boolean).join("\n");
+}
+
+function adminShowFeedbackDetail(btn) {
+  const text = btn?.dataset.detail || "";
+  _showInfoModal({
+    title: "ข้อเสนอแนะฉบับเต็ม",
+    // ต้อง escape อีกรอบเพราะ dataset คืนข้อความดิบมาแล้ว (ท่าเดียวกับ adminShowUsageDetail)
+    bodyHtml: `<pre style="white-space:pre-wrap;font-size:12px;margin:0;">${escapeHtml(text)}</pre>`,
+    secondaryLabel: "ปิด",
+  });
+}
+
+async function adminSetFeedbackStatus(id, status, rev) {
+  try {
+    await _adminJsonFetch(`/admin/feedback/${encodeURIComponent(id)}/status`, {
+      method: "POST",
+      body: { status, expected_rev: Number(rev || 0) },
+    });
+    await adminLoadFeedback();
+  } catch (e) {
+    toast(e.message || String(e), "red");
+    // 409 = มีคนอื่นแก้ไปแล้ว โหลดใหม่ให้เห็นของจริงทันที
+    await adminLoadFeedback();
   }
 }
 

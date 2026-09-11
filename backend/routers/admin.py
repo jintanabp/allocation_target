@@ -20,10 +20,10 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
@@ -67,7 +67,7 @@ from ..services.user_access_store import (
     upsert_row,
     write_rows,
 )
-from ..services import dev_bundle, emp_assignment_store, no_target_store
+from ..services import dev_bundle, emp_assignment_store, feedback_store, no_target_store
 from ..services.admin_team import list_supervisor_codes, load_supervisor_team
 from ..services.admin_inventory import build_data_inventory
 from ..services.sku_link_store import (
@@ -103,6 +103,9 @@ from ..services.target_baseline import (
 )
 from ..core.targets import load_target_csv_for
 from ..services.usage_log_store import append_log, read_logs
+# ใช้ตัวเดียวกับที่ log_from_user ใช้เดา role ของผู้ใช้ธรรมดา —
+# dict ของผู้ใช้ทั่วไปไม่มีคีย์ "role" (มีแต่ของแอดมิน) จะอ่านตรง ๆ ไม่ได้
+from ..services.usage_log_store import _infer_role as _infer_usage_role
 from ..services.user_access_store import read_rows as read_user_access_rows
 from ..fabric_dax_connector import FabricDAXConnector
 
@@ -2153,6 +2156,154 @@ def admin_post_usage_log(
         detail=body.detail,
     )
     return row
+
+
+# ─── ข้อเสนอแนะจากผู้ใช้ (ปุ่ม 💬 มุมขวาล่างของหน้าเว็บ) ────────────────────────
+#
+# เส้น "ส่ง" ผู้ใช้ทั่วไปยิงได้ (require_authenticated_user) แบบเดียวกับ POST /usage-logs
+# ข้างบน ส่วนเส้น "อ่าน / เปลี่ยนสถานะ" กันด้วย require_capability("feedback")
+#
+# สองอย่างที่ห้ามเผลอ "จัดระเบียบ" ทีหลัง:
+#   1. อยู่ใต้ /admin ทั้งที่ไม่ใช่ของแอดมิน — เพราะ proxy หน้า production forward ให้แอป
+#      เฉพาะ prefix ที่มีอยู่แล้ว เส้นใหม่ระดับรากจะได้ 404 เปล่าจากตัวเสิร์ฟหน้า
+#   2. เส้นส่งใช้ path /feedback/submit ไม่ใช่ POST /feedback — จงใจไม่ให้ path เดียวกัน
+#      มี Depends คนละตัวต่างเมธอด ไม่งั้นคนอ่านทีหลังจะนึกว่าพิมพ์ผิดแล้ว "แก้ให้ตรงกัน"
+#      ซึ่งเท่ากับเปิดกล่องข้อเสนอแนะทั้งกล่องให้ทุกคนอ่าน
+
+
+class FeedbackSubmitBody(BaseModel):
+    category: Literal["problem", "request", "question"] = "problem"
+    message: str = Field(min_length=5, max_length=feedback_store.MAX_MESSAGE_CHARS)
+    sup_id: str = Field(default="", max_length=20)
+    sup_name: str = Field(default="", max_length=120)
+    target_month: int | None = Field(default=None, ge=1, le=12)
+    target_year: int | None = Field(default=None, ge=2000, le=2100)
+    screen: str = Field(default="", max_length=20)
+    app_version: str = Field(default="", max_length=40)
+
+
+class FeedbackStatusBody(BaseModel):
+    status: Literal["new", "read", "done"]
+    admin_note: str | None = Field(default=None, max_length=feedback_store.MAX_NOTE_CHARS)
+    expected_rev: int | None = None
+
+
+def _server_build_version() -> str:
+    """เวอร์ชันของเซิร์ฟเวอร์ตอนที่ข้อความถูกส่ง — ใช้ตัวเดียวกับ GET /health/build"""
+    try:
+        from .health import _git_short_hash
+
+        return _git_short_hash()
+    except Exception:
+        return ""
+
+
+@router.post("/feedback/submit")
+def admin_submit_feedback_from_user(
+    body: FeedbackSubmitBody,
+    user: dict = Depends(require_authenticated_user),
+    user_agent: Annotated[str | None, Header()] = None,
+) -> dict[str, Any]:
+    """
+    ผู้ใช้ทั่วไปส่งข้อเสนอแนะ — อีเมลมาจาก token ฝั่งเซิร์ฟเวอร์ ไม่รับจาก body
+
+    บนเครื่อง dev ที่ปิด Entra (AZURE_AUTH_DISABLED=1) อีเมลว่างได้ตามปกติ
+    ห้าม 400 เพราะอีเมลว่าง ไม่งั้นทดสอบในเครื่องไม่ได้เลย
+    """
+    email = str(user.get("email") or user.get("view_as_email") or "").strip()
+    try:
+        row = feedback_store.append_entry(
+            email=email,
+            role_hint=_infer_usage_role(user),
+            acting_admin_email=str(user.get("acting_admin_email") or ""),
+            category=body.category,
+            message=body.message,
+            sup_id=body.sup_id,
+            sup_name=body.sup_name,
+            target_month=body.target_month,
+            target_year=body.target_year,
+            screen=body.screen,
+            app_version=f"{body.app_version} · server {_server_build_version()}".strip(" ·"),
+            user_agent=user_agent or "",
+        )
+    except feedback_store.FeedbackRateLimited:
+        raise HTTPException(
+            status_code=429,
+            detail="ส่งข้อความถี่เกินไป — รอสักครู่แล้วส่งใหม่ได้ ข้อความก่อนหน้าถึงทีมพัฒนาแล้ว",
+        )
+    # บรรทัดสั้น ๆ ใน usage log ให้ไทม์ไลน์ "ใครทำอะไรเมื่อไหร่" ครบ
+    # ตัวข้อความเต็มอยู่ในที่เก็บข้อเสนอแนะ ไม่ซ้ำซ้อนกัน
+    append_log(
+        level="info",
+        email=email,
+        role="client",
+        sup_id=row.get("sup_id") or "",
+        action="feedback_submit",
+        message=f"ส่งข้อเสนอแนะ ({feedback_store.CATEGORY_LABELS.get(row['category'], row['category'])})",
+        detail=str(row.get("message") or "")[:200],
+    )
+    return {"ok": True, "id": row["id"]}
+
+
+@router.get("/feedback")
+def admin_list_feedback(
+    status: str = Query("", max_length=10),
+    category: str = Query("", max_length=10),
+    limit: int = Query(200, ge=1, le=1000),
+    _admin: dict = Depends(require_capability("feedback")),
+) -> dict[str, Any]:
+    """
+    รายการข้อเสนอแนะทั้งหมด — **จงใจไม่กรองตามขอบเขตของแอดมิน**
+
+    สิทธิ์นี้มอบให้ head_admin เท่านั้น (dev ได้ทุกสิทธิ์อยู่แล้ว) ซึ่งเป็นบทบาทระดับบริษัท
+    และข้อเสนอแนะหลายข้อเป็นเรื่องของระบบทั้งระบบ ไม่ใช่ของทีมใดทีมหนึ่ง
+    """
+    return {
+        "items": feedback_store.read_items(status=status, category=category, limit=limit),
+        "counts": feedback_store.counts_by_status(),
+        "status_labels": feedback_store.STATUS_LABELS,
+        "category_labels": feedback_store.CATEGORY_LABELS,
+    }
+
+
+@router.post("/feedback/{feedback_id}/status")
+def admin_set_feedback_status(
+    feedback_id: str,
+    body: FeedbackStatusBody,
+    admin: dict = Depends(require_capability("feedback")),
+) -> dict[str, Any]:
+    """เปลี่ยนสถานะข้อเสนอแนะ 1 รายการ — ถอยกลับเป็น「ใหม่」ได้ เผื่อกดผิด"""
+    who = str(admin.get("email") or "")
+    before = next(
+        (r for r in feedback_store.read_doc()["items"] if str(r.get("id")) == str(feedback_id)),
+        None,
+    )
+    try:
+        saved = feedback_store.set_status(
+            feedback_id,
+            status=body.status,
+            admin_note=body.admin_note,
+            handled_by=who,
+            expected_rev=body.expected_rev,
+        )
+    except feedback_store.FeedbackConflict as e:
+        raise HTTPException(
+            status_code=409,
+            detail="มีแอดมินอีกคนเปลี่ยนรายการนี้ไปแล้ว — กดโหลดใหม่แล้วลองอีกครั้ง",
+            headers={"X-Feedback-Rev": str(e.current.get("rev") or 0)},
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    _audit_admin(
+        admin,
+        "admin_feedback_status",
+        f"เปลี่ยนสถานะข้อเสนอแนะเป็น「{feedback_store.STATUS_LABELS.get(saved['status'], saved['status'])}」",
+        f"id={feedback_id} · จาก {(before or {}).get('email') or '-'}",
+        level="warn",
+        sup_id=str(saved.get("sup_id") or ""),
+        context={"before": before, "after": saved},
+    )
+    return {"ok": True, "item": saved}
 
 
 class EmpAssignmentBody(BaseModel):
