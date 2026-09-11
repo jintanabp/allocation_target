@@ -14942,6 +14942,11 @@ const ADMIN_TAB_META = {
     title: "ข้อเสนอแนะจากผู้ใช้",
     sub: "ข้อความที่ซุปส่งจากปุ่ม 💬 มุมขวาล่าง — มีอีเมล ทีม และงวดติดมาด้วย",
   },
+  allocRules: {
+    group: "ระบบ",
+    title: "กติกาการเกลี่ย",
+    sub: "เปิด/ปิดกติกา「ไม่เคยขาย = เป้า 0」ทั้งระบบหรือรายทีม — มีผลกับการคำนวณครั้งถัดไป",
+  },
 };
 
 let _adminSkuLinkRows = [];
@@ -14995,6 +15000,7 @@ function adminSwitchTab(tab) {
   if (_adminActiveTab === "skuLinks") adminInitSkuLinksPanel();
   if (_adminActiveTab === "permissions") adminPermsLoad();
   if (_adminActiveTab === "feedback") adminInitFeedbackPanel();
+  if (_adminActiveTab === "allocRules") adminLoadAllocRules();
   // /admin/emp-assignments ใช้เวลา ~9 วินาทีและไม่มีแคชฝั่งไหนเลย
   // เดิมยิงใหม่ทุกครั้งที่เปิดแท็บ พร้อมล้างตารางที่โหลดไว้ทิ้งก่อน
   // ปุ่ม「โหลดใหม่」ยังบังคับดึงสดได้เหมือนเดิม
@@ -15315,6 +15321,173 @@ async function adminInvalidateCache(layer) {
     adminLoadCacheStatus();
   } catch (e) {
     toast(e.message, "red");
+  }
+}
+
+/* ── แท็บ「กติกาการเกลี่ย」 ────────────────────────────────────────────────
+   สวิตช์นี้เปลี่ยนตัวเลขเป้าของคนทั้งบริษัท ทุกการกดจึงต้อง (1) บอกผลกระทบก่อน
+   (2) ส่ง rev กลับไปด้วย กันแอดมินสองคนบันทึกทับกัน */
+
+let _allocRulesState = null;
+
+async function adminLoadAllocRules() {
+  const msg = document.getElementById("adminAllocRulesMsg");
+  if (msg) msg.textContent = "กำลังโหลด…";
+  try {
+    _allocRulesState = await _adminJsonFetch("/admin/settings/alloc-rules");
+    adminRenderAllocRules();
+    if (msg) msg.textContent = "";
+  } catch (e) {
+    if (msg) msg.textContent = e.message || String(e);
+  }
+}
+
+function adminRenderAllocRules() {
+  const st = _allocRulesState;
+  if (!st) return;
+  const enabled = document.getElementById("adminAllocRulesEnabled");
+  const push = document.getElementById("adminAllocRulesPush");
+  const src = document.getElementById("adminAllocRulesSource");
+  if (enabled) enabled.checked = !!st.enabled;
+  if (push) {
+    push.value = st.push_multiple;
+    push.min = st.min_push_multiple;
+    push.max = st.max_push_multiple;
+    push.oninput = _adminAllocRulesSyncHint;
+  }
+  if (src) {
+    src.textContent = st.source === "admin"
+      ? `ค่าที่ใช้อยู่: ตั้งจากหน้านี้เมื่อ ${_fmtLogTimeBangkok(st.updated_at)} โดย ${st.updated_by || "—"}`
+      : "ค่าที่ใช้อยู่: ค่าตั้งต้นที่มากับโค้ด (ยังไม่เคยตั้งจากหน้านี้)";
+  }
+  const pick = document.getElementById("adminAllocRulesTeamPick");
+  if (pick) {
+    const teams = Array.isArray(st.teams) ? st.teams : [];
+    pick.innerHTML = teams.length
+      ? teams.map((t) => {
+          const tail = [t.region, t.unit].filter(Boolean).join(" / ");
+          return `<option value="${escapeHtml(t.sup_id)}">${escapeHtml(t.sup_id)}${t.name ? ` — ${escapeHtml(t.name)}` : ""}${tail ? ` (${escapeHtml(tail)})` : ""}</option>`;
+        }).join("")
+      : `<option value="">— ไม่มีรายชื่อทีม —</option>`;
+  }
+  _adminAllocRulesSyncHint();
+  _adminRenderAllocRulesChips();
+}
+
+function _adminAllocRulesSyncHint() {
+  const st = _allocRulesState;
+  const hint = document.getElementById("adminAllocRulesPushHint");
+  const push = document.getElementById("adminAllocRulesPush");
+  if (!hint || !st) return;
+  const err = AppLogic.allocRulePushMultipleError(push?.value, {
+    min: st.min_push_multiple, max: st.max_push_multiple,
+  });
+  if (err) {
+    hint.textContent = `⚠️ ${err}`;
+    return;
+  }
+  const n = Number(push?.value || st.push_multiple);
+  hint.textContent = `ค่าเริ่มต้นคือ ${st.default_push_multiple} เท่า (90% ของเคสปกติไม่เกิน 2.4 เท่า) · `
+    + `ตอนนี้ตั้งไว้ ${n} เท่า — ยิ่งตั้งต่ำ ยิ่งมีสินค้าถูกเฉลี่ยให้ทุกคนมากขึ้น`;
+}
+
+function _adminRenderAllocRulesChips() {
+  const box = document.getElementById("adminAllocRulesChips");
+  const st = _allocRulesState;
+  if (!box || !st) return;
+  const list = st.disabled_sups || [];
+  if (!list.length) {
+    box.innerHTML = `<span class="alloc-rules-empty">ยังไม่มีทีมไหนถูกปิด — กติกาทำงานกับทุกทีม</span>`;
+    return;
+  }
+  const byCode = new Map((st.teams || []).map((t) => [t.sup_id, t.name]));
+  box.innerHTML = list.map((code) => {
+    const name = byCode.get(code);
+    const unknown = !byCode.has(code) ? ' <span class="alloc-rules-unknown" title="ไม่พบรหัสนี้ในทะเบียนทีมที่กระจายเป้าได้ — อาจเป็นทีมที่ปิดไปแล้ว">(ไม่พบในทะเบียน)</span>' : "";
+    return `<span class="alloc-rules-chip">${escapeHtml(code)}${name ? ` — ${escapeHtml(name)}` : ""}${unknown}
+      <button type="button" onclick="adminAllocRulesRemoveTeam('${escapeHtml(code)}')" aria-label="เอา ${escapeHtml(code)} ออกจากรายการ" title="เปิดกติกาให้ทีมนี้ตามเดิม (ยังไม่มีผลจนกว่าจะกดบันทึก)">✕</button></span>`;
+  }).join("");
+}
+
+function adminAllocRulesAddTeam() {
+  const st = _allocRulesState;
+  const pick = document.getElementById("adminAllocRulesTeamPick");
+  const code = String(pick?.value || "").trim().toUpperCase();
+  if (!st || !code) return;
+  if (st.disabled_sups.includes(code)) {
+    toast(`${code} อยู่ในรายการอยู่แล้ว`, "amber");
+    return;
+  }
+  st.disabled_sups = [...st.disabled_sups, code].sort();
+  _adminRenderAllocRulesChips();
+}
+
+function adminAllocRulesRemoveTeam(code) {
+  const st = _allocRulesState;
+  if (!st) return;
+  st.disabled_sups = st.disabled_sups.filter((c) => c !== code);
+  _adminRenderAllocRulesChips();
+}
+
+async function adminSaveAllocRules() {
+  const st = _allocRulesState;
+  if (!st) return;
+  const enabled = !!document.getElementById("adminAllocRulesEnabled")?.checked;
+  const pushRaw = document.getElementById("adminAllocRulesPush")?.value;
+  const err = AppLogic.allocRulePushMultipleError(pushRaw, {
+    min: st.min_push_multiple, max: st.max_push_multiple,
+  });
+  if (err) {
+    toast(err, "red");
+    return;
+  }
+  // ปิดทั้งระบบกระทบทุกทีมพร้อมกัน — ต้องถามย้ำพร้อมบอกว่ากี่ทีม
+  if (!enabled && st.enabled) {
+    const n = (st.teams || []).length;
+    const ok = await _confirmDialog(
+      `ปิดกติกา「ไม่เคยขาย = เป้า 0」ทั้งระบบ\n\n`
+      + `จะมีผลกับทีมที่กระจายเป้าได้ทั้งหมด ${n} ทีมในการคำนวณครั้งถัดไป\n`
+      + `ผลที่คำนวณและส่งไปแล้วไม่เปลี่ยน\n\n`
+      + `ถ้าเป็นปัญหาของทีมเดียว ให้ใส่รหัสทีมในรายการ「ทีมที่ปิดกติกาให้」แทน`,
+      { okLabel: "ปิดทั้งระบบ", cancelLabel: "ยกเลิก" },
+    );
+    if (!ok) return;
+  }
+  const msg = document.getElementById("adminAllocRulesMsg");
+  if (msg) msg.textContent = "กำลังบันทึก…";
+  try {
+    const saved = await _adminJsonFetch("/admin/settings/alloc-rules", {
+      method: "PUT",
+      body: {
+        enabled,
+        push_multiple: Number(AppLogic.normalizeNumericText(pushRaw)),
+        disabled_sups: st.disabled_sups,
+        expected_rev: Number(st.rev || 0),
+      },
+    });
+    _allocRulesState = saved;
+    adminRenderAllocRules();
+    if (msg) msg.textContent = "";
+    toast("บันทึกกติกาแล้ว — มีผลกับการคำนวณครั้งถัดไป", "green");
+  } catch (e) {
+    if (msg) msg.textContent = "";
+    toast(e.message || String(e), "red");
+    await adminLoadAllocRules();   // 409 = มีคนอื่นบันทึกไปแล้ว ดึงของจริงมาแสดงทันที
+  }
+}
+
+async function adminResetAllocRules() {
+  const ok = await _confirmDialog(
+    "คืนค่ากติกาเป็นค่าตั้งต้นที่มากับโค้ด\n\nรายการทีมที่ปิดไว้และเกณฑ์ที่ปรับไว้จะหายทั้งหมด",
+    { okLabel: "คืนค่าตั้งต้น", cancelLabel: "ยกเลิก" },
+  );
+  if (!ok) return;
+  try {
+    _allocRulesState = await _adminJsonFetch("/admin/settings/alloc-rules/reset", { method: "POST" });
+    adminRenderAllocRules();
+    toast("คืนค่าตั้งต้นแล้ว", "green");
+  } catch (e) {
+    toast(e.message || String(e), "red");
   }
 }
 

@@ -67,7 +67,7 @@ from ..services.user_access_store import (
     upsert_row,
     write_rows,
 )
-from ..services import dev_bundle, emp_assignment_store, feedback_store, no_target_store
+from ..services import alloc_rules_store, dev_bundle, emp_assignment_store, feedback_store, no_target_store
 from ..services.admin_team import list_supervisor_codes, load_supervisor_team
 from ..services.admin_inventory import build_data_inventory
 from ..services.sku_link_store import (
@@ -2792,3 +2792,101 @@ def admin_set_target_read_source(
         "targetsun_read_enabled": targetsun_read.is_enabled(),
         "payload_cache_cleared": removed,
     }
+
+
+# ─── กติกาการเกลี่ย「ไม่เคยขาย = เป้า 0」 ──────────────────────────────────
+#
+# สวิตช์นี้ขยับตัวเลขเป้าของคนทั้งบริษัท (วัดงวด 09/2026: ย้ายหีบ 3.4% ทีมหนักสุด 7.2%)
+# จึงให้เฉพาะ head_admin และบันทึกค่าก่อน-หลังทุกครั้งที่กด
+#
+# ค่าที่ตั้งจากหน้านี้ลง data/alloc_rules.json ไม่ใช่ config/allocation_rules.json —
+# ไฟล์ใน config/ ถูก git pull ทับตอน deploy ทีมที่สั่งปิดไว้จะถูกเปิดคืนเงียบ ๆ
+
+
+class AllocRulesBody(BaseModel):
+    enabled: bool
+    push_multiple: float = Field(ge=1.0, le=100.0)
+    disabled_sups: list[str] = Field(default_factory=list, max_length=500)
+    expected_rev: int | None = None
+
+
+def _alloc_rules_payload() -> dict[str, Any]:
+    from ..services.allocating_teams import allocating_teams
+
+    settings = alloc_rules_store.read_settings()
+    try:
+        teams = [
+            {"sup_id": t.get("sup_id", ""), "name": t.get("full_name", ""),
+             "region": t.get("acc_region", ""), "unit": t.get("acc_unit", "")}
+            for t in allocating_teams()
+        ]
+    except Exception as e:
+        # รายชื่อทีมหายต้องไม่ทำให้เปิดหน้าไม่ได้ — ยังพิมพ์รหัสทีมเองได้
+        logger.warning("ดึงรายชื่อทีมสำหรับหน้ากติกาไม่ได้: %s", e)
+        teams = []
+    known = {t["sup_id"] for t in teams}
+    return {
+        **settings,
+        "teams": teams,
+        "unknown_sups": [c for c in settings["disabled_sups"] if c not in known],
+    }
+
+
+@router.get("/settings/alloc-rules")
+def admin_get_alloc_rules(
+    _admin: dict = Depends(require_capability("alloc_rules")),
+) -> dict[str, Any]:
+    """ค่ากติกาที่ใช้อยู่ + ทะเบียนทีมที่กระจายเป้าได้ (ไว้เลือกทีมที่จะปิดให้)"""
+    return _alloc_rules_payload()
+
+
+@router.put("/settings/alloc-rules")
+def admin_put_alloc_rules(
+    body: AllocRulesBody,
+    admin: dict = Depends(require_capability("alloc_rules")),
+) -> dict[str, Any]:
+    before = alloc_rules_store.read_settings()
+    try:
+        alloc_rules_store.write_settings(
+            enabled=body.enabled,
+            push_multiple=body.push_multiple,
+            disabled_sups=body.disabled_sups,
+            updated_by=str(admin.get("email") or ""),
+            expected_rev=body.expected_rev,
+        )
+    except alloc_rules_store.AllocRulesConflict:
+        raise HTTPException(
+            status_code=409,
+            detail="มีแอดมินอีกคนบันทึกค่าไปแล้ว — กดโหลดใหม่เพื่อดูค่าล่าสุดก่อนแก้ซ้ำ",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    after = _alloc_rules_payload()
+    _audit_admin(
+        admin,
+        "admin_alloc_rules_update",
+        "แก้กติกาการเกลี่ย「ไม่เคยขาย = เป้า 0」",
+        f"เปิด={after['enabled']} · เกณฑ์ดันเป้า={after['push_multiple']} เท่า · "
+        f"ปิดให้ {len(after['disabled_sups'])} ทีม",
+        level="warn",
+        context={"before": before, "after": {k: after[k] for k in ("enabled", "push_multiple", "disabled_sups", "rev")}},
+    )
+    return {"ok": True, **after}
+
+
+@router.post("/settings/alloc-rules/reset")
+def admin_reset_alloc_rules(
+    admin: dict = Depends(require_capability("alloc_rules")),
+) -> dict[str, Any]:
+    """คืนค่าตั้งต้นจากโค้ด — ลบไฟล์ที่หน้าเว็บเขียนไว้ทิ้ง"""
+    before = alloc_rules_store.read_settings()
+    alloc_rules_store.reset_settings()
+    after = _alloc_rules_payload()
+    _audit_admin(
+        admin,
+        "admin_alloc_rules_reset",
+        "คืนค่ากติกาการเกลี่ยเป็นค่าตั้งต้นจากโค้ด",
+        level="warn",
+        context={"before": before, "after": {k: after[k] for k in ("enabled", "push_multiple", "disabled_sups")}},
+    )
+    return {"ok": True, **after}

@@ -26,12 +26,21 @@ class AllocRulesStoreTest(unittest.TestCase):
         self._path = os.path.join(self._tmpdir, "allocation_rules.json")
         self._prev = os.environ.get("ALLOC_RULES_JSON_PATH")
         os.environ["ALLOC_RULES_JSON_PATH"] = self._path
+        # ต้องชี้ไฟล์ override ไป tmp ด้วย ไม่งั้นค่าที่แอดมินตั้งไว้บนเครื่องจริง
+        # จะทับค่าที่เทสเขียน แล้วเทสจะแดง/เขียวตามเครื่องที่รัน
+        self._override = os.path.join(self._tmpdir, "alloc_rules.json")
+        self._prev_ov = os.environ.get("ALLOC_RULES_OVERRIDE_PATH")
+        os.environ["ALLOC_RULES_OVERRIDE_PATH"] = self._override
 
     def tearDown(self):
         if self._prev is None:
             os.environ.pop("ALLOC_RULES_JSON_PATH", None)
         else:
             os.environ["ALLOC_RULES_JSON_PATH"] = self._prev
+        if self._prev_ov is None:
+            os.environ.pop("ALLOC_RULES_OVERRIDE_PATH", None)
+        else:
+            os.environ["ALLOC_RULES_OVERRIDE_PATH"] = self._prev_ov
         import shutil
 
         shutil.rmtree(self._tmpdir, ignore_errors=True)
