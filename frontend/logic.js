@@ -113,7 +113,25 @@
     return out;
   }
 
+  /**
+   * ตรวจค่า "เป้าใหญ่เกินกี่เท่าถึงเฉลี่ยทุกคน" ก่อนส่งขึ้นเซิร์ฟเวอร์
+   *
+   * คืนข้อความไทยเมื่อใช้ไม่ได้ คืน "" เมื่อใช้ได้ — ต้องบอกเหตุผลด้วย ไม่ใช่แค่
+   * "ค่าไม่ถูกต้อง" เพราะคนกรอกไม่ได้อ่านโค้ดและเดาขอบเขตเองไม่ได้
+   * (ฝั่งเซิร์ฟเวอร์ตรวจซ้ำอีกชั้นเสมอ ตัวนี้มีไว้ให้รู้ตัวก่อนกดบันทึก)
+   */
+  function allocRulePushMultipleError(value, { min = 1, max = 100 } = {}) {
+    const raw = String(value ?? "").trim();
+    if (!raw) return "ยังไม่ได้กรอกเกณฑ์สินค้าดันเป้า";
+    const n = Number(normalizeNumericText(raw));
+    if (!Number.isFinite(n)) return "เกณฑ์สินค้าดันเป้าต้องเป็นตัวเลข";
+    if (n < min) return `ต่ำกว่า ${min} เท่ากับปิดกฎ「สินค้าดันเป้า」ทิ้งทั้งข้อ — ใส่ตั้งแต่ ${min} ขึ้นไป`;
+    if (n > max) return `เกิน ${max} เท่า จะไม่มีสินค้าตัวไหนเข้าเงื่อนไขเลย — ใส่ไม่เกิน ${max}`;
+    return "";
+  }
+
   const AppLogic = {
+    allocRulePushMultipleError,
     normalizeNumericText,
     parseBoxCount,
     parseMoney,

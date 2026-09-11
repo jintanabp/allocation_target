@@ -60,6 +60,26 @@ class TestDefaultsMatchLegacyBehaviour(unittest.TestCase):
         for role in caps.CONFIGURABLE_ROLES:
             self.assertNotIn("emp_moves", store.DEFAULT_ROLE_CAPABILITIES[role])
 
+    def test_capabilities_added_after_the_table_are_dev_only_by_default(self):
+        """
+        สิทธิ์ที่เพิ่มทีหลังต้องไม่โผล่ในค่าตั้งต้น — ไม่งั้น test_default_tabs_match_legacy_arrays
+        จะต้องถูกแก้ตามทุกครั้งที่เพิ่มหน้าใหม่ จนเลิกเป็นตัวกันของเดิมไปเอง
+
+        ของจริงว่าใครเห็นแท็บไหนอยู่ใน config/admin_permissions.json ซึ่ง track ใน git
+        (เพิ่ม feedback + alloc_rules ให้ head_admin ไว้แล้ว 11 ก.ย. 2026)
+        """
+        for key in ("feedback", "alloc_rules"):
+            self.assertIn(key, caps.all_capability_keys())
+            for role in caps.CONFIGURABLE_ROLES:
+                self.assertNotIn(key, store.DEFAULT_ROLE_CAPABILITIES[role])
+
+    def test_new_capabilities_are_head_admin_only(self):
+        """ทั้งสองหน้าเปลี่ยนของระดับบริษัท — แอดมินภาคขอสิทธิ์นี้ไม่ได้"""
+        for key in ("feedback", "alloc_rules"):
+            self.assertTrue(caps.can_grant(key, "head_admin"))
+            self.assertFalse(caps.can_grant(key, "admin"))
+            self.assertFalse(caps.can_grant(key, "marketing"))
+
 
 class TestValidationGuards(unittest.TestCase):
     def test_rejects_capability_locked_to_dev(self):

@@ -16,7 +16,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=2026091003" />
+  <link rel="stylesheet" href="style.css?v=2026091101" />
 </head>
 
 <body>
@@ -72,6 +72,20 @@
   <div id="peerViewBanner" class="view-as-banner peer-view-banner" style="display:none;" role="status" aria-live="polite">
     <span id="peerViewBannerText"></span>
   </div>
+
+  <!-- ปุ่มส่งความเห็น — ต้องมองเห็นได้ทุกหน้า จึงวางไว้**บนสุดของ body ก่อน div.page**
+       1. อยู่ใน `.page` ไม่ได้ เพราะ `body.is-admin .page { display:none }` ซ่อนทั้งก้อน
+       2. วางท้ายไฟล์ก็ไม่ได้ เพราะ `#adminView` ปิด div ไม่ครบมาแต่เดิม (depth ค้าง 1
+          ตั้งแต่ก่อนงานวันนี้) เบราว์เซอร์เลยดูดทุกอย่างที่อยู่ท้ายไฟล์เข้าไปข้างใน
+          แล้วปุ่มจะโผล่เฉพาะหน้าแอดมินแทน — เจอจริงตอนกดบน server ทดสอบ 11 ก.ย. 2026
+       ตำแหน่งบนจอคุมด้วย position:fixed อยู่แล้ว ลำดับใน DOM จึงไม่มีผลกับหน้าตา
+       ปุ่มโผล่เมื่อ S.userEmail มีค่า (หลังล็อกอิน Microsoft) เพราะเส้นส่งต้องมี token -->
+  <button type="button" id="openFeedbackBtn" class="btn-manual btn-feedback--floating" style="display:none;"
+    onclick="showFeedbackModal()"
+    title="ส่งความเห็น แจ้งปัญหา หรือสอบถามถึงทีมพัฒนา — ใช้ได้ทุกหน้า">
+    <span class="btn-manual__icon" aria-hidden="true">💬</span>
+    <span class="btn-manual__text">ส่งความเห็น</span>
+  </button>
 
   <div class="page">
 
@@ -1037,6 +1051,11 @@
           <button type="button" class="admin-nav-item" role="tab" data-tab="team" aria-selected="false" onclick="adminSwitchTab('team')">ทีมพนักงาน <span id="adminTeamReadOnlyBadge" class="admin-ro-badge" style="display:none;">ดูอย่างเดียว</span></button>
           <button type="button" class="admin-nav-item" role="tab" data-tab="empMoves" aria-selected="false" onclick="adminSwitchTab('empMoves')">ย้ายพนักงาน</button>
         </div>
+        <div class="admin-nav-group">
+          <div class="admin-nav-group__label">ระบบ</div>
+          <button type="button" class="admin-nav-item" role="tab" data-tab="feedback" aria-selected="false" onclick="adminSwitchTab('feedback')" title="อ่านข้อความที่ผู้ใช้ส่งมาจากปุ่มมุมขวาล่าง (เฉพาะหัวหน้าแอดมิน)">ข้อเสนอแนะจากผู้ใช้ <span id="adminFeedbackNewBadge" class="admin-ro-badge" style="display:none;">0</span></button>
+          <button type="button" class="admin-nav-item" role="tab" data-tab="allocRules" aria-selected="false" onclick="adminSwitchTab('allocRules')" title="เปิด/ปิดกติกา「ไม่เคยขาย = เป้า 0」ทั้งระบบหรือรายทีม (เฉพาะหัวหน้าแอดมิน)">กติกาการเกลี่ย</button>
+        </div>
       </nav>
 
       <div class="admin-content">
@@ -1529,6 +1548,114 @@
         </section>
       </div>
 
+      <div id="adminPanelFeedback" class="admin-panel" data-panel="feedback" style="display:none;">
+        <section class="admin-card admin-card--panel">
+          <div class="admin-card-header">
+            <div>
+              <h2 class="admin-card__title">ข้อเสนอแนะจากผู้ใช้</h2>
+              <p class="admin-card__hint">ข้อความที่ซุปกดส่งจากปุ่ม 💬 มุมขวาล่างของหน้าเว็บ — ใหม่สุดอยู่บน</p>
+            </div>
+            <div class="admin-period-bar">
+              <label class="admin-period-bar__field">สถานะ
+                <select id="adminFeedbackStatus" class="admin-select admin-select--sm" onchange="adminLoadFeedback()">
+                  <option value="">ทุกสถานะ</option>
+                  <option value="new">ใหม่</option>
+                  <option value="read">อ่านแล้ว</option>
+                  <option value="done">จัดการแล้ว</option>
+                </select>
+              </label>
+              <label class="admin-period-bar__field">ประเภท
+                <select id="adminFeedbackCategory" class="admin-select admin-select--sm" onchange="adminLoadFeedback()">
+                  <option value="">ทุกประเภท</option>
+                  <option value="problem">แจ้งปัญหา</option>
+                  <option value="request">ขอให้เพิ่ม</option>
+                  <option value="question">สงสัย</option>
+                </select>
+              </label>
+              <button type="button" class="admin-btn-refresh admin-btn-refresh--sm" onclick="adminLoadFeedback()" title="โหลดข้อความล่าสุด">
+                <span class="admin-btn-refresh__icon" aria-hidden="true">↻</span>
+                <span>โหลดใหม่</span>
+              </button>
+              <span id="adminFeedbackCount" class="admin-period-bar__meta" aria-live="polite"></span>
+            </div>
+          </div>
+          <div class="admin-help-strip admin-help-strip--compact">
+            <p>ทุกข้อความมี<strong>อีเมลผู้ส่ง ทีม และงวด</strong>ติดมาด้วย จึงติดต่อกลับได้ทันที · กด <strong>อ่านแล้ว</strong> เพื่อบอกแอดมินคนอื่นว่ามีคนดูแล้ว และกด <strong>จัดการแล้ว</strong> เมื่อปิดเรื่องได้ — กดผิดถอยกลับเป็น「ใหม่」ได้ · ระบบ<strong>ไม่ได้ส่งอีเมลแจ้งผู้ส่ง</strong> ต้องติดต่อกลับเอง</p>
+          </div>
+          <div id="adminFeedbackBody" class="admin-table-wrap admin-table-wrap--panel">
+            <table class="admin-table admin-table--compact admin-table--zebra admin-table--feedback">
+              <thead><tr>
+                <th class="fb-col-time">เวลา</th>
+                <th class="fb-col-status">สถานะ</th>
+                <th class="fb-col-cat">ประเภท</th>
+                <th class="fb-col-user">ผู้ส่ง</th>
+                <th class="fb-col-sup">ทีม/งวด</th>
+                <th class="fb-col-msg">ข้อความ</th>
+                <th class="fb-col-act">จัดการ</th>
+              </tr></thead>
+              <tbody id="adminFeedbackTable"><tr><td colspan="7" class="admin-empty">กำลังโหลด…</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <div id="adminPanelAllocRules" class="admin-panel" data-panel="allocRules" style="display:none;">
+        <section class="admin-card admin-card--panel">
+          <div class="admin-card-header">
+            <div>
+              <h2 class="admin-card__title">กติกาการเกลี่ย「ไม่เคยขาย = เป้า 0」</h2>
+              <p class="admin-card__hint">เปิด/ปิดให้ทั้งระบบหรือรายทีม โดยไม่ต้องรอ deploy</p>
+            </div>
+            <div class="admin-period-bar">
+              <button type="button" class="admin-btn-refresh admin-btn-refresh--sm" onclick="adminLoadAllocRules()" title="โหลดค่าที่บันทึกไว้ล่าสุดจากเซิร์ฟเวอร์">
+                <span class="admin-btn-refresh__icon" aria-hidden="true">↻</span>
+                <span>โหลดใหม่</span>
+              </button>
+              <span id="adminAllocRulesSource" class="admin-period-bar__meta" aria-live="polite"></span>
+            </div>
+          </div>
+
+          <div class="admin-help-strip">
+            <p><strong>กติกานี้ทำอะไร:</strong> คู่ <em>พนักงาน × สินค้า</em> ที่ไม่เคยขายกันเลยใน <strong>12 เดือนล่าสุด</strong> จะไม่ได้รับเป้า · ถ้าทั้งทีมไม่มีใครเคยขาย SKU นั้น หรือเป้าใหญ่เกินเกณฑ์ด้านล่างเมื่อเทียบกับประวัติของทีม ระบบจะ <strong>เฉลี่ยให้ทุกคนแทน</strong> ไม่กองที่คนเดียว</p>
+            <p><strong>ขนาดที่วัดได้จริง (งวด 09/2026):</strong> ย้ายหีบประมาณ <strong>3.4% ของทั้งบริษัท</strong> · ทีมที่กระทบมากที่สุด <strong>7.2%</strong> · ไม่มีทีมไหนเกิน 20%</p>
+            <p><strong>ปิดแล้วเกิดอะไร:</strong> เป้ากลับไปกระจายแบบเดิม <strong>เฉพาะการคำนวณครั้งถัดไป</strong> — ผลที่ซุปกดคำนวณและบันทึกไว้แล้วไม่เปลี่ยน และที่ส่งเข้า Target Sun ไปแล้วยิ่งไม่เปลี่ยน ต้องให้เขากดคำนวณใหม่เอง</p>
+            <p><strong>ปิดรายทีมกับโหมดรวมภาค:</strong> ถ้าผู้จัดการกดคำนวณแบบ <strong>รวมภาค</strong> (ทุกทีมเป็นก้อนเดียว) แล้วมีทีมที่ถูกปิดอยู่ในรอบนั้น <strong>กติกาจะปิดทั้งรอบ</strong> — ทีมอื่นที่ยังเปิดอยู่จะไม่ได้ใช้กติกาไปด้วย · หน้าจอของผู้จัดการขึ้นบอกทั้งก่อนกดและหลังคำนวณ พร้อมบอกว่าถ้าอยากให้ทีมที่เหลือยังใช้กติกา ให้เลือก「แยกตามทีม」แทน</p>
+          </div>
+
+          <div class="alloc-rules-grid">
+            <div class="alloc-rules-block">
+              <label class="alloc-rules-switch">
+                <input type="checkbox" id="adminAllocRulesEnabled" />
+                <span><strong>เปิดกติกานี้ทั้งระบบ</strong></span>
+              </label>
+              <p class="alloc-rules-note">ปิดตรงนี้ = <strong>ทุกทีมเปลี่ยนพร้อมกัน</strong> ใช้เฉพาะตอนกติกาออกมาผิดทั้งบริษัท · ถ้าเป็นทีมเดียวให้ใส่รหัสทีมในช่องด้านขวาแทน</p>
+            </div>
+
+            <div class="alloc-rules-block">
+              <label class="alloc-rules-field">เป้าใหญ่เกินกี่เท่าของประวัติทีม ถึงจะเฉลี่ยทุกคน
+                <input type="number" id="adminAllocRulesPush" class="field-input field-input--sm" min="1" max="100" step="0.1" />
+              </label>
+              <p id="adminAllocRulesPushHint" class="alloc-rules-note"></p>
+            </div>
+          </div>
+
+          <div class="alloc-rules-block">
+            <h3 class="alloc-rules-subtitle">ทีมที่ปิดกติกาให้</h3>
+            <div class="alloc-rules-pickrow">
+              <select id="adminAllocRulesTeamPick" class="admin-select admin-select--sm" aria-label="เลือกทีมที่จะปิดกติกาให้"></select>
+              <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminAllocRulesAddTeam()" title="ปิดกติกาให้ทีมที่เลือก (ยังไม่มีผลจนกว่าจะกดบันทึก)">+ เพิ่มทีม</button>
+            </div>
+            <div id="adminAllocRulesChips" class="alloc-rules-chips"></div>
+          </div>
+
+          <div class="alloc-rules-actions">
+            <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminSaveAllocRules()" title="บันทึกค่ากติกาลงเซิร์ฟเวอร์ — มีผลกับการคำนวณครั้งถัดไป">บันทึก</button>
+            <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminResetAllocRules()" title="ลบค่าที่ตั้งจากหน้านี้ กลับไปใช้ค่าตั้งต้นที่มากับโค้ด">คืนค่าตั้งต้น</button>
+            <span id="adminAllocRulesMsg" class="admin-period-bar__meta" aria-live="polite"></span>
+          </div>
+        </section>
+      </div>
+
       <div id="adminPanelAllocations" class="admin-panel" data-panel="allocations" style="display:none;">
         <section class="admin-card admin-card--panel">
           <div class="admin-card-header">
@@ -1704,7 +1831,7 @@
   <!-- ตรรกะล้วน (ตัวแปลงเลข/คณิตการเกลี่ย) — ต้องมาก่อน app.js
        ไฟล์นี้มีเทสจริงด้วย node --test tests/logic.test.js -->
   <script src="logic.js?v=2026090410"></script>
-  <script src="app.js?v=2026091007"></script>
+  <script src="app.js?v=2026091101"></script>
 </body>
 
 </html>

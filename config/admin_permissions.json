@@ -10,7 +10,9 @@
       "usage_logs",
       "usage_summary",
       "team",
-      "emp_moves"
+      "emp_moves",
+      "feedback",
+      "alloc_rules"
     ],
     "admin": [
       "users",

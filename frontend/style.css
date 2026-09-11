@@ -10220,3 +10220,183 @@ tr.emp-row--no-target .emp-tag {
 #infoModal .admin-table--compact { width: 100%; }
 #infoModal .admin-table--compact td,
 #infoModal .admin-table--compact th { white-space: nowrap; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   กล่องส่งความเห็น (ปุ่ม 💬 มุมขวาล่าง) + แท็บข้อเสนอแนะในหน้าแอดมิน
+   ใช้ทรงปุ่มเดียวกับปุ่มคู่มือ (.btn-manual) แต่สีกลาง ๆ เพื่อให้ปุ่มคู่มือ
+   ยังเป็นปุ่มที่เด่นที่สุดเหมือนเดิม — คนเดิมจะได้ไม่สับสนว่าปุ่มไหนคือปุ่มไหน
+   ══════════════════════════════════════════════════════════════════════ */
+
+.btn-feedback--floating {
+  position: fixed;
+  bottom: max(16px, env(safe-area-inset-bottom, 0px));
+  right: max(14px, env(safe-area-inset-right, 0px));
+  z-index: 70;                       /* เหนือ topbar 50 / ปุ่มคู่มือ 60 · ใต้ dropdown 100 · modal 200 */
+  padding: 11px 18px;
+  font-size: 14px;
+  color: var(--text-1);
+  background: var(--white);
+  border: 1px solid var(--border-md);
+  box-shadow: var(--shadow-md);
+}
+.btn-feedback--floating:hover {
+  filter: none;
+  background: var(--surface-2);
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-2px);
+}
+.btn-feedback--floating .btn-manual__text { text-shadow: none; }
+.btn-feedback--floating .btn-manual__icon { filter: none; }
+
+@media (max-width: 520px) {
+  .btn-feedback--floating { padding: 11px 14px; }
+  .btn-feedback--floating .btn-manual__text { display: none; }
+  .btn-feedback--floating .btn-manual__icon { font-size: 22px; }
+}
+
+/* กล่องมีช่องพิมพ์ยาว — ใบมาตรฐาน 420px แคบไปจนพิมพ์แล้วอ่านย้อนลำบาก */
+#infoModal .modal-card--feedback {
+  width: min(560px, 94vw);
+  max-width: min(560px, 94vw);
+}
+.feedback-cats { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.feedback-cat {
+  flex: 1 1 auto;
+  padding: 9px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  cursor: pointer;
+}
+.feedback-cat:hover { background: var(--surface-2); }
+.feedback-cat--on {
+  color: var(--accent);
+  background: var(--accent-bg);
+  border-color: var(--accent-brd);
+}
+.feedback-cat-hint { font-size: 12px; color: var(--text-3); margin-bottom: 10px; }
+.feedback-text {
+  width: 100%;
+  min-height: 140px;
+  padding: 10px 12px;
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-1);
+  background: var(--white);
+  border: 1px solid var(--border-md);
+  border-radius: var(--r-md);
+  resize: vertical;
+}
+.feedback-text:focus { outline: 2px solid var(--accent-brd); outline-offset: 1px; }
+.feedback-foot-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.feedback-attach {
+  margin-top: 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+
+#adminView .admin-table--feedback .fb-col-time { width: 120px; }
+#adminView .admin-table--feedback .fb-col-status { width: 90px; }
+#adminView .admin-table--feedback .fb-col-cat { width: 90px; }
+#adminView .admin-table--feedback .fb-col-user { width: 200px; }
+#adminView .admin-table--feedback .fb-col-sup { width: 110px; }
+#adminView .admin-table--feedback .fb-col-act { width: 230px; }
+#adminView .admin-table--feedback .log-msg { white-space: pre-wrap; }
+#adminView .admin-table--feedback .fb-note {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+#adminView .admin-fb-status--new { color: var(--red); background: var(--red-bg); border-color: var(--red-brd); }
+#adminView .admin-fb-status--read { color: var(--amber); background: var(--amber-bg); border-color: var(--amber-brd); }
+#adminView .admin-fb-status--done { color: var(--green); background: var(--green-bg); border-color: var(--green-brd); }
+
+/* ── แท็บ「กติกาการเกลี่ย」 (หน้าแอดมิน) ─────────────────────────────── */
+
+#adminView .alloc-rules-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+  margin: 14px 0;
+}
+#adminView .alloc-rules-block {
+  padding: 14px 16px;
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  margin-bottom: 14px;
+}
+#adminView .alloc-rules-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--text-1);
+  cursor: pointer;
+}
+#adminView .alloc-rules-switch input { width: 18px; height: 18px; cursor: pointer; }
+#adminView .alloc-rules-field {
+  display: block;
+  font-size: 13px;
+  color: var(--text-2);
+}
+#adminView .alloc-rules-field input { display: block; margin-top: 6px; width: 120px; }
+#adminView .alloc-rules-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-3);
+}
+#adminView .alloc-rules-subtitle {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: var(--text-1);
+}
+#adminView .alloc-rules-pickrow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+#adminView .alloc-rules-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+#adminView .alloc-rules-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px 5px 12px;
+  font-size: 13px;
+  color: var(--text-1);
+  background: var(--surface-2);
+  border: 1px solid var(--border-md);
+  border-radius: 999px;
+}
+#adminView .alloc-rules-chip button {
+  background: none;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 4px;
+}
+#adminView .alloc-rules-chip button:hover { color: var(--red); }
+#adminView .alloc-rules-unknown { color: var(--amber); font-size: 11px; }
+#adminView .alloc-rules-empty { font-size: 13px; color: var(--text-3); }
+#adminView .alloc-rules-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}

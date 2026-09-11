@@ -56,6 +56,11 @@ API_MAP = [
     {"endpoint": "GET /admin/usage-summary", "fabric": False, "sources": ["allocations/*.json", "user_access.json", "sl_links.json", "logs/usage_*.jsonl", "cache/salesman_roster.json"]},
     {"endpoint": "GET /admin/usage-summary/export-xlsx", "fabric": False, "sources": ["เหมือน GET /admin/usage-summary"]},
     {"endpoint": "POST /admin/cache/refresh (layer=roster)", "fabric": True, "sources": ["Dim_Salesman ทั้งบริษัท (คำสั่งเดียว) → cache/salesman_roster.json"]},
+    {"endpoint": "POST /admin/feedback/submit", "fabric": False, "sources": ["feedback/feedback.json (ผู้ใช้ทั่วไปส่งได้)"]},
+    {"endpoint": "GET /admin/feedback", "fabric": False, "sources": ["feedback/feedback.json"]},
+    {"endpoint": "POST /admin/feedback/{id}/status", "fabric": False, "sources": ["feedback/feedback.json"]},
+    {"endpoint": "GET /admin/settings/alloc-rules", "fabric": False, "sources": ["data/alloc_rules.json (ถ้ามี) มิฉะนั้น config/allocation_rules.json", "user_access.json + sl_links.json (รายชื่อทีม)"]},
+    {"endpoint": "PUT /admin/settings/alloc-rules", "fabric": False, "sources": ["data/alloc_rules.json (ไม่แตะ config/)"]},
 ]
 
 _CACHE_PATTERNS = [

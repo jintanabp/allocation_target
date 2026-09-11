@@ -104,3 +104,15 @@ test("sumTargetBoxesBySku — ทีมที่ไม่มีข้อมู�
   assert.deepEqual({ ...L.sumTargetBoxesBySku({}, ["SLA"]) }, {});
   assert.deepEqual({ ...L.sumTargetBoxesBySku(null, null) }, {});
 });
+
+test("เกณฑ์สินค้าดันเป้า — บอกเหตุผลเป็นภาษาไทยเมื่อใส่ค่าที่ใช้ไม่ได้", () => {
+  const err = AppLogic.allocRulePushMultipleError;
+  assert.equal(err(5), "");
+  assert.equal(err("2.5"), "");
+  assert.match(err(0.5), /ปิดกฎ/);
+  assert.match(err(500), /เกิน 100/);
+  assert.match(err(""), /ยังไม่ได้กรอก/);
+  assert.match(err("ห้า"), /ต้องเป็นตัวเลข/);
+  // เลขไทยต้องผ่าน — ช่องกรอกอื่นในแอปรับเลขไทยได้หมดแล้ว
+  assert.equal(err("๕"), "");
+});

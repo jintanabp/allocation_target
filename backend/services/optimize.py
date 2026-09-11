@@ -756,7 +756,25 @@ def run_optimization_service(
     #
     # **ไม่มีไฟล์ = ไม่รู้ ต้องไม่ใช่ "ไม่เคยขาย"** — ถ้าเผลอตีความว่าไม่เคยขาย
     # ทีมที่แคชยังไม่มาจะถูกตัดเป้าเป็น 0 เกือบทั้งทีมในคลิกเดียว
-    never_sold_on = alloc_rules_store.never_sold_zero_enabled(sup_id)
+    #
+    # รอบรวมภาค/รวมหน่วยมีหลายทีมในก้อนเดียว แต่สวิตช์เป็นตัวเดียวต่อรอบ —
+    # เคาะไว้ 11 ก.ย. 2026 ว่า **ทีมไหนสักทีมถูกปิด = ปิดทั้งรอบ** (ดู alloc_rules_store)
+    # เดิมดูสวิตช์ของทีมหลักทีมเดียว ทีมที่แอดมินสั่งปิดจึงยังโดนกติกาถ้าไม่ได้เป็นทีมหลัก
+    _round_rule = alloc_rules_store.never_sold_zero_round_state(hist_sup_ids)
+    never_sold_on = bool(_round_rule["enabled"])
+    never_sold_off_reason: dict | None = None
+    if not never_sold_on:
+        if _round_rule["system_off"]:
+            never_sold_off_reason = {"reason": "system_off", "sups": []}
+            logger.info("กติกาไม่เคยขาย=เป้า 0 ปิดทั้งระบบอยู่ — รอบนี้ไม่ทำงาน")
+        else:
+            off_sups = list(_round_rule["disabled_sups"])
+            never_sold_off_reason = {"reason": "team_disabled", "sups": off_sups}
+            logger.info(
+                "กติกาไม่เคยขาย=เป้า 0 ปิดรอบนี้ (%d ทีมในรอบ): ทีมที่ถูกสั่งปิดไว้ = %s",
+                len(hist_sup_ids),
+                ", ".join(off_sups),
+            )
     df_hist_12 = pd.DataFrame()
     if never_sold_on:
         try:
@@ -771,6 +789,7 @@ def run_optimization_service(
         df_hist_12 = _maybe_split_hist(df_hist_12, reverse_map, value_shares)
         if df_hist_12.empty:
             never_sold_on = False
+            never_sold_off_reason = {"reason": "no_hist_12m", "sups": []}
             logger.warning(
                 "กติกาไม่เคยขาย=เป้า 0 ปิดตัวเองรอบนี้ (%s): ไม่มีประวัติ 12 เดือนให้ตัดสิน "
                 "— โหลดข้อมูลขั้นที่ 1 ใหม่เพื่อดึงเข้ามา",
@@ -1252,4 +1271,7 @@ def run_optimization_service(
         # กติกาไม่เคยขาย = เป้า 0 ทำอะไรไปบ้าง — หน้าจอต้องบอกผู้ใช้ได้ว่าทำไมเลขเปลี่ยน
         # โดยเฉพาะ SKU ที่เป้าไปกองที่คนเคยขายไม่กี่คน ซึ่งผู้ใช้ขอให้ "แจ้งบอก" ไว้
         "never_sold_summary": never_sold_summary_all,
+        # ทำไมกติกาไม่ทำงานรอบนี้ (None = ทำงานปกติ) — ห้ามปิดเงียบ หน้าจอต้องบอกได้ว่า
+        # เพราะทีมไหนถูกสั่งปิด ไม่งั้นซุปเห็นเลขไม่เหมือนรอบก่อนแล้วหาเหตุผลไม่เจอ
+        "never_sold_off_reason": never_sold_off_reason,
     }
