@@ -30,7 +30,10 @@ class RegionalOverwriteWarningTest(unittest.TestCase):
         with open(APP_JS, encoding="utf-8") as f:
             cls.src = f.read()
         i = cls.src.index("async function openAllocScopeModal(")
-        cls.modal = cls.src[i : i + 5200]
+        # ตัดถึงฟังก์ชันถัดไป ไม่ใช่จำนวนตัวอักษรตายตัว — โมดอลใบนี้มีคนมาเพิ่มคำเตือน
+        # เรื่อย ๆ (11 ก.ย. เพิ่มบล็อกกติกาการเกลี่ย) หน้าต่างตายตัวจะเลื่อนหลุดเงียบ ๆ
+        # แล้วเทสแดงทั้งที่โค้ดไม่ได้พัง
+        cls.modal = cls.src[i : cls.src.index("function _lakehouseTargetSkus(", i)]
 
     def _fn(self, name, span=900):
         i = self.src.index(name)

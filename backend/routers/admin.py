@@ -2890,3 +2890,24 @@ def admin_reset_alloc_rules(
         context={"before": before, "after": {k: after[k] for k in ("enabled", "push_multiple", "disabled_sups")}},
     )
     return {"ok": True, **after}
+
+
+# เส้นนี้ **ผู้ใช้ทั่วไปยิงได้** แบบเดียวกับ /admin/feedback/submit — ดูคอมเมนต์ตรงนั้น
+# ว่าทำไมของที่ไม่ใช่ของแอดมินถึงต้องอยู่ใต้ /admin (proxy หน้า production)
+#
+# หน้าเว็บต้องรู้ "ก่อนกด" ว่ารอบรวมภาคนี้กติกาจะไม่ทำงาน เพราะมีทีมที่ถูกสั่งปิดอยู่
+# ในชุด ไม่งั้นซุปจะรู้ตอนเลขออกมาแล้ว ซึ่งสายไป — คืนเฉพาะรหัสที่ส่งเข้ามาถามเท่านั้น
+# ไม่ได้เปิดรายชื่อทีมที่ถูกปิดทั้งบริษัทให้ใครก็ได้อ่าน
+
+
+class AllocRulesRoundBody(BaseModel):
+    sup_ids: list[str] = Field(default_factory=list, max_length=500)
+
+
+@router.post("/alloc-rules/round-check")
+def alloc_rules_round_check(
+    body: AllocRulesRoundBody,
+    _user: dict = Depends(require_authenticated_user),
+) -> dict[str, Any]:
+    """กติกา「ไม่เคยขาย = เป้า 0」จะทำงานไหม ถ้ากระจายทีมชุดนี้รวมกันในรอบเดียว"""
+    return alloc_rules_store.never_sold_zero_round_state(body.sup_ids)

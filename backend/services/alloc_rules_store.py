@@ -102,19 +102,57 @@ def never_sold_zero_enabled(sup_id: str) -> bool:
     ทีมนี้เปิดกติกา "ไม่เคยขาย = เป้า 0" หรือไม่ — **ค่าเริ่มต้นคือเปิด**
 
     ปิดได้สองแบบ: ปิดทั้งระบบ (`"enabled": false`) หรือปิดเป็นรายทีม (`"disabled_sups"`)
+
+    ทีมเดียวเสมอ — รอบที่มีหลายทีมในก้อนเดียวใช้ `never_sold_zero_round_state()`
+    ซึ่งเป็นเจ้าของกติกาตัวจริง ตัวนี้เป็นทางลัดของทีมเดียวเพื่อไม่ให้มีสองชุดตรรกะ
+
+    รหัส SL ที่ผูกกันไว้คือทีมเดียวกัน (เช่น SL524 -> SL508) — ถ้าเทียบรหัสดิบ
+    ทีมที่ล็อกอินด้วยรหัสเก่าจะไม่โดนสวิตช์ที่แอดมินเพิ่งกดปิดให้ แล้วดูเหมือนปุ่มเสีย
     """
+    return bool(never_sold_zero_round_state([sup_id])["enabled"])
+
+
+def never_sold_zero_round_state(sup_ids: Any) -> dict[str, Any]:
+    """
+    กติกาทำงานไหม เมื่อ "หนึ่งรอบการคำนวณ" มีหลายทีมอยู่ในก้อนเดียว
+
+    โหมดรวมเป้าทั้งภาค / รวมทั้งหน่วย ยิง `/optimize` **ครั้งเดียว**ด้วยพนักงานหลายทีม
+    แต่กติกานี้เป็นสวิตช์ตัวเดียวต่อรอบ (OR_engine ตัดสินจาก `df_sold_12m` ก้อนเดียว)
+    จะแยกรายคนตามทีมไม่ได้ ถ้ายังไม่ตอบก่อนว่ากฎข้อ 2/3 นับคำว่า "ทั้งทีม" จากทีมไหน
+
+    **ผู้ใช้เคาะไว้ 11 ก.ย. 2026: มีทีมไหนสักทีมในรอบถูกปิด = ปิดทั้งรอบ**
+    ทางกลับกันแย่กว่า — ทีมที่แอดมินสั่งปิดจะยังโดนกติกาเพราะบังเอิญไม่ได้เป็นทีมหลัก
+    ของรอบนั้น แปลว่าปุ่มปิดในหน้าแอดมิน "กดแล้วไม่เกิดอะไร" ซึ่งเสียความเชื่อถือกว่า
+    ทางนี้เสียแค่ทีมที่ยังเปิดอยู่ไม่ได้ใช้กติกาในรอบรวม และเลี่ยงได้ด้วยการเลือก
+    「แยกตามทีม」ซึ่งมีปุ่มอยู่บนจอแล้ว — **แต่ต้องขึ้นบอกบนจอทุกครั้ง ห้ามปิดเงียบ**
+
+    คืน `disabled_sups` เป็นรหัสตามที่ส่งเข้ามา (ไม่ใช่ canonical) เพราะเอาไปโชว์บนจอ
+    ให้ผู้ใช้จำได้ว่าเป็นทีมไหน — ส่วนการเทียบใช้ canonical ทั้งสองฝั่ง
+    """
+    codes: list[str] = []
+    seen: set[str] = set()
+    for x in sup_ids or []:
+        c = norm_sup(x)
+        if c and c not in seen:
+            seen.add(c)
+            codes.append(c)
+
     cfg = _read_raw().get("never_sold_zero")
     if not isinstance(cfg, dict):
-        return True
+        return {"enabled": True, "system_off": False, "disabled_sups": []}
     if cfg.get("enabled") is False:
-        return False
+        return {"enabled": False, "system_off": True, "disabled_sups": []}
     off = cfg.get("disabled_sups")
     if not isinstance(off, list) or not off:
-        return True
-    # รหัส SL ที่ผูกกันไว้คือทีมเดียวกัน (เช่น SL524 -> SL508) — ถ้าเทียบรหัสดิบ
-    # ทีมที่ล็อกอินด้วยรหัสเก่าจะไม่โดนสวิตช์ที่แอดมินเพิ่งกดปิดให้ แล้วดูเหมือนปุ่มเสีย
-    want = _canonical_sup(sup_id)
-    return want not in {_canonical_sup(x) for x in off}
+        return {"enabled": True, "system_off": False, "disabled_sups": []}
+
+    # อ่านตารางผูกรหัสครั้งเดียวแล้วใช้ซ้ำ — `resolve_to_canonical` เปิดไฟล์ทุกครั้งที่เรียก
+    # รอบรวมภาคมีได้หลายสิบทีม ถ้าเรียกต่อทีมคือเปิดไฟล์เดิมหลายสิบรอบต่อการคำนวณ
+    cmap = _alias_to_canonical_map()
+    off_canon = {cmap.get(norm_sup(x), norm_sup(x)) for x in off}
+    off_canon.discard("")
+    hit = [c for c in codes if cmap.get(c, c) in off_canon]
+    return {"enabled": not hit, "system_off": False, "disabled_sups": hit}
 
 
 def push_multiple() -> float:
@@ -132,18 +170,15 @@ def push_multiple() -> float:
     return DEFAULT_PUSH_MULTIPLE
 
 
-def _canonical_sup(code: Any) -> str:
-    """รหัสทีมหลังแก้ alias — อ่านไฟล์ล้วน เรียกครั้งเดียวต่อการคำนวณ ไม่ใช่ต่อ SKU"""
-    c = norm_sup(code)
-    if not c:
-        return ""
+def _alias_to_canonical_map() -> dict[str, str]:
+    """ตารางผูกรหัส SL ทั้งก้อน — อ่านไฟล์ครั้งเดียวแล้วส่งต่อ ไม่ใช่เปิดซ้ำต่อรหัส"""
     try:
-        from .sl_link_store import resolve_to_canonical
+        from .sl_link_store import alias_to_canonical_map
 
-        return norm_sup(resolve_to_canonical(c))
+        return alias_to_canonical_map()
     except Exception as e:  # ไฟล์ผูกรหัสมีปัญหาต้องไม่ทำให้กระจายเป้าไม่ได้
-        logger.warning("แก้ alias รหัสทีม %s ไม่ได้ (%s) — ใช้รหัสตรง ๆ", c, e)
-        return c
+        logger.warning("อ่านตารางผูกรหัส SL ไม่ได้ (%s) — เทียบด้วยรหัสตรง ๆ", e)
+        return {}
 
 
 def _now_iso() -> str:

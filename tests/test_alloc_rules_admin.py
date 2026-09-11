@@ -223,6 +223,96 @@ class AllocRulesWiringTest(unittest.TestCase):
         self.assertIn("รวมภาค", panel, "ต้องเตือนว่าปิดรายทีมไม่ครอบโหมดรวมภาค")
 
 
+class RoundCheckForTheAllocationScreenTest(AllocRulesSettingsTest):
+    """
+    หน้าจอต้องรู้ **ก่อนกด** ว่ารอบรวมภาคนี้กติกาจะไม่ทำงาน เพราะมีทีมที่ถูกสั่งปิดอยู่ในชุด
+    ถ้ารู้ตอนเลขออกมาแล้วคือสายไป — ซุปกระจายเสร็จแล้วถึงมาเห็นว่าเลขไม่เหมือนที่คาด
+    """
+
+    def test_a_normal_user_can_ask_about_the_teams_on_their_screen(self):
+        store.write_settings(enabled=True, push_multiple=5, disabled_sups=["SL531"])
+        out = admin_router.alloc_rules_round_check(
+            body=admin_router.AllocRulesRoundBody(sup_ids=["SL509", "SL531"]),
+            _user={"email": "sup@spc.co.th"},
+        )
+        self.assertFalse(out["enabled"])
+        self.assertEqual(out["disabled_sups"], ["SL531"])
+
+    def test_it_only_answers_about_the_codes_it_was_asked(self):
+        """ห้ามกลายเป็นเส้นอ่านรายชื่อทีมที่ถูกปิดทั้งบริษัทให้ใครก็ได้"""
+        store.write_settings(enabled=True, push_multiple=5, disabled_sups=["SL531", "SL406"])
+        out = admin_router.alloc_rules_round_check(
+            body=admin_router.AllocRulesRoundBody(sup_ids=["SL509", "SL531"]),
+            _user={"email": "sup@spc.co.th"},
+        )
+        self.assertEqual(out["disabled_sups"], ["SL531"], "SL406 ไม่ได้ถูกถาม ห้ามหลุดออกไป")
+
+    def test_the_read_route_is_still_admin_only(self):
+        """เส้นอ่านค่าทั้งก้อนต้องไม่ถูก 'จัดระเบียบ' ให้เปิดตามเส้นใหม่นี้"""
+        src = _read("backend/routers/admin.py")
+        after = src.split('@router.get("/settings/alloc-rules")')[1]
+        block = after.split("@router.")[0]
+        self.assertIn('require_capability("alloc_rules")', block)
+
+    def test_the_new_route_lives_under_admin_because_of_the_proxy(self):
+        """prefix ใหม่ระดับรากได้ 404 เปล่าจาก proxy หน้า production — ดู feedback/submit"""
+        src = _read("backend/routers/admin.py")
+        self.assertIn('@router.post("/alloc-rules/round-check")', src)
+
+
+class TheWholeRoundFollowsTheSwitchTest(unittest.TestCase):
+    """
+    บั๊กที่แก้รอบนี้: `/optimize` ถูกยิงครั้งเดียวต่อรอบรวมภาค โดยส่งรหัสทีมหลักมาตัวเดียว
+    ถ้ายังดูสวิตช์ของทีมหลักอย่างเดียว ทีมที่แอดมินสั่งปิดจะยังโดนกติกา
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.py = _read("backend/services/optimize.py")
+        cls.js = _read("frontend/app.js")
+
+    def test_the_engine_asks_about_every_team_in_the_round(self):
+        self.assertIn("never_sold_zero_round_state(hist_sup_ids)", self.py)
+        self.assertNotIn("never_sold_zero_enabled(sup_id)", self.py)
+
+    def test_the_engine_says_why_it_turned_the_rule_off(self):
+        """ปิดเงียบไม่ได้ — ต้องส่งเหตุผลกลับไปให้หน้าจอพูดได้ว่าเพราะทีมไหน"""
+        self.assertIn('"never_sold_off_reason": never_sold_off_reason', self.py)
+        for reason in ("team_disabled", "system_off", "no_hist_12m"):
+            self.assertIn(reason, self.py, reason)
+
+    def test_both_frontend_paths_carry_the_reason(self):
+        """ทีมเดียวกับรวมภาคเป็นคนละเส้นทาง — พลาดเส้นไหนเส้นนั้นเงียบ (บทเรียน R3)"""
+        self.assertIn("S.neverSoldOffReasons = json.never_sold_off_reason", self.js)
+        self.assertIn("S.neverSoldOffReasons = neverSoldOff;", self.js)
+
+    def test_the_panel_actually_shows_it(self):
+        """บทเรียน 8 ก.ย. — มีฟังก์ชันแต่ไม่มีใครเรียก = ฟีเจอร์ตายเงียบ"""
+        i = self.js.index("function _neverSoldReviewLines(")
+        self.assertIn("_neverSoldOffLines()", self.js[i : i + 400])
+
+    def test_the_message_survives_an_empty_summary(self):
+        """
+        กติกาถูกปิด = สรุปว่างเสมอ ถ้ายัง return [] ตอนสรุปว่าง ข้อความจะไม่มีวันขึ้น
+        (คำเตือนที่ขึ้นเฉพาะตอนไม่ต้องใช้ = คำเตือนที่ไม่มีอยู่จริง)
+        """
+        i = self.js.index("function _neverSoldReviewLines(")
+        body = self.js[i : i + 400]
+        self.assertIn("if (!items.length) return out;", body)
+
+    def test_the_scope_modal_warns_before_the_button_is_pressed(self):
+        i = self.js.index("async function openAllocScopeModal(")
+        j = self.js.index("return new Promise((resolve)", i)
+        block = self.js[i:j]
+        self.assertIn("_allocRulesRoundCheck(supOrder)", block)
+        self.assertIn("แยกตามทีม", block, "ต้องบอกทางออกที่กดได้จริงในโมดอลใบเดียวกัน")
+
+    def test_a_broken_check_does_not_block_the_allocation(self):
+        """เส้นถามล่มต้องเสียแค่คำเตือน ไม่ใช่กดกระจายไม่ได้"""
+        i = self.js.index("async function _allocRulesRoundCheck(")
+        self.assertIn("return null;", self.js[i : i + 700])
+
+
 def _readfile(path: str) -> str:
     with open(path, encoding="utf-8") as f:
         return f.read()

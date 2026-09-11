@@ -955,6 +955,8 @@ let S = {
   histFallbacks: [],
   /** กติกา「ไม่เคยขาย = เป้า 0」ทำอะไรไปบ้าง — คีย์เป็น sku (ทีมเดียว) หรือ "ทีม|sku" (รวมภาค) */
   neverSoldSummary: {},
+  /** ทำไมกติกา「ไม่เคยขาย = เป้า 0」ไม่ทำงานรอบล่าสุด — [{supId, reason, sups}] · [] = ทำงานปกติ */
+  neverSoldOffReasons: [],
   // ผลตรวจ "เป้าใน Target Sun เปลี่ยนหลังโหลดข้อมูล" — null = ยังไม่เคยตรวจรอบนี้
   targetDrift: null,
   // หน่วยขายที่เลือกดูอยู่ ("" = ทุกหน่วย ซึ่งกระจายรวมกันไม่ได้)
@@ -6241,6 +6243,9 @@ function _applyOptimizeMetaFromJson(json) {
     json.never_sold_summary && typeof json.never_sold_summary === "object"
       ? json.never_sold_summary
       : {};
+  S.neverSoldOffReasons = json.never_sold_off_reason
+    ? [{ supId: String(S.supId || ""), ...json.never_sold_off_reason }]
+    : [];
   // เส้นทางซุปเดียว — ไม่มีรายชื่อทีมให้ระบุ ล้างค่าจากรอบรวมภาคก่อนหน้าทิ้ง
   S.optimizationFallbackSups = [];
   S.regionalFailedSups = [];
@@ -6269,9 +6274,15 @@ function _applyOptimizeMetaFromSups(metaBySup) {
   const histFallbacks = new Set();
   // กติกาไม่เคยขายคิดแยกรายทีม — รวมทุกทีมไว้ก้อนเดียวเพื่อบอกผู้ใช้ทีเดียว
   const neverSold = {};
+  const neverSoldOff = [];
   for (const [supId, json] of entries) {
     if (!json) continue;
     if (json.optimization_fallback) fallbackSups.push(supId);
+    // แต่ละทีมปิดกติกาด้วยเหตุผลคนละอย่างได้ (ถูกสั่งปิด / ไม่มีประวัติ 12 เดือน)
+    // เก็บไว้ทั้งหมดแล้วค่อยยุบตอนขึ้นข้อความ — ยุบตรงนี้จะเหลือทีมเดียวเหมือนบั๊ก R3 เดิม
+    if (json.never_sold_off_reason) {
+      neverSoldOff.push({ supId, ...json.never_sold_off_reason });
+    }
     if (json.never_sold_summary && typeof json.never_sold_summary === "object") {
       for (const [sku, info] of Object.entries(json.never_sold_summary)) {
         neverSold[`${supId}|${sku}`] = { ...info, supervisor_code: supId };
@@ -6312,6 +6323,7 @@ function _applyOptimizeMetaFromSups(metaBySup) {
   S.newProductsEvenMode = evenMode;
   S.newProductSkus = newSkus;
   S.neverSoldSummary = neverSold;
+  S.neverSoldOffReasons = neverSoldOff;
   S.tierFlexSkus = flexSkus;
   S.tierStrictSkuCount = strictCount;
   // อัตราส่วนต่อทีมไม่เท่ากัน — ใช้ค่าเฉลี่ยเพื่อแสดงผลรวมภาค
@@ -7178,6 +7190,48 @@ function pinStickyLeftColumns(scroller) {
 }
 
 /**
+ * บอกว่ารอบนี้กติกา「ไม่เคยขาย = เป้า 0」**ไม่ทำงาน** และไม่ทำงานเพราะอะไร
+ *
+ * ห้ามปิดเงียบ: ซุปที่เคยเห็นเลขแบบมีกติกาแล้วรอบนี้ได้เลขอีกแบบ ต้องหาเหตุผลเจอบนจอ
+ * ไม่ใช่ไปงมใน log — โดยเฉพาะเหตุผล "ยังไม่มีประวัติ 12 เดือน" ซึ่งผู้ใช้แก้เองได้
+ * ด้วยการกดโหลดข้อมูลขั้นที่ 1 ใหม่
+ */
+function _neverSoldOffLines() {
+  const rows = Array.isArray(S.neverSoldOffReasons) ? S.neverSoldOffReasons : [];
+  if (!rows.length) return [];
+  const lines = [];
+
+  const disabled = rows.filter((r) => r?.reason === "team_disabled");
+  if (disabled.length) {
+    // รหัสทีมที่ "ถูกสั่งปิด" อาจไม่ใช่ทีมที่กดคำนวณ — ในโหมดรวมภาคคือทีมไหนก็ได้ในรอบ
+    const offSups = [...new Set(disabled.flatMap((r) => r.sups || []))];
+    const unit = _selectedAllocScope() === "unit";
+    lines.push(
+      `กติกา「ไม่เคยขาย = เป้า 0」ไม่ได้ใช้รอบนี้ — ทีมที่ถูกปิดกติกาไว้ในหน้าแอดมิน: `
+      + `${offSups.join(", ") || "—"}`
+      + (unit
+        ? " · โหมดรวมภาคใช้กติกาเดียวกันทั้งก้อน จึงปิดให้ทุกทีมในรอบ"
+          + " (เลือก「แยกตามทีม」ถ้าอยากให้ทีมที่เหลือยังใช้กติกา)"
+        : "")
+    );
+  }
+
+  const noHist = rows.filter((r) => r?.reason === "no_hist_12m").map((r) => r.supId).filter(Boolean);
+  if (noHist.length) {
+    lines.push(
+      `กติกา「ไม่เคยขาย = เป้า 0」ไม่ได้ใช้รอบนี้ เพราะยังไม่มีประวัติ 12 เดือนให้ตัดสิน`
+      + ` (${[...new Set(noHist)].join(", ")}) — กดโหลดข้อมูลขั้นที่ 1 ใหม่หนึ่งครั้ง`
+      + ` แล้วกระจายอีกที ถ้าต้องการให้กติกาทำงาน`
+    );
+  }
+
+  if (rows.some((r) => r?.reason === "system_off")) {
+    lines.push("กติกา「ไม่เคยขาย = เป้า 0」ถูกปิดทั้งระบบอยู่ — เป้ากระจายแบบเดิมทุกทีม");
+  }
+  return lines;
+}
+
+/**
  * กติกา「ไม่เคยขาย = เป้า 0」ทำอะไรไปบ้าง — ผู้ใช้ขอให้ "แจ้งบอก" ไว้ตอนตกลงกติกา
  *
  * สิ่งที่ต้องบอกมีสองเรื่องคนละน้ำหนัก:
@@ -7185,11 +7239,11 @@ function pinStickyLeftColumns(scroller) {
  *   - **เป้าไปกองที่คนเคยขายไม่กี่คน** = เรื่องที่ต้องเข้าไปดูจริง ๆ จึงบอกเป็นราย SKU
  */
 function _neverSoldReviewLines() {
+  const out = _neverSoldOffLines();
   const summary = S.neverSoldSummary || {};
   const items = Object.entries(summary);
-  if (!items.length) return [];
+  if (!items.length) return out;
 
-  const out = [];
   const zeroed = items.filter(([, v]) => v?.reason === "zeroed");
   const evened = items.filter(([, v]) => v?.reason === "no_seller" || v?.reason === "push_target");
 
@@ -8815,6 +8869,27 @@ async function _sentToTargetSunTeams() {
 }
 
 /**
+ * รอบรวมภาคนี้กติกา「ไม่เคยขาย = เป้า 0」จะทำงานไหม — ถามก่อนกด ไม่ใช่รู้ตอนเลขออกมาแล้ว
+ *
+ * ทีมไหนสักทีมในรอบถูกสั่งปิด = ปิดทั้งรอบ (เคาะไว้ 11 ก.ย. 2026) ทางออกของผู้ใช้คือ
+ * เลือก「แยกตามทีม」ซึ่งเป็นปุ่มที่อยู่ในโมดอลใบเดียวกันอยู่แล้ว จึงไม่ต้องถามคำถามใหม่
+ *
+ * ถามไม่สำเร็จให้เงียบแล้วปล่อยผ่าน — คำเตือนหายดีกว่ากดกระจายไม่ได้เพราะเส้นนี้ล่ม
+ */
+async function _allocRulesRoundCheck(supIds) {
+  try {
+    return await _adminJsonFetch("/admin/alloc-rules/round-check", {
+      method: "POST",
+      body: { sup_ids: supIds },
+      timeout: 8000,
+    });
+  } catch (e) {
+    console.warn("[allocRules] ถามสถานะกติกาไม่สำเร็จ:", e?.message || e);
+    return null;
+  }
+}
+
+/**
  * ตัวเลือกขอบเขตการกระจายแบบ modal
  *
  * opts.run = true → ปุ่มหลักคือ "เริ่มกระจายหีบ" และคืน true เมื่อผู้ใช้ยืนยัน
@@ -8832,6 +8907,7 @@ async function openAllocScopeModal(opts = {}) {
   const empTotal = supOrder.reduce((n, sid) => n + (grouped.get(sid) || []).length, 0);
   const pending = run ? await _pendingReallocateTeams() : [];
   const sent = run ? await _sentToTargetSunTeams() : [];
+  const ruleState = await _allocRulesRoundCheck(supOrder);
   const cur = _selectedAllocScope();
 
   const opt = (value, title, desc) => `
@@ -8861,6 +8937,19 @@ async function openAllocScopeModal(opts = {}) {
       "<br>คู่พนักงาน×สินค้าที่ Target Sun ยังไม่มี จะถูกสร้างแถวใหม่ตอนส่ง",
     ) +
     `</div>`;
+
+  // กติกาถูกปิดเพราะทีมในรอบ — บอกตรงนี้เพราะทางแก้คือปุ่ม「แยกตามทีม」ที่อยู่ข้างบนนี้เอง
+  if (ruleState && ruleState.enabled === false && !ruleState.system_off) {
+    const offList = (ruleState.disabled_sups || []).map((c) => `<code>${escH(String(c))}</code>`).join(" · ");
+    bodyHtml +=
+      `<div class="scope-modal__warn"><strong>⚠️ รอบนี้กติกา「ไม่เคยขาย = เป้า 0」จะไม่ทำงาน</strong>` +
+      `<div>เพราะทีมเหล่านี้ถูกปิดกติกาไว้ในหน้าแอดมิน: ${offList}</div>` +
+      `<div class="scope-modal__warn-foot">` +
+      `โหมดรวมภาคใช้กติกาเดียวกันทั้งก้อน จึงปิดให้ทั้งรอบ — ` +
+      `ถ้าอยากให้ทีมที่เหลือยังใช้กติกา ให้เลือก <strong>「แยกตามทีมของแต่ละ Supervisor」</strong> ด้านบน ` +
+      `แต่ละทีมจะใช้ค่าของตัวเอง` +
+      `</div></div>`;
+  }
 
   if (pending.length) {
     bodyHtml +=
