@@ -167,6 +167,21 @@ class FeedbackWiringTest(unittest.TestCase):
     def test_the_audit_action_name_is_stable(self):
         self.assertIn('"admin_feedback_status"', self.src)
 
+    def test_the_floating_button_sits_above_div_page_so_it_shows_on_every_screen(self):
+        """
+        เจอจริง 11 ก.ย. 2026 ตอนกดบน server ทดสอบ: ปุ่มหายทั้งหน้าแอดมิน
+
+        สองกับดักที่ทำให้ปุ่ม "มีในโค้ดแต่ไม่มีบนจอ":
+          1. อยู่ใน `div.page` → โดน `body.is-admin .page { display:none }` ซ่อนทั้งก้อน
+          2. อยู่ท้ายไฟล์ → `#adminView` ปิด div ไม่ครบมาแต่เดิม เบราว์เซอร์ดูดปุ่มเข้าไป
+             ข้างใน แล้วปุ่มโผล่เฉพาะหน้าแอดมินแทน
+        ทางที่รอดทั้งสองข้อคือวางก่อน `<div class="page">` = เป็นลูกตรงของ body แน่นอน
+        """
+        html = _read("frontend/index.html")
+        btn = html.index('id="openFeedbackBtn"')
+        page = html.index('<div class="page">')
+        self.assertLess(btn, page, "ปุ่ม 💬 ต้องอยู่ก่อน div.page ไม่งั้นหายในหน้าแอดมิน")
+
 
 if __name__ == "__main__":
     unittest.main()

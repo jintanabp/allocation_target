@@ -73,6 +73,20 @@
     <span id="peerViewBannerText"></span>
   </div>
 
+  <!-- ปุ่มส่งความเห็น — ต้องมองเห็นได้ทุกหน้า จึงวางไว้**บนสุดของ body ก่อน div.page**
+       1. อยู่ใน `.page` ไม่ได้ เพราะ `body.is-admin .page { display:none }` ซ่อนทั้งก้อน
+       2. วางท้ายไฟล์ก็ไม่ได้ เพราะ `#adminView` ปิด div ไม่ครบมาแต่เดิม (depth ค้าง 1
+          ตั้งแต่ก่อนงานวันนี้) เบราว์เซอร์เลยดูดทุกอย่างที่อยู่ท้ายไฟล์เข้าไปข้างใน
+          แล้วปุ่มจะโผล่เฉพาะหน้าแอดมินแทน — เจอจริงตอนกดบน server ทดสอบ 11 ก.ย. 2026
+       ตำแหน่งบนจอคุมด้วย position:fixed อยู่แล้ว ลำดับใน DOM จึงไม่มีผลกับหน้าตา
+       ปุ่มโผล่เมื่อ S.userEmail มีค่า (หลังล็อกอิน Microsoft) เพราะเส้นส่งต้องมี token -->
+  <button type="button" id="openFeedbackBtn" class="btn-manual btn-feedback--floating" style="display:none;"
+    onclick="showFeedbackModal()"
+    title="ส่งความเห็น แจ้งปัญหา หรือสอบถามถึงทีมพัฒนา — ใช้ได้ทุกหน้า">
+    <span class="btn-manual__icon" aria-hidden="true">💬</span>
+    <span class="btn-manual__text">ส่งความเห็น</span>
+  </button>
+
   <div class="page">
 
     <!-- ─── LOGIN VIEW ─── -->
@@ -217,15 +231,6 @@
       title="ดูคู่มือการใช้งานทีละขั้นตอน">
       <span class="btn-manual__icon" aria-hidden="true">📖</span>
       <span class="btn-manual__text">คู่มือ</span>
-    </button>
-
-    <!-- ส่งความเห็น — โผล่หลังล็อกอิน Microsoft แล้ว (เส้นส่งต้องมี token)
-         ต่างจากปุ่มคู่มือตรงที่ต้องขึ้นในหน้าแอดมินด้วย จึงไม่มีกฎซ่อนตอน body.is-admin -->
-    <button type="button" id="openFeedbackBtn" class="btn-manual btn-feedback--floating" style="display:none;"
-      onclick="showFeedbackModal()"
-      title="ส่งความเห็น แจ้งปัญหา หรือสอบถามถึงทีมพัฒนา — ใช้ได้ทุกหน้า">
-      <span class="btn-manual__icon" aria-hidden="true">💬</span>
-      <span class="btn-manual__text">ส่งความเห็น</span>
     </button>
 
     <!-- ─── DASHBOARD VIEW ─── -->
