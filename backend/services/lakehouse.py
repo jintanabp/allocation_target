@@ -334,6 +334,15 @@ def emp_dims_from_own_grain(dg: pd.DataFrame) -> dict[str, dict[str, str]]:
     ปกติและไม่ได้อยู่ในคีย์ upsert · ส่วน SALESTYPE / DIVISIONCODE / AREACODE ต้องมีครบ
     ไม่งั้นเดาไปก็ส่งไม่ได้อยู่ดี
 
+    **WAREHOUSECODE คิดแยกจากตัวอื่น** (เพิ่ม 11 ก.ย. 2026) — มันอยู่ในคีย์ upsert
+    ตั้งแต่ 7 ก.ย. แต่ไม่ใช่ "คุณสมบัติของพนักงาน" แบบเขต/ดิวิชัน คนหนึ่งขายหลายคลังได้
+    จึงเดาเฉพาะเมื่อทุกแถวของเขาใช้คลังเดียวกันหมด และ**ขัดกันแล้วต้องไม่ทิ้งทั้งคน**
+    เหมือน dim ตัวอื่น (ไม่งั้น SKU ของคนที่ขายหลายคลังจะถูกตัดทิ้งไปด้วย)
+
+    ของจริงที่ทำให้ต้องเพิ่ม: SL376 พนักงาน B033 มีเป้าที่ปลายทาง 246 แถว ใช้คลัง
+    R082 ทุกแถว แต่แถวใหม่ที่เราสร้างให้เขาได้คลังว่าง — เพราะคีย์รวมคลัง คู่เดียวกัน
+    จึงกลายเป็นสองแถวที่ปลายทางได้ (วัดจากชุดพัฒนา 11 ก.ย.: ~7,800 แถวเป็นแบบนี้)
+
     ใช้ตอนกระจายรวมทั้งหน่วย: พนักงานทีมอื่นที่ไม่เคยมีเป้าสินค้าตัวนี้จะได้แถวใหม่
     (Target Sun รองรับ insert — ดู targetsun-importTargetSalesmanNextFromExcel.md)
     """
@@ -366,6 +375,12 @@ def emp_dims_from_own_grain(dg: pd.DataFrame) -> dict[str, dict[str, str]]:
         # (ดู _import_key_mask) เดาไปก็ไม่มีประโยชน์
         if not all(dims.get(k) for k in ("salestype", "divisioncode", "areacode")):
             continue
+        # คลังคิดหลังด่านข้างบน และไม่มีสิทธิ์ทำให้ทั้งคนตกไป — ขัดกัน = ไม่เดา เท่านั้น
+        wh_vals = {
+            _cell_str(v) for v in grp.get("warehouse_code", pd.Series(dtype=str))
+        }
+        wh_vals.discard("")
+        dims["warehouse_code"] = next(iter(wh_vals)) if len(wh_vals) == 1 else ""
         out[emp_key] = dims
     return out
 
@@ -699,6 +714,11 @@ def _expand_allocations_with_tga_grain(
         # (หรือเติมจากแถวอื่นของพนักงานคนเดียวกัน เมื่อเปิด infer_missing_dims)
         if sub.empty:
             inferred = emp_dims.get(e) if emp_dims else None
+            # คลังของปลายทางมาก่อนค่าจากฝั่งแอปเสมอ — กติกาเดียวกับกิ่งที่เจอ grain
+            # (ที่นั่นใช้ `แถว grain or wh_req`) ที่นี่ "แถวของคนคนนั้นเอง" ทำหน้าที่แทน
+            # ไม่งั้นแถวใหม่จะไปอยู่คนละคลังกับเป้าอื่นทั้งหมดของเขา แล้วคีย์ upsert
+            # ซึ่งรวมคลังจะมองเป็นคนละแถว = คู่เดียวกันมีเป้าสองที่
+            wh_new = (inferred.get("warehouse_code") if inferred else "") or wh_req or ""
             out.append(
                 {
                     "emp_id": e,
@@ -708,7 +728,7 @@ def _expand_allocations_with_tga_grain(
                     "divisioncode": inferred["divisioncode"] if inferred else "",
                     "areacode": inferred["areacode"] if inferred else "",
                     "provincecode": inferred["provincecode"] if inferred else "",
-                    "warehouse_code": wh_req,
+                    "warehouse_code": wh_new,
                     "dims_inferred": bool(inferred),
                 }
             )

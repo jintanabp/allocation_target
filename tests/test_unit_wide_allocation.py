@@ -49,7 +49,8 @@ class TestEmpDimsInference(unittest.TestCase):
         dims = lh.emp_dims_from_own_grain(dg)
         self.assertEqual(
             dims["E1"],
-            {"salestype": "S1", "divisioncode": "D1", "areacode": "10", "provincecode": "P1"},
+            {"salestype": "S1", "divisioncode": "D1", "areacode": "10",
+             "provincecode": "P1", "warehouse_code": "WH1"},
         )
 
     def test_conflicting_rows_are_never_guessed(self):
