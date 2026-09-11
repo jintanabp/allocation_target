@@ -82,14 +82,17 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
         rb = res.get("readback") or {}
         rb_note = ""
         level = "info" if ok else "error"
+        caveats: list[str] = []          # ข้อความเตือนที่ต้องขึ้นหัวบรรทัด ไม่ใช่ซ่อนท้าย
         if rb.get("checked") and rb.get("ok") is False:
             rb_note = (
                 f" · ⚠ ยอดลงจริงไม่ตรงไฟล์ {rb.get('diff_count', 0)} SKU "
                 f"({rb.get('diff_boxes', 0):+,} หีบ)"
             )
             level = "error"
+            caveats.append("ยอดลงจริงไม่ตรงไฟล์")
         elif rb.get("checked") is False and ok:
             rb_note = f" · ตรวจยอดหลังส่งไม่ได้ ({rb.get('reason') or '-'})"
+            caveats.append("ตรวจยอดหลังส่งไม่ได้")
         emp_ids = [str(e).strip() for e in (res.get("emp_codes") or []) if str(e).strip()]
         # SKU ที่ถูกตัดออกทั้งตัว + แถวหีบ 0 ที่ส่งไปล้างเป้าเดิม — สองตัวเลขนี้เป็น
         # ตัวชี้ว่ายอดใน Target Sun ตรงกับที่กระจายไว้หรือไม่ แต่เดิมไม่เคยถูกบันทึก
@@ -100,14 +103,28 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
                 f" · ⚠ ไม่ส่ง {exc['excluded_sku_count']} SKU ทั้งตัว "
                 f"({exc['excluded_boxes']:,} หีบ) — Target Sun ยังถือเลขเดิมของ SKU เหล่านี้"
             )
+            caveats.append("ไม่ครบทุก SKU")
             if level == "info":
                 level = "warn"
+        # หัวข้อบรรทัด log ต้องตรงกับธงที่ติดไว้ — เดิมเขียน "สำเร็จ" ทุกครั้งที่ปลายทาง
+        # ตอบ 200 ทั้งที่บรรทัดเดียวกันถูกติดธง error เพราะยอดลงจริงไม่ตรงไฟล์
+        # คนไล่ log เห็นคำว่าสำเร็จแล้วข้ามไป ปัญหาจึงถูกซ่อนอยู่หลังคำนั้นมาตลอด
+        #
+        # **ต้องมีคำว่า "สำเร็จ" อยู่ในข้อความของเคสที่ของลงปลายทางไปแล้วเสมอ**
+        # เพราะบรรทัดเก่าที่ไม่มี context.ok ถูกตัดสินด้วยข้อความ (usage_summary:110-115)
+        # ถ้าตัดคำนี้ทิ้ง การส่งที่สำเร็จจริงจะถูกนับเป็นล้มเหลวย้อนหลัง
+        if not ok:
+            head = "ส่งเข้า Target Sun ไม่สำเร็จ"
+        else:
+            head = "ส่งเข้า Target Sun สำเร็จ"
+            if caveats:
+                head += " — แต่" + " และ".join(caveats)
         log_from_user(
             user,
             level=level,
             sup_id=req.sup_id,
             action="send_targetsun",
-            message=("ส่งเข้า Target Sun สำเร็จ" if ok else "ส่งเข้า Target Sun ไม่สำเร็จ"),
+            message=head,
             detail=(
                 f"งวด {req.target_year}-{req.target_month:02d} · "
                 f"ส่ง {res.get('rows_sent', 0)} แถว · "

@@ -1834,9 +1834,11 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
 .admin-inv-err { color: var(--red); }
 .admin-inv-muted { color: var(--text-3); font-size: 12px; }
 .admin-inv-url { font-size: 11px; word-break: break-all; }
-.admin-table--compact { font-size: 12px; }
-.admin-table--compact th,
-.admin-table--compact td { padding: 6px 8px; }
+/* .admin-table--compact ถูกลบทิ้ง 11 ก.ย. 2026 — มันเป็นคลาสตายมาตลอด
+   เพราะประกาศก่อน .admin-table ที่ specificity เท่ากัน (บรรทัด ~2782) จึงแพ้เสมอ
+   **ห้ามปลุกกลับมา** ถ้าให้มันมีผลจริง 6 ตารางในหน้าแอดมินจะเหลือตัวอักษร 12px ทันที
+   ซึ่งขัดกับกติกา "ผู้ใช้สูงวัย อ่านง่ายไว้ก่อน" · ตารางไหนอยากบีบระยะให้เจาะจงตารางนั้น
+   แบบที่ #adminAllocTable ทำ (บีบ padding อย่างเดียว ไม่ลดขนาดตัวอักษร) */
 .admin-stats--compact {
   display: flex;
   flex-wrap: wrap;
@@ -3818,10 +3820,19 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
   text-align: right;
 }
 
-.alloc-summary-status--sent { color: var(--green, var(--green)); }
-.alloc-summary-status--optimized { color: var(--blue, var(--accent)); }
-.alloc-summary-status--draft { color: var(--text-3); }
-.alloc-summary-status--none { color: var(--text-3); opacity: 0.7; }
+/* สีสถานะผลกระจาย — **ใช้ร่วมกัน 2 หน้า**: การ์ดสรุปภาคใน Dashboard
+   และตาราง「ผลกระจายที่บันทึกไว้」ในหน้าแอดมิน (ตัวสร้างคลาสคือ _allocationStatusClass)
+   จึงห้ามย้ายไปอยู่ใต้ .alloc-summary-table หรือ #adminView — หน้าหนึ่งจะสีหายทันที
+   ใส่ตัวเลือก td.… คู่ไว้ด้วย เพราะ .admin-table td มี specificity สูงกว่าคลาสเปล่า
+   ถ้าวันหนึ่งมีใครใส่ color ให้ .admin-table td สีสถานะในหน้าแอดมินจะตายเงียบ ๆ */
+.alloc-summary-status--sent,
+td.alloc-summary-status--sent { color: var(--green, var(--green)); }
+.alloc-summary-status--optimized,
+td.alloc-summary-status--optimized { color: var(--blue, var(--accent)); }
+.alloc-summary-status--draft,
+td.alloc-summary-status--draft { color: var(--text-3); }
+.alloc-summary-status--none,
+td.alloc-summary-status--none { color: var(--text-3); opacity: 0.7; }
 
 /* คำอธิบายสถานะใต้ตารางสรุป — manager มักไม่รู้ว่า "แบบร่าง" ต่างจาก "กระจายแล้ว" ยังไง */
 .alloc-summary-legend {
@@ -10217,9 +10228,12 @@ tr.emp-row--no-target .emp-tag {
   width: min(940px, 94vw);
   max-width: min(940px, 94vw);
 }
-#infoModal .admin-table--compact { width: 100%; }
-#infoModal .admin-table--compact td,
-#infoModal .admin-table--compact th { white-space: nowrap; }
+/* เดิมเกาะชื่อ .admin-table--compact ซึ่งเป็นคลาสตายทุกที่ยกเว้นในโมดัล (มี #infoModal
+   นำหน้าจึงชนะ) — พอลบคลาสตายทิ้งเมื่อ 11 ก.ย. ตารางในโมดัลจะเสียความกว้างไปด้วย
+   จึงเกาะที่ .admin-table-wrap แทน ซึ่งเป็นตัวเดียวกับที่กฎความกว้างของการ์ดข้างบนใช้ */
+#infoModal .admin-table-wrap .admin-table { width: 100%; }
+#infoModal .admin-table-wrap .admin-table td,
+#infoModal .admin-table-wrap .admin-table th { white-space: nowrap; }
 
 /* ══════════════════════════════════════════════════════════════════════
    กล่องส่งความเห็น (ปุ่ม 💬 มุมขวาล่าง) + แท็บข้อเสนอแนะในหน้าแอดมิน

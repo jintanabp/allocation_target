@@ -1066,6 +1066,42 @@ def run_optimization_service(
         never_sold_pairs_all |= set(df_allocation.attrs.get("never_sold_zero_pairs") or ())
         never_sold_summary_all.update(df_allocation.attrs.get("never_sold_summary") or {})
 
+    # ── กติกาไม่เคยขายแตะอะไรไปบ้างในรอบนี้ — บันทึกไว้เป็นตัวเลข ──────────────
+    #
+    # ผู้ใช้เลือกเปิดกติกาให้ทุกทีมพร้อมกัน จึงไม่มีกลุ่มเปรียบเทียบและตอบไม่ได้ว่า
+    # "ดีขึ้นไหม" (แผนหัวข้อ 9.6 ข้อ 5) · สิ่งที่ยังเก็บได้คือ "แตะไปเท่าไร" ต่อทีมต่อรอบ
+    # ซึ่งพอเอาไปคู่กับสัดส่วนการแก้มือของงวดถัดไปก็ตอบได้ว่าทีมที่โดนหนักแก้เยอะกว่าไหม
+    #
+    # **ไม่เรียกว่า "หีบที่ย้าย"** เพราะรู้ไม่ได้ว่าถ้าไม่มีกติกาแล้วหีบจะไปอยู่ที่ใคร
+    # ถ้าไม่รันสองรอบ — ที่นับได้จริงคือ "ช่องที่ถูกตัดเป็น 0" กับ "ขนาดของสินค้าที่กติกาแตะ"
+    _zeroed_skus = [k for k, v in never_sold_summary_all.items() if (v or {}).get("reason") == "zeroed"]
+    _even_skus = [
+        k for k, v in never_sold_summary_all.items()
+        if (v or {}).get("reason") in ("no_seller", "push_target")
+    ]
+    _tgt_by_sku_norm = {
+        str(r["sku"]).strip(): int(round(float(r["supervisor_target_boxes"] or 0)))
+        for _, r in df_sku.iterrows()
+    }
+    _touched = set(_zeroed_skus) | set(_even_skus)
+    never_sold_impact = {
+        "cells_zeroed": len(never_sold_pairs_all),
+        "skus_zeroed": len(_zeroed_skus),
+        "skus_evened": len(_even_skus),
+        "boxes_in_touched_skus": sum(_tgt_by_sku_norm.get(s, 0) for s in _touched),
+        "skus_total": len(df_sku),
+    }
+    if never_sold_on and _touched:
+        logger.info(
+            "กติกาไม่เคยขาย=เป้า 0 (%s งวด %04d-%02d): ตัดเป็น 0 %d ช่อง · สินค้าที่แตะ %d จาก %d ตัว "
+            "(ตัด %d · เฉลี่ยทุกคน %d) · หีบในสินค้าที่แตะรวม %s",
+            sup_id, target_year, target_month,
+            never_sold_impact["cells_zeroed"],
+            len(_touched), never_sold_impact["skus_total"],
+            never_sold_impact["skus_zeroed"], never_sold_impact["skus_evened"],
+            f"{never_sold_impact['boxes_in_touched_skus']:,}",
+        )
+
     tier_flex_skus: list[str] = []
     if req.tiered_allocation:
         tier_flex_skus = sorted(_flex_skus_by_target_value(df_sku, float(req.tier_pct)))
@@ -1274,4 +1310,6 @@ def run_optimization_service(
         # ทำไมกติกาไม่ทำงานรอบนี้ (None = ทำงานปกติ) — ห้ามปิดเงียบ หน้าจอต้องบอกได้ว่า
         # เพราะทีมไหนถูกสั่งปิด ไม่งั้นซุปเห็นเลขไม่เหมือนรอบก่อนแล้วหาเหตุผลไม่เจอ
         "never_sold_off_reason": never_sold_off_reason,
+        # ขนาดที่กติกาแตะรอบนี้ — เก็บไว้วัดผลย้อนหลังคู่กับสัดส่วนการแก้มือของงวดถัดไป
+        "never_sold_impact": never_sold_impact,
     }

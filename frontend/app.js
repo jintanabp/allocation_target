@@ -17140,11 +17140,16 @@ async function adminLoadSlLinks() {
 function adminRenderSlLinks() {
   const body = document.getElementById("adminSlLinkBody");
   if (!body) return;
+  // Marketing เปิดหน้านี้ได้แต่แก้ไม่ได้ — เดิมคอลัมน์ "จัดการ" ยังอยู่แต่ทุกแถวว่าง
+  // ซึ่งอ่านเหมือนปุ่มหาย ไม่ใช่ "คุณไม่มีสิทธิ์" · ซ่อนทั้งคอลัมน์ไปเลยชัดกว่า
+  const canEdit = _canManageLinks();
+  const th = document.getElementById("adminSlLinkActionsTh");
+  if (th) th.hidden = !canEdit;
+  const cols = canEdit ? 4 : 3;
   if (!_adminSlLinkRows.length) {
-    body.innerHTML = `<tr><td colspan="4" class="admin-empty">ยังไม่มีกลุ่มผูกรหัส SL</td></tr>`;
+    body.innerHTML = `<tr><td colspan="${cols}" class="admin-empty">ยังไม่มีกลุ่มผูกรหัส SL</td></tr>`;
     return;
   }
-  const canEdit = _canManageLinks();
   body.innerHTML = _adminSlLinkRows.map((r) => {
     const oldSl = r.old_sl || r.canonical_sl;
     const newSls = (r.new_sls || []).join(", ");
@@ -17157,7 +17162,7 @@ function adminRenderSlLinks() {
       <td><code>${oldEsc}</code></td>
       <td>${(r.new_sls || []).map((c) => `<code>${escapeHtml(c)}</code>`).join(" ")}</td>
       <td>${escapeHtml(r.note || "")}</td>
-      <td class="admin-td-actions">${btns}</td>
+      ${canEdit ? `<td class="admin-td-actions">${btns}</td>` : ""}
     </tr>`;
   }).join("");
 }
@@ -17551,7 +17556,7 @@ let _adminInvData = null;
 
 function _invTable(head, rows) {
   if (!rows.length) return `<p class="admin-inv-muted">ไม่มีข้อมูล</p>`;
-  return `<div class="admin-table-wrap"><table class="admin-table admin-table--compact">
+  return `<div class="admin-table-wrap"><table class="admin-table">
     <thead><tr>${head.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead>
     <tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody>
   </table></div>`;
