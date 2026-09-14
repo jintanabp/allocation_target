@@ -218,21 +218,24 @@ Target Sun Read API ──────────┘
 <strong>EVEN และ LP ถูกคอมเมนต์ปิดไว้ใน <code>frontend/index.html</code></strong> ชั่วคราว —
 UI จึงแสดงแค่ 4 ตัว ยิงผ่าน API ตรง ๆ ยังใช้ได้ทั้ง 6</p>
 
-<h3>ลำดับการทำงาน 6 ขั้น</h3>
+<h3>ลำดับการทำงาน 7 ขั้น</h3>
 <div class="flow"><pre><code>1. _normalize_engine_inputs   ทำคีย์ให้อยู่รูปเดียวกัน · ปัดเป้าเป็น int · ยุบ SKU ซ้ำ
                               · ปฏิเสธถ้าหีบที่ล็อกรวมกันเกินเป้า SKU
         │
-2. _proportional              แบ่งตามสัดส่วนประวัติ + เพดานกันกระจุก (mean × 3.0)
+2. _never_sold_plan           (ถ้าเปิดกติกา) คิดว่าคู่ emp×sku ไหนไม่เคยขายกันเลยใน 12 เดือน
+                              → ตัดเป็น 0 หรือเฉลี่ยแทน · ต้องทำก่อนข้อ 3 เสมอ (ดู §5 I9)
+        │
+3. _proportional              แบ่งตามสัดส่วนประวัติ + เพดานกันกระจุก (mean × 3.0)
                               → ได้ baseline ที่ทุกขั้นถัดไปใช้อ้างอิง
         │
-3. _lp_optimize (CBC)         ปรับให้มูลค่าเงินต่อคนใกล้เป้า ภายในรั้ว ±% จาก baseline
-        │                     แก้ไม่ได้ → ใช้ผลข้อ 2 แทน (ตั้ง optimization_fallback)
+4. _lp_optimize (CBC)         ปรับให้มูลค่าเงินต่อคนใกล้เป้า ภายในรั้ว ±% จาก baseline
+        │                     แก้ไม่ได้ → ใช้ผลข้อ 3 แทน (ตั้ง optimization_fallback)
         │
-4. _greedy_revenue_balancer   โยนหีบทีละใบระหว่างคนที่เกิน↔ขาด ปิดช่องว่างที่เหลือ
+5. _greedy_revenue_balancer   โยนหีบทีละใบระหว่างคนที่เกิน↔ขาด ปิดช่องว่างที่เหลือ
         │
-5. _enforce_even_skus_on_df   สินค้าใหม่ที่ติ๊กไว้ → บังคับแบ่งเท่าทุกคน
+6. _enforce_even_skus_on_df   สินค้าใหม่ที่ติ๊กไว้ / SKU ที่ข้อ 2 สั่งเฉลี่ย → บังคับแบ่งเท่าทุกคน
         │
-6. validate_allocation_vs_targets   ประตู: ผลรวมต่อ SKU ต้องตรงเป้า ไม่งั้น 409</code></pre></div>
+7. validate_allocation_vs_targets   ประตู: ผลรวมต่อ SKU ต้องตรงเป้า ไม่งั้น 409</code></pre></div>
 
 <h3>รั้วกันตัวเลขเพี้ยน</h3>
 <p>หัวใจคือ <strong>baseline จากประวัติ</strong> แล้วอนุญาตให้ LP ขยับได้แค่ในกรอบ %:</p>
@@ -284,12 +287,19 @@ UI จึงแสดงแค่ 4 ตัว ยิงผ่าน API ตร�
 <tr><td><strong>I5</strong></td><td>เซลล์อยู่ในรั้ว % จาก baseline</td><td>ข้อจำกัดใน LP + ขอบเขตใน greedy</td></tr>
 <tr><td><strong>I6</strong></td><td>SKU รหัสเดียวถูกกระจายรอบเดียว</td><td>ยุบซ้ำก่อนแบ่งกลุ่มตามแบรนด์</td></tr>
 <tr><td><strong>I7</strong></td><td>โหมดรวมภาคไม่ปน <em>ตัวตน</em> ข้ามทีม</td><td>คีย์ล็อกมีรหัสซุปนำหน้า · ห้าม fallback ไปรหัสผู้จัดการ</td></tr>
+<tr><td><strong>I9</strong></td><td>คู่ emp×sku ที่ไม่เคยขายกันเลยใน 12 เดือน = เป้า 0 (กติกา opt-in)</td><td><code>_never_sold_plan()</code> ก่อน <code>_proportional</code> เสมอ · เฉลี่ยแทนถ้าทั้งทีมไม่มีประวัติ หรือเป้าเกิน 5 เท่าของประวัติ</td></tr>
 </table></div>
+<p style="color:var(--ink-3);font-size:14px">เปิด/ปิดได้ทั้งระบบหรือรายทีมจากหน้าแอดมิน แท็บ「กติกาการเกลี่ย」— ไม่ต้อง deploy (ดู §11)</p>
 
 <h2 id="edit">6 · แก้มือและการเกลี่ยอัตโนมัติ</h2>
 
 <p>คลิกตัวเลขในตารางแล้วพิมพ์ใหม่ → ช่องนั้นกลายเป็น <strong>ล็อก</strong> ระบบจะไม่ขยับอีก
-แม้กดคำนวณใหม่ (ส่งไปเป็น <code>locked_edits</code>)</p>
+แม้กดคำนวณใหม่ (ส่งไปเป็น <code>locked_edits</code>) — <strong>คลิกเข้าไปแล้วคลิกออกโดยไม่แก้เลขก็ล็อกเหมือนกัน</strong>
+(<code>onResultEdit</code> ตีความว่าเป็นเจตนา) ปลดล็อกทีละช่องด้วยปุ่ม <strong>↺</strong> ข้างตัวเลขนั้น</p>
+
+<p><strong>↺ คืนค่าที่ระบบคำนวณ</strong> (ปุ่มด้านบนตาราง) คืนค่า/ปลดล็อก<strong>ทุกช่อง</strong>ที่แก้มือไว้ในคราวเดียว
+ต้องมี <code>_engine_boxes</code> เก็บไว้ตั้งแต่ตอนคำนวณ (ทุกแถว ทุกครั้งที่ <code>_doOptimize</code>) และรอดผ่าน
+undo/refresh (แนบไปกับ snapshot ด้วย) — ถ้าไม่มีค่านี้ปุ่มจะกดไม่ได้</p>
 
 <p>แต่ผลรวมต่อ SKU ต้องคงเดิม ระบบจึงไป <strong>เกลี่ยจากคนที่ยังไม่ถูกแก้</strong> โดยอัตโนมัติ
 (<code>autoRebalance</code>) น้ำหนักการเกลี่ยใช้ <code>hist_avg</code> ของแต่ละคน</p>
@@ -352,7 +362,19 @@ UI จึงแสดงแค่ 4 ตัว ยิงผ่าน API ตร�
   <li><strong>ทีมพังทีมเดียวไม่ล้มทั้งภาค</strong> — เก็บ error รายทีม รายงานว่าทีมไหนพลาด ทีมที่สำเร็จบันทึกแล้ว</li>
   <li><strong>คำเตือน fallback รวมทุกทีม</strong> — ถ้าทีมใดตกไปใช้ proportional จะเตือนพร้อมระบุชื่อทีม</li>
   <li><strong>คีย์ล็อกมีรหัสซุปนำหน้า</strong> (<code>SL330::E001</code>) เพราะ <code>emp_id</code> ซ้ำข้ามทีมได้</li>
+  <li><strong>กติกา「ไม่เคยขาย=0」ทีมใดถูกปิดในรอบ = ปิดทั้งรอบ</strong> — ไม่ใช่ยึดตามทีมหลักที่ล็อกอิน
+  (<code>never_sold_zero_round_state()</code> ถามครบทุกรหัสในคำขอ ไม่ใช่ทีมเดียว)</li>
 </ul>
+
+<div class="box warn">
+  <h4>⚠️ เตือนก่อนกระจายใหม่ทับทีมที่ส่งไปแล้ว</h4>
+  <p>ถ้ามีทีมในภาคที่<strong>ส่งเข้า Target Sun ไปแล้ว</strong> กล่องเลือกขอบเขต (<code>openAllocScopeModal</code>)
+  จะขึ้นกล่องแดงบอกรายชื่อทีม + เวลาส่งล่าสุด และปุ่ม<strong>「เริ่มกระจายหีบ」จะกดไม่ได้จนกว่าจะติ๊กรับทราบ</strong>
+  (ยืนยันครั้งเดียวก่อนเริ่มลูป ไม่ใช่ถามทีละทีมกลางทาง) — มาจากเหตุการณ์จริงที่การกระจายทั้งภาค
+  ทับผลของ 8 ทีมที่ส่งไปแล้วโดยไม่มีใครรู้</p>
+  <p style="margin-bottom:0">ชี้ทีมด้วย<strong>เวลาส่งล่าสุด ไม่ใช่สถานะ</strong> เพราะทีมที่ส่งแล้วกลับมาแก้ต่อจะมีสถานะ
+  เป็น「แบบร่าง」ซึ่งจะหลุดจากตัวกรองเดิมถ้าดูแค่สถานะ</p>
+</div>
 
 <h2 id="send">8 · ส่งเข้า Target Sun</h2>
 
@@ -390,6 +412,27 @@ PROVINCECODE · WAREHOUSECODE · QUANTITYCASE · EFFECTIVEDATE · UPDATEDATE · 
 <p>แถว <code>QUANTITYCASE = 0</code> ถูกส่งไปด้วย <strong>โดยตั้งใจ</strong> เพื่อทับเป้าเดิมใน Target Sun ให้เป็นศูนย์
 · วันที่เป็นข้อความปี พ.ศ. รูปแบบ <code>d/M/yyyy HH:mm:ss</code></p>
 
+<div class="box stop">
+  <h4>Business key (upsert) — นิยามอยู่ที่เดียวเท่านั้น</h4>
+  <p style="margin-bottom:0"><strong><code>PRODUCTCODE + SALESTYPE + DIVISIONCODE + SALESMANCODE + AREACODE +
+  PROVINCECODE + WAREHOUSECODE</code></strong> (เพิ่ม <code>WAREHOUSECODE</code> เข้าคีย์เมื่อ 7 ก.ย. 2026 —
+  เจ้าของ Target Sun แก้บน production) คลังว่างนับเป็น<strong>ค่าคีย์ค่าหนึ่ง</strong> ไม่ใช่ค่าที่ถูกละเว้น
+  พนักงานที่ขายหลายคลังจึงเป็นคนละแถวที่ต้องส่งแยกกัน — <strong>อย่าก็อปนิยามนี้ไปเขียนซ้ำที่ไหน</strong>
+  อ้างอิงจาก <code>docs/TARGETSUN_READ_API_SPEC.md</code> เท่านั้น เอกสารสองที่เคยขัดกันมาแล้วเพราะ
+  แก้แค่ไฟล์เดียวตอนคีย์เปลี่ยน</p>
+</div>
+
+<h3>ตรวจก่อนส่งจริง / ถ้าส่งไม่ครบ</h3>
+<ul class="tight">
+  <li><strong>ปุ่ม「ตรวจไฟล์ก่อนส่ง」</strong> — เรียก <code>prepare-targetsun</code> แบบ prepare-only สรุปจำนวนแถว/หีบ 0/
+  SKU ที่จะขาด โดย<strong>ยังไม่ส่งเข้า Oracle</strong> กดกี่ครั้งก็ได้</li>
+  <li><strong>SKU ที่ Target Sun ไม่เคยมีแถวของบางคนเลย → ไม่ส่งทั้ง SKU</strong> (กันเป้าครึ่ง ๆ กลาง ๆ) —
+  กล่องแจ้งบอก「ตอนนี้ Target Sun ถืออยู่ N หีบ · ต้องแก้ให้เป็น X หีบ」ไม่ใช่แค่ "ขาดเท่าไร"
+  เพราะเลขเก่ายังค้างอยู่เต็มก้อน ไปเติมแค่ส่วนขาดจะเกินเป้า</li>
+  <li><strong>รายการ SKU ที่ต้องไปแก้เองไม่หายเมื่อปิดกล่อง</strong> — ค้างเป็นแถบเหลืองบนหน้าผลลัพธ์
+  (แยกตามทีม+งวด, เก็บใน localStorage) จนกว่าจะกด「แก้ครบแล้ว」หรือส่งรอบใหม่แล้วไม่เหลือ SKU ที่ขาด</li>
+</ul>
+
 <h2 id="roles">9 · บทบาทและสิทธิ์</h2>
 
 <p>สิทธิ์มาจาก <code>config/user_access.json</code> (อีเมล + รหัส USERPL) และลำดับชั้นใน
@@ -404,6 +447,13 @@ PROVINCECODE · WAREHOUSECODE · QUANTITYCASE · EFFECTIVEDATE · UPDATEDATE · 
 <tr><td><strong>marketing</strong></td><td>ตามที่กำหนด</td><td>เข้าบางส่วนของหน้าแอดมิน</td></tr>
 </table></div>
 
+<h3>สิทธิ์หน้าแอดมิน — แยกทีละแท็บได้ (ไม่ต้อง deploy)</h3>
+<p><code>config/admin_permissions.json</code> คุมว่าบทบาทไหนเข้าแท็บไหนได้ — dev แก้ได้จากแท็บ「สิทธิ์หน้าแอดมิน」
+เอง <strong>dev เข้าได้ทุกแท็บเสมอ ถอดสิทธิ์ตัวเองไม่ได้</strong> · แท็บ「แหล่งข้อมูล」ล็อกไว้เฉพาะ dev เพราะมีผล
+ทั้งระบบ · สิทธิ์「ผู้ดูแลระบบ」มอบให้แอดมินธรรมดาไม่ได้ (จะยกระดับตัวเองได้)</p>
+<p>สองแท็บใหม่ล็อกไว้ที่ <strong>head_admin</strong> เท่านั้น (ไม่ใช่แอดมินทั่วไปทุกคน):
+「ข้อเสนอแนะจากผู้ใช้」(อ่านความเห็นจากปุ่ม 💬) และ「กติกาการเกลี่ย」(เปิด/ปิดกติกา I9)</p>
+
 <h3>สิทธิ์ส่ง Target Sun</h3>
 <p>คุมแยกต่างหากด้วย <code>can_import_targetsun</code> ต่ออีเมล ตั้งจากหน้าแอดมิน</p>
 <p>คอลัมน์ Target Sun มีปุ่ม <strong>เปิดทุกคน / ปิดทุกคน</strong> ทำงานกับ
@@ -416,13 +466,20 @@ PROVINCECODE · WAREHOUSECODE · QUANTITYCASE · EFFECTIVEDATE · UPDATEDATE · 
 <pre><code>target_boxes_{SL}_{YYYY}_{MM}.csv        เป้าหีบราย SKU
 target_sun_{SL}_{YYYY}_{MM}.csv          เป้าเงินราย emp
 emp_cache_{SL}_{YYYY}_{MM}.csv           รายชื่อพนักงาน
-hist_cache_{SL}_{YYYY}_{MM}.csv          ประวัติ 3M  (+ _6m)
+hist_cache_{SL}_{YYYY}_{MM}.csv          ประวัติ 3M  (+ _6m, _12m สำหรับกติกา I9)
 hist_cy_{SL}_{YYYY}.csv                  ประวัติทั้งปี — ใช้ตรวจสินค้าใหม่
 tga_lines_{SL}_{YYYY}_{MM}.csv           TGA grain เต็ม (ใช้ตอนส่ง)
 payload_cache_{SL}_{YYYY}_{MM}.json      cache ผล GET /data/employees
 final_allocation_{SL}_{YYYY}_{MM}.csv    ผลกระจายล่าสุด
 Final_Dashboard_{SL}_{YYYY}_{MM}.xlsx    Excel ผลกระจาย
-allocations/{SL}_{YYYY}_{MM}.json        snapshot บน server</code></pre>
+allocations/{SL}_{YYYY}_{MM}.json        snapshot บน server
+cache/salesman_roster.json               ทะเบียนพนักงานทั้งบริษัท (ไม่ผูกทีม — คำสั่งเดียว)</code></pre>
+
+<p><strong>ข้อยกเว้นที่ตั้งใจ — สองไฟล์นี้ global โดยไม่ผูกทีมเลย:</strong>
+<code>data/alloc_rules.json</code> (ค่ากติกาการเกลี่ยที่แอดมินตั้ง) และ
+<code>data/feedback/feedback.json</code> (ความเห็นผู้ใช้) — ทั้งคู่เขียนใต้ <code>_STORE_LOCK</code>
+ของตัวเอง และ <code>alloc_rules</code> มี compare-and-swap ด้วย <code>rev</code> เหมือนกลไก
+version ของ snapshot ด้านล่าง จึงไม่มี lost update</p>
 
 <div class="box stop">
   <h4>ข้อสมมติที่ทั้งระบบแบกอยู่: uvicorn 1 worker เท่านั้น</h4>
@@ -454,6 +511,11 @@ client บันทึก → ส่ง if_match_version: 3
 <tr><td><code>USE_LEGACY_TARGET_CSV</code></td><td>ปิด</td><td><strong>dev เท่านั้น</strong> — อ่านไฟล์เป้าแบบ global ที่วางเอง</td></tr>
 <tr><td><code>ENABLE_DEBUG_ENDPOINTS</code></td><td>ปิด</td><td>เปิด <code>GET /debug/fabric</code></td></tr>
 </table></div>
+
+<p style="color:var(--ink-3);font-size:14px">ตารางนี้คือ <strong>env vars</strong> เท่านั้น (ต้องแก้ที่เซิร์ฟเวอร์แล้วรีสตาร์ท) — กติกา I9
+("ไม่เคยขาย=0") เป็นคนละกลไก: ตั้งจาก<strong>หน้าเว็บ</strong> (แท็บ「กติกาการเกลี่ย」→
+<code>data/alloc_rules.json</code>) มีผลทันทีไม่ต้อง deploy/รีสตาร์ท ค่าตั้งต้นจากโค้ดอยู่ที่
+<code>config/allocation_rules.json</code></p>
 
 <h2 id="api">12 · API ทั้งหมด</h2>
 
@@ -488,13 +550,21 @@ client บันทึก → ส่ง if_match_version: 3
 <tr><td>PUT</td><td><code>/admin/user-access/targetsun/bulk</code></td><td><strong>เปิด/ปิดยกชุด</strong></td></tr>
 <tr><td>GET/POST/PUT/DELETE</td><td><code>/admin/sl-links</code> · <code>/admin/sku-links</code></td><td>ผูกรหัส SL / รหัส SKU</td></tr>
 <tr><td>PUT</td><td><code>/admin/settings/target-source</code></td><td>สลับแหล่งเป้า + preset URL</td></tr>
+<tr><td>GET</td><td><code>/admin/emp-assignments</code></td><td>รายชื่อพนักงาน+ทีมสังกัด (3 แหล่ง รวม roster)</td></tr>
+<tr><td>POST</td><td><code>/admin/emp-assignments</code></td><td>ย้ายพนักงานไปทีมอื่น</td></tr>
+<tr><td>POST</td><td><code>/admin/feedback/submit</code></td><td>ผู้ใช้ทั่วไปส่งความเห็นจากปุ่ม 💬</td></tr>
+<tr><td>GET</td><td><code>/admin/feedback</code></td><td>รายการความเห็น — <strong>head_admin เท่านั้น</strong></td></tr>
+<tr><td>POST</td><td><code>/admin/feedback/{id}/status</code></td><td>เปลี่ยนสถานะความเห็น</td></tr>
+<tr><td>GET/PUT</td><td><code>/admin/settings/alloc-rules</code></td><td>อ่าน/บันทึกกติกา I9 — PUT เป็น CAS ด้วย <code>expected_rev</code></td></tr>
+<tr><td>POST</td><td><code>/admin/settings/alloc-rules/reset</code></td><td>คืนค่าเริ่มต้นจากโค้ด</td></tr>
+<tr><td>POST</td><td><code>/admin/alloc-rules/round-check</code></td><td>ผู้ใช้ทั่วไปยิงได้ — เช็คว่าทีมถูกปิดกติกาไหมก่อนกระจายรวมภาค</td></tr>
 <tr><td>GET</td><td><code>/admin/usage-logs</code></td><td>บันทึกการใช้งาน</td></tr>
 <tr><td>GET</td><td><code>/health</code> · <code>/health/build</code></td><td>ตรวจสถานะ</td></tr>
 </table></div>
 
 <h2 id="test">13 · การทดสอบ</h2>
 
-<pre><code># ทั้งหมด (161 เทสต์)
+<pre><code># ทั้งหมด (1,290 เทสต์)
 python run_tests.py
 
 # กฎคงที่ของการกระจาย — ในหน่วยความจำล้วน ไม่แตะไฟล์/เน็ต/DB

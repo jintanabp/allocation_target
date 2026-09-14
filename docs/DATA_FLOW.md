@@ -107,6 +107,10 @@ Frontend **ไม่** เรียก Power BI โดยตรง
 
 Methods: `get_skus_sold_by_team`, `get_historical_sales`, `get_calendar_year_sales_by_emp_sku`, `get_same_month_prior_year_by_emp_sku`, `get_prev_month_by_emp_sku`, `get_latest_price_per_box_by_sku`, `get_warehouse_by_emp`
 
+**ประวัติ 12 เดือน สำหรับกติกา "ไม่เคยขาย = เป้า 0"** — คิวรีเดิม (`get_historical_sales`)
+เรียกซ้ำโดยขอ `n_months=12` แทน 3/6 ไม่ใช่คิวรีใหม่ · แคชแยกไฟล์ (`hist_cache_*_12m.csv`
+ดูหัวข้อ 3) ดึงพร้อมขั้นที่ 1 เฉพาะเมื่อเปิดกติกานี้อยู่ (`backend/services/optimize.py:782`)
+
 #### `cfm_produc_master`
 
 | คอลัมน์ | การใช้งาน |
@@ -172,11 +176,15 @@ python scripts/repair_user_access.py
 | `payload_cache_{sup}_{year}_{mm}.json` | payload ขั้นที่ 1 ทั้งก้อน |
 | `tga_lines_{sup}_{year}_{mm}.csv` | tga_target_salesman_next |
 | `hist_cache_*`, `hist_lysm_*`, `hist_prev_*`, `hist_cy_*` | cross_sold_history |
+| `hist_cache_{sup}_{year}_{mm}_12m.csv` | cross_sold_history (12 เดือน — เฉพาะกติกา "ไม่เคยขาย = เป้า 0") |
 | `target_boxes_{sup}_{year}_{mm}.csv`, `target_sun_{sup}_{year}_{mm}.csv` | คำนวณจาก TGA + ราคา |
 | `managers_cache.json` | access_hierarchy |
+| `cache/salesman_roster.json` | `Dim_Salesman` ทั้งบริษัท คำสั่งเดียว (`company_roster.py`) — ใช้โดยแท็บ「สรุปการใช้งาน」**และ**แท็บ「ย้ายพนักงาน」(เป็นแหล่งที่ 3 เติมพนักงานของทีมที่ยังไม่เคยเปิดใช้งาน) · รีเฟรชด้วย `POST /admin/cache/refresh?layer=roster` — ไม่รวมอยู่ใน `layer=all` |
+| `alloc_rules.json` | ค่ากติกาการเกลี่ยที่แอดมินตั้งจากหน้าเว็บ (global ไม่ผูก sup — ดู `docs/CONCURRENCY.md`) |
+| `feedback/feedback.json` | ข้อความจากปุ่ม 💬 ของผู้ใช้ (global ไม่ผูก sup) |
 | `ts_prepare/*.xlsx` | ไฟล์ชั่วคราวก่อนส่ง TargetSun |
 
-TTL: `EMPLOYEE_PAYLOAD_CACHE_TTL_SEC`, `MANAGERS_CACHE_TTL_SEC`, `ADMIN_TEAM_CACHE_TTL_SEC`
+TTL: `EMPLOYEE_PAYLOAD_CACHE_TTL_SEC`, `MANAGERS_CACHE_TTL_SEC`, `ADMIN_TEAM_CACHE_TTL_SEC`, `FABRIC_STATIC_CACHE_TTL_SEC` (roster)
 
 ---
 
@@ -198,6 +206,15 @@ TTL: `EMPLOYEE_PAYLOAD_CACHE_TTL_SEC`, `MANAGERS_CACHE_TTL_SEC`, `ADMIN_TEAM_CAC
 | `PUT /admin/permissions` | ไม่ | บันทึกตารางสิทธิ์ (dev เท่านั้น) |
 | `GET /admin/permissions/me` | ไม่ | สิทธิ์/แท็บของคนที่ล็อกอินอยู่ |
 | `GET /admin/sku-links/preview` | ใช่ | ทดสอบยอดประวัติ 3M/LY หลังรวม alias |
+| `GET /admin/emp-assignments` | ไม่ | รายชื่อพนักงาน+ทีมสังกัดจริง สำหรับหน้าย้ายพนักงาน (3 แหล่ง — ดู §3) |
+| `POST /admin/emp-assignments` | ไม่ | บันทึกการย้ายพนักงานไปทีมอื่น |
+| `POST /admin/feedback/submit` | ไม่ | ผู้ใช้ทั่วไปส่งความเห็นจากปุ่ม 💬 (auth ธรรมดา ไม่ใช่ admin) |
+| `GET /admin/feedback` | ไม่ | รายการความเห็นทั้งหมด — เฉพาะ head_admin |
+| `POST /admin/feedback/{id}/status` | ไม่ | เปลี่ยนสถานะความเห็น (อ่านแล้ว/จัดการแล้ว/กลับเป็นใหม่) |
+| `GET /admin/settings/alloc-rules` | ไม่ | อ่านค่ากติกาการเกลี่ยปัจจุบัน (`config` หรือ `admin` ตามว่าเคยตั้งจากเว็บไหม) |
+| `PUT /admin/settings/alloc-rules` | ไม่ | บันทึกค่ากติกาการเกลี่ย — CAS ด้วย `expected_rev` (ดู `docs/CONCURRENCY.md`) |
+| `POST /admin/settings/alloc-rules/reset` | ไม่ | ลบค่าที่ตั้งจากเว็บ กลับไปใช้ค่าเริ่มต้นจากโค้ด |
+| `POST /admin/alloc-rules/round-check` | ไม่ | ผู้ใช้ทั่วไปยิงได้ (ไม่ใช่ admin) — ถามว่ารหัสทีมที่ระบุถูกปิดกติกาไหม ก่อนกดกระจายรวมภาค |
 | `GET /debug/fabric` | ใช่ | debug (`ENABLE_DEBUG_ENDPOINTS=1`) |
 
 ---

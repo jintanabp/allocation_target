@@ -74,6 +74,22 @@ allocations/{SUP}_{YYYY}_{MM}.json
 ตอน deploy ใหม่ ๆ — ทุกครั้งที่ fallback ทำงานจะมี `logger.warning("target CSV: ใช้ไฟล์ global เดิม…")`
 **เมื่อ log นี้เงียบแล้วให้ถอด fallback ออก** และลบไฟล์ global ทิ้ง
 
+### ไฟล์ global ที่ตั้งใจไม่ผูก `sup_id` — ข้อยกเว้นของกฎด้านบน
+
+สองไฟล์นี้เป็นค่าที่ **ใช้ร่วมกันทั้งระบบโดยตั้งใจ** ไม่ใช่บั๊กแบบ `target_boxes.csv` เดิม:
+
+| ไฟล์ | เก็บอะไร | ทำไมต้อง global |
+|---|---|---|
+| `data/alloc_rules.json` | ค่ากติกาการเกลี่ยที่แอดมินตั้งจากหน้าเว็บ (เปิด/ปิด "ไม่เคยขาย=0", เกณฑ์ดันเป้า, รายทีมที่ปิด) | กติกาเป็นค่าตั้งของทั้งบริษัท ไม่ใช่ของทีมใดทีมหนึ่ง |
+| `data/feedback/feedback.json` | ข้อความจากปุ่ม 💬 ของผู้ใช้ทุกทีม | หน้าแอดมินต้องอ่านรวมทุกทีมในที่เดียว |
+
+ทั้งคู่ป้องกัน read-modify-write ชนกันแล้ว (ต่างจาก `user_access.json` ด้านล่างที่ยังมีรู):
+`backend/services/alloc_rules_store.py` (`write_settings()`) อ่าน + เช็ค `expected_rev` +
+เขียนทั้งหมด **ใต้ `_STORE_LOCK` เดียว** แล้วปฏิเสธด้วย `AllocRulesConflict` ถ้า `rev` ไม่ตรง
+(compare-and-swap แบบเดียวกับ `allocation_store.py`) · `feedback_store.py` ก็ครอบ
+read-modify-write ใต้ `_STORE_LOCK` ของตัวเองเช่นกัน — แอดมิน 2 คนกดบันทึกกติกาพร้อมกัน
+คนที่ `rev` ไม่ตรงจะได้ 409 ไม่ใช่ข้อมูลหาย
+
 ## บันทึกผลกระจาย — optimistic concurrency
 
 `PUT /data/allocations` ใช้ **compare-and-swap** ด้วย `version` (int เพิ่มทีละ 1)
@@ -122,6 +138,8 @@ client บันทึก → ส่ง if_match_version: 3
 | `services/usage_log_store.py` | `_LOCK` | append/rewrite jsonl |
 | `services/sl_link_store.py` / `sku_link_store.py` | `_LOCK` | เขียน links |
 | `fabric_dax_connector.py` | `_TOKEN_CACHE_LOCK` | เขียน `data/token_cache.bin` (เฉพาะโหมดล็อกอินผู้ใช้) |
+| `services/alloc_rules_store.py` | `_STORE_LOCK` | CAS ด้วย `rev` (ดูหัวข้อ "ไฟล์ global" ด้านบน) |
+| `services/feedback_store.py` | `_STORE_LOCK` | append/แก้สถานะความเห็นผู้ใช้ |
 
 ## โหลดรวมภาคทำงานขนานกัน (thread pool ซ้อนใน request)
 
