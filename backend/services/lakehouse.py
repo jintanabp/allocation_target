@@ -2265,6 +2265,26 @@ def _build_tga_upload_dataframe(
                     "hint_th": "กลับไปโหลดข้อมูลขั้นที่ 1 ใหม่ แล้วกระจายหีบอีกครั้ง",
                 },
             )
+        # ตัดแถวเป้า 0 ที่ "สร้างแถวใหม่เปล่า ๆ" — ปลายทางไม่เคยมีคู่นี้มาก่อน
+        # (dims_inferred == True แปลว่าเดา dim จากแถวอื่นของคนคนนั้นแล้วผ่านด่านบนมาได้)
+        # และหีบ = 0 จึงไม่มีอะไรให้ทับ/ล้าง สร้างแถวเปล่าไปก็ไม่มีประโยชน์
+        #
+        # ห้ามแตะแถวหีบ 0 ที่ dims_inferred เป็น NaN/False — พวกนั้นคือคู่ที่ Target Sun
+        # "มีอยู่แล้ว" ต้องส่ง 0 ไปทับเพื่อล้างเป้างวดก่อน ไม่ตัดจะเหลือเลขเก่าค้างเป็นยอดเกิน
+        # ไม่กระทบยอดรวมต่อ SKU เลย (ตัดแถวที่มีค่า 0 ผลรวมเท่าเดิม) — ดู
+        # docs/ALLOCATION_INVARIANTS.md หัวข้อ "เริ่มงาน ค9" และ docs/next-plan-2026-09.md 11.2
+        if "dims_inferred" in df.columns and not df.empty:
+            _empty_new_mask = (df["dims_inferred"] == True) & (  # noqa: E712
+                pd.to_numeric(df["allocated_boxes"], errors="coerce").fillna(0).astype(int) == 0
+            )
+            _cut = int(_empty_new_mask.sum())
+            if _cut:
+                df = df[~_empty_new_mask].copy()
+                logger.info(
+                    "ตัดแถวเป้า 0 ที่สร้างแถวใหม่เปล่า ๆ %s: %d แถว (ปลายทางไม่เคยมีคู่นี้ + หีบ=0)",
+                    str(req.sup_id or "").strip().upper(),
+                    _cut,
+                )
     else:
         not_in_ts = _preview_not_in_targetsun(df)
         dropped_dims = int((~_import_key_mask(df)).sum())
