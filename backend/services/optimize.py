@@ -42,6 +42,7 @@ from ..core.paths import (
 )
 from ..core.atomic_io import atomic_write_csv
 from ..core.targets import (
+    _read_sku_csv,
     load_summed_target_boxes,
     load_target_csv_for,
     target_boxes_source_path,
@@ -50,7 +51,7 @@ from ..generate_excel import create_target_excel
 from ..schemas import OptimizeRequest
 from ..fabric_dax_connector import FabricDAXConnector
 from . import alloc_rules_store, no_target_store
-from .sku_link_store import collapse_hist_to_canonical
+from .sku_link_store import collapse_hist_to_canonical, expand_skus_for_dax, read_links
 from .wh_split import (
     _norm_wh,
     alloc_key,
@@ -236,6 +237,92 @@ def _read_hist_cache_across_teams(
     if {"emp_id", "sku"} <= set(out.columns):
         out = out.drop_duplicates(subset=["emp_id", "sku"], keep="first").reset_index(drop=True)
     return out
+
+
+def _peer_target_skus(sup_id: str, month: int, year: int) -> set[str] | None:
+    """
+    SKU ที่ทีมนี้เคยตั้งเป้าเงินเอง (จากไฟล์เป้าราย sup) — นี่คือขอบเขต SKU ที่ Step-1
+    ของทีมนี้เคยส่งเข้า Fabric จริง (employees.py: sku_list มาจากเป้าเงินตัวเองเท่านั้น
+    ดู _fill_missing_peer_hist ด้านล่าง)
+
+    คืน None เมื่อยังไม่มีไฟล์เป้าของทีมนี้เลย — ไม่รู้ขอบเขต ไม่กล้าเดาว่าอะไรคือช่องว่าง
+    """
+    df = _read_sku_csv(target_boxes_cache_path(sup_id, month, year))
+    if df is None:
+        return None
+    return set(df["sku"].astype(str).str.strip())
+
+
+def _fill_missing_peer_hist(
+    fabric,
+    hist_sup_ids: list[str],
+    emp_by_sup: dict[str, list[str]],
+    all_skus: set[str],
+    target_month: int,
+    target_year: int,
+    n_months: int,
+    sku_links,
+) -> None:
+    """
+    เติมประวัติของทีม peer สำหรับ SKU ที่ทีมนั้น "ไม่เคยมีเป้าเงินเองมาก่อน" (โหมดรวมภาค/หน่วย)
+
+    โหมดรวมภาคอ่านประวัติจาก cache ของทุกทีมใน hist_sup_ids อยู่แล้ว
+    (_read_hist_cache_across_teams) แต่ cache ของแต่ละทีมถูกสร้างตอน Step-1 โดยดึงประวัติ
+    เฉพาะ SKU ที่ "ทีมนั้นเองมีเป้าเงิน" เท่านั้น — SKU ที่มีเป้าอยู่ที่ทีมอื่นในกลุ่มเดียวกัน
+    (เช่นเป้าเพิ่งถูกวางไว้ที่ทีมเดียวรอกระจาย) จึงไม่เคยถูกดึงให้ทีมนี้เลย พนักงานทีมนี้เลย
+    ดูเหมือน "ไม่เคยขาย" ทั้งที่ Fabric มีประวัติจริง — ต้นเหตุของกรณี SL341/SKU 426544
+    (ก.ย. 2026, ดู docs/next-plan-2026-09.md)
+
+    ดึงเพิ่มเฉพาะ SKU ที่เป็นช่องว่างจริง (ไม่อยู่ในเป้าของทีมนั้นเอง และยังไม่มีในไฟล์ cache)
+    แล้วต่อกลับเข้าไฟล์ cache ของทีมนั้น — ไม่แตะไฟล์เป้า (target_boxes_) เด็ดขาด
+
+    ไม่มี marker แยกว่า "เคยลองแล้วได้ 0" โดยตั้งใจ: SKU ที่เป็นช่องว่างจริงและยังไม่เคยขาย
+    จริงอาจถูกยิงซ้ำได้ทุกรอบที่กระจายรวมภาค แต่จำกัดเฉพาะ SKU ที่เป็นช่องว่างจริงเท่านั้น
+    (ไม่ใช่ทุก SKU ของทีม) และเมื่อเจอยอดขายจริงครั้งแรกจะถูกแคชไว้และไม่ถูกยิงซ้ำอีก —
+    ต้นทุนแบบเดียวกับที่ ก3 ยอมรับไว้แล้วสำหรับคิวรี 12 เดือนของกติกาไม่เคยขาย=เป้า 0
+    """
+    if fabric is None or not all_skus:
+        return
+    for sid in hist_sup_ids:
+        own_skus = _peer_target_skus(sid, target_month, target_year)
+        if own_skus is None:
+            continue
+        team_emps = emp_by_sup.get(sid) or []
+        if not team_emps:
+            continue
+        cache_path = hist_cache_path(sid, target_month, target_year, n_months=n_months)
+        existing = _read_hist_cache(cache_path, team_emps)
+        already_have = set(existing["sku"]) if not existing.empty else set()
+        missing = (all_skus - own_skus) - already_have
+        if not missing:
+            continue
+        dax_skus = expand_skus_for_dax(sorted(missing), sku_links)
+        try:
+            df_gap = fabric.get_historical_sales(
+                target_month, target_year,
+                sku_list=dax_skus, emp_list=team_emps, n_months=n_months,
+            )
+        except Exception as e:
+            logger.warning(
+                "เติมประวัติ peer ของ %s (%dM) ไม่สำเร็จ — ข้ามช่องว่างรอบนี้: %s",
+                sid, n_months, e,
+            )
+            continue
+        if df_gap is None or df_gap.empty:
+            continue
+        df_gap = collapse_hist_to_canonical(df_gap, sku_links)
+        combined = (
+            pd.concat([existing, df_gap], ignore_index=True) if not existing.empty else df_gap
+        )
+        combined = combined.drop_duplicates(subset=["emp_id", "sku"], keep="last")
+        try:
+            combined.to_csv(cache_path, index=False)
+        except OSError as e:
+            logger.warning("เขียน hist cache เติม peer ของ %s ไม่สำเร็จ: %s", sid, e)
+        logger.info(
+            "เติมประวัติ peer: ทีม %s ช่วง %dM — เจอ %d แถวจาก %d SKU ที่เคยเป็นช่องว่าง",
+            sid, n_months, len(df_gap), len(missing),
+        )
 
 
 def _hist_input_for_strategy(
@@ -677,6 +764,38 @@ def run_optimization_service(
         )
         if s and s != str(sup_id).strip().upper()
     ]
+
+    # กระจายรวมทั้งภาค/หน่วย: เติมช่องว่างประวัติของทีม peer ที่ SKU บางตัวไม่เคยอยู่ใน
+    # เป้าเงินของทีมตัวเองมาก่อน (ดู _fill_missing_peer_hist) — ทีมเดียวไม่มีช่องว่างให้เติม
+    # เพราะ df_sku ของทีมเดียวคือไฟล์เป้าของทีมนั้นเองพอดี จึง no-op โดยอัตโนมัติ
+    _gapfill_fabric = None
+    _gapfill_emp_by_sup: dict[str, list[str]] = {}
+    _gapfill_sku_links: list = []
+    _gapfill_all_skus: set[str] = set()
+    if len(hist_sup_ids) > 1:
+        try:
+            _gapfill_fabric = FabricDAXConnector()
+        except Exception as e:
+            logger.warning(
+                "เติมประวัติ peer: เชื่อม Fabric ไม่ได้ — ข้ามการเติมช่องว่างรอบนี้: %s", e
+            )
+        if _gapfill_fabric is not None:
+            _gapfill_sku_links = read_links()
+            _gapfill_all_skus = set(df_sku["sku"].astype(str).str.strip())
+            if "supervisor_code" in df_all_targets.columns:
+                for _sid, _grp in df_all_targets.groupby(
+                    df_all_targets["supervisor_code"].astype(str).str.strip().str.upper()
+                ):
+                    if _sid:
+                        _gapfill_emp_by_sup[_sid] = (
+                            _grp["emp_id"].astype(str).str.strip().tolist()
+                        )
+            for _nm in (3, 6):
+                _fill_missing_peer_hist(
+                    _gapfill_fabric, hist_sup_ids, _gapfill_emp_by_sup, _gapfill_all_skus,
+                    target_month, target_year, n_months=_nm, sku_links=_gapfill_sku_links,
+                )
+
     df_hist_3 = _read_hist_cache_across_teams(
         lambda sid: hist_cache_path(sid, target_month, target_year, n_months=3),
         hist_sup_ids,
@@ -777,6 +896,11 @@ def run_optimization_service(
             )
     df_hist_12 = pd.DataFrame()
     if never_sold_on:
+        if _gapfill_fabric is not None:
+            _fill_missing_peer_hist(
+                _gapfill_fabric, hist_sup_ids, _gapfill_emp_by_sup, _gapfill_all_skus,
+                target_month, target_year, n_months=12, sku_links=_gapfill_sku_links,
+            )
         try:
             df_hist_12 = _read_hist_cache_across_teams(
                 lambda sid: hist_cache_path(sid, target_month, target_year, n_months=12),
