@@ -104,6 +104,13 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
                 f" · สร้างแถวใหม่ {new_rows} แถว ({new_rows_boxes} แถวมีหีบ > 0) "
                 "— ปลายทางไม่เคยมีคู่นี้มาก่อน เสี่ยงคลังไม่ตรงกับที่มีอยู่แล้ว"
             )
+        # แถวเป้าเก่าที่หลุดจากรอบนี้แล้วถูกล้าง (ส่ง 0 ไปทับ) — ค8
+        stale_cleared = int(res.get("stale_rows_cleared_count") or 0)
+        stale_cleared_note = (
+            f" · ล้างแถวเป้าเก่าที่หลุดจากรอบนี้ {stale_cleared} แถว (ส่ง 0 ไปทับ)"
+            if stale_cleared
+            else ""
+        )
         emp_ids = [str(e).strip() for e in (res.get("emp_codes") or []) if str(e).strip()]
         # SKU ที่ถูกตัดออกทั้งตัว + แถวหีบ 0 ที่ส่งไปล้างเป้าเดิม — สองตัวเลขนี้เป็น
         # ตัวชี้ว่ายอดใน Target Sun ตรงกับที่กระจายไว้หรือไม่ แต่เดิมไม่เคยถูกบันทึก
@@ -145,6 +152,7 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
                 + exc_note
                 + rb_note
                 + new_rows_note
+                + stale_cleared_note
             ),
             target_month=int(req.target_month),
             target_year=int(req.target_year),
@@ -163,6 +171,7 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
                 "readback_ok": rb.get("ok"),
                 "new_rows_count": new_rows,
                 "new_rows_with_boxes_count": new_rows_boxes,
+                "stale_rows_cleared_count": stale_cleared,
                 "ok": ok,
             },
         )

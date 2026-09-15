@@ -1072,6 +1072,89 @@ def _clear_no_target_employees_in_tga(
     return pd.concat([df, pd.DataFrame(extra)], ignore_index=True), sorted(cleared)
 
 
+def _clear_stale_employee_sku_rows_in_tga(
+    df: pd.DataFrame,
+    sup_id: str,
+    *,
+    dg: pd.DataFrame | None = None,
+    full_send: bool,
+) -> tuple[pd.DataFrame, int]:
+    """
+    ล้างแถวเป้าเก่าที่ "หลุดจากผลกระจายรอบนี้" แต่ยังค้างอยู่ใน Target Sun (ค8)
+
+    คนละกรณีกับ _clear_no_target_employees_in_tga ด้านบน (ที่นั่นคือคนทั้งคนไม่มีแถว
+    เลยเพราะอยู่ในบัญชีดำ「ไม่ต้องตั้งเป้า」) — ที่นี่คือ "พนักงานคนนี้ยังอยู่ในรอบส่งนี้จริง
+    (มีอย่างน้อย 1 แถว) แต่ SKU บางตัวที่เขาเคยมีเป้า (เห็นใน grain ของ TGA) ไม่อยู่ใน
+    รอบนี้แล้ว" เช่นทีมเลิกตั้งเป้า SKU นั้น หรือพนักงานคนนั้นไม่มีเป้าเงินของ SKU นั้นอีก
+    ต่อไป — Target Sun ยังถือเลขงวดก่อนไว้เพราะไม่มีใครเคยส่ง 0 ไปทับ
+
+    full_send=False (ส่งเฉพาะแบรนด์/สินค้าบางตัวผ่าน brand_filter/sku_filter) ต้อง
+    **ไม่ทำอะไรเลย** — SKU ที่ไม่อยู่ใน payload รอบนั้นอาจแค่ "ไม่ได้เลือกส่งรอบนี้" ไม่ใช่
+    "หมดเป้าแล้ว" ถ้าไปทับจะล้างเป้าที่ยังถูกต้องของ SKU อื่นทั้งหมดโดยไม่ตั้งใจ — ผู้เรียก
+    ต้องส่ง full_send=True เฉพาะตอนที่ brand_filter=="ALL" และ sku_filter ว่าง เท่านั้น
+
+    จับคู่แค่ระดับ (emp, sku) เหมือน _clear_no_target_employees_in_tga — ไม่แยกตามคลัง
+    แม้คีย์ upsert จะรวม WAREHOUSECODE แล้วก็ตาม (ยังผูกกับคำถามที่ยังไม่มีคำตอบ ข7:
+    แถวคลังว่างกับแถวมีคลังของคู่เดียวกัน ถือเป็นคนละเป้าไหม) — ถ้าพนักงานมีแถวของ SKU นี้
+    อยู่ในรอบนี้แล้วไม่ว่าคลังไหน ถือว่า "ยังมีเป้า" ไม่ล้าง
+
+    **ต้องเป็น SKU ที่อยู่ใน "จักรวาล SKU ของรอบนี้" ด้วย** (มีแถวของ SKU นั้นอยู่ใน df
+    ไม่ว่าจะเป็นของพนักงานคนไหนก็ตาม) ไม่ใช่แค่ "ไม่อยู่ในแถวของพนักงานคนนี้" — พนักงาน
+    ทีมอื่นที่ติดมาในโหมดรวมภาค/หน่วย (grain ถูกเติมข้ามทีมมาให้มีครบ dim) มักมี SKU อื่น
+    ในประวัติ/เป้าของทีมตัวเองที่ไม่เกี่ยวอะไรกับรอบส่งนี้เลย (คนละ SKU กับที่ทีมเจ้าของ
+    ก้อนกำลังตั้งเป้าอยู่) ถ้าไม่กันตรงนี้ไว้จะกลายเป็นสร้างแถว 0 ปลอมให้ SKU ที่รอบนี้
+    ไม่เคยแตะเลยสักที (พบจากเทสจริง test_grain_across_teams.py /
+    test_unit_wide_allocation.py ตอนพัฒนา)
+    """
+    if not full_send or dg is None or dg.empty or "emp_id" not in dg.columns or df.empty:
+        return df, 0
+
+    present_emps = set(df["emp_id"].astype(str).str.strip()) - {""}
+    if not present_emps:
+        return df, 0
+    round_skus = set(df["sku"].astype(str).str.strip()) - {""}
+    if not round_skus:
+        return df, 0
+
+    present_pairs = set(
+        zip(
+            df["emp_id"].astype(str).str.strip(),
+            df["sku"].astype(str).str.strip(),
+        )
+    )
+    extra: list[dict] = []
+    touched: set[str] = set()
+    for _, r in dg.iterrows():
+        emp = str(r.get("emp_id") or "").strip()
+        sku = str(r.get("sku") or "").strip()
+        if not emp or not sku or emp not in present_emps or sku not in round_skus:
+            continue
+        if (emp, sku) in present_pairs:
+            continue
+        extra.append(
+            {
+                "emp_id": emp,
+                "sku": sku,
+                "allocated_boxes": 0,
+                "salestype": _cell_str(r.get("salestype", "")),
+                "divisioncode": _cell_str(r.get("divisioncode", "")),
+                "areacode": _areacode_str(r.get("areacode", "")),
+                "provincecode": _cell_str(r.get("provincecode", "")),
+                "warehouse_code": _cell_str(r.get("warehouse_code", "")),
+            }
+        )
+        touched.add(emp)
+    if not extra:
+        return df, 0
+    logger.info(
+        "ล้างแถวเป้าเก่าที่หลุดจากผลกระจายรอบนี้ %s: %d คน %d แถว (ส่งหีบ 0 ไปทับ)",
+        str(sup_id or "").strip().upper(),
+        len(touched),
+        len(extra),
+    )
+    return pd.concat([df, pd.DataFrame(extra)], ignore_index=True), len(extra)
+
+
 def _preview_not_in_targetsun(df: pd.DataFrame, limit: int = 80) -> list[dict]:
     """คู่พนักงาน×สินค้าที่ไม่มี SALESTYPE/DIVISION/AREACODE จากเป้า TGA ณ ตอนส่ง"""
     if df.empty:
@@ -2158,9 +2241,17 @@ def _build_tga_upload_dataframe(
         grain_lookup=grain_lookup,
     )
     # เฉพาะเส้นทางส่งจริง — ไฟล์ Excel ที่ผู้ใช้โหลดไปดูไม่ต้องมีแถวล้างค่าปนมาให้งง
+    stale_rows_cleared = 0
     if drop_incomplete_rows:
         df, _no_target_cleared = _clear_no_target_employees_in_tga(
             df, req.sup_id, dg=grain_dg
+        )
+        # ล้างแถวที่หลุดจากรอบนี้ (ค8) ต้องเป็นการส่งแบบเต็ม — brand_filter=="ALL" และ
+        # ไม่มี sku_filter — ไม่งั้นจะเข้าใจผิดว่า "ตั้งใจไม่เลือกส่ง" คือ "หมดเป้าแล้ว"
+        # แล้วไปล้างเป้าที่ยังถูกต้องของ SKU/แบรนด์อื่นที่ไม่ได้อยู่ในรอบส่งนี้
+        _full_send = (brand_filter or "ALL").upper() == "ALL" and not sku_filter
+        df, stale_rows_cleared = _clear_stale_employee_sku_rows_in_tga(
+            df, req.sup_id, dg=grain_dg, full_send=_full_send
         )
     t_expand = time.perf_counter()
 
@@ -2420,6 +2511,7 @@ def _build_tga_upload_dataframe(
     # unpack เป็น 4-tuple ตายตัวอยู่แล้ว เพิ่มค่าคืนที่ 5 จะพังของเดิมทั้งหมด)
     final.attrs["new_rows_count"] = new_rows
     final.attrs["new_rows_with_boxes_count"] = new_rows_with_boxes
+    final.attrs["stale_rows_cleared_count"] = stale_rows_cleared
     return final, dropped_dims, not_in_ts, shortfall
 
 

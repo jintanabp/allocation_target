@@ -38,7 +38,7 @@ def _req(month=9, year=2026, sup="SL397"):
     return LakehouseUploadRequest(sup_id=sup, target_month=month, target_year=year)
 
 
-def _result(ok=True, emp_codes=("S402", "S420"), rows=12, new_rows=0, new_rows_boxes=0):
+def _result(ok=True, emp_codes=("S402", "S420"), rows=12, new_rows=0, new_rows_boxes=0, stale_cleared=0):
     return {
         "rows_sent": rows,
         "emp_codes": list(emp_codes),
@@ -46,6 +46,7 @@ def _result(ok=True, emp_codes=("S402", "S420"), rows=12, new_rows=0, new_rows_b
         "readback": {"checked": True, "ok": True},
         "new_rows_count": new_rows,
         "new_rows_with_boxes_count": new_rows_boxes,
+        "stale_rows_cleared_count": stale_cleared,
     }
 
 
@@ -132,6 +133,19 @@ class TestSendLogRecordsPeriodAndPeople(_LogBase):
         self.assertEqual(row["context"]["new_rows_count"], 0)
         self.assertNotIn("สร้างแถวใหม่", row["detail"])
 
+    def test_stale_rows_cleared_is_written_and_flagged_in_detail(self):
+        """แถวเป้าเก่าที่หลุดจากรอบนี้แล้วถูกล้าง (ค8) ต้องเห็นได้จาก log"""
+        lakehouse._log_targetsun_send(USER, _req(), _result(stale_cleared=7))
+        row = self._only()
+        self.assertEqual(row["context"]["stale_rows_cleared_count"], 7)
+        self.assertIn("ล้างแถวเป้าเก่าที่หลุดจากรอบนี้ 7 แถว", row["detail"])
+
+    def test_no_stale_rows_cleared_adds_no_note(self):
+        lakehouse._log_targetsun_send(USER, _req(), _result())
+        row = self._only()
+        self.assertEqual(row["context"]["stale_rows_cleared_count"], 0)
+        self.assertNotIn("ล้างแถวเป้าเก่า", row["detail"])
+
     def test_failed_send_still_records_period(self):
         lakehouse._log_targetsun_send(USER, _req(8, 2026), _result(ok=False))
         row = self._only()
@@ -195,6 +209,15 @@ class TestAttachReadbackCarriesEmpCodes(unittest.TestCase):
         self.assertEqual(out["new_rows_count"], 5)
         self.assertEqual(out["new_rows_with_boxes_count"], 2)
 
+    def test_stale_rows_cleared_count_passes_through(self):
+        out = tsi._attach_readback(
+            {"targetsun": {"success": False}},
+            sup_id="SL397", month=9, year=2026,
+            sku_totals={}, emp_codes=["S402"],
+            stale_rows_cleared_count=3,
+        )
+        self.assertEqual(out["stale_rows_cleared_count"], 3)
+
     def test_new_rows_count_defaults_to_zero(self):
         out = tsi._attach_readback(
             {"targetsun": {"success": False}},
@@ -203,6 +226,7 @@ class TestAttachReadbackCarriesEmpCodes(unittest.TestCase):
         )
         self.assertEqual(out["new_rows_count"], 0)
         self.assertEqual(out["new_rows_with_boxes_count"], 0)
+        self.assertEqual(out["stale_rows_cleared_count"], 0)
 
 
 class TestUsageLogStoreAcceptsIt(unittest.TestCase):

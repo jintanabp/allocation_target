@@ -73,6 +73,7 @@ def _save_prepare_bundle(
     emp_codes: list | None = None,
     new_rows_count: int = 0,
     new_rows_with_boxes_count: int = 0,
+    stale_rows_cleared_count: int = 0,
 ) -> None:
     _prepare_dir()
     (_prepare_dir() / f"{token}.xlsx").write_bytes(content)
@@ -98,6 +99,8 @@ def _save_prepare_bundle(
         # แล้วกลายเป็นแถวคู่ขนานคนละคลัง (11.3 / ปริศนา SL453)
         "new_rows_count": int(new_rows_count),
         "new_rows_with_boxes_count": int(new_rows_with_boxes_count),
+        # แถวเป้าเก่าที่หลุดจากรอบนี้แล้วถูกล้าง (ส่ง 0 ไปทับ) — ค8
+        "stale_rows_cleared_count": int(stale_rows_cleared_count),
         # คู่ที่ผู้ใช้ต้องไปเพิ่มจำนวนเองใน Target Sun — ต้องติดไปถึงหน้าจอ "ส่งสำเร็จ"
         "shortfall": shortfall,
         "shortfall_boxes": sum(int(s.get("missing_boxes") or 0) for s in shortfall),
@@ -232,6 +235,7 @@ def prepare_targetsun_import(req: LakehouseUploadRequest) -> dict:
         emp_codes=emp_codes,
         new_rows_count=int(df.attrs.get("new_rows_count") or 0),
         new_rows_with_boxes_count=int(df.attrs.get("new_rows_with_boxes_count") or 0),
+        stale_rows_cleared_count=int(df.attrs.get("stale_rows_cleared_count") or 0),
     )
     logger.info(
         "TargetSun prepare: token=%s rows=%d build=%.2fs",
@@ -448,6 +452,7 @@ def _attach_readback(
     emp_codes: list,
     new_rows_count: int = 0,
     new_rows_with_boxes_count: int = 0,
+    stale_rows_cleared_count: int = 0,
 ) -> dict:
     """
     ตรวจซ้ำหลังส่งว่ายอด "ลงจริง" ครบตามไฟล์ไหม แล้วแนบผลไปกับคำตอบ
@@ -467,6 +472,8 @@ def _attach_readback(
         # แนบไว้ให้บันทึกการใช้งานเก็บ จะได้สืบย้อนหลังได้โดยไม่ต้องเดา
         out["new_rows_count"] = int(new_rows_count)
         out["new_rows_with_boxes_count"] = int(new_rows_with_boxes_count)
+        # แถวเป้าเก่าที่หลุดจากรอบนี้แล้วถูกล้าง (ส่ง 0 ไปทับ) — ค8
+        out["stale_rows_cleared_count"] = int(stale_rows_cleared_count)
     if isinstance(ts, dict) and ts.get("success") is False:
         out["readback"] = {"checked": False, "reason": "send_failed"}
         return out
@@ -515,6 +522,7 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
         emp_codes=meta.get("emp_codes") if isinstance(meta.get("emp_codes"), list) else [],
         new_rows_count=int(meta.get("new_rows_count") or 0),
         new_rows_with_boxes_count=int(meta.get("new_rows_with_boxes_count") or 0),
+        stale_rows_cleared_count=int(meta.get("stale_rows_cleared_count") or 0),
     )
 
 
@@ -589,4 +597,5 @@ def import_allocations_to_targetsun(req: LakehouseUploadRequest) -> dict:
         emp_codes=emp_codes,
         new_rows_count=int(df.attrs.get("new_rows_count") or 0),
         new_rows_with_boxes_count=int(df.attrs.get("new_rows_with_boxes_count") or 0),
+        stale_rows_cleared_count=int(df.attrs.get("stale_rows_cleared_count") or 0),
     )
