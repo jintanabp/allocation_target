@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <title>โหมดทดลอง: กระจายจากประวัติ</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap"
+    rel="stylesheet" />
+  <!-- ใช้ style.css ของแอปหลักร่วมกัน (อ่านอย่างเดียว ไม่กระทบแอปหลัก) เพื่อให้หน้าตา
+       สอดคล้องกันโดยไม่ต้องเขียน CSS ซ้ำ -->
+  <link rel="stylesheet" href="style.css?v=2026091101" />
+  <style>
+    /* เท่าที่ style.css ไม่มีให้ — หน้านี้เป็นหน้าเดี่ยว ไม่ใช้ #page/#dashboardView ของแอปหลัก */
+    body { max-width: 980px; margin: 0 auto; padding: 24px 16px 64px; }
+    .qd-banner {
+      background: #fff7e6; border: 1px solid #f0c674; border-radius: 10px;
+      padding: 12px 16px; margin-bottom: 20px; font-size: 14px; color: #6b4b12;
+    }
+    .qd-login-card {
+      background: var(--bg-card, #fff); border: 1px solid var(--border-md, #e2e5ea);
+      border-radius: 14px; padding: 24px; margin-bottom: 24px; max-width: 520px;
+    }
+    .qd-hidden { display: none !important; }
+  </style>
+</head>
+
+<body>
+  <div class="qd-banner">
+    🧪 <strong>โหมดทดลอง: กระจายจากประวัติ (ไม่ต้องตั้งเป้าเงิน)</strong> — หน้านี้แยกจากระบบหลัก
+    ทั้งหมด ไม่กระทบขั้นตอนกระจายเป้าปกติเลย ผลลัพธ์เป็น <strong>preview เท่านั้น
+    ยังส่งเข้า Target Sun จริงไม่ได้</strong> · <a href="index.html">← กลับไประบบหลัก</a>
+  </div>
+
+  <div id="qdAuthNotice" class="qd-banner qd-hidden" style="background:#fdeaea;border-color:#e0a3a3;color:#7a2020;"></div>
+
+  <section class="qd-login-card" id="qdLoginCard">
+    <div class="step-label-row">
+      <span class="step-num">1</span>
+      <div>
+        <h2 class="step-title">เลือกทีมและงวด</h2>
+        <p class="step-desc">เลือก Supervisor และงวดเดือนที่ต้องการดูประวัติ</p>
+      </div>
+    </div>
+
+    <div class="field-group">
+      <label class="field-label">Supervisor</label>
+      <select id="qdSupSelect" class="field-select" style="width:100%;" disabled>
+        <option value="">⏳ กำลังดึงรายชื่อ...</option>
+      </select>
+    </div>
+
+    <div class="field-group">
+      <label class="field-label">งวดเดือนที่ต้องการดู</label>
+      <div class="month-year-row">
+        <select id="qdMonthSelect" class="field-select">
+          <option value="1">มกราคม</option>
+          <option value="2">กุมภาพันธ์</option>
+          <option value="3">มีนาคม</option>
+          <option value="4">เมษายน</option>
+          <option value="5">พฤษภาคม</option>
+          <option value="6">มิถุนายน</option>
+          <option value="7">กรกฎาคม</option>
+          <option value="8">สิงหาคม</option>
+          <option value="9">กันยายน</option>
+          <option value="10">ตุลาคม</option>
+          <option value="11">พฤศจิกายน</option>
+          <option value="12">ธันวาคม</option>
+        </select>
+        <select id="qdYearSelect" class="field-select year-select"></select>
+      </div>
+    </div>
+
+    <button type="button" class="btn-run login-btn" id="qdLoadBtn" disabled>ดูประวัติทีมนี้</button>
+    <div class="login-error qd-hidden" id="qdLoginError"></div>
+  </section>
+
+  <section class="step-section qd-hidden" id="qdMainSection">
+    <div class="step-label-row">
+      <span class="step-num">2</span>
+      <div>
+        <h2 class="step-title" id="qdTeamTitle">ประวัติการขายรายพนักงาน</h2>
+        <p class="step-desc">ดูประวัติ เลือกวิธีกระจาย แล้วดูผลลัพธ์ — preview เท่านั้น</p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-icon">📜</span>
+        <span class="panel-title">ประวัติการขายรายพนักงาน</span>
+        <span class="panel-count" id="qdHistEmpCount"></span>
+      </div>
+      <div class="tbl-scroll">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th>รหัส</th>
+              <th>ชื่อ</th>
+              <th>ยอดขายเดือนเดียวกันปีที่แล้ว</th>
+              <th>ยอดขายเฉลี่ย 3 เดือนย้อนหลัง</th>
+            </tr>
+          </thead>
+          <tbody id="qdHistBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="strategy-wrap">
+      <div class="field-label">เลือกวิธีกระจาย</div>
+      <div class="strategy-pills" id="qdStrategyPills">
+        <label class="s-pill active">
+          <input type="radio" name="qdStrategy" value="L3M" checked>
+          <span class="s-pill-icon">📊</span>
+          <div>
+            <div class="s-pill-name">เฉลี่ย 3 เดือนย้อนหลัง</div>
+            <div class="s-pill-desc">กระจายตามสัดส่วนยอดขายเฉลี่ยรวม 3 เดือนย้อนหลัง</div>
+          </div>
+        </label>
+        <label class="s-pill">
+          <input type="radio" name="qdStrategy" value="L6M">
+          <span class="s-pill-icon">📈</span>
+          <div>
+            <div class="s-pill-name">เฉลี่ย 6 เดือนย้อนหลัง</div>
+            <div class="s-pill-desc">กระจายตามสัดส่วนยอดขายเฉลี่ยรวม 6 เดือนย้อนหลัง</div>
+          </div>
+        </label>
+        <label class="s-pill">
+          <input type="radio" name="qdStrategy" value="LY">
+          <span class="s-pill-icon">📅</span>
+          <div>
+            <div class="s-pill-name">เดือนเดียวกันปีที่แล้ว</div>
+            <div class="s-pill-desc">กระจายตามสัดส่วนยอดขายเดือนเดียวกับงวดที่เลือกในปีที่แล้ว</div>
+          </div>
+        </label>
+        <label class="s-pill">
+          <input type="radio" name="qdStrategy" value="PUSH">
+          <span class="s-pill-icon">🚀</span>
+          <div>
+            <div class="s-pill-name">ผลักดันพนักงาน</div>
+            <div class="s-pill-desc">เพิ่มให้พนักงานที่ขาย SKU นั้นน้อยหรือไม่มียอด</div>
+          </div>
+        </label>
+      </div>
+    </div>
+
+    <div class="step3-actions" style="margin:12px 0;">
+      <button type="button" class="btn-dl" id="qdDistBtn">กระจายจากประวัติ (preview)</button>
+    </div>
+
+    <div id="qdDistError" class="fabric-change-inline qd-hidden" role="alert"></div>
+
+    <div class="panel qd-hidden" id="qdResultPanel">
+      <div class="panel-head">
+        <span class="panel-icon">👀</span>
+        <span class="panel-title">ผลลัพธ์ (preview เท่านั้น — ยังไม่ส่งเข้า Target Sun)</span>
+      </div>
+      <div class="tbl-scroll">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th>พนักงาน</th>
+              <th>สินค้า</th>
+              <th>หีบที่ได้</th>
+            </tr>
+          </thead>
+          <tbody id="qdResultBody"></tbody>
+          <tfoot id="qdResultFoot"></tfoot>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <script src="vendor/msal-browser.min.js"></script>
+  <script src="quick-distribute.js?v=2026091501"></script>
+</body>
+
+</html>
