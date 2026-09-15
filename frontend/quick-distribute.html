@@ -50,6 +50,21 @@
     </div>
 
     <div class="field-group">
+      <label class="field-label">อีเมลบัญชีที่ใช้ดูแทน (ถ้ามี — เช่นบัญชีสาธิต)</label>
+      <div class="login-row" style="gap:8px;">
+        <input type="email" id="qdViewAsEmail" class="field-select" style="width:100%;"
+          placeholder="เช่น demosuper@sahapat.co.th" autocomplete="off">
+        <button type="button" class="btn-mini" id="qdViewAsReloadBtn" style="white-space:nowrap;">
+          ↻ โหลดรายชื่อทีม
+        </button>
+      </div>
+      <div class="field-help field-help--short">
+        เว้นว่างไว้ถ้าจะดูทีมของตัวเอง — ใช้ "ดูแทน" ได้เฉพาะบัญชีแอดมิน หรือโหมดพัฒนา
+        (สิทธิ์เดียวกับปุ่ม "ดูแทน" ในหน้าแอดมินของระบบหลัก)
+      </div>
+    </div>
+
+    <div class="field-group">
       <label class="field-label">Supervisor</label>
       <select id="qdSupSelect" class="field-select" style="width:100%;" disabled>
         <option value="">⏳ กำลังดึงรายชื่อ...</option>
@@ -177,7 +192,7 @@
   </section>
 
   <script src="vendor/msal-browser.min.js"></script>
-  <script src="quick-distribute.js?v=2026091501"></script>
+  <script src="quick-distribute.js?v=2026091502"></script>
 </body>
 
 </html>

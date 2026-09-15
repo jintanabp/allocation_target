@@ -39,12 +39,21 @@ function qdFmt(n) {
   return Number(n).toLocaleString("th-TH");
 }
 
+/** อีเมลบัญชีที่ใช้ "ดูแทน" (ถ้ากรอกไว้) — สิทธิ์เดียวกับปุ่ม "ดูแทน" ในหน้าแอดมินของ
+ *  ระบบหลัก (เฉพาะบัญชีแอดมิน/โหมดพัฒนา ปลายทาง 403 เองถ้าไม่มีสิทธิ์) ใช้เพื่อเข้าถึง
+ *  ทีมสาธิต (SLDEMO1-3) ซึ่งไม่โผล่ในรายชื่อปกติจนกว่าจะ "ดูแทน" บัญชีสาธิต */
+function qdViewAsEmail() {
+  return (document.getElementById("qdViewAsEmail")?.value || "").trim().toLowerCase();
+}
+
 async function qdFetch(path, options = {}, timeoutMs = 15000) {
   const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
   const t = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
   try {
     const opts = { ...options, headers: { ...(options.headers || {}) } };
     if (qd.token) opts.headers.Authorization = `Bearer ${qd.token}`;
+    const viewAs = qdViewAsEmail();
+    if (viewAs) opts.headers["X-View-As-Email"] = viewAs;
     if (ctrl) opts.signal = ctrl.signal;
     return await fetch(`${QD_API_BASE}${path}`, opts);
   } finally {
@@ -334,6 +343,11 @@ async function qdInit() {
   qdBindStrategyPills();
   document.getElementById("qdLoadBtn").addEventListener("click", qdHandleLoad);
   document.getElementById("qdDistBtn").addEventListener("click", qdRunDistribute);
+  document.getElementById("qdViewAsReloadBtn").addEventListener("click", qdLoadManagers);
+  // กด Enter ในช่องอีเมล = โหลดรายชื่อทีมใหม่เลย ไม่ต้องไปกดปุ่มแยก
+  document.getElementById("qdViewAsEmail").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); qdLoadManagers(); }
+  });
 
   const ok = await qdInitAuth();
   if (!ok) return; // ข้อความอธิบายแล้วผ่าน qdShowAuthNotice — ไม่โหลดรายชื่อทีมต่อ
