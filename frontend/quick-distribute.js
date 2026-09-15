@@ -217,11 +217,14 @@ async function qdHandleLoad() {
     qd.supId = supId;
     qd.employees = Array.isArray(data.employees) ? data.employees : [];
     qd.skus = Array.isArray(data.skus) ? data.skus : [];
-    document.getElementById("qdTeamTitle").textContent =
-      `ประวัติการขายรายพนักงาน — ${supId} (${document.getElementById("qdMonthSelect").selectedOptions[0].textContent} ${year + 543})`;
+    const monthLabel = document.getElementById("qdMonthSelect").selectedOptions[0].textContent;
+    document.getElementById("qdSupBadge").textContent = `${supId} · งวด ${monthLabel} ${year + 543}`;
     qdRenderHistoryTable();
-    document.getElementById("qdMainSection").classList.remove("qd-hidden");
     document.getElementById("qdResultPanel").classList.add("qd-hidden");
+    // สลับจากการ์ดเลือกทีม (login-wrap เต็มจอ) ไปหน้าเนื้อหาหลัก — เหมือนแอปหลักสลับ
+    // #loginView -> #dashboardView ตอนล็อกอินสำเร็จ
+    document.getElementById("qdLoginView").style.display = "none";
+    document.getElementById("qdMainView").style.display = "block";
   } catch (e) {
     console.error("qdHandleLoad:", e);
     qdShowLoginError(e?.message || String(e));

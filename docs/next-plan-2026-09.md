@@ -1147,3 +1147,19 @@ backend ใหม่ฝั่งอ่าน), และเวอร์ชัน
 เทส backend ยังเขียว **1,350 ข้อ** (ไม่เปลี่ยนจากรอบก่อน เพราะเปลี่ยนแค่ฝั่ง frontend) ·
 golden compare ยืนยันซ้ำว่าไม่กระทบ · **ยังไม่ deploy** ผู้ใช้เปิด `/quick-distribute.html`
 ตรง ๆ ได้เลย ไม่ต้องผ่าน query flag ใด ๆ (เพราะแยกไฟล์แล้ว ไม่ต้องซ่อน)
+
+**แก้หน้าตาให้ตรงกับแอปหลัก (15 ก.ย. ค่ำ รอบสุดท้าย):** หลังทำไฟล์แยกเสร็จรอบแรก ผู้ใช้ดู
+แล้วบอกว่า "คือต้องการให้ทำหน้าตาแบบเดียวกับแบบเดิมอะ ตอนนี้ไม่ใช่" — ตอนนั้น
+`quick-distribute.html` ใช้ CSS คลาสเองแบบง่าย ๆ (`.qd-banner`/`.qd-login-card`/
+`body{max-width:980px}`) แค่ดึงสี/ฟอนต์จาก `style.css` มาผสม ไม่ได้ใช้โครง markup เดียวกับ
+`index.html` จริง ๆ จึงหน้าตาไม่เหมือน — **แก้โดยเขียน markup ใหม่ให้ใช้คลาสโครงสร้างจริง
+ของแอปหลักตรง ๆ**: `.login-wrap`/`.login-shell` (หน้าจอเลือกทีม/งวด เป็น 2 คอลัมน์ hero+card
+เหมือนหน้า login จริง) และ `.page`/`.page-header`/`.page-header-top`/`.page-title`/
+`.page-sup-badge` (หน้าหลังโหลดทีมแล้ว เหมือนโครง dashboard จริง) รวมถึงคลาสฟอร์มร่วม
+(`.field-group`/`.field-label`/`.field-select`/`.month-year-row`/`.btn-run.login-btn`) —
+ปรับ `quick-distribute.js::qdHandleLoad()` ให้สลับ `#qdLoginView`/`#qdMainView` (แทน
+`#qdTeamTitle` เดิมที่ถูกลบ ใช้ `#qdSupBadge` แทน) ให้ตรงกับ id ใหม่ · ยืนยันด้วยเบราว์เซอร์
+จริงอีกรอบ: หน้าจอ login เป็น 2 คอลัมน์เหมือนแอปหลักแล้ว, กรอก "ดูแทน" → โหลด SLDEMO1 →
+ดูประวัติ → กระจาย (L3M) → ผลลัพธ์ 40 แถว ผลรวมตรงเป้าทุก SKU (8/8 ✅) ไม่มี JS error ·
+`run_tests.py` ยังเขียว 1,350 ข้อ + golden compare ไม่กระทบ (ตามคาด เพราะแก้แค่ CSS/markup
+ฝั่งไฟล์แยกใหม่ ไม่แตะ backend เลย)
