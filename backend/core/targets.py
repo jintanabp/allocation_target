@@ -13,7 +13,12 @@ def _read_sku_csv(path: str) -> pd.DataFrame | None:
     if not os.path.exists(path):
         return None
     with read_locked(path):  # กัน writer เรียก os.replace ตอนเราถือ handle อยู่ (Windows)
-        df = pd.read_csv(path, dtype={"sku": str}).dropna(subset=["sku"]).fillna(0)
+        df = pd.read_csv(path, dtype={"sku": str}).dropna(subset=["sku"])
+    # เติมช่องว่างแยกตามชนิดคอลัมน์ — คอลัมน์ชื่อ (brand_name_*/product_name_*) ต้องเป็น
+    # "" ไม่ใช่ 0 ต่างจากคอลัมน์ตัวเลข (เดิม .fillna(0) เหมารวมทั้งตาราง ทำให้สินค้าที่
+    # ไม่มีชื่อภาษาอังกฤษ/ไทย ได้ชื่อเป็นเลข 0.0 ไปโผล่ในผลกระจายและ snapshot ที่บันทึกไว้)
+    for c in df.columns:
+        df[c] = df[c].fillna("" if "name" in c else 0)
     df["sku"] = df["sku"].astype(str).str.strip()
     return df
 

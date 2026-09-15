@@ -23,6 +23,13 @@ def run_optimization(
         pid = str(peer or "").strip().upper()
         if pid and pid != sup_id.strip().upper():
             ensure_supervisor_allowed(user, pid)
+    # โหมดรวมทั้งหน่วย/ภาค: peer_sup_ids กำหนดว่าจะอ่านประวัติขายจากทีมไหนบ้าง
+    # (คนละตัวกับ target_sup_ids ที่กำหนดเป้า) ต้องตรวจสิทธิ์ทุกรหัสเหมือนกัน ไม่งั้น
+    # ดึงประวัติขายของทีมที่ไม่มีสิทธิ์เห็นมาปนในเป้าตัวเองได้
+    for peer in req.peer_sup_ids:
+        pid = str(peer or "").strip().upper()
+        if pid and pid != sup_id.strip().upper():
+            ensure_supervisor_allowed(user, pid)
     return run_optimization_service(
         req=req,
         sup_id=sup_id,

@@ -311,5 +311,67 @@ class TestPeerSupIdsWiring(unittest.TestCase):
         self.assertIn("peer_sup_ids", src)
 
 
+class TestPeerSupIdsPermission(unittest.TestCase):
+    """
+    peer_sup_ids กำหนดว่าจะอ่านประวัติขายจากทีมไหนบ้าง (คนละตัวกับ target_sup_ids)
+    เดิมไม่มีการตรวจสิทธิ์เลยสักบรรทัด — ต่างจาก target_sup_ids ที่ตรวจทุกรหัสอยู่แล้ว
+    (ดู TestTargetSupIdsPermission) แปลว่าซุปคนหนึ่งเคยใส่รหัสทีมอะไรก็ได้ลงใน
+    peer_sup_ids แล้วดึงประวัติขายของทีมที่ไม่มีสิทธิ์เห็นมาปนในเป้าตัวเองได้
+    (พบจากการทดสอบผ่านเซิร์ฟเวอร์จริง)
+    """
+
+    def _req(self, peer_sup_ids):
+        from backend.schemas import OptimizeRequest
+
+        return OptimizeRequest(
+            yellowTargets=[{"emp_id": "E1", "yellow_target": 1.0}],
+            peer_sup_ids=peer_sup_ids,
+        )
+
+    def test_router_source_checks_every_peer_sup_id(self):
+        import inspect
+
+        from backend.routers import optimize as router
+
+        src = inspect.getsource(router.run_optimization)
+        self.assertIn("for peer in req.peer_sup_ids", src)
+
+    def test_every_peer_sup_id_is_checked_for_permission(self):
+        from backend.routers import optimize as router
+
+        checked: list[str] = []
+        with patch.object(
+            router, "ensure_supervisor_allowed", side_effect=lambda user, sid: checked.append(sid)
+        ), patch.object(router, "ensure_own_supervisor_write"), patch.object(
+            router, "run_optimization_service", return_value={"ok": True}
+        ):
+            router.run_optimization(
+                self._req(["SLB", "SLC"]), user={}, sup_id="SLA",
+                target_month=9, target_year=2026,
+            )
+        self.assertIn("SLB", checked)
+        self.assertIn("SLC", checked)
+
+    def test_a_denied_peer_blocks_the_request_before_optimizing(self):
+        from fastapi import HTTPException
+
+        from backend.routers import optimize as router
+
+        def _deny(user, sid):
+            if sid == "SLB":
+                raise HTTPException(403, detail="ไม่มีสิทธิ์เข้าถึงรหัส Supervisor นี้")
+
+        with patch.object(router, "ensure_supervisor_allowed", side_effect=_deny), patch.object(
+            router, "ensure_own_supervisor_write"
+        ), patch.object(router, "run_optimization_service") as mock_service:
+            with self.assertRaises(HTTPException) as ctx:
+                router.run_optimization(
+                    self._req(["SLB"]), user={}, sup_id="SLA",
+                    target_month=9, target_year=2026,
+                )
+        self.assertEqual(ctx.exception.status_code, 403)
+        mock_service.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

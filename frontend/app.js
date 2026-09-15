@@ -6220,8 +6220,11 @@ async function _callOptimizeApi(supId, payload) {
     + (res.ok ? "" : ` · ไม่สำเร็จ (${res.status}${errCode}${errMismatch})`)
   );
   if (!res.ok) {
+    // errBody.detail มักเป็น object ({code, message, sku_total_checks, ...}) ไม่ใช่ string
+    // ห้ามส่งเข้า _userFacingError ตรง ๆ — String(object) กลายเป็น "[object Object]"
+    // ต้องแกะด้วย _formatApiErrorDetail ก่อนเหมือนจุดอื่นทั้งไฟล์
     throw new Error(
-      _userFacingError({ message: errBody.detail }, `กระจายหีบไม่สำเร็จ (${supId})`)
+      _userFacingError(_formatApiErrorDetail(errBody), `กระจายหีบไม่สำเร็จ (${supId})`)
     );
   }
   return res.json();
