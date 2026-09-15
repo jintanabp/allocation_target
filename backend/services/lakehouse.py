@@ -2358,15 +2358,30 @@ def _build_tga_upload_dataframe(
 
     # แถวที่จะถูก "สร้างใหม่" ใน Target Sun (เดิมไม่มีคู่นี้อยู่) — ต้องบอกให้รู้
     # เพราะเป็นการแตะ master data ไม่ใช่แค่ทับตัวเลขเป้าเดิม
+    #
+    # ทำไมต้องรู้จำนวนนี้: ถ้าปลายทางมีคู่นี้อยู่แล้วที่คลังอื่น (คีย์ upsert รวม
+    # WAREHOUSECODE) แถวที่ "สร้างใหม่" ตรงนี้จะไม่ทับของเดิม แต่ไปตั้งเป็นแถวคู่ขนาน
+    # ที่คลังคนละอัน — คู่เดียวกันจึงมีเป้าสองก้อนพร้อมกัน (ดู docs/next-plan-2026-09.md
+    # หัวข้อ 11.3 และปริศนา SL453) ยิ่งสำคัญมากสำหรับงวดที่เพิ่งเริ่มมีข้อมูล เพราะ
+    # แคชในเครื่องยังไม่มีคลังของใครเลยสักคน ตัวเดา (emp_dims_from_own_grain) จึง
+    # พลาดสูงเป็นพิเศษ
+    new_rows = 0
+    new_rows_with_boxes = 0
     if "dims_inferred" in df.columns:
         # คอลัมน์นี้เป็น object (แถวจากเส้นทางอื่นไม่มีค่า) — เทียบตรง ๆ เลี่ยง
         # การ downcast ที่ pandas เตือนว่าจะเปลี่ยนพฤติกรรมในอนาคต
-        new_rows = int((df["dims_inferred"] == True).sum())  # noqa: E712
+        _new_mask = df["dims_inferred"] == True  # noqa: E712
+        new_rows = int(_new_mask.sum())
         if new_rows:
+            new_rows_with_boxes = int(
+                (_new_mask & (pd.to_numeric(df["allocated_boxes"], errors="coerce").fillna(0) > 0)).sum()
+            )
             logger.warning(
-                "จะสร้างเป้าใหม่ใน Target Sun %s: %d แถว (เติมเขต/พื้นที่จากแถวอื่นของพนักงานคนเดียวกัน)",
+                "จะสร้างเป้าใหม่ใน Target Sun %s: %d แถว (%d แถวมีหีบ > 0) "
+                "(เติมเขต/พื้นที่จากแถวอื่นของพนักงานคนเดียวกัน)",
                 str(req.sup_id or "").strip().upper(),
                 new_rows,
+                new_rows_with_boxes,
             )
 
     user_code = _resolve_user_code(req)
@@ -2399,7 +2414,13 @@ def _build_tga_upload_dataframe(
         len(out),
         grain_ok,
     )
-    return out[LAKEHOUSE_CSV_COLUMNS], dropped_dims, not_in_ts, shortfall
+    final = out[LAKEHOUSE_CSV_COLUMNS]
+    # เมทาดาทาเสริม ไม่ใช่คอลัมน์ข้อมูล — ผู้เรียกที่สนใจ (เตรียม/ส่งจริง) อ่านผ่าน
+    # .attrs ได้โดยไม่ต้องเปลี่ยน signature ของฟังก์ชันนี้ (ผู้เรียกเดิม 9+ จุด
+    # unpack เป็น 4-tuple ตายตัวอยู่แล้ว เพิ่มค่าคืนที่ 5 จะพังของเดิมทั้งหมด)
+    final.attrs["new_rows_count"] = new_rows
+    final.attrs["new_rows_with_boxes_count"] = new_rows_with_boxes
+    return final, dropped_dims, not_in_ts, shortfall
 
 
 def _export_basename(req: LakehouseUploadRequest) -> str:

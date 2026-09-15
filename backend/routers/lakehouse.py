@@ -93,6 +93,17 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
         elif rb.get("checked") is False and ok:
             rb_note = f" · ตรวจยอดหลังส่งไม่ได้ ({rb.get('reason') or '-'})"
             caveats.append("ตรวจยอดหลังส่งไม่ได้")
+        # แถวที่ "สร้างใหม่" เพราะปลายทางไม่เคยมีคู่นี้ (dims_inferred) — เสี่ยงคลัง
+        # ไม่ตรงกับที่ปลายทางมีอยู่แล้วจากคลังอื่น แล้วกลายเป็นแถวคู่ขนานคนละคลัง
+        # (11.3 / ปริศนา SL453) — เห็นได้เฉพาะตอนไล่ log เท่านั้น ไม่มีทางรู้จากที่อื่น
+        new_rows = int(res.get("new_rows_count") or 0)
+        new_rows_boxes = int(res.get("new_rows_with_boxes_count") or 0)
+        new_rows_note = ""
+        if new_rows:
+            new_rows_note = (
+                f" · สร้างแถวใหม่ {new_rows} แถว ({new_rows_boxes} แถวมีหีบ > 0) "
+                "— ปลายทางไม่เคยมีคู่นี้มาก่อน เสี่ยงคลังไม่ตรงกับที่มีอยู่แล้ว"
+            )
         emp_ids = [str(e).strip() for e in (res.get("emp_codes") or []) if str(e).strip()]
         # SKU ที่ถูกตัดออกทั้งตัว + แถวหีบ 0 ที่ส่งไปล้างเป้าเดิม — สองตัวเลขนี้เป็น
         # ตัวชี้ว่ายอดใน Target Sun ตรงกับที่กระจายไว้หรือไม่ แต่เดิมไม่เคยถูกบันทึก
@@ -133,6 +144,7 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
                 + ("" if ok else f" · {ts.get('resultMsg') or ''}")
                 + exc_note
                 + rb_note
+                + new_rows_note
             ),
             target_month=int(req.target_month),
             target_year=int(req.target_year),
@@ -149,6 +161,8 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
                 "emp_ids_truncated": len(emp_ids) > _MAX_LOGGED_EMP_IDS,
                 "readback_checked": rb.get("checked"),
                 "readback_ok": rb.get("ok"),
+                "new_rows_count": new_rows,
+                "new_rows_with_boxes_count": new_rows_boxes,
                 "ok": ok,
             },
         )

@@ -127,6 +127,28 @@ class TestDropEmptyNewRows(unittest.TestCase):
         )
         self.assertIn("NEWZERO", out["PRODUCTCODE"].tolist())
 
+    def test_new_rows_count_is_attached_as_dataframe_metadata(self):
+        """
+        เผยว่า "สร้างแถวใหม่กี่แถว" ผ่าน .attrs — ให้ตัวส่งจริงเอาไปแนบ usage log ได้
+        โดยไม่ต้องเปลี่ยน signature (มีผู้เรียก 9+ จุด unpack เป็น 4-tuple ตายตัวอยู่แล้ว)
+
+        NEWZERO ถูก ค9 ตัดไปก่อนถึงจุดนับแล้ว (drop_incomplete_rows=True) จึงเหลือ
+        แค่ NEWBOXES เป็นแถวสร้างใหม่ 1 แถว และมีหีบ > 0 ทั้ง 1 แถวนั้น
+        """
+        out, _d, _p, _s = lh._build_tga_upload_dataframe(
+            self._req(), drop_incomplete_rows=True
+        )
+        self.assertEqual(out.attrs.get("new_rows_count"), 1)
+        self.assertEqual(out.attrs.get("new_rows_with_boxes_count"), 1)
+
+    def test_new_rows_count_on_the_excel_path_counts_the_empty_one_too(self):
+        """ฝั่งดาวน์โหลด Excel ไม่ตัด NEWZERO ทิ้ง จึงนับสร้างใหม่ 2 แถว แต่มีหีบ > 0 แค่ 1"""
+        out, _d, _p, _s = lh._build_tga_upload_dataframe(
+            self._req(), drop_incomplete_rows=False
+        )
+        self.assertEqual(out.attrs.get("new_rows_count"), 2)
+        self.assertEqual(out.attrs.get("new_rows_with_boxes_count"), 1)
+
     def test_a_zero_row_for_a_pair_the_destination_already_has_is_never_cut(self):
         """
         คนละกรณีกับ NEWZERO — ปลายทางมี OLD อยู่แล้ว (เจอคู่นี้ใน grain ตรง ๆ)

@@ -71,6 +71,8 @@ def _save_prepare_bundle(
     target_month: int | None = None,
     target_year: int | None = None,
     emp_codes: list | None = None,
+    new_rows_count: int = 0,
+    new_rows_with_boxes_count: int = 0,
 ) -> None:
     _prepare_dir()
     (_prepare_dir() / f"{token}.xlsx").write_bytes(content)
@@ -92,6 +94,10 @@ def _save_prepare_bundle(
         "rows_dropped_missing_dims": dropped_dims,
         "rows_not_in_targetsun": not_in_ts,
         "rows_not_in_targetsun_count": dropped_dims,
+        # แถวที่ "สร้างใหม่" เพราะปลายทางไม่เคยมีคู่นี้ — เสี่ยงคลังไม่ตรงกับที่มีอยู่
+        # แล้วกลายเป็นแถวคู่ขนานคนละคลัง (11.3 / ปริศนา SL453)
+        "new_rows_count": int(new_rows_count),
+        "new_rows_with_boxes_count": int(new_rows_with_boxes_count),
         # คู่ที่ผู้ใช้ต้องไปเพิ่มจำนวนเองใน Target Sun — ต้องติดไปถึงหน้าจอ "ส่งสำเร็จ"
         "shortfall": shortfall,
         "shortfall_boxes": sum(int(s.get("missing_boxes") or 0) for s in shortfall),
@@ -224,6 +230,8 @@ def prepare_targetsun_import(req: LakehouseUploadRequest) -> dict:
         target_month=int(req.target_month),
         target_year=int(req.target_year),
         emp_codes=emp_codes,
+        new_rows_count=int(df.attrs.get("new_rows_count") or 0),
+        new_rows_with_boxes_count=int(df.attrs.get("new_rows_with_boxes_count") or 0),
     )
     logger.info(
         "TargetSun prepare: token=%s rows=%d build=%.2fs",
@@ -438,6 +446,8 @@ def _attach_readback(
     year: int,
     sku_totals: dict,
     emp_codes: list,
+    new_rows_count: int = 0,
+    new_rows_with_boxes_count: int = 0,
 ) -> dict:
     """
     ตรวจซ้ำหลังส่งว่ายอด "ลงจริง" ครบตามไฟล์ไหม แล้วแนบผลไปกับคำตอบ
@@ -452,6 +462,11 @@ def _attach_readback(
     # แนบก่อนทางออกทุกทาง รวมทางที่ส่งไม่สำเร็จ — จะได้รู้ว่ากะจะส่งให้ใครบ้าง
     if isinstance(out, dict):
         out["emp_codes"] = [str(e).strip() for e in (emp_codes or []) if str(e).strip()]
+        # แถวที่ "สร้างใหม่" (คู่ที่ปลายทางไม่เคยมีมาก่อน) — เสี่ยงคลังไม่ตรงกับที่
+        # ปลายทางมีอยู่แล้ว แล้วกลายเป็นแถวคู่ขนานคนละคลัง (11.3 / ปริศนา SL453)
+        # แนบไว้ให้บันทึกการใช้งานเก็บ จะได้สืบย้อนหลังได้โดยไม่ต้องเดา
+        out["new_rows_count"] = int(new_rows_count)
+        out["new_rows_with_boxes_count"] = int(new_rows_with_boxes_count)
     if isinstance(ts, dict) and ts.get("success") is False:
         out["readback"] = {"checked": False, "reason": "send_failed"}
         return out
@@ -498,6 +513,8 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
         year=meta.get("target_year") or req.target_year,
         sku_totals=meta.get("sku_totals") if isinstance(meta.get("sku_totals"), dict) else {},
         emp_codes=meta.get("emp_codes") if isinstance(meta.get("emp_codes"), list) else [],
+        new_rows_count=int(meta.get("new_rows_count") or 0),
+        new_rows_with_boxes_count=int(meta.get("new_rows_with_boxes_count") or 0),
     )
 
 
@@ -570,4 +587,6 @@ def import_allocations_to_targetsun(req: LakehouseUploadRequest) -> dict:
         year=req.target_year,
         sku_totals=sku_totals,
         emp_codes=emp_codes,
+        new_rows_count=int(df.attrs.get("new_rows_count") or 0),
+        new_rows_with_boxes_count=int(df.attrs.get("new_rows_with_boxes_count") or 0),
     )

@@ -38,12 +38,14 @@ def _req(month=9, year=2026, sup="SL397"):
     return LakehouseUploadRequest(sup_id=sup, target_month=month, target_year=year)
 
 
-def _result(ok=True, emp_codes=("S402", "S420"), rows=12):
+def _result(ok=True, emp_codes=("S402", "S420"), rows=12, new_rows=0, new_rows_boxes=0):
     return {
         "rows_sent": rows,
         "emp_codes": list(emp_codes),
         "targetsun": {"success": ok, "result": {"inserted": 5, "updated": 7, "skipped": 0}},
         "readback": {"checked": True, "ok": True},
+        "new_rows_count": new_rows,
+        "new_rows_with_boxes_count": new_rows_boxes,
     }
 
 
@@ -111,6 +113,25 @@ class TestSendLogRecordsPeriodAndPeople(_LogBase):
         self.assertIsNotNone(re.search(r"งวด (\d{4})-(\d{2})", detail))
         self.assertTrue(detail.startswith("งวด 2026-09 · ส่ง 12 แถว"))
 
+    def test_new_rows_count_is_written_and_flagged_in_detail(self):
+        """
+        แถวที่ "สร้างใหม่" (ปลายทางไม่เคยมีคู่นี้มาก่อน) ต้องเห็นได้จาก log —
+        เจอตอนไล่เหตุการณ์จริงของ SL341 ว่า log เดิมไม่มีเบาะแสนี้เลย
+        """
+        lakehouse._log_targetsun_send(
+            USER, _req(), _result(new_rows=1374, new_rows_boxes=900)
+        )
+        row = self._only()
+        self.assertEqual(row["context"]["new_rows_count"], 1374)
+        self.assertEqual(row["context"]["new_rows_with_boxes_count"], 900)
+        self.assertIn("สร้างแถวใหม่ 1374 แถว (900 แถวมีหีบ > 0)", row["detail"])
+
+    def test_no_new_rows_adds_no_note(self):
+        lakehouse._log_targetsun_send(USER, _req(), _result())
+        row = self._only()
+        self.assertEqual(row["context"]["new_rows_count"], 0)
+        self.assertNotIn("สร้างแถวใหม่", row["detail"])
+
     def test_failed_send_still_records_period(self):
         lakehouse._log_targetsun_send(USER, _req(8, 2026), _result(ok=False))
         row = self._only()
@@ -163,6 +184,25 @@ class TestAttachReadbackCarriesEmpCodes(unittest.TestCase):
             tsi.verify_after_send = orig
         self.assertEqual(out["emp_codes"], ["S402"])
         self.assertTrue(out["readback"]["ok"])
+
+    def test_new_rows_count_passes_through(self):
+        out = tsi._attach_readback(
+            {"targetsun": {"success": False}},
+            sup_id="SL397", month=9, year=2026,
+            sku_totals={}, emp_codes=["S402"],
+            new_rows_count=5, new_rows_with_boxes_count=2,
+        )
+        self.assertEqual(out["new_rows_count"], 5)
+        self.assertEqual(out["new_rows_with_boxes_count"], 2)
+
+    def test_new_rows_count_defaults_to_zero(self):
+        out = tsi._attach_readback(
+            {"targetsun": {"success": False}},
+            sup_id="SL397", month=9, year=2026,
+            sku_totals={}, emp_codes=["S402"],
+        )
+        self.assertEqual(out["new_rows_count"], 0)
+        self.assertEqual(out["new_rows_with_boxes_count"], 0)
 
 
 class TestUsageLogStoreAcceptsIt(unittest.TestCase):
