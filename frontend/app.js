@@ -6205,17 +6205,23 @@ async function _callOptimizeApi(supId, payload) {
     },
     _optimizeTimeoutMs()
   );
+  // อ่าน body ก่อน log เวลา — ไม่งั้น code/รายละเอียดของ 409/400 หายไปตลอดกาล
+  // (บันทึกการใช้งานของแอดมินมีแค่ ms + สถานะผ่าน/ไม่ผ่าน ไม่มีทางสืบสาเหตุย้อนหลังได้เลย)
+  const errBody = res.ok ? null : await res.json().catch(() => ({}));
+  const errCode = errBody?.detail?.code ? ` ${errBody.detail.code}` : "";
+  const errMismatch = errBody?.detail?.mismatch_count
+    ? ` ${errBody.detail.mismatch_count} SKU`
+    : "";
   _logTiming(
     "กระจายหีบ",
     Date.now() - _t0,
     `sup=${supId} · วิธี ${payload?.strategy || "-"}`
     + (S.aggregateMode ? " · โหมดรวมภาค" : "")
-    + (res.ok ? "" : ` · ไม่สำเร็จ (${res.status})`)
+    + (res.ok ? "" : ` · ไม่สำเร็จ (${res.status}${errCode}${errMismatch})`)
   );
   if (!res.ok) {
-    const j = await res.json().catch(() => ({}));
     throw new Error(
-      _userFacingError({ message: j.detail }, `กระจายหีบไม่สำเร็จ (${supId})`)
+      _userFacingError({ message: errBody.detail }, `กระจายหีบไม่สำเร็จ (${supId})`)
     );
   }
   return res.json();
