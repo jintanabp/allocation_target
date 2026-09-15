@@ -2964,6 +2964,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   });
   syncHistAllocNote();
+  _maybeShowQuickHistorySection();
 
   window.addEventListener("beforeunload", e => {
     /* เดิมเตือนเฉพาะเมื่อมีผลกระจายแล้ว — คนที่กรอกเป้าเงินขั้นที่ 2 ค้างไว้
@@ -4611,6 +4612,9 @@ function applyDataPayload(data) {
   for (const e of S.employees) {
     if (e.wh_split) S.whExpanded.add(_employeeWhGroupKey(e));
   }
+  // no-op เสมอเว้นแต่เปิดโหมดทดลอง ?quickdist=1 (ดูท้ายไฟล์) — เพื่อให้ตารางประวัติ
+  // ของโหมดนั้นตามทันทุกครั้งที่โหลดขั้นที่ 1 ใหม่/สลับทีม
+  _renderQuickHistoryTable();
   _applyNewProductSkus(data.new_product_skus);
   S.supervisorName = (data.supervisor_name || "").trim();
   S.totalTarget = S.skus.reduce(
@@ -19250,5 +19254,158 @@ async function exitViewAsMode() {
     _enableLoginScrollLock();
   }
   updateAdminNavVisibility();
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   โหมดทดลอง: "กระจายจากประวัติ ไม่ต้องตั้งเป้าเงิน" (แผน majestic-twirling-lynx)
+
+   ทุกฟังก์ชันในบล็อกนี้เป็นของใหม่ล้วน ไม่แก้พฤติกรรมของโค้ดเดิมด้านบนเลย —
+   ซ่อนไว้ด้วย [hidden] เสมอ เปิดได้เฉพาะเข้า URL พร้อม ?quickdist=1 เท่านั้น
+   (จุดเดียวที่ไปแตะโค้ดเดิม: เรียก _renderQuickHistoryTable() หนึ่งบรรทัดท้าย
+   applyDataPayload — ฟังก์ชันนี้ self-guard ด้วย section.hidden จึงเป็น no-op
+   เสมอเมื่อไม่ได้เปิดโหมดนี้)
+
+   v1: preview เท่านั้น — ไม่ผูกปุ่ม "ตรวจไฟล์ก่อนส่ง"/"ส่งเข้า Target Sun" เลย
+══════════════════════════════════════════════════════════════════════ */
+
+function _maybeShowQuickHistorySection() {
+  const section = document.getElementById("quickHistorySection");
+  if (!section) return;
+  let enabled = false;
+  try {
+    enabled = new URLSearchParams(window.location.search).get("quickdist") === "1";
+  } catch (_) {
+    enabled = false;
+  }
+  if (!enabled) return;
+  section.hidden = false;
+  section.querySelectorAll('[name="quickStrategy"]').forEach((r) => {
+    r.addEventListener("change", () => {
+      section.querySelectorAll(".s-pill").forEach((p) => p.classList.remove("active"));
+      r.closest(".s-pill")?.classList.add("active");
+    });
+  });
+  _renderQuickHistoryTable();
+}
+
+/** ตารางประวัติระดับพนักงาน — read-only, ไม่มีช่องแก้เป้าเงินเหมือนตาราง Step 1 เดิม */
+function _renderQuickHistoryTable() {
+  const section = document.getElementById("quickHistorySection");
+  if (!section || section.hidden) return;
+  const body = document.getElementById("quickHistBody");
+  const countEl = document.getElementById("quickHistEmpCount");
+  if (!body) return;
+  const emps = _allocEligibleEmployees();
+  if (countEl) countEl.textContent = emps.length ? `${emps.length} คน` : "";
+  if (!emps.length) {
+    body.innerHTML = `<tr><td colspan="4">ยังไม่มีข้อมูลพนักงาน — โหลดข้อมูลขั้นที่ 1 ก่อน</td></tr>`;
+    return;
+  }
+  body.innerHTML = emps
+    .map(
+      (e) => `
+      <tr>
+        <td>${escapeHtml(String(e.emp_id || ""))}</td>
+        <td>${escapeHtml(String(e.emp_name || ""))}</td>
+        <td>${fmt(e.ly_sales)}</td>
+        <td>${fmt(e.hist_avg_3m)}</td>
+      </tr>`
+    )
+    .join("");
+}
+
+/** เรียกจากปุ่ม "กระจายจากประวัติ (preview)" — ข้ามเป้าเงินทั้งหมด (history_only=true) */
+async function runQuickHistoryDistribute() {
+  const btn = document.getElementById("quickDistBtn");
+  const errBox = document.getElementById("quickDistError");
+  const resultPanel = document.getElementById("quickResultPanel");
+  if (errBox) {
+    errBox.style.display = "none";
+    errBox.textContent = "";
+  }
+  const strategy = document.querySelector('#quickStrategyPills [name="quickStrategy"]:checked')?.value || "L3M";
+  const yellowTargets = _allocEligibleEmployees()
+    .map((e) => _yellowTargetPayloadRow(e))
+    .filter(Boolean);
+  if (!yellowTargets.length) {
+    if (errBox) {
+      errBox.textContent = "ไม่มีพนักงานให้กระจาย — โหลดข้อมูลขั้นที่ 1 ก่อน";
+      errBox.style.display = "block";
+    }
+    return;
+  }
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "กำลังกระจาย…";
+  }
+  try {
+    const json = await _callOptimizeApi(S.supId, {
+      strategy,
+      history_only: true,
+      force_min_one: false,
+      new_products_even: false,
+      tiered_allocation: false,
+      yellowTargets,
+    });
+    const allocs = Array.isArray(json.allocations) ? json.allocations : [];
+    _renderQuickResultTable(allocs);
+    if (resultPanel) resultPanel.style.display = "block";
+  } catch (err) {
+    console.error("runQuickHistoryDistribute:", err);
+    if (errBox) {
+      errBox.textContent = `❌ ${err?.message || String(err)}`;
+      errBox.style.display = "block";
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "กระจายจากประวัติ (preview)";
+    }
+  }
+}
+
+/** ตารางผลลัพธ์แบบง่าย (read-only) + สรุปยอดต่อ SKU เทียบเป้าหีบให้เห็น I1 ตรง ๆ */
+function _renderQuickResultTable(allocs) {
+  const body = document.getElementById("quickResultBody");
+  const foot = document.getElementById("quickResultFoot");
+  if (!body) return;
+  const skuInfoBySku = new Map((S.skus || []).map((s) => [String(s.sku), s]));
+  const rows = (allocs || [])
+    .slice()
+    .sort(
+      (a, b) =>
+        String(a.emp_id).localeCompare(String(b.emp_id)) ||
+        String(a.sku).localeCompare(String(b.sku))
+    );
+  body.innerHTML = rows
+    .map((r) => {
+      const skuInfo = skuInfoBySku.get(String(r.sku));
+      const skuLabel = skuInfo?.product_name_thai
+        ? `${escapeHtml(String(r.sku))} — ${escapeHtml(String(skuInfo.product_name_thai))}`
+        : escapeHtml(String(r.sku || ""));
+      return `
+      <tr>
+        <td>${escapeHtml(String(r.emp_id || ""))}</td>
+        <td>${skuLabel}</td>
+        <td>${fmt(r.allocated_boxes)}</td>
+      </tr>`;
+    })
+    .join("");
+  if (!foot) return;
+  const sumBySku = new Map();
+  for (const r of rows) {
+    const k = String(r.sku);
+    sumBySku.set(k, (sumBySku.get(k) || 0) + (Number(r.allocated_boxes) || 0));
+  }
+  const targetBySku = new Map(
+    (S.skus || []).map((s) => [String(s.sku), Number(s.supervisor_target_boxes) || 0])
+  );
+  foot.innerHTML = [...sumBySku.entries()]
+    .map(([sku, sum]) => {
+      const target = targetBySku.get(sku) || 0;
+      const ok = sum === target;
+      return `<tr><td colspan="2">รวม ${escapeHtml(sku)} (เป้า ${fmt(target)})</td><td>${fmt(sum)} ${ok ? "✅" : "⚠️"}</td></tr>`;
+    })
+    .join("");
 }
 

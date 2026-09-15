@@ -244,6 +244,7 @@ def allocate_boxes(
     tier_pct: float = _TIER_DEFAULT_PCT,
     df_sold_12m: pd.DataFrame | None = None,
     push_multiple: float = 5.0,
+    history_only: bool = False,
 ) -> pd.DataFrame:
     strategy = strategy.upper()
     valid = ("L3M", "L6M", "LY", "EVEN", "PUSH", "LP")
@@ -273,7 +274,7 @@ def allocate_boxes(
             even_skus = frozenset(_norm_sku(s) for s in (new_product_skus or []))
 
     logger.info(
-        "allocate_boxes: strategy=%s emp=%d sku=%d force_min_one=%s locked=%d even_new_products=%s even_skus=%d (cy_ly=%d zero_hist=%d)",
+        "allocate_boxes: strategy=%s emp=%d sku=%d force_min_one=%s locked=%d even_new_products=%s even_skus=%d (cy_ly=%d zero_hist=%d) history_only=%s",
         strategy,
         len(df_emp_targets),
         len(df_sku),
@@ -283,6 +284,7 @@ def allocate_boxes(
         len(even_skus),
         len(cy_ly_skus),
         len(zero_hist_skus),
+        history_only,
     )
 
     # ── กติกา "หน่วยไม่เคยขายสินค้านั้น = เป้า 0" ─────────────────────────
@@ -327,7 +329,11 @@ def allocate_boxes(
     _LP_STRATEGIES = frozenset({"L3M", "L6M", "LY", "LP"})
     base_map: dict[tuple[str, str], int] = {}
     opt_meta: dict[str, bool] = {"optimization_fallback": False}
-    if strategy in _LP_STRATEGIES:
+    # history_only=True: ข้ามชั้นเงินทั้งหมด (LP + greedy revenue balancer ด้านล่าง —
+    # ตัวนั้นถูก gate ด้วย "if ... base_map" อยู่แล้ว จึงข้ามอัตโนมัติเมื่อ base_map
+    # ไม่ถูกตั้งตรงนี้) กระจายด้วย _proportional ตรง ๆ ตามสัดส่วนประวัติล้วน ๆ
+    # ไม่แตะ yellow_target เลยไม่ว่าค่าที่ส่งมาจะเป็นอะไร — ใช้เมื่อไม่มีการตั้งเป้าเงิน
+    if strategy in _LP_STRATEGIES and not history_only:
         baseline = strategy if strategy in ("L3M", "L6M", "LY") else "L3M"
         df_base = _proportional(
             df_emp_targets,
@@ -362,11 +368,14 @@ def allocate_boxes(
             _meta=opt_meta,
         )
     else:
+        # strategy == LP/L3M/L6M/LY ตอน history_only=True ไม่มีความหมายเป็น "วิธีแก้ LP"
+        # อีกต่อไป — ใช้เป็นแค่ชื่อหน้าต่างประวัติ ตกไป L3M เหมือน baseline ของ LP ปกติ
+        prop_strategy = strategy if strategy in ("L3M", "L6M", "LY", "EVEN", "PUSH") else "L3M"
         df_out = _proportional(
             df_emp_targets,
             df_sku,
             df_hist,
-            strategy,
+            prop_strategy,
             force_min_one,
             locked_map,
             effective_cap,

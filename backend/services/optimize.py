@@ -733,12 +733,20 @@ def run_optimization_service(
     # บันทึก "ใครถูกขอมาบ้าง" ก่อนกรองเป้าเงิน — ด่าน I8 ท้ายฟังก์ชันใช้ชุดนี้เทียบ
     # ต้องเก็บจาก frame ที่ยังไม่กรอง ไม่งั้นคนที่ถูกกรองออกจะไม่มีวันถูกตรวจ = ด่านหลอก
     requested_alloc_keys = _requested_alloc_keys(df_all_targets)
-    df_emp_targets = df_all_targets[df_all_targets["yellow_target"] > 0].copy()
+    # history_only=True (โหมดทดลอง "กระจายจากประวัติ ไม่ต้องตั้งเป้าเงิน"): เป้าเงิน
+    # ไม่มีความหมายอะไรเลย — ด่านนี้จึงต้องไม่กรองคนออกด้วยมันด้วย ไม่งั้นทีมที่ไม่เคย
+    # ตั้งเป้าเงินไว้เลย (yellow_target ทุกคน = 0) จะกระจายไม่ได้ทั้งที่ตั้งใจให้ทำได้
+    if bool(getattr(req, "history_only", False)):
+        df_emp_targets = df_all_targets.copy()
+    else:
+        df_emp_targets = df_all_targets[df_all_targets["yellow_target"] > 0].copy()
     if df_emp_targets.empty:
         raise HTTPException(
             400,
             detail=(
-                "ไม่มีพนักงานที่มีเป้าเงิน > 0 — ไม่สามารถเกลี่ยหีบได้ "
+                "ไม่มีพนักงานให้กระจายหีบ"
+                if bool(getattr(req, "history_only", False))
+                else "ไม่มีพนักงานที่มีเป้าเงิน > 0 — ไม่สามารถเกลี่ยหีบได้ "
                 "(ทุกคนเป้า 0 ในงวดนี้ / ตรวจสอบ Target Sun)"
             ),
         )
@@ -1138,6 +1146,7 @@ def run_optimization_service(
                 tier_pct=float(req.tier_pct),
                 df_sold_12m=df_hist_12 if never_sold_on else None,
                 push_multiple=alloc_rules_store.push_multiple(),
+                history_only=bool(req.history_only),
             )
             if df_alloc_grp.attrs.get("optimization_fallback"):
                 optimization_fallback = True
@@ -1149,7 +1158,7 @@ def run_optimization_service(
             if alloc_parts
             else pd.DataFrame(columns=["emp_id", "sku", "allocated_boxes"])
         )
-        if not df_allocation.empty and req.tiered_allocation:
+        if not df_allocation.empty and req.tiered_allocation and not req.history_only:
             df_allocation = _post_merge_revenue_balance(
                 df_allocation,
                 df_emp_targets,
@@ -1185,6 +1194,7 @@ def run_optimization_service(
             tier_pct=float(req.tier_pct),
             df_sold_12m=df_hist_12 if never_sold_on else None,
             push_multiple=alloc_rules_store.push_multiple(),
+            history_only=bool(req.history_only),
         )
         optimization_fallback = bool(df_allocation.attrs.get("optimization_fallback"))
         never_sold_pairs_all |= set(df_allocation.attrs.get("never_sold_zero_pairs") or ())
