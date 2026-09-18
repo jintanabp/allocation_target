@@ -19,9 +19,29 @@
   <link rel="stylesheet" href="style.css?v=2026091101" />
   <style>
     .qd-hidden { display: none !important; }
+    /* position:fixed + z-index สูงกว่า .login-wrap (z-index:20 ใน style.css) เพราะ
+       .login-wrap เป็น fixed เต็มจอ (inset:0) ทับทุกอย่างที่มาก่อนหน้ามันใน DOM —
+       ไม่งั้นแบนเนอร์นี้จะไม่โชว์เลยตอนอยู่หน้าเลือกทีม (มีอยู่ใน DOM จริง แต่โดนบัง) */
     .qd-topnote {
-      text-align: center; font-size: 13px; color: var(--text-3);
-      padding: 10px 16px; border-bottom: 1px solid var(--border);
+      position: fixed; top: 0; left: 0; right: 0; z-index: 25;
+      text-align: center; font-size: 13px; color: var(--text-2);
+      padding: 10px 16px; background: var(--accent-bg); border-bottom: 1px solid var(--accent-brd);
+    }
+    .qd-topnote strong { color: var(--accent); }
+    .qd-topnote a { color: var(--accent); font-weight: 600; }
+    /* คอลัมน์ "มูลค่ารวม" ในหน้านี้มีบรรทัดเทียบฐานประวัติ + % เติบโต ยาวกว่าตัวเลขเปล่าๆ
+       ที่ style.css ออกแบบไว้เดิม — ขยายความกว้าง + ให้ตัดบรรทัดได้เฉพาะหน้านี้ ไม่แตะ
+       ตัวแปร/กติกาของแอปหลัก (คนละ document, override เฉพาะที่นี่) */
+    #qdResultPanel { --sticky-grand-val-w: 210px; }
+    /* ตารางประวัติแถวสูงเกินความจำเป็น (แค่รหัส/ชื่อ/ตัวเลข 2 คอลัมน์ ไม่มีอะไรซับซ้อน) —
+       ลด padding/ฟอนต์ให้แน่นขึ้นเฉพาะตารางนี้ แทนที่จะพึ่งสกอลล์ในกล่องเตี้ยๆ อย่างเดียว
+       (เลื่อนเองได้ก็จริงแต่ต้องเลื่อนดูตลอดเวลาแม้แค่ 15 คน อ่านยากกว่าเดิม) */
+    #qdHistScroll th, #qdHistScroll td { padding: 5px 12px; font-size: 12px; }
+    #qdHistScroll { max-height: min(460px, 56vh); overflow-y: auto; }
+    #qdResultPanel .sticky-grand-val.grand-val-cell .hist-sub,
+    #qdResultPanel .sticky-grand-val.tfoot-val .hist-sub {
+      white-space: normal;
+      line-height: 1.35;
     }
   </style>
 </head>
@@ -83,6 +103,17 @@
               </select>
             </div>
 
+            <div class="field-group qd-hidden" id="qdPeerGroup">
+              <label class="result-toolbar-check" style="display:flex;align-items:center;gap:8px;">
+                <input type="checkbox" id="qdPeerCheckbox">
+                <span id="qdPeerLabel">รวมทีม peer ในภาคเดียวกัน</span>
+              </label>
+              <div class="field-help field-help--short">
+                กระจายรวมพนักงานของทุกทีม peer เป็นก้อนเดียว เทียบกับเป้าหีบรวมทั้งภาค
+                (สิทธิ์เดียวกับ "กระจายรวมภาค" ในระบบหลัก — ใช้ได้เฉพาะตอนเลือกรหัสทีมตัวเอง)
+              </div>
+            </div>
+
             <div class="field-group">
               <label class="field-label">งวดเดือนที่ต้องการดู</label>
               <div class="month-year-row">
@@ -117,6 +148,11 @@
         <div class="page-header-top">
           <h1 class="page-title">โหมดทดลอง: กระจายจากประวัติ</h1>
           <span class="page-sup-badge" id="qdSupBadge"></span>
+          <div id="qdScopeToggle" class="qd-hidden" style="display:flex;gap:6px;align-items:center;">
+            <span style="font-size:12px;color:var(--text-3);">มุมมอง:</span>
+            <button type="button" id="qdScopeIndividualBtn" class="btn-mini" onclick="qdSwitchScope(false)">👤 รายคน</button>
+            <button type="button" id="qdScopeRegionBtn" class="btn-mini" onclick="qdSwitchScope(true)">🌐 รวมภาค</button>
+          </div>
           <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="location.reload()">
             ↺ เลือกทีม/งวดใหม่
           </button>
@@ -128,20 +164,22 @@
       </div>
 
       <section class="step-section" id="qdMainSection">
+        <div id="qdAggregateNotice" class="fabric-change-inline qd-hidden" role="status"></div>
+
         <div class="panel">
           <div class="panel-head">
             <span class="panel-icon">📜</span>
             <span class="panel-title">ประวัติการขายรายพนักงาน</span>
             <span class="panel-count" id="qdHistEmpCount"></span>
           </div>
-          <div class="tbl-scroll">
+          <div class="tbl-scroll" id="qdHistScroll">
             <table class="tbl">
               <thead>
                 <tr>
                   <th>รหัส</th>
                   <th>ชื่อ</th>
-                  <th>ยอดขายเดือนเดียวกันปีที่แล้ว</th>
-                  <th>ยอดขายเฉลี่ย 3 เดือนย้อนหลัง</th>
+                  <th class="r">ยอดขายเดือนเดียวกันปีที่แล้ว</th>
+                  <th class="r">ยอดขายเฉลี่ย 3 เดือนย้อนหลัง</th>
                 </tr>
               </thead>
               <tbody id="qdHistBody"></tbody>
@@ -187,26 +225,64 @@
           </div>
         </div>
 
-        <div class="step3-actions" style="margin:12px 0;">
-          <button type="button" class="btn-dl" id="qdDistBtn">กระจายจากประวัติ (preview)</button>
+        <div class="step3-actions" style="margin:16px 0; display:flex; justify-content:flex-end;">
+          <button type="button" class="btn-run" id="qdDistBtn">🚀 กระจายจากประวัติ (preview)</button>
         </div>
 
         <div id="qdDistError" class="fabric-change-inline qd-hidden" role="alert"></div>
 
-        <div class="panel qd-hidden" id="qdResultPanel">
-          <div class="panel-head">
-            <span class="panel-icon">👀</span>
-            <span class="panel-title">ผลลัพธ์ (preview เท่านั้น — ยังไม่ส่งเข้า Target Sun)</span>
+        <div class="result-block qd-hidden" id="qdResultPanel">
+          <div class="result-head" style="flex-direction:column; align-items:flex-start; gap:2px;">
+            <div class="result-title">👀 ผลลัพธ์การกระจายหีบ</div>
+            <div style="font-size:12px; color:var(--text-3);">preview เท่านั้น — ยังไม่ส่งเข้า Target Sun · แก้เลขในช่องได้เหมือนหน้ากระจายจริง</div>
           </div>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:12px 20px 16px; border-bottom:1px solid var(--border); margin-bottom:12px;">
+            <div class="emp-search" role="search">
+              <input type="search" id="qdEmpSearchInput" class="emp-search__input"
+                placeholder="ค้นหาพนักงาน (รหัส/ชื่อ)" autocomplete="off" aria-label="ค้นหาพนักงาน"
+                oninput="qdOnEmpSearchInput(this.value)" />
+              <span class="emp-search__count" id="qdEmpSearchCount" aria-live="polite"></span>
+            </div>
+            <label class="result-toolbar-check" title="ซ่อนแถวที่ไม่ตรงคำค้น แทนการไฮไลต์เฉย ๆ">
+              <input type="checkbox" id="qdEmpSearchFilterOnly" onchange="qdOnEmpSearchFilterToggle(this.checked)" />
+              แสดงเฉพาะที่พบ
+            </label>
+            <label class="result-toolbar-check" title="เหลือเฉพาะคอลัมน์สินค้าที่ยอดยังไม่เท่าเป้า">
+              <input type="checkbox" id="qdOffTargetOnly" onchange="qdOnOffTargetToggle(this.checked)" />
+              เฉพาะที่ยังไม่ตรงเป้า
+            </label>
+            <select id="qdRowSortSelect" class="field-select"
+              style="min-width:150px; padding:6px 30px 6px 12px; height:auto; border-radius:6px;"
+              aria-label="เรียงลำดับแถวพนักงาน" onchange="qdOnResultRowSortChange(this.value)">
+              <option value="default">เรียงพนักงาน: ตามเดิม</option>
+              <option value="name">เรียงพนักงาน: ชื่อ/รหัส</option>
+              <option value="code">เรียงพนักงาน: รหัสพนักงาน (น้อย→มาก)</option>
+              <option value="boxes_desc">เรียงพนักงาน: หีบรวม (มาก→น้อย)</option>
+              <option value="value_desc">เรียงพนักงาน: ยอดเงิน (มาก→น้อย)</option>
+            </select>
+            <select id="qdSkuSortSelect" class="field-select"
+              style="min-width:140px; padding:6px 30px 6px 12px; height:auto; border-radius:6px;"
+              onchange="qdRenderResultTable()">
+              <option value="code">เรียงตาม รหัสสินค้า</option>
+              <option value="brand">เรียงตาม ชื่อแบรนด์</option>
+              <option value="qty">เรียงตาม จำนวนหีบ (มากไปน้อย)</option>
+              <option value="price_desc">เรียงตาม ราคา/หีบ (มากไปน้อย)</option>
+            </select>
+            <button type="button" id="qdToggleSkuNamesBtn" class="btn-dl btn-dl--toggle btn-dl--toggle-on"
+              style="color:var(--text-2); border-color:var(--border-md); background:var(--bg-main);"
+              onclick="qdToggleSkuProductNames()" aria-pressed="true"
+              title="แสดง/ซ่อนแถวชื่อสินค้าในหัวตาราง">ชื่อสินค้า ▼</button>
+            <button class="btn-dl" id="qdUndoBtn"
+              style="color:var(--text-2); border-color:var(--border-md); background:var(--bg-main);"
+              onclick="qdUndoLastEdit()" disabled>↩️ Undo</button>
+            <button class="btn-dl" id="qdRevertAllBtn"
+              style="color:var(--text-2); border-color:var(--border-md); background:var(--bg-main);"
+              title="ยังไม่มีช่องที่แก้มือไว้" onclick="qdRevertAllResultCells()" disabled>↺ คืนค่าที่ระบบคำนวณ</button>
+          </div>
+          <div id="qdCompositeLegend" class="composite-alloc-legend" style="display:none; margin:12px 20px 0;"></div>
           <div class="tbl-scroll">
-            <table class="tbl">
-              <thead>
-                <tr>
-                  <th>พนักงาน</th>
-                  <th>สินค้า</th>
-                  <th>หีบที่ได้</th>
-                </tr>
-              </thead>
+            <table class="tbl result-tbl">
+              <thead id="qdResultHead"></thead>
               <tbody id="qdResultBody"></tbody>
               <tfoot id="qdResultFoot"></tfoot>
             </table>
@@ -218,7 +294,10 @@
   </div>
 
   <script src="vendor/msal-browser.min.js"></script>
-  <script src="quick-distribute.js?v=2026091503"></script>
+  <!-- ตรรกะล้วนของหน้าเว็บ (ไม่แตะ DOM/state ส่วนกลาง) — ใช้ร่วมกับแอปหลักได้ตรงๆ
+       เพื่อไม่ต้องเขียนคณิตศาสตร์การเกลี่ยหีบซ้ำ (ดูคอมเมนต์หัวไฟล์ logic.js เอง) -->
+  <script src="logic.js?v=2026090410"></script>
+  <script src="quick-distribute.js?v=2026091802"></script>
 </body>
 
 </html>
