@@ -294,6 +294,9 @@ locked_edits ──► ตรวจ "ล็อกรวม <= เป้าขอ
 - Runtime preset: แอดมิน → `PUT /admin/settings/target-endpoints` → `config/app_runtime.json`
 - คอลัมน์: `PRODUCTCODE`, `SALESTYPE`, `DIVISIONCODE`, `SALESMANCODE`, `AREACODE`, `PROVINCECODE`, `WAREHOUSECODE`, `QUANTITYCASE`, `EFFECTIVEDATE`, `UPDATEDATE`, `USERCODE`
 - เอกสาร: `targetsun-importTargetSalesmanNextFromExcel.md`, `docs/TARGETSUN_READ_API_SPEC.md`
+- **กติกา `WAREHOUSECODE`** (อยู่ในคีย์ upsert ของปลายทางตั้งแต่ 7 ก.ย. 2026 — คลังว่างนับ
+  เป็นค่าคีย์ค่าหนึ่ง): ดู `docs/ALLOCATION_INVARIANTS.md` หัวข้อ "คีย์ upsert ของ
+  Target Sun ห้ามซ้ำในไฟล์เดียวกัน"
 
 ### OneLake
 
