@@ -1609,6 +1609,80 @@ CALCULATETABLE(
         print(f"✅ TGA targets (granular): {len(df)} แถว")
         return df
 
+    def get_tga_dim_combos_by_product(
+        self,
+        sku_list: list,
+        target_month: int,
+        target_year: int,
+    ) -> pd.DataFrame:
+        """
+        คลัง/เขต/ดิวิชัน ที่ TGA เห็นจริงสำหรับกลุ่ม PRODUCTCODE ที่ระบุ — ไม่กรองพนักงาน
+        (ต่างจาก get_tga_target_salesman_granular ซึ่งกรองด้วย emp_list) ใช้เป็นตัวช่วย
+        แอดมินเลือกคลังที่จะ "ปักหมุด" ให้กติกาบังคับคลังเดียว (ดู
+        backend/services/warehouse_pin_rules_store.py) — คืน AREACODE/DIVISIONCODE/
+        WAREHOUSECODE พร้อม SUM(QUANTITYCASE) และ DISTINCTCOUNT(SALESMANCODE) ต่อกลุ่ม
+        เพื่อโชว์ "คลังไหนคือคลังหลักจริง ๆ" ก่อนแอดมินเลือก
+        """
+        t = os.environ.get("TGA_TABLE_NAME", "tga_target_salesman_next").strip()
+        c_emp = os.environ.get("TGA_COL_SALESMAN", "SALESMANCODE").strip()
+        c_prod = os.environ.get("TGA_COL_PRODUCT", "PRODUCTCODE").strip()
+        c_qty = os.environ.get("TGA_COL_QUANTITY", "QUANTITYCASE").strip()
+        c_eff = os.environ.get("TGA_COL_EFFECTIVE", "EFFECTIVEDATE").strip()
+        filter_period = tga_filter_by_selected_period()
+
+        empty_cols = ["areacode", "divisioncode", "warehouse_code", "qty", "emp_count"]
+        if not sku_list:
+            return pd.DataFrame(columns=empty_cols)
+
+        sku_str = ", ".join(f'"{str(s)}"' for s in sku_list)
+
+        eff_filters = ""
+        if filter_period and c_eff:
+            y_ce = int(target_year)
+            tm = int(target_month)
+            eff_filters = (
+                f", YEAR('{t}'[{c_eff}]) = {y_ce}, "
+                f"MONTH('{t}'[{c_eff}]) = {tm}"
+            )
+
+        c_area = os.environ.get("LAKEHOUSE_COL_AREACODE", "AREACODE").strip()
+        c_div = os.environ.get("LAKEHOUSE_COL_DIVISION", "DIVISIONCODE").strip()
+        c_wh = os.environ.get("LAKEHOUSE_COL_WAREHOUSE", "WAREHOUSECODE").strip()
+
+        print(
+            f"📡 [{t}] ดึงคลัง/เขต/ดิวิชันของกลุ่มสินค้า (sku={len(sku_list)}) "
+            f"สำหรับกติกาบังคับคลัง..."
+        )
+
+        dax = f"""
+EVALUATE
+CALCULATETABLE(
+    SUMMARIZECOLUMNS(
+        '{t}'[{c_area}],
+        '{t}'[{c_div}],
+        '{t}'[{c_wh}],
+        "qty", SUM('{t}'[{c_qty}]),
+        "emp_count", DISTINCTCOUNT('{t}'[{c_emp}])
+    ),
+    TREATAS({{{sku_str}}}, '{t}'[{c_prod}]){eff_filters}
+)
+"""
+        rows = self._execute_dax(dax, debug=True)
+        records = []
+        for r in rows:
+            area = str(self._get(r, f"{t}[{c_area}]", f"[{c_area}]", "[areacode]", default="") or "").strip()
+            div = str(self._get(r, f"{t}[{c_div}]", f"[{c_div}]", "[divisioncode]", default="") or "").strip()
+            wh = str(self._get(r, f"{t}[{c_wh}]", f"[{c_wh}]", "[warehouse_code]", default="") or "").strip()
+            qty = float(self._get(r, "[qty]", default=0) or 0)
+            emp_count = int(self._get(r, "[emp_count]", default=0) or 0)
+            records.append(
+                {"areacode": area, "divisioncode": div, "warehouse_code": wh, "qty": qty, "emp_count": emp_count}
+            )
+
+        df = pd.DataFrame(records) if records else pd.DataFrame(columns=empty_cols)
+        print(f"✅ TGA dim combos by product: {len(df)} แถว")
+        return df
+
     def get_tga_period_sku_targets(
         self,
         target_month: int,

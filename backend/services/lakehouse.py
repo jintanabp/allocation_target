@@ -17,6 +17,7 @@ from ..core.paths import safe_id, target_boxes_cache_path, tga_grain_cache_path
 from ..fabric_dax_connector import FabricDAXConnector
 from ..schemas import LakehouseUploadRequest
 from . import no_target_store
+from . import warehouse_pin_rules_store
 
 logger = logging.getLogger("target_allocation")
 
@@ -159,6 +160,26 @@ def _areacode_str(val) -> str:
     low = s.lower()
     if low in ("0", "0.0", "-0", "-0.0"):
         return "0"
+    return s
+
+
+def _section_str(val) -> str:
+    """ค่า Dim_Product[Section] — CSV round-trip ทำให้ "702" กลายเป็น 702.0 ได้เหมือน
+    AREACODE จึงปัดกลับด้วยกติกาเดียวกับ _areacode_str (ต่างกันแค่ไม่มีกรณีพิเศษของ "0")"""
+    if val is None:
+        return ""
+    try:
+        if pd.isna(val):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    if isinstance(val, (int, float)) and not isinstance(val, bool):
+        if float(val) == int(val):
+            return str(int(val))
+        return str(val).strip()
+    s = str(val).strip()
+    if not s or s.lower() in ("nan", "none"):
+        return ""
     return s
 
 
@@ -1936,6 +1957,141 @@ def _sup_target_boxes_by_sku(sup_id: str, month: int, year: int) -> dict[str, in
     return targets
 
 
+def _sku_section_map(sup_id: str, month: int, year: int) -> dict[str, str]:
+    """sku -> Dim_Product[Section] จากไฟล์เป้าราย sup ที่เขียนไว้แล้วตอนขั้นที่ 1
+    (คอลัมน์ 'section' ใน employees.py::_SKU_OUTPUT_COLUMNS) — ไม่ยิง Fabric เพิ่ม
+    เพราะ section เป็นคุณสมบัติสินค้า ไม่ใช่ของทีม ไฟล์ราย sup มีครบสำหรับทุก SKU
+    ที่ทีมนี้มีเป้าอยู่แล้ว — คืนว่างถ้าอ่านไม่ได้/ไม่มีคอลัมน์ ให้ผู้เรียก fail open"""
+    from ..core.targets import load_target_csv_for
+
+    sid = str(sup_id or "").strip().upper()
+    try:
+        df_sku, _ = load_target_csv_for(sid, int(month), int(year), allow_legacy_fallback=False)
+    except Exception as e:
+        logger.warning("กติกาบังคับคลัง: อ่านไฟล์เป้าเพื่อหา section ไม่ได้ (%s): %s", sid, e)
+        return {}
+    if df_sku is None or df_sku.empty or "section" not in df_sku.columns:
+        return {}
+    out: dict[str, str] = {}
+    for _, r in df_sku.iterrows():
+        sku = str(r.get("sku") or "").strip()
+        sec = _section_str(r.get("section"))
+        if sku and sec:
+            out[sku] = sec
+    return out
+
+
+def _apply_warehouse_pin_rules(
+    df: pd.DataFrame, sup_id: str, month: int, year: int,
+) -> tuple[pd.DataFrame, dict[str, int]]:
+    """
+    บังคับคลังเดียวสำหรับกลุ่มสินค้า (section) × AREACODE × DIVISIONCODE ตามกติกาที่
+    แอดมินตั้งไว้ (warehouse_pin_rules_store) — ใช้แก้ปัญหาที่บางกลุ่มสินค้ากระจายเป้า
+    ปนหลายคลังตามประวัติขาย ทั้งที่ธุรกิจต้องการคลังเดียว
+
+    ต้องรันหลังคลัง/areacode/divisioncode ของทุกแถว resolve ครบแล้ว (หลัง
+    _apply_wh_hints/_enrich_emp_dimensions) — จับคู่กติกาด้วย 4 ทูเพิล
+    (emp_id, sku, areacode, divisioncode) ไม่ใช่แค่ (emp_id, sku) เพราะพนักงานคนเดียว
+    อาจมีแถวคนละ area/division ปนกันได้ (ดู emp_dims_from_own_grain) กติกาต้องแตะเฉพาะ
+    ขาที่ area/division ตรงกับกติกาจริง ๆ
+
+    เมื่อกติกาแมตช์: รวมหีบทั้งกลุ่มเป็นแถวใหม่ 1 แถวที่คลังปักหมุด + ตั้ง
+    allocated_boxes=0 ให้ทุกแถวเดิมที่ไม่ใช่คลังปักหมุด (**ตั้งเป็น 0 ไม่ลบแถว** — ทำให้
+    คลังเก่าถูกส่ง 0 ทับจริงที่ Target Sun กันปัญหาเดียวกับ SL380/SL530/SL525:
+    WAREHOUSECODE อยู่ในคีย์ upsert ตั้งแต่ 7 ก.ย. 2026 คลังใหม่ที่ปลายทางไม่เคยมี =
+    insert ซ้อนไม่ใช่ update ทับ ดู docs/ALLOCATION_INVARIANTS.md)
+
+    ปล่อยให้ _merge_duplicate_import_keys (เรียกทีหลังใน _build_tga_upload_dataframe)
+    ยุบ+บวกหีบของแถวที่คีย์ตรงกันเป๊ะให้เอง — ไม่ต้องเขียน merge เอง
+    """
+    empty_stats = {"matched_groups": 0, "boxes_moved": 0, "rows_zeroed": 0, "new_warehouse_legs": 0}
+    if df is None or df.empty:
+        return df, empty_stats
+
+    rules = warehouse_pin_rules_store.rules_by_key()
+    if not rules:
+        return df, empty_stats
+
+    sec_map = _sku_section_map(sup_id, month, year)
+    if not sec_map:
+        logger.warning(
+            "กติกาบังคับคลัง: ไม่มี section map ของ %s — ข้ามการบังคับรอบนี้ (มีกติกาตั้งไว้ %d ข้อ)",
+            str(sup_id or "").strip().upper(), len(rules),
+        )
+        return df, empty_stats
+
+    d = df.copy()
+    d["_wh_pin_area"] = d.get("areacode", "").map(_areacode_str)
+    d["_wh_pin_div"] = d.get("divisioncode", "").map(_cell_str)
+    d["_wh_pin_sec"] = d["sku"].astype(str).str.strip().map(lambda s: sec_map.get(s, ""))
+
+    extra_rows: list[dict] = []
+    zero_idx: list[int] = []
+    stats = dict(empty_stats)
+
+    for (emp_id, sku, area, div), grp in d.groupby(
+        ["emp_id", "sku", "_wh_pin_area", "_wh_pin_div"], sort=False
+    ):
+        sec = grp["_wh_pin_sec"].iloc[0]
+        if not sec:
+            continue
+        rule = rules.get((sec, area, div))
+        if not rule:
+            continue
+
+        target_wh = _cell_str(rule["warehouse_code"])
+        wh_series = grp["warehouse_code"].map(_cell_str)
+        if wh_series.eq(target_wh).all():
+            continue  # ทุกแถวอยู่คลังปักหมุดอยู่แล้ว ไม่ต้องทำอะไร
+
+        total = int(pd.to_numeric(grp["allocated_boxes"], errors="coerce").fillna(0).sum())
+        if total == 0:
+            # ไม่มีหีบให้รวม (ทุกแถวในกลุ่มเป็น 0 อยู่แล้ว) — สร้างแถวใหม่ที่คลังปักหมุดไปก็ได้
+            # แค่แถวเปล่าไร้ประโยชน์ คนละจุดกับ ค9 (ที่ตัดหลังสร้างแล้ว) แต่หลักการเดียวกัน
+            continue
+
+        already_pinned = wh_series.eq(target_wh)
+        moved = int(
+            pd.to_numeric(grp.loc[~already_pinned, "allocated_boxes"], errors="coerce")
+            .fillna(0)
+            .sum()
+        )
+        zero_idx.extend(grp.index[~already_pinned].tolist())
+
+        row0 = grp.iloc[0]
+        extra_rows.append(
+            {
+                "emp_id": emp_id,
+                "sku": sku,
+                "allocated_boxes": total,
+                "salestype": _cell_str(row0.get("salestype", "")),
+                "divisioncode": div,
+                "areacode": area,
+                "provincecode": _cell_str(row0.get("provincecode", "")),
+                "warehouse_code": target_wh,
+            }
+        )
+        stats["matched_groups"] += 1
+        stats["boxes_moved"] += moved
+        stats["rows_zeroed"] += int((~already_pinned).sum())
+        if not wh_series.eq(target_wh).any():
+            stats["new_warehouse_legs"] += 1
+
+    if zero_idx:
+        d.loc[zero_idx, "allocated_boxes"] = 0
+    d = d.drop(columns=["_wh_pin_area", "_wh_pin_div", "_wh_pin_sec"])
+    if extra_rows:
+        d = pd.concat([d, pd.DataFrame(extra_rows)], ignore_index=True)
+        logger.warning(
+            "กติกาบังคับคลัง %s: %d กลุ่มพนักงาน×สินค้า×เขต×ดิวิชันถูกรวมคลัง — "
+            "ย้าย %d หีบ, ล้าง %d แถวคลังอื่นเป็น 0, %d เป็นคลังใหม่ของคู่นั้น",
+            str(sup_id or "").strip().upper(),
+            stats["matched_groups"], stats["boxes_moved"], stats["rows_zeroed"],
+            stats["new_warehouse_legs"],
+        )
+    return d, stats
+
+
 def _assert_send_matches_sup_targets(
     df: pd.DataFrame,
     sup_id: str,
@@ -2273,6 +2429,13 @@ def _build_tga_upload_dataframe(
         )
     t_enrich = time.perf_counter()
 
+    # ทุกแถวมี areacode/divisioncode/warehouse_code resolve ครบแล้วถึงจุดนี้ — บังคับกติกา
+    # คลังเดียว (ถ้ามีตั้งไว้) ก่อนตัดแถว/ยุบคีย์ซ้ำ ให้ _merge_duplicate_import_keys
+    # (ท้ายฟังก์ชัน) ยุบ+บวกหีบของแถวที่คลังปักหมุดชนกับของเดิม (ถ้ามี) ให้เอง
+    df, wh_pin_stats = _apply_warehouse_pin_rules(
+        df, req.sup_id, int(req.target_month), int(req.target_year)
+    )
+
     # ต้องคิดจาก df ก่อน drop — หลัง drop แถวที่หายไปไม่เหลือให้นับแล้ว
     shortfall = _shortfall_from_dropped_rows(
         df, req.sup_id, int(req.target_month), int(req.target_year)
@@ -2513,6 +2676,10 @@ def _build_tga_upload_dataframe(
     final.attrs["new_rows_count"] = new_rows
     final.attrs["new_rows_with_boxes_count"] = new_rows_with_boxes
     final.attrs["stale_rows_cleared_count"] = stale_rows_cleared
+    final.attrs["wh_pin_matched_groups"] = wh_pin_stats["matched_groups"]
+    final.attrs["wh_pin_boxes_moved"] = wh_pin_stats["boxes_moved"]
+    final.attrs["wh_pin_rows_zeroed"] = wh_pin_stats["rows_zeroed"]
+    final.attrs["wh_pin_new_warehouse_legs"] = wh_pin_stats["new_warehouse_legs"]
     return final, dropped_dims, not_in_ts, shortfall
 
 

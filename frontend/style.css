@@ -10383,6 +10383,42 @@ tr.emp-row--no-target .emp-tag {
   color: var(--text-1);
 }
 #adminView .alloc-rules-pickrow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+#adminView .wh-pin-pickgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px 14px;
+  margin-bottom: 8px;
+}
+#adminView .wh-pin-pickgrid label {
+  display: block;
+  font-size: 13px;
+  color: var(--text-2);
+}
+#adminView .wh-pin-pickgrid select { display: block; margin-top: 6px; width: 100%; }
+#adminView .wh-pin-product-list {
+  margin: 4px 0 10px;
+  padding: 10px 12px;
+  background: var(--bg-2, #f7f7f9);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  max-height: 180px;
+  overflow-y: auto;
+}
+#adminView .wh-pin-product-list__title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  margin-bottom: 6px;
+}
+#adminView .wh-pin-product-list__items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 12.5px;
+  color: var(--text-2);
+  line-height: 1.9;
+}
+#adminView .wh-pin-product-list__items li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #adminView .alloc-rules-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 #adminView .alloc-rules-chip {
   display: inline-flex;

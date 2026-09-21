@@ -12,7 +12,8 @@
       "team",
       "emp_moves",
       "feedback",
-      "alloc_rules"
+      "alloc_rules",
+      "warehouse_pin_rules"
     ],
     "admin": [
       "users",

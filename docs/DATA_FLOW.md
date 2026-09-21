@@ -134,7 +134,7 @@ Methods: `get_skus_sold_by_team`, `get_historical_sales`, `get_calendar_year_sal
 | `UPDATEDATE` | `TGA_COL_EFFECTIVE_FALLBACK` |
 | `SALESTYPE`, `DIVISIONCODE`, `AREACODE`, `PROVINCECODE`, `WAREHOUSECODE` | `LAKEHOUSE_COL_*` |
 
-Methods: `get_tga_max_effective_raw`, `get_tga_target_salesman_granular`, `get_tga_lakehouse_dims_by_emp_sku`, `get_tga_lakehouse_dims_by_emp`
+Methods: `get_tga_max_effective_raw`, `get_tga_target_salesman_granular`, `get_tga_lakehouse_dims_by_emp_sku`, `get_tga_lakehouse_dims_by_emp`, `get_tga_dim_combos_by_product` (กรองด้วย `PRODUCTCODE` แทน `SALESMANCODE` — ใช้เฉพาะหน้าแอดมิน「กติกาบังคับคลัง」เพื่อโชว์คลังที่เจอจริงของกลุ่มสินค้า)
 
 ---
 
@@ -215,6 +215,9 @@ TTL: `EMPLOYEE_PAYLOAD_CACHE_TTL_SEC`, `MANAGERS_CACHE_TTL_SEC`, `ADMIN_TEAM_CAC
 | `PUT /admin/settings/alloc-rules` | ไม่ | บันทึกค่ากติกาการเกลี่ย — CAS ด้วย `expected_rev` (ดู `docs/CONCURRENCY.md`) |
 | `POST /admin/settings/alloc-rules/reset` | ไม่ | ลบค่าที่ตั้งจากเว็บ กลับไปใช้ค่าเริ่มต้นจากโค้ด |
 | `POST /admin/alloc-rules/round-check` | ไม่ | ผู้ใช้ทั่วไปยิงได้ (ไม่ใช่ admin) — ถามว่ารหัสทีมที่ระบุถูกปิดกติกาไหม ก่อนกดกระจายรวมภาค |
+| `GET /admin/settings/warehouse-pin-rules` | ไม่ | อ่านกติกาบังคับคลังเดียว (`data/warehouse_pin_rules.json`) |
+| `PUT /admin/settings/warehouse-pin-rules` | ไม่ | บันทึกกติกาบังคับคลัง — CAS ด้วย `expected_rev` |
+| `GET /admin/warehouse-pin-rules/combos` | ใช่ | คลัง/เขต/ดิวิชันที่ TGA เห็นจริงของกลุ่มสินค้า — ช่วยแอดมินเลือกคลังที่จะปักหมุด |
 | `GET /debug/fabric` | ใช่ | debug (`ENABLE_DEBUG_ENDPOINTS=1`) |
 
 ---

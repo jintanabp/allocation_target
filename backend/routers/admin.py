@@ -68,6 +68,7 @@ from ..services.user_access_store import (
     write_rows,
 )
 from ..services import alloc_rules_store, dev_bundle, emp_assignment_store, feedback_store, no_target_store
+from ..services import warehouse_pin_rules_store
 from ..services.admin_team import list_supervisor_codes, load_supervisor_team
 from ..services.admin_inventory import build_data_inventory
 from ..services.sku_link_store import (
@@ -1029,6 +1030,7 @@ def _sku_rows_from_payload(payload: dict[str, Any], sku_links: list[dict[str, An
                 "product_name_thai": str(raw.get("product_name_thai") or "").strip(),
                 "product_name_english": str(raw.get("product_name_english") or "").strip(),
                 "brand": str(raw.get("brand") or "").strip(),
+                "section": str(raw.get("section") or "").strip(),
                 "target_boxes": float(raw.get("target_boxes") or 0),
                 "target_sun": float(raw.get("target_sun") or 0),
                 "has_sku_link": canon != sku or bool(extras),
@@ -1143,6 +1145,7 @@ def sku_link_catalog(
                             info.get("product_name_english") or info.get("Product_NameEnglish") or ""
                         ).strip(),
                         "brand": str(info.get("brand") or info.get("Brand") or "").strip(),
+                        "section": str(info.get("section") or info.get("Section") or "").strip(),
                         "target_boxes": boxes,
                         "price_per_box": float(price_map.get(sku, 0) or 0),
                         "has_sku_link": canon != sku or bool(extras),
@@ -2975,3 +2978,113 @@ def alloc_rules_round_check(
 ) -> dict[str, Any]:
     """กติกา「ไม่เคยขาย = เป้า 0」จะทำงานไหม ถ้ากระจายทีมชุดนี้รวมกันในรอบเดียว"""
     return alloc_rules_store.never_sold_zero_round_state(body.sup_ids)
+
+
+# ─── กติกาบังคับคลังเดียว — กลุ่มสินค้า (Section) × AREACODE × DIVISIONCODE ──────────
+#
+# กระทบเงิน/คลังที่ Target Sun เห็นทั้งบริษัท (WAREHOUSECODE อยู่ในคีย์ upsert ตั้งแต่
+# 7 ก.ย. 2026 — ดู docs/ALLOCATION_INVARIANTS.md) จึงให้เฉพาะ head_admin เหมือน alloc_rules
+# ค่าที่ตั้งลง data/warehouse_pin_rules.json เท่านั้น (ไม่ใช่ config/ ที่โดน git pull ทับ)
+
+
+class WarehousePinRuleBody(BaseModel):
+    id: str = ""
+    section: str
+    section_label_hint: str = ""
+    areacode: str
+    divisioncode: str
+    warehouse_code: str
+    note: str = ""
+
+
+class WarehousePinRulesBody(BaseModel):
+    rules: list[WarehousePinRuleBody] = Field(default_factory=list, max_length=500)
+    expected_rev: int | None = None
+
+
+@router.get("/settings/warehouse-pin-rules")
+def admin_get_warehouse_pin_rules(
+    _admin: dict = Depends(require_capability("warehouse_pin_rules")),
+) -> dict[str, Any]:
+    return warehouse_pin_rules_store.read_state()
+
+
+@router.put("/settings/warehouse-pin-rules")
+def admin_put_warehouse_pin_rules(
+    body: WarehousePinRulesBody,
+    admin: dict = Depends(require_capability("warehouse_pin_rules")),
+) -> dict[str, Any]:
+    before = warehouse_pin_rules_store.read_state()
+    try:
+        after = warehouse_pin_rules_store.write_rules(
+            [r.model_dump() for r in body.rules],
+            updated_by=str(admin.get("email") or ""),
+            expected_rev=body.expected_rev,
+        )
+    except warehouse_pin_rules_store.WarehousePinRulesConflict:
+        raise HTTPException(
+            status_code=409,
+            detail="มีแอดมินอีกคนบันทึกกติกาไปแล้ว — กดโหลดใหม่เพื่อดูค่าล่าสุดก่อนแก้ซ้ำ",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    _audit_admin(
+        admin,
+        "admin_warehouse_pin_rules_update",
+        "แก้กติกาบังคับคลังเดียว",
+        f"{len(after['rules'])} กติกา",
+        level="warn",
+        context={"before": before, "after": after},
+    )
+    return {"ok": True, **after}
+
+
+@router.get("/warehouse-pin-rules/combos")
+def admin_warehouse_pin_rule_combos(
+    section: str = Query(..., min_length=1),
+    year: int | None = Query(None, ge=2000, le=2100),
+    month: int | None = Query(None, ge=1, le=12),
+    _admin: dict = Depends(require_capability("warehouse_pin_rules")),
+) -> dict[str, Any]:
+    """คลัง/เขต/ดิวิชันที่ TGA เห็นจริงของกลุ่มสินค้านี้ — ให้แอดมินเลือกคลังที่จะปักหมุด
+    โดยมีข้อมูลจริงประกอบ (% หีบ/จำนวนคนต่อคลัง) ไม่ใช่เดาเอง"""
+    from ..core.tga_period import expected_allocation_period_ce
+
+    if month is None or year is None:
+        year, month = expected_allocation_period_ce()
+    year = int(year)
+    month = int(month)
+    sec = str(section or "").strip()
+
+    try:
+        fabric = FabricDAXConnector()
+        df_tgt = fabric.get_tga_period_sku_targets(month, year)
+        sku_list: list[str] = []
+        if df_tgt is not None and not df_tgt.empty:
+            sku_list = df_tgt["sku"].astype(str).str.strip().tolist()
+        sample_skus: list[str] = []
+        if sku_list:
+            df_info = fabric.get_product_info(sku_list=sku_list, target_year=year, target_month=month)
+            if df_info is not None and not df_info.empty:
+                mask = df_info["section"].astype(str).str.strip() == sec
+                sample_skus = df_info.loc[mask, "sku"].astype(str).str.strip().tolist()
+        if not sample_skus:
+            return {
+                "section": sec, "sku_count": 0, "sample_skus": [], "combos": [],
+                "hint": f"ไม่พบ SKU ที่มีเป้าในงวด {month:02d}/{year} สำหรับกลุ่มสินค้า {sec}",
+            }
+        df_combos = fabric.get_tga_dim_combos_by_product(sample_skus, month, year)
+        combos = [] if df_combos is None or df_combos.empty else df_combos.to_dict(orient="records")
+        return {
+            "section": sec,
+            "sku_count": len(sample_skus),
+            "sample_skus": sample_skus[:20],
+            "combos": combos,
+            "hint": f"งวด {month:02d}/{year} · {len(sample_skus)} SKU ในกลุ่มนี้",
+        }
+    except Exception as e:
+        logger.warning("warehouse-pin-rules combos fabric failed: %s", e)
+        raise HTTPException(
+            status_code=502,
+            detail="ดึงข้อมูลคลังจาก Fabric ไม่สำเร็จ — กด「โหลดใหม่」อีกครั้ง",
+        ) from e

@@ -15057,6 +15057,11 @@ const ADMIN_TAB_META = {
     title: "กติกาการเกลี่ย",
     sub: "เปิด/ปิดกติกา「ไม่เคยขาย = เป้า 0」ทั้งระบบหรือรายทีม — มีผลกับการคำนวณครั้งถัดไป",
   },
+  warehousePinRules: {
+    group: "ระบบ",
+    title: "กติกาบังคับคลัง",
+    sub: "บังคับคลังเดียวสำหรับกลุ่มสินค้า × ภาค × Division — มีผลตอนตรวจไฟล์ก่อนส่ง/ส่งจริง",
+  },
 };
 
 let _adminSkuLinkRows = [];
@@ -15111,6 +15116,7 @@ function adminSwitchTab(tab) {
   if (_adminActiveTab === "permissions") adminPermsLoad();
   if (_adminActiveTab === "feedback") adminInitFeedbackPanel();
   if (_adminActiveTab === "allocRules") adminLoadAllocRules();
+  if (_adminActiveTab === "warehousePinRules") adminLoadWarehousePinRules();
   // /admin/emp-assignments ใช้เวลา ~9 วินาทีและไม่มีแคชฝั่งไหนเลย
   // เดิมยิงใหม่ทุกครั้งที่เปิดแท็บ พร้อมล้างตารางที่โหลดไว้ทิ้งก่อน
   // ปุ่ม「โหลดใหม่」ยังบังคับดึงสดได้เหมือนเดิม
@@ -15598,6 +15604,297 @@ async function adminResetAllocRules() {
     toast("คืนค่าตั้งต้นแล้ว", "green");
   } catch (e) {
     toast(e.message || String(e), "red");
+  }
+}
+
+/* ── แท็บ「กติกาบังคับคลัง」 ─────────────────────────────────────────────
+   บังคับคลังเดียวสำหรับกลุ่มสินค้า (Section) × AREACODE × DIVISIONCODE — มีผลตอน
+   ตรวจไฟล์ก่อนส่ง/ส่งจริงเท่านั้น (ดู backend/services/lakehouse.py::
+   _apply_warehouse_pin_rules) โครง add+table+save เดียวกับแท็บ「กติกาการเกลี่ย」
+   ต่างตรงที่แต่ละกติกามี 4 ค่า (section/area/division/warehouse) จึงใช้ตารางแทน chip */
+
+let _whPinRulesState = null;
+let _whPinSections = [];   // [{section, sample_skus, sku_count}]
+let _whPinCombos = [];     // combos ของ section ที่เลือกอยู่ตอนนี้
+let _whPinTmpIdSeq = 0;
+let _whPinLastWarehouse = "";
+
+async function adminLoadWarehousePinRules() {
+  const msg = document.getElementById("adminWhPinMsg");
+  if (msg) msg.textContent = "กำลังโหลด…";
+  try {
+    const [state] = await Promise.all([
+      _adminJsonFetch("/admin/settings/warehouse-pin-rules"),
+      adminLoadWhPinSections(),
+    ]);
+    _whPinRulesState = state;
+    adminRenderWarehousePinRulesTable();
+    const src = document.getElementById("adminWhPinSource");
+    if (src) {
+      src.textContent = state.updated_at
+        ? `แก้ล่าสุดเมื่อ ${_fmtLogTimeBangkok(state.updated_at)} โดย ${state.updated_by || "—"}`
+        : "ยังไม่เคยตั้งกติกานี้";
+    }
+    if (msg) msg.textContent = "";
+  } catch (e) {
+    if (msg) msg.textContent = e.message || String(e);
+  }
+}
+
+async function adminLoadWhPinSections() {
+  const sel = document.getElementById("adminWhPinSection");
+  if (sel) sel.innerHTML = `<option value="">กำลังโหลด…</option>`;
+  try {
+    // ไม่ส่ง super_code — endpoint นี้จะดึง SKU ที่มีเป้าทั้งบริษัทของงวดปัจจุบันมาให้
+    const data = await _adminJsonFetch("/admin/sku-links/catalog", { timeout: 120000 });
+    const bySection = new Map();
+    for (const row of data.skus || []) {
+      const sec = String(row.section || "").trim();
+      if (!sec) continue;
+      if (!bySection.has(sec)) bySection.set(sec, []);
+      bySection.get(sec).push({
+        sku: String(row.sku || ""),
+        name: row.product_name_thai || row.product_name_english || row.sku,
+      });
+    }
+    _whPinSections = [...bySection.entries()]
+      .map(([section, products]) => ({
+        section,
+        products,
+        sample_skus: products.slice(0, 3).map((p) => p.name),
+        sku_count: products.length,
+      }))
+      .sort((a, b) => a.section.localeCompare(b.section, "en", { numeric: true }));
+    if (sel) {
+      sel.innerHTML = _whPinSections.length
+        ? [`<option value="">— เลือกกลุ่มสินค้า —</option>`, ...whPinSections_options()].join("")
+        : `<option value="">— ไม่พบกลุ่มสินค้าที่มีเป้างวดนี้ —</option>`;
+    }
+  } catch (e) {
+    if (sel) sel.innerHTML = `<option value="">โหลดรายการกลุ่มสินค้าไม่สำเร็จ</option>`;
+    toast(e.message || String(e), "red");
+  }
+}
+
+function whPinSections_options() {
+  return _whPinSections.map((s) => {
+    const label = `${s.section} (${s.sku_count} SKU — เช่น ${s.sample_skus.join(", ")})`;
+    return `<option value="${escapeHtml(s.section)}">${escapeHtml(label)}</option>`;
+  });
+}
+
+function _whPinRenderSectionProducts(section) {
+  const box = document.getElementById("adminWhPinSectionProducts");
+  if (!box) return;
+  const meta = _whPinSections.find((s) => s.section === section);
+  if (!section || !meta || !meta.products.length) {
+    box.style.display = "none";
+    box.innerHTML = "";
+    return;
+  }
+  box.style.display = "block";
+  box.innerHTML = `<div class="wh-pin-product-list__title">สินค้าในกลุ่ม ${escapeHtml(section)} (${meta.products.length} รายการ)</div>`
+    + `<ul class="wh-pin-product-list__items">`
+    + meta.products.map((p) => `<li>${escapeHtml(p.sku)} — ${escapeHtml(p.name || p.sku)}</li>`).join("")
+    + `</ul>`;
+}
+
+function _whPinResetSelect(id, placeholder) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>`;
+  el.disabled = true;
+}
+
+async function whPinSectionChanged() {
+  const section = document.getElementById("adminWhPinSection")?.value || "";
+  const hint = document.getElementById("adminWhPinSectionHint");
+  _whPinRenderSectionProducts(section);
+  _whPinResetSelect("adminWhPinArea", "—");
+  _whPinResetSelect("adminWhPinDivision", "—");
+  _whPinResetSelect("adminWhPinWarehouse", "—");
+  _whPinCombos = [];
+  if (!section) {
+    if (hint) hint.textContent = "";
+    return;
+  }
+  if (hint) hint.textContent = "กำลังตรวจคลังที่เจอจริงในข้อมูล…";
+  try {
+    const period = _effectiveTargetPeriod();
+    const q = new URLSearchParams({ section, year: String(period.year), month: String(period.month) });
+    const data = await _adminJsonFetch(`/admin/warehouse-pin-rules/combos?${q}`, { timeout: 120000 });
+    _whPinCombos = data.combos || [];
+    if (hint) hint.textContent = data.hint || "";
+    const areas = [...new Set(_whPinCombos.map((c) => c.areacode))].sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+    const areaSel = document.getElementById("adminWhPinArea");
+    if (areaSel) {
+      areaSel.innerHTML = areas.length
+        ? [`<option value="">— เลือกภาค —</option>`, ...areas.map((a) => `<option value="${escapeHtml(a)}">AREACODE ${escapeHtml(a)}</option>`)].join("")
+        : `<option value="">— ไม่พบข้อมูลคลังของกลุ่มนี้ —</option>`;
+      areaSel.disabled = !areas.length;
+    }
+  } catch (e) {
+    if (hint) hint.textContent = "";
+    toast(e.message || String(e), "red");
+  }
+}
+
+function whPinAreaChanged() {
+  const area = document.getElementById("adminWhPinArea")?.value || "";
+  _whPinResetSelect("adminWhPinDivision", "—");
+  _whPinResetSelect("adminWhPinWarehouse", "—");
+  if (!area) return;
+  const divs = [...new Set(_whPinCombos.filter((c) => c.areacode === area).map((c) => c.divisioncode))].sort();
+  const divSel = document.getElementById("adminWhPinDivision");
+  if (divSel) {
+    divSel.innerHTML = divs.length
+      ? [`<option value="">— เลือก division —</option>`, ...divs.map((d) => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`)].join("")
+      : `<option value="">— ไม่พบข้อมูล —</option>`;
+    divSel.disabled = !divs.length;
+  }
+}
+
+function whPinDivisionChanged() {
+  const area = document.getElementById("adminWhPinArea")?.value || "";
+  const div = document.getElementById("adminWhPinDivision")?.value || "";
+  const whSel = document.getElementById("adminWhPinWarehouse");
+  if (!whSel) return;
+  if (!area || !div) {
+    whSel.innerHTML = `<option value="">—</option>`;
+    whSel.disabled = true;
+    return;
+  }
+  // คลังที่เลือกได้ = คลังทั้งหมดที่เจอในกลุ่มสินค้านี้ (ไม่ใช่แค่ในภาค/division ที่เลือก)
+  // เพราะบางครั้งต้องการปักหมุดไปคลังที่ "ยังไม่เคยมี" ในภาคนี้มาก่อน (เช่นรวมศูนย์คลังใหม่)
+  // — แต่โชว์สถิติจริงของภาค/division ที่เลือกกำกับให้ดูก่อนตัดสินใจ
+  const allWh = [...new Set(_whPinCombos.map((c) => c.warehouse_code).filter(Boolean))];
+  const hereRows = _whPinCombos.filter((c) => c.areacode === area && c.divisioncode === div);
+  const totalHere = hereRows.reduce((s, c) => s + Number(c.qty || 0), 0);
+  const byWhHere = new Map(hereRows.map((c) => [c.warehouse_code, c]));
+  const opts = allWh
+    .map((wh) => {
+      const row = byWhHere.get(wh);
+      const label = row
+        ? `${wh} — ${Math.round(Number(row.qty || 0))} หีบ (${totalHere ? Math.round((row.qty / totalHere) * 100) : 0}%), ${row.emp_count} คน`
+        : `${wh} (ไม่เคยมีข้อมูลในภาค/division นี้)`;
+      return { wh, qty: row ? Number(row.qty || 0) : -1, label };
+    })
+    .sort((a, b) => b.qty - a.qty);
+  whSel.innerHTML = opts.length
+    ? [`<option value="">— เลือกคลัง —</option>`, ...opts.map((o) => `<option value="${escapeHtml(o.wh)}">${escapeHtml(o.label)}</option>`)].join("")
+    : `<option value="">— ไม่พบคลังเลย —</option>`;
+  whSel.disabled = !opts.length;
+  if (_whPinLastWarehouse && allWh.includes(_whPinLastWarehouse)) {
+    whSel.value = _whPinLastWarehouse;
+  }
+}
+
+function adminRenderWarehousePinRulesTable() {
+  const body = document.getElementById("adminWhPinRulesTableBody");
+  const st = _whPinRulesState;
+  if (!body || !st) return;
+  const rules = st.rules || [];
+  if (!rules.length) {
+    body.innerHTML = `<tr><td colspan="6" class="admin-empty">ยังไม่มีกติกา</td></tr>`;
+    return;
+  }
+  body.innerHTML = rules.map((r) => `<tr>
+    <td>${escapeHtml(r.section)}</td>
+    <td>${escapeHtml(r.areacode)}</td>
+    <td>${escapeHtml(r.divisioncode)}</td>
+    <td>${escapeHtml(r.warehouse_code)}</td>
+    <td>${escapeHtml(r.created_by || "ยังไม่บันทึก")}</td>
+    <td><button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminWhPinRulesRemove('${escapeHtml(r._tmp_id || r.id)}')" aria-label="ลบกติกานี้ออกจากรายการ">✕</button></td>
+  </tr>`).join("");
+}
+
+function adminWhPinRulesAdd() {
+  const st = _whPinRulesState;
+  if (!st) return;
+  const section = document.getElementById("adminWhPinSection")?.value || "";
+  const areacode = document.getElementById("adminWhPinArea")?.value || "";
+  const divisioncode = document.getElementById("adminWhPinDivision")?.value || "";
+  const warehouse_code = document.getElementById("adminWhPinWarehouse")?.value || "";
+  const addMsg = document.getElementById("adminWhPinAddMsg");
+  if (!section || !areacode || !divisioncode || !warehouse_code) {
+    if (addMsg) addMsg.textContent = "เลือกให้ครบทั้ง 4 ช่องก่อนกดเพิ่ม";
+    return;
+  }
+  const dup = (st.rules || []).some(
+    (r) => r.section === section && r.areacode === areacode && r.divisioncode === divisioncode,
+  );
+  if (dup) {
+    toast(`กลุ่มสินค้า ${section} ภาค ${areacode} division ${divisioncode} ถูกตั้งไว้แล้ว`, "amber");
+    return;
+  }
+  const secMeta = _whPinSections.find((s) => s.section === section);
+  st.rules = [
+    ...(st.rules || []),
+    {
+      _tmp_id: `tmp_${++_whPinTmpIdSeq}`,
+      id: "",
+      section,
+      section_label_hint: secMeta ? secMeta.sample_skus.join(", ") : "",
+      areacode,
+      divisioncode,
+      warehouse_code,
+      created_by: "",
+      note: "",
+    },
+  ];
+  _whPinLastWarehouse = warehouse_code;
+  if (addMsg) addMsg.textContent = "";
+  adminRenderWarehousePinRulesTable();
+  // ตั้งกติกาถัดไปของกลุ่มเดิมได้ทันที — ล้างแค่ภาค/division ตามที่ขอ (เก็บ section/คลังไว้)
+  _whPinResetSelect("adminWhPinArea", "— เลือกภาค —");
+  const areaSel = document.getElementById("adminWhPinArea");
+  if (areaSel) {
+    const areas = [...new Set(_whPinCombos.map((c) => c.areacode))].sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+    areaSel.innerHTML = [`<option value="">— เลือกภาค —</option>`, ...areas.map((a) => `<option value="${escapeHtml(a)}">AREACODE ${escapeHtml(a)}</option>`)].join("");
+    areaSel.disabled = false;
+  }
+  _whPinResetSelect("adminWhPinDivision", "—");
+  _whPinResetSelect("adminWhPinWarehouse", "—");
+}
+
+function adminWhPinRulesRemove(id) {
+  const st = _whPinRulesState;
+  if (!st) return;
+  st.rules = (st.rules || []).filter((r) => (r._tmp_id || r.id) !== id);
+  adminRenderWarehousePinRulesTable();
+}
+
+async function adminSaveWarehousePinRules() {
+  const st = _whPinRulesState;
+  if (!st) return;
+  const msg = document.getElementById("adminWhPinMsg");
+  if (msg) msg.textContent = "กำลังบันทึก…";
+  try {
+    const saved = await _adminJsonFetch("/admin/settings/warehouse-pin-rules", {
+      method: "PUT",
+      body: {
+        rules: (st.rules || []).map((r) => ({
+          id: r.id || "",
+          section: r.section,
+          section_label_hint: r.section_label_hint || "",
+          areacode: r.areacode,
+          divisioncode: r.divisioncode,
+          warehouse_code: r.warehouse_code,
+          note: r.note || "",
+        })),
+        expected_rev: Number(st.rev || 0),
+      },
+    });
+    _whPinRulesState = saved;
+    adminRenderWarehousePinRulesTable();
+    const src = document.getElementById("adminWhPinSource");
+    if (src) src.textContent = `แก้ล่าสุดเมื่อ ${_fmtLogTimeBangkok(saved.updated_at)} โดย ${saved.updated_by || "—"}`;
+    if (msg) msg.textContent = "";
+    toast("บันทึกกติกาบังคับคลังแล้ว", "green");
+  } catch (e) {
+    if (msg) msg.textContent = "";
+    toast(e.message || String(e), "red");
+    await adminLoadWarehousePinRules();   // 409 = มีคนอื่นบันทึกไปแล้ว ดึงของจริงมาแสดงทันที
   }
 }
 

@@ -97,6 +97,15 @@ CAPABILITIES: dict[str, dict[str, Any]] = {
         "tab": "allocRules",
         "allowed_roles": ("head_admin",),
     },
+    "warehouse_pin_rules": {
+        "label": "กติกาบังคับคลัง",
+        "desc": (
+            "บังคับคลังเดียวสำหรับกลุ่มสินค้า (Section) × ภาค × Division ที่กำหนด — "
+            "เปลี่ยนคลังที่ Target Sun เห็นตอนส่งเป้าจริงของทุกทีมที่เข้าเงื่อนไข"
+        ),
+        "tab": "warehousePinRules",
+        "allowed_roles": ("head_admin",),
+    },
     "data_source": {
         "label": "แหล่งข้อมูล",
         "desc": (
