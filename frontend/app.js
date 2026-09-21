@@ -15608,16 +15608,22 @@ async function adminResetAllocRules() {
 }
 
 /* ── แท็บ「กติกาบังคับคลัง」 ─────────────────────────────────────────────
-   บังคับคลังเดียวสำหรับกลุ่มสินค้า (Section) × AREACODE × DIVISIONCODE — มีผลตอน
+   บังคับคลังเดียวสำหรับ "ชุด SKU ที่เลือกไว้" × AREACODE × DIVISIONCODE — มีผลตอน
    ตรวจไฟล์ก่อนส่ง/ส่งจริงเท่านั้น (ดู backend/services/lakehouse.py::
    _apply_warehouse_pin_rules) โครง add+table+save เดียวกับแท็บ「กติกาการเกลี่ย」
-   ต่างตรงที่แต่ละกติกามี 4 ค่า (section/area/division/warehouse) จึงใช้ตารางแทน chip */
+
+   Section เป็นแค่ตัวช่วยกรองตอนเลือกสินค้า (เลือกกลุ่ม → เปิดโมดัลเลือกเฉพาะบางตัวจาก
+   ในกลุ่มนั้น ไม่บังคับทั้งกลุ่ม) กติกาที่บันทึกจริงคือ skus: [...] — ตรงกับที่ backend
+   จับคู่ (ดู warehouse_pin_rules_store.rules_by_key ซึ่งคีย์ด้วย sku ตรง ๆ ไม่ใช่ section) */
 
 let _whPinRulesState = null;
-let _whPinSections = [];   // [{section, sample_skus, sku_count}]
-let _whPinCombos = [];     // combos ของ section ที่เลือกอยู่ตอนนี้
+let _whPinSections = [];      // [{section, products:[{sku,name}], sample_skus, sku_count}]
+let _whPinCombos = [];        // combos ของ SKU ชุดที่เลือกอยู่ตอนนี้
 let _whPinTmpIdSeq = 0;
 let _whPinLastWarehouse = "";
+let _whPinSelectedSkus = [];  // SKU ที่ยืนยันแล้วจากโมดัล (ใช้สร้างกติกาถัดไป)
+let _whPinModalSection = "";
+let _whPinModalChecked = new Set(); // สถานะติ๊กชั่วคราวระหว่างโมดัลเปิดอยู่
 
 async function adminLoadWarehousePinRules() {
   const msg = document.getElementById("adminWhPinMsg");
@@ -15683,22 +15689,6 @@ function whPinSections_options() {
   });
 }
 
-function _whPinRenderSectionProducts(section) {
-  const box = document.getElementById("adminWhPinSectionProducts");
-  if (!box) return;
-  const meta = _whPinSections.find((s) => s.section === section);
-  if (!section || !meta || !meta.products.length) {
-    box.style.display = "none";
-    box.innerHTML = "";
-    return;
-  }
-  box.style.display = "block";
-  box.innerHTML = `<div class="wh-pin-product-list__title">สินค้าในกลุ่ม ${escapeHtml(section)} (${meta.products.length} รายการ)</div>`
-    + `<ul class="wh-pin-product-list__items">`
-    + meta.products.map((p) => `<li>${escapeHtml(p.sku)} — ${escapeHtml(p.name || p.sku)}</li>`).join("")
-    + `</ul>`;
-}
-
 function _whPinResetSelect(id, placeholder) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -15706,37 +15696,157 @@ function _whPinResetSelect(id, placeholder) {
   el.disabled = true;
 }
 
-async function whPinSectionChanged() {
+function whPinSectionPicked() {
   const section = document.getElementById("adminWhPinSection")?.value || "";
-  const hint = document.getElementById("adminWhPinSectionHint");
-  _whPinRenderSectionProducts(section);
+  _whPinSelectedSkus = [];
+  _whPinRenderSelectedSkusSummary();
   _whPinResetSelect("adminWhPinArea", "—");
   _whPinResetSelect("adminWhPinDivision", "—");
   _whPinResetSelect("adminWhPinWarehouse", "—");
   _whPinCombos = [];
+  const hint = document.getElementById("adminWhPinSectionHint");
+  if (hint) hint.textContent = "";
+  const btn = document.getElementById("adminWhPinOpenSkuModalBtn");
+  if (btn) btn.disabled = !section;
+}
+
+function _whPinRenderSelectedSkusSummary() {
+  const el = document.getElementById("adminWhPinSelectedSkusSummary");
+  const btn = document.getElementById("adminWhPinOpenSkuModalBtn");
+  if (el) el.textContent = _whPinSelectedSkus.length ? `เลือกแล้ว ${_whPinSelectedSkus.length} รายการ` : "";
+  if (btn) {
+    btn.textContent = _whPinSelectedSkus.length
+      ? `แก้ไขสินค้าที่เลือก (${_whPinSelectedSkus.length})`
+      : "+ เลือกสินค้าที่จะปักหมุด";
+  }
+}
+
+/* ── โมดัลเลือกสินค้าเฉพาะบางตัวในกลุ่ม (ไม่ติ๊กอะไรไว้ก่อน — ผู้ใช้เลือกเองทั้งหมด) ── */
+
+function whPinOpenSkuModal() {
+  const section = document.getElementById("adminWhPinSection")?.value || "";
   if (!section) {
+    toast("เลือกกลุ่มสินค้าก่อน", "amber");
+    return;
+  }
+  _whPinModalSection = section;
+  _whPinModalChecked = new Set(_whPinSelectedSkus.filter((sku) => _whPinSkuInSection(sku, section)));
+  const titleEl = document.getElementById("whPinSkuModalTitle");
+  const meta = _whPinSections.find((s) => s.section === section);
+  if (titleEl) titleEl.textContent = `เลือกสินค้าในกลุ่ม ${section} (${meta ? meta.products.length : 0} รายการ)`;
+  const searchEl = document.getElementById("whPinSkuModalSearch");
+  if (searchEl) searchEl.value = "";
+  _whPinRenderSkuModalList("");
+  const modal = qs("#whPinSkuModal");
+  modal.style.display = "flex";
+  _staticModalUnbind.whPinSkuModal = bindModalBehaviour(modal, closeWhPinSkuModal);
+}
+
+function _whPinSkuInSection(sku, section) {
+  const meta = _whPinSections.find((s) => s.section === section);
+  return !!meta && meta.products.some((p) => p.sku === sku);
+}
+
+function _whPinFilteredModalProducts(filterText) {
+  const meta = _whPinSections.find((s) => s.section === _whPinModalSection);
+  const products = meta ? meta.products : [];
+  const ft = String(filterText || "").trim().toLowerCase();
+  return ft
+    ? products.filter((p) => p.sku.toLowerCase().includes(ft) || String(p.name || "").toLowerCase().includes(ft))
+    : products;
+}
+
+function _whPinRenderSkuModalList(filterText) {
+  const list = document.getElementById("whPinSkuModalList");
+  if (!list) return;
+  const filtered = _whPinFilteredModalProducts(filterText);
+  list.innerHTML = filtered.length
+    ? filtered.map((p) => `
+      <label class="wh-pin-sku-modal-item">
+        <input type="checkbox" value="${escapeHtml(p.sku)}" ${_whPinModalChecked.has(p.sku) ? "checked" : ""} onchange="_whPinSkuModalToggle('${escapeHtml(p.sku)}', this.checked)" />
+        <span>${escapeHtml(p.sku)} — ${escapeHtml(p.name || p.sku)}</span>
+      </label>`).join("")
+    : `<div class="admin-empty">ไม่พบสินค้าที่ค้นหา</div>`;
+  _whPinUpdateModalCount();
+}
+
+function _whPinSkuModalFilter() {
+  _whPinRenderSkuModalList(document.getElementById("whPinSkuModalSearch")?.value || "");
+}
+
+function _whPinSkuModalToggle(sku, checked) {
+  if (checked) _whPinModalChecked.add(sku);
+  else _whPinModalChecked.delete(sku);
+  _whPinUpdateModalCount();
+}
+
+function _whPinSkuModalSelectAll(on) {
+  const searchVal = document.getElementById("whPinSkuModalSearch")?.value || "";
+  if (on) {
+    // "เลือกทั้งหมด" ต้องแปลว่า "ทุกตัวที่กำลังเห็นอยู่" ไม่ใช่ทั้งกลุ่มเสมอไป — ถ้ากำลัง
+    // ค้นหาอยู่แล้วเลือกทั้งกลุ่มแบบไม่บอกกล่าว ผู้ใช้จะได้สินค้าที่มองไม่เห็นติดไปด้วย
+    _whPinFilteredModalProducts(searchVal).forEach((p) => _whPinModalChecked.add(p.sku));
+  } else {
+    _whPinModalChecked.clear();
+  }
+  _whPinRenderSkuModalList(searchVal);
+}
+
+function _whPinUpdateModalCount() {
+  const el = document.getElementById("whPinSkuModalCount");
+  if (el) el.textContent = `เลือกแล้ว ${_whPinModalChecked.size} รายการ`;
+}
+
+function closeWhPinSkuModal() { _closeStaticModal("whPinSkuModal"); }
+function closeWhPinSkuModalOnBg(e) { if (e.target === qs("#whPinSkuModal")) closeWhPinSkuModal(); }
+
+function _whPinSkuModalConfirm() {
+  if (!_whPinModalChecked.size) {
+    toast("เลือกอย่างน้อย 1 สินค้าก่อนกดตกลง", "amber");
+    return;
+  }
+  _whPinSelectedSkus = [..._whPinModalChecked].sort();
+  closeWhPinSkuModal();
+  _whPinRenderSelectedSkusSummary();
+  whPinSkusChanged();
+}
+
+async function whPinSkusChanged() {
+  const hint = document.getElementById("adminWhPinSectionHint");
+  _whPinResetSelect("adminWhPinArea", "—");
+  _whPinResetSelect("adminWhPinDivision", "—");
+  _whPinResetSelect("adminWhPinWarehouse", "—");
+  _whPinCombos = [];
+  if (!_whPinSelectedSkus.length) {
     if (hint) hint.textContent = "";
     return;
   }
   if (hint) hint.textContent = "กำลังตรวจคลังที่เจอจริงในข้อมูล…";
   try {
     const period = _effectiveTargetPeriod();
-    const q = new URLSearchParams({ section, year: String(period.year), month: String(period.month) });
+    const q = new URLSearchParams({
+      skus: _whPinSelectedSkus.join(","),
+      year: String(period.year),
+      month: String(period.month),
+    });
     const data = await _adminJsonFetch(`/admin/warehouse-pin-rules/combos?${q}`, { timeout: 120000 });
     _whPinCombos = data.combos || [];
     if (hint) hint.textContent = data.hint || "";
-    const areas = [...new Set(_whPinCombos.map((c) => c.areacode))].sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
-    const areaSel = document.getElementById("adminWhPinArea");
-    if (areaSel) {
-      areaSel.innerHTML = areas.length
-        ? [`<option value="">— เลือกภาค —</option>`, ...areas.map((a) => `<option value="${escapeHtml(a)}">AREACODE ${escapeHtml(a)}</option>`)].join("")
-        : `<option value="">— ไม่พบข้อมูลคลังของกลุ่มนี้ —</option>`;
-      areaSel.disabled = !areas.length;
-    }
+    _whPinPopulateAreaSelect();
   } catch (e) {
     if (hint) hint.textContent = "";
     toast(e.message || String(e), "red");
   }
+}
+
+function _whPinPopulateAreaSelect() {
+  const areas = [...new Set(_whPinCombos.map((c) => c.areacode))].sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+  const areaSel = document.getElementById("adminWhPinArea");
+  if (!areaSel) return;
+  areaSel.innerHTML = areas.length
+    ? [`<option value="">— เลือกภาค —</option>`, ...areas.map((a) => `<option value="${escapeHtml(a)}">AREACODE ${escapeHtml(a)}</option>`)].join("")
+    : `<option value="">— ไม่พบข้อมูลคลังของสินค้าที่เลือก —</option>`;
+  areaSel.disabled = !areas.length;
 }
 
 function whPinAreaChanged() {
@@ -15798,33 +15908,43 @@ function adminRenderWarehousePinRulesTable() {
     body.innerHTML = `<tr><td colspan="6" class="admin-empty">ยังไม่มีกติกา</td></tr>`;
     return;
   }
-  body.innerHTML = rules.map((r) => `<tr>
-    <td>${escapeHtml(r.section)}</td>
+  body.innerHTML = rules.map((r) => {
+    const skus = r.skus || [];
+    const skuLabel = skus.length <= 3 ? skus.join(", ") : `${skus.slice(0, 3).join(", ")} +${skus.length - 3}`;
+    return `<tr>
+    <td>${escapeHtml(r.section)} <span class="admin-period-bar__meta" title="${escapeHtml(skus.join(", "))}">(${skus.length} SKU: ${escapeHtml(skuLabel)})</span></td>
     <td>${escapeHtml(r.areacode)}</td>
     <td>${escapeHtml(r.divisioncode)}</td>
     <td>${escapeHtml(r.warehouse_code)}</td>
-    <td>${escapeHtml(r.created_by || "ยังไม่บันทึก")}</td>
+    <td>${r.id ? escapeHtml(r.created_by || "—") : "ยังไม่บันทึก"}</td>
     <td><button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminWhPinRulesRemove('${escapeHtml(r._tmp_id || r.id)}')" aria-label="ลบกติกานี้ออกจากรายการ">✕</button></td>
-  </tr>`).join("");
+  </tr>`;
+  }).join("");
 }
 
 function adminWhPinRulesAdd() {
   const st = _whPinRulesState;
   if (!st) return;
   const section = document.getElementById("adminWhPinSection")?.value || "";
+  const skus = _whPinSelectedSkus.slice();
   const areacode = document.getElementById("adminWhPinArea")?.value || "";
   const divisioncode = document.getElementById("adminWhPinDivision")?.value || "";
   const warehouse_code = document.getElementById("adminWhPinWarehouse")?.value || "";
   const addMsg = document.getElementById("adminWhPinAddMsg");
-  if (!section || !areacode || !divisioncode || !warehouse_code) {
-    if (addMsg) addMsg.textContent = "เลือกให้ครบทั้ง 4 ช่องก่อนกดเพิ่ม";
+  if (!section || !skus.length || !areacode || !divisioncode || !warehouse_code) {
+    if (addMsg) addMsg.textContent = "เลือกกลุ่มสินค้า สินค้า ภาค division และคลังให้ครบก่อนกดเพิ่ม";
     return;
   }
-  const dup = (st.rules || []).some(
-    (r) => r.section === section && r.areacode === areacode && r.divisioncode === divisioncode,
-  );
-  if (dup) {
-    toast(`กลุ่มสินค้า ${section} ภาค ${areacode} division ${divisioncode} ถูกตั้งไว้แล้ว`, "amber");
+  // เช็คว่า SKU ตัวไหนถูกใช้ไปแล้วในกติกาอื่นของภาค+division เดียวกัน (ต้องมีคลังเดียวต่อ SKU)
+  const claimed = new Map();
+  for (const r of st.rules || []) {
+    if (r.areacode !== areacode || r.divisioncode !== divisioncode) continue;
+    for (const s of r.skus || []) claimed.set(s, r);
+  }
+  const conflicts = skus.filter((s) => claimed.has(s));
+  if (conflicts.length) {
+    const shown = conflicts.slice(0, 5).join(", ") + (conflicts.length > 5 ? " ..." : "");
+    toast(`SKU ${shown} มีกติกาอยู่แล้วในภาค ${areacode} division ${divisioncode}`, "amber");
     return;
   }
   const secMeta = _whPinSections.find((s) => s.section === section);
@@ -15835,6 +15955,7 @@ function adminWhPinRulesAdd() {
       id: "",
       section,
       section_label_hint: secMeta ? secMeta.sample_skus.join(", ") : "",
+      skus,
       areacode,
       divisioncode,
       warehouse_code,
@@ -15845,14 +15966,9 @@ function adminWhPinRulesAdd() {
   _whPinLastWarehouse = warehouse_code;
   if (addMsg) addMsg.textContent = "";
   adminRenderWarehousePinRulesTable();
-  // ตั้งกติกาถัดไปของกลุ่มเดิมได้ทันที — ล้างแค่ภาค/division ตามที่ขอ (เก็บ section/คลังไว้)
-  _whPinResetSelect("adminWhPinArea", "— เลือกภาค —");
-  const areaSel = document.getElementById("adminWhPinArea");
-  if (areaSel) {
-    const areas = [...new Set(_whPinCombos.map((c) => c.areacode))].sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
-    areaSel.innerHTML = [`<option value="">— เลือกภาค —</option>`, ...areas.map((a) => `<option value="${escapeHtml(a)}">AREACODE ${escapeHtml(a)}</option>`)].join("");
-    areaSel.disabled = false;
-  }
+  // ตั้งกติกาถัดไปของกลุ่ม/สินค้าเดิมได้ทันที — ล้างแค่ภาค/division ตามที่ขอ
+  // (เก็บ section/สินค้าที่เลือก/คลังไว้ — ตัวอย่างจริงคือปักหมุดกลุ่มเดียวหลายภาคติดกัน)
+  _whPinPopulateAreaSelect();
   _whPinResetSelect("adminWhPinDivision", "—");
   _whPinResetSelect("adminWhPinWarehouse", "—");
 }
@@ -15877,6 +15993,7 @@ async function adminSaveWarehousePinRules() {
           id: r.id || "",
           section: r.section,
           section_label_hint: r.section_label_hint || "",
+          skus: r.skus || [],
           areacode: r.areacode,
           divisioncode: r.divisioncode,
           warehouse_code: r.warehouse_code,

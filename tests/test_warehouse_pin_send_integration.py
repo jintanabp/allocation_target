@@ -68,8 +68,11 @@ class WarehousePinSendIntegrationTest(unittest.TestCase):
         pd.DataFrame(grain_rows).to_csv(f"data/tga_lines_{SUP}_2026_10.csv", index=False)
         pd.DataFrame(target_rows).to_csv(f"data/target_boxes_{SUP}_2026_10.csv", index=False)
 
-    def _rule(self, section="702", area="3", div="S", wh="G010"):
-        store.write_rules([{"section": section, "areacode": area, "divisioncode": div, "warehouse_code": wh}])
+    def _rule(self, skus=None, section="702", area="3", div="S", wh="G010"):
+        store.write_rules([{
+            "section": section, "skus": skus if skus is not None else ["SKU1"],
+            "areacode": area, "divisioncode": div, "warehouse_code": wh,
+        }])
 
     def _req(self, allocations, **kw):
         return LakehouseUploadRequest(
@@ -150,6 +153,32 @@ class WarehousePinSendIntegrationTest(unittest.TestCase):
         self.assertEqual(len(other_rows), 1)
         self.assertEqual(other_rows.iloc[0]["WAREHOUSECODE"], "R303")
         self.assertEqual(int(other_rows.iloc[0]["QUANTITYCASE"]), 5)
+
+    def test_same_section_different_sku_is_not_pinned(self):
+        """กติกาผูก SKU1 เท่านั้น — SKU2 (อยู่ section 702 เดียวกัน) ต้องไม่โดนแตะเลย
+        เพราะแอดมินอาจเลือกแค่บางตัวในกลุ่มสินค้า ไม่ใช่ทั้งกลุ่มเสมอไป"""
+        self._write_cache(
+            grain_rows=[
+                _grain("E1", "SKU1", 6, "R082"), _grain("E1", "SKU1", 4, "G002"),
+                _grain("E1", "SKU2", 6, "R082"), _grain("E1", "SKU2", 4, "G002"),
+            ],
+            target_rows=[
+                {"sku": "SKU1", "section": "702", "supervisor_target_boxes": 10, "price_per_box": 100.0},
+                {"sku": "SKU2", "section": "702", "supervisor_target_boxes": 10, "price_per_box": 100.0},
+            ],
+        )
+        self._rule(skus=["SKU1"], area="3", div="S", wh="G010")
+        req = self._req(
+            [
+                {"emp_id": "E1", "sku": "SKU1", "allocated_boxes": 10},
+                {"emp_id": "E1", "sku": "SKU2", "allocated_boxes": 10},
+            ]
+        )
+        out, _dropped, _preview, _short = lh._build_tga_upload_dataframe(req, drop_incomplete_rows=True)
+        sku2_rows = out[out["PRODUCTCODE"] == "SKU2"]
+        self.assertEqual(set(sku2_rows["WAREHOUSECODE"]), {"R082", "G002"})
+        self.assertNotIn("G010", sku2_rows["WAREHOUSECODE"].tolist())
+        self.assertEqual(int(sku2_rows["QUANTITYCASE"].sum()), 10)
 
     def test_excel_download_path_shows_the_same_consolidated_result(self):
         """ดาวน์โหลด Excel (drop_incomplete_rows=False) ต้องเห็นค่าจริงที่จะถูกส่งเหมือนกัน"""

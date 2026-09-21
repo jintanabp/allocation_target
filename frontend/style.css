@@ -10395,30 +10395,27 @@ tr.emp-row--no-target .emp-tag {
   color: var(--text-2);
 }
 #adminView .wh-pin-pickgrid select { display: block; margin-top: 6px; width: 100%; }
-#adminView .wh-pin-product-list {
-  margin: 4px 0 10px;
-  padding: 10px 12px;
-  background: var(--bg-2, #f7f7f9);
+
+.wh-pin-sku-modal { max-width: 560px; }
+.wh-pin-sku-modal-list {
+  max-height: 320px;
+  overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
-  max-height: 180px;
-  overflow-y: auto;
+  padding: 4px 8px;
 }
-#adminView .wh-pin-product-list__title {
-  font-size: 12px;
-  font-weight: 600;
+.wh-pin-sku-modal-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 4px;
+  font-size: 13.5px;
   color: var(--text-2);
-  margin-bottom: 6px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
 }
-#adminView .wh-pin-product-list__items {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  font-size: 12.5px;
-  color: var(--text-2);
-  line-height: 1.9;
-}
-#adminView .wh-pin-product-list__items li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wh-pin-sku-modal-item:last-child { border-bottom: none; }
+.wh-pin-sku-modal-item input { accent-color: var(--accent); cursor: pointer; flex-shrink: 0; width: 16px; height: 16px; }
 #adminView .alloc-rules-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 #adminView .alloc-rules-chip {
   display: inline-flex;

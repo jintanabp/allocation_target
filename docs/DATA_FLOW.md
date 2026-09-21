@@ -217,7 +217,7 @@ TTL: `EMPLOYEE_PAYLOAD_CACHE_TTL_SEC`, `MANAGERS_CACHE_TTL_SEC`, `ADMIN_TEAM_CAC
 | `POST /admin/alloc-rules/round-check` | ไม่ | ผู้ใช้ทั่วไปยิงได้ (ไม่ใช่ admin) — ถามว่ารหัสทีมที่ระบุถูกปิดกติกาไหม ก่อนกดกระจายรวมภาค |
 | `GET /admin/settings/warehouse-pin-rules` | ไม่ | อ่านกติกาบังคับคลังเดียว (`data/warehouse_pin_rules.json`) |
 | `PUT /admin/settings/warehouse-pin-rules` | ไม่ | บันทึกกติกาบังคับคลัง — CAS ด้วย `expected_rev` |
-| `GET /admin/warehouse-pin-rules/combos` | ใช่ | คลัง/เขต/ดิวิชันที่ TGA เห็นจริงของกลุ่มสินค้า — ช่วยแอดมินเลือกคลังที่จะปักหมุด |
+| `GET /admin/warehouse-pin-rules/combos` | ใช่ | คลัง/เขต/ดิวิชันที่ TGA เห็นจริงของ SKU ชุดที่แอดมินเลือกไว้ (query `skus=`, ไม่ใช่ section) — ช่วยเลือกคลังที่จะปักหมุด |
 | `GET /debug/fabric` | ใช่ | debug (`ENABLE_DEBUG_ENDPOINTS=1`) |
 
 ---

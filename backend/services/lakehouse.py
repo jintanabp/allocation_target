@@ -163,26 +163,6 @@ def _areacode_str(val) -> str:
     return s
 
 
-def _section_str(val) -> str:
-    """ค่า Dim_Product[Section] — CSV round-trip ทำให้ "702" กลายเป็น 702.0 ได้เหมือน
-    AREACODE จึงปัดกลับด้วยกติกาเดียวกับ _areacode_str (ต่างกันแค่ไม่มีกรณีพิเศษของ "0")"""
-    if val is None:
-        return ""
-    try:
-        if pd.isna(val):
-            return ""
-    except (TypeError, ValueError):
-        pass
-    if isinstance(val, (int, float)) and not isinstance(val, bool):
-        if float(val) == int(val):
-            return str(int(val))
-        return str(val).strip()
-    s = str(val).strip()
-    if not s or s.lower() in ("nan", "none"):
-        return ""
-    return s
-
-
 def _resolve_user_code(req: LakehouseUploadRequest) -> str:
     """
     รหัสผู้บันทึก: ส่งจาก frontend (manager หรือ supervisor ที่ล็อกอิน)
@@ -1957,37 +1937,18 @@ def _sup_target_boxes_by_sku(sup_id: str, month: int, year: int) -> dict[str, in
     return targets
 
 
-def _sku_section_map(sup_id: str, month: int, year: int) -> dict[str, str]:
-    """sku -> Dim_Product[Section] จากไฟล์เป้าราย sup ที่เขียนไว้แล้วตอนขั้นที่ 1
-    (คอลัมน์ 'section' ใน employees.py::_SKU_OUTPUT_COLUMNS) — ไม่ยิง Fabric เพิ่ม
-    เพราะ section เป็นคุณสมบัติสินค้า ไม่ใช่ของทีม ไฟล์ราย sup มีครบสำหรับทุก SKU
-    ที่ทีมนี้มีเป้าอยู่แล้ว — คืนว่างถ้าอ่านไม่ได้/ไม่มีคอลัมน์ ให้ผู้เรียก fail open"""
-    from ..core.targets import load_target_csv_for
-
-    sid = str(sup_id or "").strip().upper()
-    try:
-        df_sku, _ = load_target_csv_for(sid, int(month), int(year), allow_legacy_fallback=False)
-    except Exception as e:
-        logger.warning("กติกาบังคับคลัง: อ่านไฟล์เป้าเพื่อหา section ไม่ได้ (%s): %s", sid, e)
-        return {}
-    if df_sku is None or df_sku.empty or "section" not in df_sku.columns:
-        return {}
-    out: dict[str, str] = {}
-    for _, r in df_sku.iterrows():
-        sku = str(r.get("sku") or "").strip()
-        sec = _section_str(r.get("section"))
-        if sku and sec:
-            out[sku] = sec
-    return out
-
-
 def _apply_warehouse_pin_rules(
     df: pd.DataFrame, sup_id: str, month: int, year: int,
 ) -> tuple[pd.DataFrame, dict[str, int]]:
     """
-    บังคับคลังเดียวสำหรับกลุ่มสินค้า (section) × AREACODE × DIVISIONCODE ตามกติกาที่
-    แอดมินตั้งไว้ (warehouse_pin_rules_store) — ใช้แก้ปัญหาที่บางกลุ่มสินค้ากระจายเป้า
-    ปนหลายคลังตามประวัติขาย ทั้งที่ธุรกิจต้องการคลังเดียว
+    บังคับคลังเดียวสำหรับ "ชุด SKU ที่แอดมินเลือกไว้" × AREACODE × DIVISIONCODE ตามกติกา
+    ที่ตั้งไว้ (warehouse_pin_rules_store) — ใช้แก้ปัญหาที่บางกลุ่มสินค้ากระจายเป้าปน
+    หลายคลังตามประวัติขาย ทั้งที่ธุรกิจต้องการคลังเดียว
+
+    จับคู่กติกาด้วย SKU ตรง ๆ (rules_by_key คืน {(sku, areacode, divisioncode): rule})
+    ไม่ผ่าน Dim_Product[Section] เลย — Section เป็นแค่ตัวช่วยกรองตอนแอดมินเลือกสินค้าใน
+    หน้าเว็บ (เลือกกลุ่มแล้วเลือกเฉพาะบางตัวผ่านโมดัล) จุดนี้จึงไม่ต้องพึ่งไฟล์เป้าราย sup
+    หรือคอลัมน์ section เลย — ไม่มีทางเกิดกรณี "ไม่มีข้อมูลให้จับคู่" แบบเดิมอีกต่อไป
 
     ต้องรันหลังคลัง/areacode/divisioncode ของทุกแถว resolve ครบแล้ว (หลัง
     _apply_wh_hints/_enrich_emp_dimensions) — จับคู่กติกาด้วย 4 ทูเพิล
@@ -2012,18 +1973,9 @@ def _apply_warehouse_pin_rules(
     if not rules:
         return df, empty_stats
 
-    sec_map = _sku_section_map(sup_id, month, year)
-    if not sec_map:
-        logger.warning(
-            "กติกาบังคับคลัง: ไม่มี section map ของ %s — ข้ามการบังคับรอบนี้ (มีกติกาตั้งไว้ %d ข้อ)",
-            str(sup_id or "").strip().upper(), len(rules),
-        )
-        return df, empty_stats
-
     d = df.copy()
     d["_wh_pin_area"] = d.get("areacode", "").map(_areacode_str)
     d["_wh_pin_div"] = d.get("divisioncode", "").map(_cell_str)
-    d["_wh_pin_sec"] = d["sku"].astype(str).str.strip().map(lambda s: sec_map.get(s, ""))
 
     extra_rows: list[dict] = []
     zero_idx: list[int] = []
@@ -2032,10 +1984,7 @@ def _apply_warehouse_pin_rules(
     for (emp_id, sku, area, div), grp in d.groupby(
         ["emp_id", "sku", "_wh_pin_area", "_wh_pin_div"], sort=False
     ):
-        sec = grp["_wh_pin_sec"].iloc[0]
-        if not sec:
-            continue
-        rule = rules.get((sec, area, div))
+        rule = rules.get((str(sku).strip(), area, div))
         if not rule:
             continue
 
@@ -2079,7 +2028,7 @@ def _apply_warehouse_pin_rules(
 
     if zero_idx:
         d.loc[zero_idx, "allocated_boxes"] = 0
-    d = d.drop(columns=["_wh_pin_area", "_wh_pin_div", "_wh_pin_sec"])
+    d = d.drop(columns=["_wh_pin_area", "_wh_pin_div"])
     if extra_rows:
         d = pd.concat([d, pd.DataFrame(extra_rows)], ignore_index=True)
         logger.warning(

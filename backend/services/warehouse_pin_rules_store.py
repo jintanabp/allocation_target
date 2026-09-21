@@ -1,10 +1,15 @@
 """
-กติกาบังคับคลังเดียว — สำหรับกลุ่มสินค้า (Dim_Product[Section]) × AREACODE × DIVISIONCODE
+กติกาบังคับคลังเดียว — สำหรับ "ชุด SKU ที่แอดมินเลือกไว้" × AREACODE × DIVISIONCODE
 
 ทำไมต้องมีกติกานี้: บางกลุ่มสินค้ามีเป้าที่ Target Sun กระจายอยู่หลายคลังตามประวัติขาย
-ทั้งที่ธุรกิจต้องการให้กลุ่มสินค้านั้น (ในภาค+division ที่กำหนด) ถูกกำหนดเป้าไว้ที่คลังเดียว
+ทั้งที่ธุรกิจต้องการให้สินค้ากลุ่มนั้น (ในภาค+division ที่กำหนด) ถูกกำหนดเป้าไว้ที่คลังเดียว
 เท่านั้น — ดู docs/ALLOCATION_INVARIANTS.md และ backend/services/lakehouse.py::
 _apply_warehouse_pin_rules สำหรับตัวบังคับใช้จริงตอนส่ง Target Sun
+
+**คีย์การแมตช์คือ SKU ตรง ๆ ไม่ใช่ Section** — `Dim_Product[Section]` เป็นแค่ตัวช่วยกรอง
+ตอนแอดมินเลือกสินค้าในหน้าเว็บ (เลือก Section แล้วเลือกสินค้าเฉพาะบางตัวจากในกลุ่มนั้นผ่าน
+โมดัล ไม่บังคับว่าต้องเอาทั้งกลุ่ม) แต่ตัวกติกาที่บันทึกจริงคือ `skus: [รหัส, ...]` —
+`section`/`section_label_hint` เก็บไว้แค่โชว์บนตาราง ไม่ถูกใช้ตอนจับคู่กติกาเลย
 
 **ต่างจาก alloc_rules_store.py ตรงที่ไม่มี "ค่าเริ่มต้นจากโค้ด"** — กติกานี้ไม่มีอยู่แปลว่า
 ไม่มีการบังคับคลังเลย (พฤติกรรมเดิม) จึงใช้ไฟล์เดียวพอ ไม่ต้องมี config/ default + data/
@@ -73,8 +78,10 @@ def _norm_str(s: Any) -> str:
     return str(s if s is not None else "").strip()
 
 
-def _rule_key(rule: dict[str, Any]) -> tuple[str, str, str]:
-    return (_norm_str(rule.get("section")), _norm_str(rule.get("areacode")), _norm_str(rule.get("divisioncode")))
+def _norm_skus(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    return sorted({_norm_str(s) for s in raw if _norm_str(s)})
 
 
 def _normalize_rule(raw: dict[str, Any], *, assign_id: bool = True) -> dict[str, Any]:
@@ -82,6 +89,7 @@ def _normalize_rule(raw: dict[str, Any], *, assign_id: bool = True) -> dict[str,
         "id": _norm_str(raw.get("id")),
         "section": _norm_str(raw.get("section")),
         "section_label_hint": _norm_str(raw.get("section_label_hint")),
+        "skus": _norm_skus(raw.get("skus")),
         "areacode": _norm_str(raw.get("areacode")),
         "divisioncode": _norm_str(raw.get("divisioncode")),
         "warehouse_code": _norm_str(raw.get("warehouse_code")),
@@ -92,6 +100,8 @@ def _normalize_rule(raw: dict[str, Any], *, assign_id: bool = True) -> dict[str,
     for f in _REQUIRED_FIELDS:
         if not rule[f]:
             raise ValueError(f"กติกาบังคับคลัง: ช่อง '{f}' ห้ามว่าง")
+    if not rule["skus"]:
+        raise ValueError("กติกาบังคับคลัง: ต้องเลือกสินค้าอย่างน้อย 1 รายการ")
     if not rule["id"] and assign_id:
         rule["id"] = f"whpin_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6]}"
     return rule
@@ -111,17 +121,19 @@ def read_state() -> dict[str, Any]:
 
 
 def rules_by_key() -> dict[tuple[str, str, str], dict[str, Any]]:
-    """{(section, areacode, divisioncode): rule} — สแกนลิสต์ตรง ๆ ทุกครั้ง
-
-    จำนวนกติกาที่คาดไว้คือหลักสิบ ไม่ใช่หลักพัน (เทียบเท่า alloc_rules_store.disabled_sups)
-    จึงไม่ต้องทำ index ค้างที่เสี่ยงหลุดจากไฟล์จริงเวลาไฟล์ถูกแก้จากที่อื่น
+    """{(sku, areacode, divisioncode): rule} — แตกทุก sku ในทุกกติกาออกเป็นคีย์ตรง ๆ
+    สแกนลิสต์ทุกครั้ง ไม่ทำ index ค้าง (จำนวนกติกา×SKU ที่คาดไว้ยังเป็นหลักร้อย ไม่ใช่
+    หลักหมื่น — เทียบเท่าระดับเดียวกับ alloc_rules_store.disabled_sups)
     """
     state = read_state()
     out: dict[tuple[str, str, str], dict[str, Any]] = {}
     for rule in state["rules"]:
         if not isinstance(rule, dict):
             continue
-        out[_rule_key(rule)] = rule
+        area = _norm_str(rule.get("areacode"))
+        div = _norm_str(rule.get("divisioncode"))
+        for sku in rule.get("skus") or []:
+            out[(sku, area, div)] = rule
     return out
 
 
@@ -131,21 +143,25 @@ def write_rules(
     updated_by: str = "",
     expected_rev: int | None = None,
 ) -> dict[str, Any]:
-    """บันทึกกติกาทั้งก้อน (แทนที่ทั้งลิสต์เดิม) — CAS ด้วย rev เหมือน alloc_rules_store"""
+    """บันทึกกติกาทั้งก้อน (แทนที่ทั้งลิสต์เดิม) — CAS ด้วย rev เหมือน alloc_rules_store
+
+    ห้าม SKU เดียวกันถูกปักหมุดสองกติกาในภาค+division เดียวกัน (จะไม่รู้ว่าคลังไหนชนะ)
+    """
     normalized: list[dict[str, Any]] = []
-    seen_keys: set[tuple[str, str, str]] = set()
+    claimed: dict[tuple[str, str, str], str] = {}
     for raw in rules or []:
         if not isinstance(raw, dict):
             raise ValueError("กติกาบังคับคลัง: รูปแบบข้อมูลไม่ถูกต้อง")
         rule = _normalize_rule(raw)
-        key = _rule_key(rule)
-        if key in seen_keys:
-            raise ValueError(
-                f"กติกาบังคับคลัง: กลุ่มสินค้า {rule['section']} ภาค {rule['areacode']} "
-                f"division {rule['divisioncode']} ถูกตั้งซ้ำ — 1 กลุ่ม×ภาค×division "
-                "ต้องมีคลังเดียวเท่านั้น"
-            )
-        seen_keys.add(key)
+        for sku in rule["skus"]:
+            key = (sku, rule["areacode"], rule["divisioncode"])
+            if key in claimed:
+                raise ValueError(
+                    f"กติกาบังคับคลัง: SKU {sku} ภาค {rule['areacode']} division "
+                    f"{rule['divisioncode']} ถูกตั้งไว้แล้วในกติกากลุ่ม {claimed[key]} — "
+                    "1 SKU × ภาค × division ต้องมีคลังเดียวเท่านั้น"
+                )
+            claimed[key] = rule["section"]
         normalized.append(rule)
 
     path = warehouse_pin_rules_path()

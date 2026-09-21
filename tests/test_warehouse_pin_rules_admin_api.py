@@ -31,9 +31,10 @@ def _read(rel: str) -> str:
         return f.read()
 
 
-def _rule_body(section="702", area="3", div="S", wh="G010"):
+def _rule_body(section="702", skus=None, area="3", div="S", wh="G010"):
     return admin_router.WarehousePinRuleBody(
-        section=section, areacode=area, divisioncode=div, warehouse_code=wh
+        section=section, skus=skus if skus is not None else ["SKU1"],
+        areacode=area, divisioncode=div, warehouse_code=wh,
     )
 
 
@@ -96,32 +97,37 @@ class WarehousePinRulesApiTest(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 409)
 
     def test_combos_endpoint_returns_data_from_fabric(self):
+        seen_calls = {}
         fake = type(
             "Fake",
             (),
             {
-                "get_tga_period_sku_targets": lambda self, m, y: pd.DataFrame([{"sku": "SKU1"}]),
-                "get_product_info": lambda self, **kw: pd.DataFrame(
-                    [{"sku": "SKU1", "section": "702"}]
-                ),
-                "get_tga_dim_combos_by_product": lambda self, skus, m, y: pd.DataFrame(
-                    [{"areacode": "3", "divisioncode": "S", "warehouse_code": "G010", "qty": 100.0, "emp_count": 10}]
+                "get_tga_dim_combos_by_product": lambda self, skus, m, y: (
+                    seen_calls.update({"skus": skus, "m": m, "y": y}) or
+                    pd.DataFrame(
+                        [{"areacode": "3", "divisioncode": "S", "warehouse_code": "G010", "qty": 100.0, "emp_count": 10}]
+                    )
                 ),
             },
         )
         with patch.object(admin_router, "FabricDAXConnector", return_value=fake()):
             out = admin_router.admin_warehouse_pin_rule_combos(
-                section="702", year=2026, month=10, _admin=ADMIN
+                skus="SKU1,SKU2", year=2026, month=10, _admin=ADMIN
             )
-        self.assertEqual(out["section"], "702")
-        self.assertEqual(out["sku_count"], 1)
+        self.assertEqual(out["sku_count"], 2)
         self.assertEqual(len(out["combos"]), 1)
         self.assertEqual(out["combos"][0]["warehouse_code"], "G010")
+        self.assertEqual(seen_calls["skus"], ["SKU1", "SKU2"])  # ส่ง SKU ตรง ๆ ไม่ derive จาก section
+
+    def test_combos_endpoint_requires_at_least_one_sku(self):
+        with self.assertRaises(HTTPException) as ctx:
+            admin_router.admin_warehouse_pin_rule_combos(skus="  , ,", year=2026, month=10, _admin=ADMIN)
+        self.assertEqual(ctx.exception.status_code, 400)
 
     def test_combos_endpoint_fails_loudly_not_silently_on_fabric_error(self):
         with patch.object(admin_router, "FabricDAXConnector", side_effect=RuntimeError("boom")):
             with self.assertRaises(HTTPException) as ctx:
-                admin_router.admin_warehouse_pin_rule_combos(section="702", year=2026, month=10, _admin=ADMIN)
+                admin_router.admin_warehouse_pin_rule_combos(skus="SKU1", year=2026, month=10, _admin=ADMIN)
         self.assertEqual(ctx.exception.status_code, 502)
 
 

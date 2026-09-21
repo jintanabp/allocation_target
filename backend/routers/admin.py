@@ -2991,6 +2991,7 @@ class WarehousePinRuleBody(BaseModel):
     id: str = ""
     section: str
     section_label_hint: str = ""
+    skus: list[str] = Field(default_factory=list, max_length=2000)
     areacode: str
     divisioncode: str
     warehouse_code: str
@@ -3041,46 +3042,39 @@ def admin_put_warehouse_pin_rules(
 
 @router.get("/warehouse-pin-rules/combos")
 def admin_warehouse_pin_rule_combos(
-    section: str = Query(..., min_length=1),
+    skus: str = Query(..., min_length=1, description="รหัส SKU คั่นด้วยจุลภาค — ชุดที่แอดมินเลือกไว้จริง"),
     year: int | None = Query(None, ge=2000, le=2100),
     month: int | None = Query(None, ge=1, le=12),
     _admin: dict = Depends(require_capability("warehouse_pin_rules")),
 ) -> dict[str, Any]:
-    """คลัง/เขต/ดิวิชันที่ TGA เห็นจริงของกลุ่มสินค้านี้ — ให้แอดมินเลือกคลังที่จะปักหมุด
-    โดยมีข้อมูลจริงประกอบ (% หีบ/จำนวนคนต่อคลัง) ไม่ใช่เดาเอง"""
+    """คลัง/เขต/ดิวิชันที่ TGA เห็นจริงของ SKU ชุดนี้ — ให้แอดมินเลือกคลังที่จะปักหมุด
+    โดยมีข้อมูลจริงประกอบ (% หีบ/จำนวนคนต่อคลัง) ไม่ใช่เดาเอง
+
+    รับ SKU ตรง ๆ จากที่แอดมินเลือกในโมดัล (ไม่ใช่ derive จาก section อีกต่อไป) เพราะ
+    แอดมินอาจเลือกแค่บางตัวในกลุ่ม ไม่ใช่ทั้งกลุ่มเสมอไป
+    """
     from ..core.tga_period import expected_allocation_period_ce
 
     if month is None or year is None:
         year, month = expected_allocation_period_ce()
     year = int(year)
     month = int(month)
-    sec = str(section or "").strip()
+    sku_list = sorted({s.strip() for s in skus.split(",") if s.strip()})
+    if not sku_list:
+        raise HTTPException(status_code=400, detail="ต้องระบุ SKU อย่างน้อย 1 รายการ")
 
     try:
         fabric = FabricDAXConnector()
-        df_tgt = fabric.get_tga_period_sku_targets(month, year)
-        sku_list: list[str] = []
-        if df_tgt is not None and not df_tgt.empty:
-            sku_list = df_tgt["sku"].astype(str).str.strip().tolist()
-        sample_skus: list[str] = []
-        if sku_list:
-            df_info = fabric.get_product_info(sku_list=sku_list, target_year=year, target_month=month)
-            if df_info is not None and not df_info.empty:
-                mask = df_info["section"].astype(str).str.strip() == sec
-                sample_skus = df_info.loc[mask, "sku"].astype(str).str.strip().tolist()
-        if not sample_skus:
-            return {
-                "section": sec, "sku_count": 0, "sample_skus": [], "combos": [],
-                "hint": f"ไม่พบ SKU ที่มีเป้าในงวด {month:02d}/{year} สำหรับกลุ่มสินค้า {sec}",
-            }
-        df_combos = fabric.get_tga_dim_combos_by_product(sample_skus, month, year)
+        df_combos = fabric.get_tga_dim_combos_by_product(sku_list, month, year)
         combos = [] if df_combos is None or df_combos.empty else df_combos.to_dict(orient="records")
         return {
-            "section": sec,
-            "sku_count": len(sample_skus),
-            "sample_skus": sample_skus[:20],
+            "sku_count": len(sku_list),
             "combos": combos,
-            "hint": f"งวด {month:02d}/{year} · {len(sample_skus)} SKU ในกลุ่มนี้",
+            "hint": (
+                f"งวด {month:02d}/{year} · {len(sku_list)} SKU"
+                if combos
+                else f"ไม่พบข้อมูลคลังในงวด {month:02d}/{year} สำหรับ {len(sku_list)} SKU ที่เลือก"
+            ),
         }
     except Exception as e:
         logger.warning("warehouse-pin-rules combos fabric failed: %s", e)
