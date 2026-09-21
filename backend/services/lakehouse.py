@@ -647,22 +647,28 @@ def _needs_fabric_enrichment(df: pd.DataFrame) -> bool:
     return bool((st.eq("") | div.eq("") | area.eq("")).any())
 
 
-def _apply_wh_hints(df: pd.DataFrame, rows_raw: list[dict]) -> pd.DataFrame:
-    wh_hint: dict[str, str] = {}
-    for r in rows_raw:
-        emp = str(r.get("emp_id") or "").strip()
-        wh = _cell_str(r.get("warehouse_code"))
-        if emp and wh:
-            wh_hint[emp] = wh
+def _apply_wh_hints(
+    df: pd.DataFrame, rows_raw: list[dict], *, trust_existing: bool = False
+) -> pd.DataFrame:
+    """trust_existing=True — คลังใน df resolve จาก grain มาครบแล้ว (รวมคลังว่างจริง)
+    ห้ามเอาค่าจาก request (rows_raw) มาทับอีก มิฉะนั้นคลังว่างจริงของปลายทางจะถูกแทนที่
+    ด้วยค่าเดา แล้วคีย์ upsert ที่ Target Sun ใช้จะมองว่าเป็นคนละแถว (ดู SL380/530/525)"""
     if "warehouse_code" not in df.columns:
         df = df.copy()
         df["warehouse_code"] = ""
     else:
         df = df.copy()
-    if wh_hint:
-        existing = df["warehouse_code"].map(_cell_str)
-        fb = df["emp_id"].astype(str).str.strip().map(lambda e: wh_hint.get(e, ""))
-        df["warehouse_code"] = existing.where(existing.ne(""), fb.map(_cell_str))
+    if not trust_existing:
+        wh_hint: dict[str, str] = {}
+        for r in rows_raw:
+            emp = str(r.get("emp_id") or "").strip()
+            wh = _cell_str(r.get("warehouse_code"))
+            if emp and wh:
+                wh_hint[emp] = wh
+        if wh_hint:
+            existing = df["warehouse_code"].map(_cell_str)
+            fb = df["emp_id"].astype(str).str.strip().map(lambda e: wh_hint.get(e, ""))
+            df["warehouse_code"] = existing.where(existing.ne(""), fb.map(_cell_str))
     df["warehouse_code"] = df["warehouse_code"].map(_cell_str)
     if "areacode" in df.columns:
         df["areacode"] = df["areacode"].map(_areacode_str)
@@ -714,8 +720,8 @@ def _expand_allocations_with_tga_grain(
         # (หรือเติมจากแถวอื่นของพนักงานคนเดียวกัน เมื่อเปิด infer_missing_dims)
         if sub.empty:
             inferred = emp_dims.get(e) if emp_dims else None
-            # คลังของปลายทางมาก่อนค่าจากฝั่งแอปเสมอ — กติกาเดียวกับกิ่งที่เจอ grain
-            # (ที่นั่นใช้ `แถว grain or wh_req`) ที่นี่ "แถวของคนคนนั้นเอง" ทำหน้าที่แทน
+            # คลังของปลายทางมาก่อนค่าจากฝั่งแอปเสมอ — กิ่งที่เจอ grain (ด้านล่าง) ใช้ค่า
+            # จาก grain ตรงๆ เท่านั้น ไม่พึ่ง wh_req เลย ที่นี่ "แถวของคนคนนั้นเอง" ทำหน้าที่แทน
             # ไม่งั้นแถวใหม่จะไปอยู่คนละคลังกับเป้าอื่นทั้งหมดของเขา แล้วคีย์ upsert
             # ซึ่งรวมคลังจะมองเป็นคนละแถว = คู่เดียวกันมีเป้าสองที่
             wh_new = (inferred.get("warehouse_code") if inferred else "") or wh_req or ""
@@ -741,11 +747,7 @@ def _expand_allocations_with_tga_grain(
             wvals = sub_pos["qty"].astype(float).tolist()
             split = _integer_split_by_weights(wvals, boxes)
             for (_, r), b in zip(sub_pos.iterrows(), split):
-                wh = (
-                    _cell_str(r.get("warehouse_code", ""))
-                    or wh_req
-                    or ""
-                )
+                wh = _cell_str(r.get("warehouse_code", ""))
                 out.append(
                     {
                         "emp_id": e,
@@ -762,11 +764,7 @@ def _expand_allocations_with_tga_grain(
             # แถว TGA เดิมที่ qty = 0: เขียน QUANTITYCASE = 0 เพื่อให้ครบ dim ตอนนำเข้ากลับ
             if not dims_only.empty:
                 for _, r in dims_only.iterrows():
-                    wh = (
-                        _cell_str(r.get("warehouse_code", ""))
-                        or wh_req
-                        or ""
-                    )
+                    wh = _cell_str(r.get("warehouse_code", ""))
                     out.append(
                         {
                             "emp_id": e,
@@ -784,11 +782,7 @@ def _expand_allocations_with_tga_grain(
             wvals = [1.0] * len(sub)
             split = _integer_split_by_weights(wvals, boxes)
             for (_, r), b in zip(sub.iterrows(), split):
-                wh = (
-                    _cell_str(r.get("warehouse_code", ""))
-                    or wh_req
-                    or ""
-                )
+                wh = _cell_str(r.get("warehouse_code", ""))
                 out.append(
                     {
                         "emp_id": e,
@@ -910,7 +904,6 @@ def _align_zero_allocations_to_tga_grain(
     for e, sku in sorted(zero_pairs):
         sub = grain_lookup.get((e, sku), pd.DataFrame())
         hint = df[(df["emp_id"] == e) & (df["sku"] == sku)]
-        wh_hint = _cell_str(hint.iloc[0].get("warehouse_code", "")) if not hint.empty else ""
         if sub.empty:
             missing_grain.append((e, sku))
             if not hint.empty:
@@ -926,7 +919,7 @@ def _align_zero_allocations_to_tga_grain(
                     "divisioncode": _cell_str(r.get("divisioncode", "")),
                     "areacode": _areacode_str(r.get("areacode", "")),
                     "provincecode": _cell_str(r.get("provincecode", "")),
-                    "warehouse_code": _cell_str(r.get("warehouse_code", "")) or wh_hint,
+                    "warehouse_code": _cell_str(r.get("warehouse_code", "")),
                 }
             )
 
@@ -1801,7 +1794,7 @@ def _enrich_emp_dimensions(
 ) -> pd.DataFrame:
     if not _needs_fabric_enrichment(df):
         logger.info("lakehouse enrich: skip Fabric (dims จาก TGA cache ครบแล้ว)")
-        return _apply_wh_hints(df, rows_raw)
+        return _apply_wh_hints(df, rows_raw, trust_existing=skip_emp_sku_dim_merge)
 
     emp_list = sorted({str(e).strip() for e in df["emp_id"].unique() if str(e).strip()})
     sku_list = sorted({str(s).strip() for s in df["sku"].unique() if str(s).strip()})
@@ -1860,7 +1853,13 @@ def _enrich_emp_dimensions(
     df["areacode"] = _coalesce_col(df, "areacode", _emp_fb_series("areacode"))
     df["provincecode"] = _coalesce_col(df, "provincecode", _emp_fb_series("provincecode"))
 
-    if not df_wh.empty:
+    if skip_emp_sku_dim_merge:
+        # แถวจาก grain resolve คลังมาแล้ว (รวมคลังว่างจริง) ฟังก์ชันนี้ถูกเรียกเพราะ dim
+        # อื่น (เช่น divisioncode) ยังขาด ไม่ใช่เพราะคลังไม่รู้ — ห้ามเอาค่าเดาจากประวัติ
+        # ขาย (df_wh) หรือ wh_hint มาทับคลังที่ resolve มาแล้ว (ดู SL380/SL530/SL525)
+        if "warehouse_code" not in df.columns:
+            df["warehouse_code"] = ""
+    elif not df_wh.empty:
         df = df.merge(
             df_wh.rename(columns={"warehouse_code": "warehouse_hist"}),
             on="emp_id",
@@ -1876,15 +1875,15 @@ def _enrich_emp_dimensions(
         )
         if "warehouse_hist" in df.columns:
             df = df.drop(columns=["warehouse_hist"])
+        df["warehouse_code"] = _coalesce_col(df, "warehouse_code", _emp_fb_series("warehouse_code"))
     else:
         df["warehouse_code"] = df.apply(
             lambda row: _cell_str(row.get("warehouse_code"))
             or wh_hint.get(str(row["emp_id"]).strip(), ""),
             axis=1,
         )
+        df["warehouse_code"] = _coalesce_col(df, "warehouse_code", _emp_fb_series("warehouse_code"))
 
-    wh_tga = _coalesce_col(df, "warehouse_code", _emp_fb_series("warehouse_code"))
-    df["warehouse_code"] = wh_tga
     df["areacode"] = df["areacode"].map(_areacode_str)
     df["warehouse_code"] = df["warehouse_code"].map(_cell_str)
     return df
@@ -2256,16 +2255,18 @@ def _build_tga_upload_dataframe(
     t_expand = time.perf_counter()
 
     # grain จากขั้นที่ 1 ครบทุกแถว → ไม่ยิง Fabric ซ้ำ (เร็วขึ้น ~2–3s)
-    # WAREHOUSECODE ไม่ได้อยู่ในด่านนี้ เพราะ Fabric enrich ไม่ได้เติมคลังให้อยู่แล้ว
-    # (คลังมาจาก grain / payload เท่านั้น) · แต่ตั้งแต่คลังเข้าคีย์ upsert แถวที่คลังว่าง
-    # จะกลายเป็น "แถวใหม่" ที่ปลายทางแทนการทับของเดิม — ตัวนับ dims_inferred ด้านล่าง
-    # เป็นตัวฟ้องกรณีนั้นอยู่แล้ว
+    # ทุกแถวผ่าน _expand_allocations_with_tga_grain/_align_zero_allocations_to_tga_grain
+    # มาแล้ว คลัง (รวมคลังว่างจริง) resolve จากปลายทางครบแล้ว — trust_existing=True
+    # กันไม่ให้ payload (ซึ่งอาจปนค่าเดาจากประวัติขาย 2 ปี) มาทับคลังว่างจริงของปลายทาง
+    # อีกที ไม่งั้นตั้งแต่คลังเข้าคีย์ upsert แถวคลังว่างจะกลายเป็น "แถวใหม่" ที่ปลายทาง
+    # แทนการทับของเดิม (ของจริง: SL380/SL530/SL525) — ตัวนับ dims_inferred ด้านล่างฟ้อง
+    # กรณีที่เหลือ (คู่ใหม่จริงๆ ที่ไม่มีใน grain เลย)
     if grain_ok and not df.empty and bool(_import_key_mask(df).all()):
         logger.info(
             "lakehouse enrich: skip Fabric (grain_ok + SALESTYPE/DIVISION/AREACODE ครบ %d แถว)",
             len(df),
         )
-        df = _apply_wh_hints(df, rows_raw)
+        df = _apply_wh_hints(df, rows_raw, trust_existing=True)
     else:
         df = _enrich_emp_dimensions(
             df, rows_raw, skip_emp_sku_dim_merge=bool(grain_ok)
