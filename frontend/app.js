@@ -15952,35 +15952,55 @@ function whPinDivisionChanged() {
   }
 }
 
+// ตารางโชว์ "1 แถวต่อ 1 SKU" เพื่อให้อ่านง่าย (ผู้ใช้บอกว่าโชว์รวมเป็นก้อนต่อกติกาแน่นเกินไป)
+// แต่ตัวข้อมูลจริงยังเป็นกติกากลุ่มเดิม (1 กติกาครอบหลาย SKU ได้) — ลบแถวใดแถวหนึ่งจึงตัด
+// แค่ SKU นั้นออกจาก skus[] ของกติกา ไม่ใช่ลบทั้งกติกา (ยืนยันกับผู้ใช้แล้ว 22 ก.ย. 2026)
+function _whPinFlattenedRows() {
+  const rows = [];
+  for (const r of (_whPinRulesState?.rules || [])) {
+    const ruleId = r._tmp_id || r.id;
+    for (const sku of (r.skus || [])) rows.push({ ruleId, sku, rule: r });
+  }
+  return rows;
+}
+
+function _whPinRowKey(ruleId, sku) {
+  return `${ruleId}::${sku}`;
+}
+
+function _whPinRemoveSkuFromRule(ruleId, sku) {
+  const st = _whPinRulesState;
+  if (!st) return;
+  st.rules = (st.rules || [])
+    .map((r) => ((r._tmp_id || r.id) !== ruleId ? r : { ...r, skus: (r.skus || []).filter((s) => s !== sku) }))
+    .filter((r) => (r.skus || []).length > 0);
+}
+
 function adminRenderWarehousePinRulesTable() {
   const body = document.getElementById("adminWhPinRulesTableBody");
-  const st = _whPinRulesState;
-  if (!body || !st) return;
-  const rules = st.rules || [];
-  const validIds = new Set(rules.map((r) => r._tmp_id || r.id));
-  for (const id of [..._whPinSelectedRuleIds]) if (!validIds.has(id)) _whPinSelectedRuleIds.delete(id);
-  if (!rules.length) {
-    body.innerHTML = `<tr><td colspan="7" class="admin-empty">ยังไม่มีกติกา</td></tr>`;
+  if (!body || !_whPinRulesState) return;
+  const rows = _whPinFlattenedRows();
+  const validKeys = new Set(rows.map((x) => _whPinRowKey(x.ruleId, x.sku)));
+  for (const k of [..._whPinSelectedRuleIds]) if (!validKeys.has(k)) _whPinSelectedRuleIds.delete(k);
+  if (!rows.length) {
+    body.innerHTML = `<tr><td colspan="8" class="admin-empty">ยังไม่มีกติกา</td></tr>`;
   } else {
-    body.innerHTML = rules.map((r) => {
-      const id = r._tmp_id || r.id;
-      const skus = r.skus || [];
+    body.innerHTML = rows.map(({ ruleId, sku, rule: r }) => {
+      const key = _whPinRowKey(ruleId, sku);
       return `<tr>
-      <td><input type="checkbox" ${_whPinSelectedRuleIds.has(id) ? "checked" : ""} onchange="adminWhPinRuleRowToggle('${escapeHtml(id)}', this.checked)" aria-label="เลือกแถวนี้" /></td>
-      <td>
-        <div class="wh-pin-row-section">${escapeHtml(r.section)}</div>
-        <span class="wh-pin-sku-badge" title="${escapeHtml(skus.join(", "))}">${skus.length} SKU</span>
-      </td>
+      <td><input type="checkbox" ${_whPinSelectedRuleIds.has(key) ? "checked" : ""} onchange="adminWhPinRuleRowToggle('${escapeHtml(key)}', this.checked)" aria-label="เลือกแถวนี้" /></td>
+      <td class="mono">${escapeHtml(sku)}</td>
+      <td>${escapeHtml(r.section)}</td>
       <td>${escapeHtml(_whPinAreaLabel(r.areacode))}</td>
       <td>${escapeHtml(r.divisioncode)}</td>
       <td>${escapeHtml(r.warehouse_code)}</td>
       <td>${r.id ? escapeHtml(r.created_by || "—") : "ยังไม่บันทึก"}</td>
-      <td><button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminWhPinRulesRemove('${escapeHtml(id)}')" aria-label="ลบกติกานี้ออกจากรายการ">✕</button></td>
+      <td><button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminWhPinRulesRemoveSku('${escapeHtml(ruleId)}', '${escapeHtml(sku)}')" aria-label="ลบ SKU นี้ออกจากกติกา" title="ลบแค่ SKU นี้ออกจากกติกา — SKU อื่นในกติกาเดียวกันไม่ถูกแตะ">✕</button></td>
     </tr>`;
     }).join("");
   }
   const selectAll = document.getElementById("adminWhPinSelectAll");
-  if (selectAll) selectAll.checked = rules.length > 0 && _whPinSelectedRuleIds.size === rules.length;
+  if (selectAll) selectAll.checked = rows.length > 0 && _whPinSelectedRuleIds.size === rows.length;
   const bulkBtn = document.getElementById("adminWhPinBulkDeleteBtn");
   if (bulkBtn) {
     bulkBtn.disabled = !_whPinSelectedRuleIds.size;
@@ -15988,23 +16008,30 @@ function adminRenderWarehousePinRulesTable() {
   }
 }
 
-function adminWhPinRuleRowToggle(id, checked) {
-  if (checked) _whPinSelectedRuleIds.add(id);
-  else _whPinSelectedRuleIds.delete(id);
+function adminWhPinRuleRowToggle(key, checked) {
+  if (checked) _whPinSelectedRuleIds.add(key);
+  else _whPinSelectedRuleIds.delete(key);
   adminRenderWarehousePinRulesTable();
 }
 
 function adminWhPinRulesToggleAll(checked) {
-  const st = _whPinRulesState;
-  const rules = (st && st.rules) || [];
-  _whPinSelectedRuleIds = checked ? new Set(rules.map((r) => r._tmp_id || r.id)) : new Set();
+  const rows = _whPinFlattenedRows();
+  _whPinSelectedRuleIds = checked ? new Set(rows.map((x) => _whPinRowKey(x.ruleId, x.sku))) : new Set();
+  adminRenderWarehousePinRulesTable();
+}
+
+function adminWhPinRulesRemoveSku(ruleId, sku) {
+  _whPinRemoveSkuFromRule(ruleId, sku);
+  _whPinSelectedRuleIds.delete(_whPinRowKey(ruleId, sku));
   adminRenderWarehousePinRulesTable();
 }
 
 function adminWhPinRulesRemoveSelected() {
-  const st = _whPinRulesState;
-  if (!st || !_whPinSelectedRuleIds.size) return;
-  st.rules = (st.rules || []).filter((r) => !_whPinSelectedRuleIds.has(r._tmp_id || r.id));
+  if (!_whPinRulesState || !_whPinSelectedRuleIds.size) return;
+  for (const key of _whPinSelectedRuleIds) {
+    const [ruleId, sku] = key.split("::");
+    _whPinRemoveSkuFromRule(ruleId, sku);
+  }
   _whPinSelectedRuleIds = new Set();
   adminRenderWarehousePinRulesTable();
 }
@@ -16067,14 +16094,6 @@ function adminWhPinRulesAdd() {
   // รีเซ็ตทั้งสองให้อยู่แล้ว) เก็บ section/สินค้า/ภาคที่เลือกไว้ — ตัวอย่างจริงคือปักหมุด
   // กลุ่มเดียวหลายภาคติดกัน
   whPinAreaChanged();
-}
-
-function adminWhPinRulesRemove(id) {
-  const st = _whPinRulesState;
-  if (!st) return;
-  st.rules = (st.rules || []).filter((r) => (r._tmp_id || r.id) !== id);
-  _whPinSelectedRuleIds.delete(id);
-  adminRenderWarehousePinRulesTable();
 }
 
 async function adminSaveWarehousePinRules() {
