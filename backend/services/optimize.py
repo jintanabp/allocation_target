@@ -1548,28 +1548,39 @@ def run_optimization_service(
     # ตรงนี้หลุดเข้า result_*.csv/Excel (ไฟล์ยังเป็นผลดิบ) เพราะใช้แค่ปรับสิ่งที่ Step 3
     # แสดงบนจอให้ตรงกับสิ่งที่จะเกิดขึ้นจริงตอนส่ง — lakehouse.py ยังรวมคลังซ้ำอีกทีตอนส่งจริง
     #
-    # ปิดไว้ชั่วคราวแบบฉุกเฉิน (22 ก.ย. 2026 กลางคืน) — ผู้ใช้รายงานว่ากระจายหีบพังทั้งก้อน
-    # สำหรับทีมที่มีพนักงานคลังแตก (SL225/S543) แม้ deploy ตัวที่ครอบ try/except กันพลาดไว้
-    # แล้ว (bcd73e5) ก็ยังพังเหมือนเดิม — แปลว่าที่พังไม่ใช่จาก _apply_wh_pin_preview เอง (ไม่งั้น
-    # try/except ต้องกันได้) จึงข้ามการเรียกไปเลยเป็นการชั่วคราวเพื่อให้กระจายหีบใช้งานได้ก่อน
-    # ระหว่างหาสาเหตุจริงต่อ (รอ traceback จาก data/app.log) — ห้ามลบฟังก์ชันทิ้ง แค่ข้ามการ
-    # เรียกไปก่อน กลับมาเปิดใหม่ทันทีที่เจอสาเหตุ
-    if os.environ.get("WH_PIN_PREVIEW_DISABLED", "1").strip().lower() not in ("1", "true", "yes"):
-        try:
-            df_final = _apply_wh_pin_preview(df_final, sup_id, target_month, target_year)
-        except Exception as e:
-            logger.error(
-                "optimize: _apply_wh_pin_preview ล้มทั้งฟังก์ชัน (ไม่ควรเกิด) sup=%s — "
-                "ข้ามไปใช้ผลดิบแทน ไม่ให้กระทบการกระจายหีบหลัก: %s",
-                sup_id, e, exc_info=True,
-            )
-            if "wh_pin_forced" not in df_final.columns:
-                df_final["wh_pin_forced"] = ""
-    else:
-        df_final["wh_pin_forced"] = ""
+    # เปิดกลับมาทดสอบแบบมีสายรัดนิรภัยพิเศษ (22 ก.ย. 2026 กลางคืน รอบ 2) — ไม่มีทางเข้าถึง
+    # data/app.log บนเซิร์ฟเวอร์ได้เลย จึงเปลี่ยนกลยุทธ์: ครอบด้วย try/except ที่กว้างที่สุด
+    # เท่าที่จะทำได้ (ครอบตั้งแต่ก่อนเรียกฟังก์ชันเผื่อพังตอน import/setup ด้วย) แล้วเก็บ
+    # ข้อความ error diagnostic ไว้ใน response field ที่ frontend เพิกเฉยอยู่แล้ว (ไม่กระทบ UI)
+    # ให้ผู้ใช้ก็อปจาก DevTools Network tab (ที่ทำได้อยู่แล้ว) ส่งกลับมาแทนการง้อ log บนเซิร์ฟเวอร์
+    wh_pin_debug: dict = {"stage": "not_started"}
+    try:
+        wh_pin_debug["stage"] = "calling"
+        df_final = _apply_wh_pin_preview(df_final, sup_id, target_month, target_year)
+        wh_pin_debug["stage"] = "ok"
+    except BaseException as e:  # BaseException ตั้งใจ — กันแม้กระทั่งอะไรที่ไม่ใช่ Exception ปกติ
+        import traceback as _tb
+
+        tb_text = _tb.format_exc()
+        logger.error(
+            "optimize: _apply_wh_pin_preview ล้มทั้งฟังก์ชัน sup=%s — ข้ามไปใช้ผลดิบแทน: %s\n%s",
+            sup_id, e, tb_text,
+        )
+        wh_pin_debug = {
+            "stage": "crashed",
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "traceback_tail": tb_text[-2000:],
+        }
+        if "wh_pin_forced" not in df_final.columns:
+            df_final["wh_pin_forced"] = ""
 
     return {
         "allocations": df_final.to_dict(orient="records"),
+        # ชั่วคราวเพื่อ debug (22 ก.ย. 2026) — เข้า data/app.log บนเซิร์ฟเวอร์ไม่ได้เลย จึงฝัง
+        # รายละเอียด error (ถ้ามี) มาใน response ตรงนี้แทน ดูได้จาก DevTools Network tab
+        # ลบทิ้งได้เมื่อเจอสาเหตุแล้ว
+        "wh_pin_debug": wh_pin_debug,
         "sku_total_checks": sku_checks,
         "hist_window_months": hist_months,
         "new_products_even_mode": new_products_even_mode,
