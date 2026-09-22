@@ -10429,12 +10429,16 @@ tr.emp-row--no-target .emp-tag {
 #adminView .wh-pin-area-item input { accent-color: var(--accent); cursor: pointer; }
 
 /* ── กติกาบังคับคลัง: การ์ดขั้นตอน 1-2-3 ให้ทำตามลำดับได้ง่ายขึ้น ── */
-#adminPanelWarehousePinRules .wh-pin-help { display: flex; gap: 10px; align-items: flex-start; }
+/* หมายเหตุ: ห้ามทำ .wh-pin-help เป็น flex container — ::before จะกลายเป็น flex item
+   แถวเดียวกับ <p> ทั้งสองตัว ทำให้สองย่อหน้าเรียงข้างกันแทนที่จะซ้อนกันตามปกติ (บั๊กที่เจอจริง) */
+#adminPanelWarehousePinRules .wh-pin-help { position: relative; padding-left: 38px; }
 #adminPanelWarehousePinRules .wh-pin-help::before {
   content: "💡";
+  position: absolute;
+  left: 12px;
+  top: 12px;
   font-size: 18px;
   line-height: 1;
-  flex-shrink: 0;
 }
 #adminPanelWarehousePinRules .wh-pin-card {
   padding: 20px 22px;
@@ -10443,11 +10447,12 @@ tr.emp-row--no-target .emp-tag {
 }
 #adminPanelWarehousePinRules .wh-pin-step-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
-  gap: 12px;
+  gap: 8px 12px;
   margin-bottom: 16px;
 }
-#adminPanelWarehousePinRules .wh-pin-step-head > div:not(.wh-pin-step-num) { flex: 1 1 auto; min-width: 0; }
+#adminPanelWarehousePinRules .wh-pin-step-head > div:not(.wh-pin-step-num) { flex: 1 1 220px; min-width: 0; }
 #adminPanelWarehousePinRules .wh-pin-step-num {
   flex-shrink: 0;
   width: 28px;
