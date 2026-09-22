@@ -10396,6 +10396,27 @@ tr.emp-row--no-target .emp-tag {
 }
 #adminView .wh-pin-pickgrid select { display: block; margin-top: 6px; width: 100%; }
 
+#adminView .wh-pin-area-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  min-height: 38px;
+}
+#adminView .wh-pin-area-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--text-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+#adminView .wh-pin-area-item input { accent-color: var(--accent); cursor: pointer; }
+
 .wh-pin-sku-modal { max-width: 560px; }
 .wh-pin-sku-modal-list {
   max-height: 320px;

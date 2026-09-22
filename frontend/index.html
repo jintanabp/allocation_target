@@ -1690,8 +1690,10 @@
               <span id="adminWhPinSelectedSkusSummary" class="admin-period-bar__meta" aria-live="polite"></span>
             </div>
             <div class="wh-pin-pickgrid" style="margin-top:14px;">
-              <label>ภาค (AREACODE)
-                <select id="adminWhPinArea" class="admin-select admin-select--sm" onchange="whPinAreaChanged()" aria-label="เลือกภาค" disabled></select>
+              <label>ภาค (เลือกได้หลายภาค)
+                <div id="adminWhPinAreaGroup" class="wh-pin-area-group" aria-label="เลือกภาค">
+                  <span class="admin-empty">เลือกสินค้าก่อน</span>
+                </div>
               </label>
               <label>Division (DIVISIONCODE)
                 <select id="adminWhPinDivision" class="admin-select admin-select--sm" onchange="whPinDivisionChanged()" aria-label="เลือก division" disabled></select>
@@ -1708,13 +1710,19 @@
           </div>
 
           <div class="alloc-rules-block">
-            <h3 class="alloc-rules-subtitle">กติกาที่ตั้งไว้</h3>
+            <div class="alloc-rules-pickrow" style="justify-content:space-between;">
+              <h3 class="alloc-rules-subtitle" style="margin:0;">กติกาที่ตั้งไว้</h3>
+              <button type="button" id="adminWhPinBulkDeleteBtn" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminWhPinRulesRemoveSelected()" disabled>ลบที่เลือก</button>
+            </div>
             <table class="admin-table">
               <thead>
-                <tr><th>กลุ่มสินค้า</th><th>ภาค</th><th>Division</th><th>คลัง</th><th>ตั้งโดย</th><th></th></tr>
+                <tr>
+                  <th><input type="checkbox" id="adminWhPinSelectAll" onchange="adminWhPinRulesToggleAll(this.checked)" aria-label="เลือกทุกแถว" /></th>
+                  <th>กลุ่มสินค้า</th><th>ภาค</th><th>Division</th><th>คลัง</th><th>ตั้งโดย</th><th></th>
+                </tr>
               </thead>
               <tbody id="adminWhPinRulesTableBody">
-                <tr><td colspan="6" class="admin-empty">ยังไม่มีกติกา</td></tr>
+                <tr><td colspan="7" class="admin-empty">ยังไม่มีกติกา</td></tr>
               </tbody>
             </table>
           </div>
@@ -1726,7 +1734,7 @@
         </section>
       </div>
 
-      <div id="whPinSkuModal" class="modal-overlay" style="display:none;" onclick="closeWhPinSkuModalOnBg(event)" role="dialog" aria-modal="true" aria-labelledby="whPinSkuModalTitle">
+      <div id="whPinSkuModal" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="whPinSkuModalTitle">
         <div class="modal-card wh-pin-sku-modal" onclick="event.stopPropagation()">
           <div class="modal-title" id="whPinSkuModalTitle">เลือกสินค้า</div>
           <div class="modal-body">

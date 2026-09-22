@@ -15624,6 +15624,22 @@ let _whPinLastWarehouse = "";
 let _whPinSelectedSkus = [];  // SKU ที่ยืนยันแล้วจากโมดัล (ใช้สร้างกติกาถัดไป)
 let _whPinModalSection = "";
 let _whPinModalChecked = new Set(); // สถานะติ๊กชั่วคราวระหว่างโมดัลเปิดอยู่
+let _whPinSelectedRuleIds = new Set(); // แถวกติกาที่ตั้งไว้แล้วที่ติ๊กเลือกไว้ (สำหรับลบเป็นชุด)
+
+// AREACODE → ชื่อภาษาไทย ดึงจาก Fabric Gold_LH.dim_warehouse_master_area (คอลัมน์ Area/Area_NameThai)
+// เมื่อ 22 ก.ย. 2026 — ภาคฟิกไม่เปลี่ยนแล้ว จึง hardcode ตามคำขอผู้ใช้แทนการต่อ Fabric สด
+// รหัสที่ตารางไม่มีชื่อกำกับ (1,7,8,9) จะโชว์แค่รหัสดิบเหมือนเดิม
+const WH_PIN_AREA_NAME_TH = {
+  "0": "กรุงเทพ",
+  "3": "ภาคกลาง",
+  "4": "ภาคอีสาน",
+  "5": "ภาคเหนือ",
+  "6": "ภาคใต้",
+};
+function _whPinAreaLabel(areacode) {
+  const name = WH_PIN_AREA_NAME_TH[String(areacode)];
+  return name ? `${name} (${areacode})` : String(areacode);
+}
 
 async function adminLoadWarehousePinRules() {
   const msg = document.getElementById("adminWhPinMsg");
@@ -15696,11 +15712,20 @@ function _whPinResetSelect(id, placeholder) {
   el.disabled = true;
 }
 
+function _whPinResetAreaGroup(placeholder) {
+  const el = document.getElementById("adminWhPinAreaGroup");
+  if (el) el.innerHTML = `<span class="admin-empty">${escapeHtml(placeholder)}</span>`;
+}
+
+function _whPinSelectedAreas() {
+  return [...document.querySelectorAll('#adminWhPinAreaGroup input[type="checkbox"]:checked')].map((el) => el.value);
+}
+
 function whPinSectionPicked() {
   const section = document.getElementById("adminWhPinSection")?.value || "";
   _whPinSelectedSkus = [];
   _whPinRenderSelectedSkusSummary();
-  _whPinResetSelect("adminWhPinArea", "—");
+  _whPinResetAreaGroup("—");
   _whPinResetSelect("adminWhPinDivision", "—");
   _whPinResetSelect("adminWhPinWarehouse", "—");
   _whPinCombos = [];
@@ -15798,7 +15823,6 @@ function _whPinUpdateModalCount() {
 }
 
 function closeWhPinSkuModal() { _closeStaticModal("whPinSkuModal"); }
-function closeWhPinSkuModalOnBg(e) { if (e.target === qs("#whPinSkuModal")) closeWhPinSkuModal(); }
 
 function _whPinSkuModalConfirm() {
   if (!_whPinModalChecked.size) {
@@ -15813,7 +15837,7 @@ function _whPinSkuModalConfirm() {
 
 async function whPinSkusChanged() {
   const hint = document.getElementById("adminWhPinSectionHint");
-  _whPinResetSelect("adminWhPinArea", "—");
+  _whPinResetAreaGroup("—");
   _whPinResetSelect("adminWhPinDivision", "—");
   _whPinResetSelect("adminWhPinWarehouse", "—");
   _whPinCombos = [];
@@ -15841,53 +15865,69 @@ async function whPinSkusChanged() {
 
 function _whPinPopulateAreaSelect() {
   const areas = [...new Set(_whPinCombos.map((c) => c.areacode))].sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
-  const areaSel = document.getElementById("adminWhPinArea");
-  if (!areaSel) return;
-  areaSel.innerHTML = areas.length
-    ? [`<option value="">— เลือกภาค —</option>`, ...areas.map((a) => `<option value="${escapeHtml(a)}">AREACODE ${escapeHtml(a)}</option>`)].join("")
-    : `<option value="">— ไม่พบข้อมูลคลังของสินค้าที่เลือก —</option>`;
-  areaSel.disabled = !areas.length;
+  const group = document.getElementById("adminWhPinAreaGroup");
+  if (!group) return;
+  const prevChecked = new Set(_whPinSelectedAreas());
+  group.innerHTML = areas.length
+    ? areas.map((a) => `
+      <label class="wh-pin-area-item">
+        <input type="checkbox" value="${escapeHtml(a)}" ${prevChecked.has(a) ? "checked" : ""} onchange="whPinAreaChanged()" />
+        <span>${escapeHtml(_whPinAreaLabel(a))}</span>
+      </label>`).join("")
+    : `<span class="admin-empty">ไม่พบข้อมูลคลังของสินค้าที่เลือก</span>`;
+  whPinAreaChanged();
 }
 
 function whPinAreaChanged() {
-  const area = document.getElementById("adminWhPinArea")?.value || "";
+  const areas = _whPinSelectedAreas();
   _whPinResetSelect("adminWhPinDivision", "—");
   _whPinResetSelect("adminWhPinWarehouse", "—");
-  if (!area) return;
-  const divs = [...new Set(_whPinCombos.filter((c) => c.areacode === area).map((c) => c.divisioncode))].sort();
+  if (!areas.length) return;
+  // เฉพาะ division ที่มีข้อมูลอยู่ใน "ทุก" ภาคที่เลือก — กันเลือก division ที่ใช้ไม่ได้กับบางภาค
+  const divSets = areas.map((a) => new Set(_whPinCombos.filter((c) => c.areacode === a).map((c) => c.divisioncode)));
+  const divs = [...divSets.reduce((acc, s) => new Set([...acc].filter((d) => s.has(d))))].sort();
   const divSel = document.getElementById("adminWhPinDivision");
   if (divSel) {
     divSel.innerHTML = divs.length
       ? [`<option value="">— เลือก division —</option>`, ...divs.map((d) => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`)].join("")
-      : `<option value="">— ไม่พบข้อมูล —</option>`;
+      : `<option value="">— ไม่มี division ร่วมกันในภาคที่เลือก —</option>`;
     divSel.disabled = !divs.length;
   }
 }
 
 function whPinDivisionChanged() {
-  const area = document.getElementById("adminWhPinArea")?.value || "";
+  const areas = _whPinSelectedAreas();
   const div = document.getElementById("adminWhPinDivision")?.value || "";
   const whSel = document.getElementById("adminWhPinWarehouse");
   if (!whSel) return;
-  if (!area || !div) {
+  if (!areas.length || !div) {
     whSel.innerHTML = `<option value="">—</option>`;
     whSel.disabled = true;
     return;
   }
   // คลังที่เลือกได้ = คลังทั้งหมดที่เจอในกลุ่มสินค้านี้ (ไม่ใช่แค่ในภาค/division ที่เลือก)
   // เพราะบางครั้งต้องการปักหมุดไปคลังที่ "ยังไม่เคยมี" ในภาคนี้มาก่อน (เช่นรวมศูนย์คลังใหม่)
-  // — แต่โชว์สถิติจริงของภาค/division ที่เลือกกำกับให้ดูก่อนตัดสินใจ
+  // — แต่โชว์สถิติจริงของภาค/division ที่เลือกกำกับให้ดูก่อนตัดสินใจ (รวมทุกภาคที่เลือกเข้าด้วยกัน)
   const allWh = [...new Set(_whPinCombos.map((c) => c.warehouse_code).filter(Boolean))];
-  const hereRows = _whPinCombos.filter((c) => c.areacode === area && c.divisioncode === div);
+  const hereRows = _whPinCombos.filter((c) => areas.includes(c.areacode) && c.divisioncode === div);
   const totalHere = hereRows.reduce((s, c) => s + Number(c.qty || 0), 0);
-  const byWhHere = new Map(hereRows.map((c) => [c.warehouse_code, c]));
+  const byWhHere = new Map();
+  for (const row of hereRows) {
+    const prev = byWhHere.get(row.warehouse_code);
+    if (prev) {
+      prev.qty += Number(row.qty || 0);
+      prev.emp_count += Number(row.emp_count || 0);
+    } else {
+      byWhHere.set(row.warehouse_code, { qty: Number(row.qty || 0), emp_count: Number(row.emp_count || 0) });
+    }
+  }
   const opts = allWh
     .map((wh) => {
       const row = byWhHere.get(wh);
       const label = row
-        ? `${wh} — ${Math.round(Number(row.qty || 0))} หีบ (${totalHere ? Math.round((row.qty / totalHere) * 100) : 0}%), ${row.emp_count} คน`
-        : `${wh} (ไม่เคยมีข้อมูลในภาค/division นี้)`;
-      return { wh, qty: row ? Number(row.qty || 0) : -1, label };
+        ? `${wh} — ${Math.round(row.qty)} หีบ (${totalHere ? Math.round((row.qty / totalHere) * 100) : 0}%), ${row.emp_count} คน`
+        : `${wh} (ไม่เคยมีข้อมูลในภาค/division ที่เลือก)`;
+      return { wh, qty: row ? row.qty : -1, label };
     })
     .sort((a, b) => b.qty - a.qty);
   whSel.innerHTML = opts.length
@@ -15904,22 +15944,54 @@ function adminRenderWarehousePinRulesTable() {
   const st = _whPinRulesState;
   if (!body || !st) return;
   const rules = st.rules || [];
+  const validIds = new Set(rules.map((r) => r._tmp_id || r.id));
+  for (const id of [..._whPinSelectedRuleIds]) if (!validIds.has(id)) _whPinSelectedRuleIds.delete(id);
   if (!rules.length) {
-    body.innerHTML = `<tr><td colspan="6" class="admin-empty">ยังไม่มีกติกา</td></tr>`;
-    return;
+    body.innerHTML = `<tr><td colspan="7" class="admin-empty">ยังไม่มีกติกา</td></tr>`;
+  } else {
+    body.innerHTML = rules.map((r) => {
+      const id = r._tmp_id || r.id;
+      const skus = r.skus || [];
+      const skuLabel = skus.length <= 3 ? skus.join(", ") : `${skus.slice(0, 3).join(", ")} +${skus.length - 3}`;
+      return `<tr>
+      <td><input type="checkbox" ${_whPinSelectedRuleIds.has(id) ? "checked" : ""} onchange="adminWhPinRuleRowToggle('${escapeHtml(id)}', this.checked)" aria-label="เลือกแถวนี้" /></td>
+      <td>${escapeHtml(r.section)} <span class="admin-period-bar__meta" title="${escapeHtml(skus.join(", "))}">(${skus.length} SKU: ${escapeHtml(skuLabel)})</span></td>
+      <td>${escapeHtml(_whPinAreaLabel(r.areacode))}</td>
+      <td>${escapeHtml(r.divisioncode)}</td>
+      <td>${escapeHtml(r.warehouse_code)}</td>
+      <td>${r.id ? escapeHtml(r.created_by || "—") : "ยังไม่บันทึก"}</td>
+      <td><button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminWhPinRulesRemove('${escapeHtml(id)}')" aria-label="ลบกติกานี้ออกจากรายการ">✕</button></td>
+    </tr>`;
+    }).join("");
   }
-  body.innerHTML = rules.map((r) => {
-    const skus = r.skus || [];
-    const skuLabel = skus.length <= 3 ? skus.join(", ") : `${skus.slice(0, 3).join(", ")} +${skus.length - 3}`;
-    return `<tr>
-    <td>${escapeHtml(r.section)} <span class="admin-period-bar__meta" title="${escapeHtml(skus.join(", "))}">(${skus.length} SKU: ${escapeHtml(skuLabel)})</span></td>
-    <td>${escapeHtml(r.areacode)}</td>
-    <td>${escapeHtml(r.divisioncode)}</td>
-    <td>${escapeHtml(r.warehouse_code)}</td>
-    <td>${r.id ? escapeHtml(r.created_by || "—") : "ยังไม่บันทึก"}</td>
-    <td><button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminWhPinRulesRemove('${escapeHtml(r._tmp_id || r.id)}')" aria-label="ลบกติกานี้ออกจากรายการ">✕</button></td>
-  </tr>`;
-  }).join("");
+  const selectAll = document.getElementById("adminWhPinSelectAll");
+  if (selectAll) selectAll.checked = rules.length > 0 && _whPinSelectedRuleIds.size === rules.length;
+  const bulkBtn = document.getElementById("adminWhPinBulkDeleteBtn");
+  if (bulkBtn) {
+    bulkBtn.disabled = !_whPinSelectedRuleIds.size;
+    bulkBtn.textContent = _whPinSelectedRuleIds.size ? `ลบที่เลือก (${_whPinSelectedRuleIds.size})` : "ลบที่เลือก";
+  }
+}
+
+function adminWhPinRuleRowToggle(id, checked) {
+  if (checked) _whPinSelectedRuleIds.add(id);
+  else _whPinSelectedRuleIds.delete(id);
+  adminRenderWarehousePinRulesTable();
+}
+
+function adminWhPinRulesToggleAll(checked) {
+  const st = _whPinRulesState;
+  const rules = (st && st.rules) || [];
+  _whPinSelectedRuleIds = checked ? new Set(rules.map((r) => r._tmp_id || r.id)) : new Set();
+  adminRenderWarehousePinRulesTable();
+}
+
+function adminWhPinRulesRemoveSelected() {
+  const st = _whPinRulesState;
+  if (!st || !_whPinSelectedRuleIds.size) return;
+  st.rules = (st.rules || []).filter((r) => !_whPinSelectedRuleIds.has(r._tmp_id || r.id));
+  _whPinSelectedRuleIds = new Set();
+  adminRenderWarehousePinRulesTable();
 }
 
 function adminWhPinRulesAdd() {
@@ -15927,56 +15999,66 @@ function adminWhPinRulesAdd() {
   if (!st) return;
   const section = document.getElementById("adminWhPinSection")?.value || "";
   const skus = _whPinSelectedSkus.slice();
-  const areacode = document.getElementById("adminWhPinArea")?.value || "";
+  const areas = _whPinSelectedAreas();
   const divisioncode = document.getElementById("adminWhPinDivision")?.value || "";
   const warehouse_code = document.getElementById("adminWhPinWarehouse")?.value || "";
   const addMsg = document.getElementById("adminWhPinAddMsg");
-  if (!section || !skus.length || !areacode || !divisioncode || !warehouse_code) {
-    if (addMsg) addMsg.textContent = "เลือกกลุ่มสินค้า สินค้า ภาค division และคลังให้ครบก่อนกดเพิ่ม";
-    return;
-  }
-  // เช็คว่า SKU ตัวไหนถูกใช้ไปแล้วในกติกาอื่นของภาค+division เดียวกัน (ต้องมีคลังเดียวต่อ SKU)
-  const claimed = new Map();
-  for (const r of st.rules || []) {
-    if (r.areacode !== areacode || r.divisioncode !== divisioncode) continue;
-    for (const s of r.skus || []) claimed.set(s, r);
-  }
-  const conflicts = skus.filter((s) => claimed.has(s));
-  if (conflicts.length) {
-    const shown = conflicts.slice(0, 5).join(", ") + (conflicts.length > 5 ? " ..." : "");
-    toast(`SKU ${shown} มีกติกาอยู่แล้วในภาค ${areacode} division ${divisioncode}`, "amber");
+  if (!section || !skus.length || !areas.length || !divisioncode || !warehouse_code) {
+    if (addMsg) addMsg.textContent = "เลือกกลุ่มสินค้า สินค้า ภาค (อย่างน้อย 1) division และคลังให้ครบก่อนกดเพิ่ม";
     return;
   }
   const secMeta = _whPinSections.find((s) => s.section === section);
-  st.rules = [
-    ...(st.rules || []),
-    {
-      _tmp_id: `tmp_${++_whPinTmpIdSeq}`,
-      id: "",
-      section,
-      section_label_hint: secMeta ? secMeta.sample_skus.join(", ") : "",
-      skus,
-      areacode,
-      divisioncode,
-      warehouse_code,
-      created_by: "",
-      note: "",
-    },
-  ];
+  const added = [];
+  const skipped = [];
+  for (const areacode of areas) {
+    // เช็คว่า SKU ตัวไหนถูกใช้ไปแล้วในกติกาอื่นของภาค+division เดียวกัน (ต้องมีคลังเดียวต่อ SKU)
+    const claimed = new Map();
+    for (const r of st.rules || []) {
+      if (r.areacode !== areacode || r.divisioncode !== divisioncode) continue;
+      for (const s of r.skus || []) claimed.set(s, r);
+    }
+    const conflicts = skus.filter((s) => claimed.has(s));
+    if (conflicts.length) {
+      const shown = conflicts.slice(0, 3).join(", ") + (conflicts.length > 3 ? " ..." : "");
+      skipped.push(`${_whPinAreaLabel(areacode)} (${shown})`);
+      continue;
+    }
+    st.rules = [
+      ...(st.rules || []),
+      {
+        _tmp_id: `tmp_${++_whPinTmpIdSeq}`,
+        id: "",
+        section,
+        section_label_hint: secMeta ? secMeta.sample_skus.join(", ") : "",
+        skus,
+        areacode,
+        divisioncode,
+        warehouse_code,
+        created_by: "",
+        note: "",
+      },
+    ];
+    added.push(_whPinAreaLabel(areacode));
+  }
   _whPinLastWarehouse = warehouse_code;
-  if (addMsg) addMsg.textContent = "";
+  if (addMsg) {
+    const parts = [];
+    if (added.length) parts.push(`เพิ่ม ${added.length} กติกา: ${added.join(", ")}`);
+    if (skipped.length) parts.push(`ข้ามเพราะ SKU ชนกติกาเดิม: ${skipped.join("; ")}`);
+    addMsg.textContent = parts.join(" — ");
+  }
   adminRenderWarehousePinRulesTable();
-  // ตั้งกติกาถัดไปของกลุ่ม/สินค้าเดิมได้ทันที — ล้างแค่ภาค/division ตามที่ขอ
-  // (เก็บ section/สินค้าที่เลือก/คลังไว้ — ตัวอย่างจริงคือปักหมุดกลุ่มเดียวหลายภาคติดกัน)
-  _whPinPopulateAreaSelect();
-  _whPinResetSelect("adminWhPinDivision", "—");
-  _whPinResetSelect("adminWhPinWarehouse", "—");
+  // ตั้งกติกาถัดไปของกลุ่ม/สินค้า/ภาคเดิมได้ทันที — ล้างแค่ division/คลัง (whPinAreaChanged
+  // รีเซ็ตทั้งสองให้อยู่แล้ว) เก็บ section/สินค้า/ภาคที่เลือกไว้ — ตัวอย่างจริงคือปักหมุด
+  // กลุ่มเดียวหลายภาคติดกัน
+  whPinAreaChanged();
 }
 
 function adminWhPinRulesRemove(id) {
   const st = _whPinRulesState;
   if (!st) return;
   st.rules = (st.rules || []).filter((r) => (r._tmp_id || r.id) !== id);
+  _whPinSelectedRuleIds.delete(id);
   adminRenderWarehousePinRulesTable();
 }
 
