@@ -2012,12 +2012,33 @@ def _apply_warehouse_pin_rules(
             continue
 
         already_pinned = wh_series.eq(target_wh)
+        non_pinned_idx = grp.index[~already_pinned].tolist()
         moved = int(
             pd.to_numeric(grp.loc[~already_pinned, "allocated_boxes"], errors="coerce")
             .fillna(0)
             .sum()
         )
-        zero_idx.extend(grp.index[~already_pinned].tolist())
+
+        if already_pinned.any():
+            # คลังปักหมุดมี "แถวอยู่แล้ว" ปนอยู่ในกลุ่มนี้ (เช่น พนักงานคลังแตกที่บังเอิญมี
+            # คลังปักหมุดเป็นหนึ่งในคลังเดิมของเขาอยู่แล้ว) — ห้ามสร้างแถวใหม่ซ้อนแบบเดิม
+            # เพราะ total ข้างบนรวมหีบของแถวที่ pinned อยู่แล้วเข้าไปด้วย ถ้าสร้างแถวใหม่อีก
+            # หีบของแถว pinned เดิมจะถูกนับซ้ำสอง (ครั้งแรกในแถวเดิมที่ยังไม่ถูกแตะ ครั้งที่
+            # สองในแถวใหม่ที่รวม total ทั้งกลุ่ม) ยอดรวมต่อ SKU จะพองเกินเป้าและไปชนด่าน
+            # I1/_assert_send_matches_sup_targets ทีหลัง — เจอบั๊กจริงจากเคส SL225/S543/
+            # SKU 411140 ที่คลังปักหมุด G010 มีแถวเดิมอยู่แล้วคู่กับ G080 (22 ก.ย. 2026)
+            # ทางแก้คือแก้ "แถวที่ pinned อยู่แล้ว" ให้เป็นยอดรวมทั้งกลุ่มตรง ๆ แทน
+            pinned_idx = grp.index[already_pinned].tolist()
+            d.loc[pinned_idx[0], "allocated_boxes"] = total
+            # ปกติจะมีแถว pinned ซ้ำได้แค่ 1 แถวต่อกลุ่มอยู่แล้ว แต่กันไว้เผื่อข้อมูลเพี้ยน
+            zero_idx.extend(pinned_idx[1:])
+            zero_idx.extend(non_pinned_idx)
+            stats["matched_groups"] += 1
+            stats["boxes_moved"] += moved
+            stats["rows_zeroed"] += len(non_pinned_idx) + len(pinned_idx[1:])
+            continue
+
+        zero_idx.extend(non_pinned_idx)
 
         # ก็อปทุกคอลัมน์จากแถวแรกของกลุ่มไว้ก่อน (เผื่อผู้เรียกมีคอลัมน์เสริมนอกเหนือชุด
         # หลักที่นี่รู้จัก เช่น optimize.py::_apply_wh_pin_preview ที่มี hist_avg/ราคา/ชื่อ
@@ -2043,9 +2064,8 @@ def _apply_warehouse_pin_rules(
         extra_rows.append(extra_row)
         stats["matched_groups"] += 1
         stats["boxes_moved"] += moved
-        stats["rows_zeroed"] += int((~already_pinned).sum())
-        if not wh_series.eq(target_wh).any():
-            stats["new_warehouse_legs"] += 1
+        stats["rows_zeroed"] += len(non_pinned_idx)
+        stats["new_warehouse_legs"] += 1
 
     if zero_idx:
         d.loc[zero_idx, "allocated_boxes"] = 0

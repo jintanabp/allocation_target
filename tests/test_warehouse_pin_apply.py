@@ -70,13 +70,26 @@ class WarehousePinApplyTest(unittest.TestCase):
         self.assertEqual(stats["boxes_moved"], 10)
         self.assertEqual(stats["rows_zeroed"], 2)
         self.assertEqual(stats["new_warehouse_legs"], 1)
-        old = out[out["warehouse_code"].isin(["R082", "G002"])]
-        self.assertEqual(len(old), 2)
-        self.assertTrue((old["allocated_boxes"] == 0).all())
-        pinned = out[out["warehouse_code"] == "G010"]
-        self.assertEqual(len(pinned), 1)
-        self.assertEqual(int(pinned.iloc[0]["allocated_boxes"]), 10)
-        self.assertEqual(int(out["allocated_boxes"].sum()), 10)  # ผลรวมไม่เปลี่ยน
+
+    def test_split_group_where_pinned_warehouse_already_has_a_row_does_not_double_count(self):
+        """บั๊กจริงที่เจอ (SL225/S543/SKU 411140, 22 ก.ย. 2026): คลังปักหมุด (G010) เป็น
+        หนึ่งในคลังที่พนักงานคลังแตกมีอยู่แล้ว (คู่กับ G080) — ของเดิมสร้างแถวใหม่ซ้อนแล้ว
+        เอา total ทั้งกลุ่ม (ซึ่งรวมหีบของแถว G010 เดิมไปแล้ว) ไปใส่ ทำให้หีบของแถว G010
+        เดิมถูกนับซ้ำสอง ยอดรวมพองเกินเป้าไปชนด่านตรวจยอดตอนส่งจริง — ต้องแก้ "แถวที่ pinned
+        อยู่แล้ว" ให้เป็นยอดรวมตรง ๆ แทนการสร้างแถวใหม่"""
+        self._rule(skus=["SKU1"], area="3", div="S", wh="G010")
+        df = pd.DataFrame([_row("E1", "SKU1", 4, "G010"), _row("E1", "SKU1", 6, "G080")])
+        out, stats = lh._apply_warehouse_pin_rules(df, SUP, 10, 2026)
+        self.assertEqual(int(out["allocated_boxes"].sum()), 10)  # ผลรวมต้องไม่พองเกินเป้า
+        self.assertEqual(len(out), 2)  # ไม่มีแถวใหม่ซ้อน — ยังคง 2 แถวเท่าเดิม
+        g010 = out[out["warehouse_code"] == "G010"]
+        g080 = out[out["warehouse_code"] == "G080"]
+        self.assertEqual(int(g010.iloc[0]["allocated_boxes"]), 10)
+        self.assertEqual(int(g080.iloc[0]["allocated_boxes"]), 0)
+        self.assertEqual(stats["matched_groups"], 1)
+        self.assertEqual(stats["boxes_moved"], 6)
+        self.assertEqual(stats["rows_zeroed"], 1)
+        self.assertEqual(stats["new_warehouse_legs"], 0)  # คลังปักหมุดมีแถวอยู่แล้ว ไม่ใช่ขาใหม่
 
     def test_pinned_warehouse_never_seen_before_creates_a_new_leg(self):
         """คลังปักหมุดไม่เคยมีในคู่นี้มาก่อนเลย — ต้องสร้างขาใหม่ ไม่ใช่แก้แถวเดิม"""
