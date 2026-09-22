@@ -710,10 +710,6 @@ def _expand_allocations_with_tga_grain(
         sku = str(arow["sku"]).strip()
         boxes_val = pd.to_numeric(arow.get("allocated_boxes", 0), errors="coerce")
         boxes = 0 if pd.isna(boxes_val) else int(round(float(boxes_val)))
-        wh_req = ""
-        raw_wh = arow.get("warehouse_code")
-        if raw_wh is not None and str(raw_wh).strip():
-            wh_req = str(raw_wh).strip()
 
         sub = grain_lookup.get((e, sku), pd.DataFrame())
 
@@ -721,11 +717,10 @@ def _expand_allocations_with_tga_grain(
         # (หรือเติมจากแถวอื่นของพนักงานคนเดียวกัน เมื่อเปิด infer_missing_dims)
         if sub.empty:
             inferred = emp_dims.get(e) if emp_dims else None
-            # คลังของปลายทางมาก่อนค่าจากฝั่งแอปเสมอ — กิ่งที่เจอ grain (ด้านล่าง) ใช้ค่า
-            # จาก grain ตรงๆ เท่านั้น ไม่พึ่ง wh_req เลย ที่นี่ "แถวของคนคนนั้นเอง" ทำหน้าที่แทน
-            # ไม่งั้นแถวใหม่จะไปอยู่คนละคลังกับเป้าอื่นทั้งหมดของเขา แล้วคีย์ upsert
-            # ซึ่งรวมคลังจะมองเป็นคนละแถว = คู่เดียวกันมีเป้าสองที่
-            wh_new = (inferred.get("warehouse_code") if inferred else "") or wh_req or ""
+            # คู่ใหม่ที่ไม่เคยมีเป้าใน TGA เลยสักแถว — ไม่มีคลังจริงให้เชื่อ ผู้ใช้ตัดสินใจ
+            # (22 ก.ย. 2026) ว่า "คู่ใหม่ควรได้คลังว่างไว้ก่อนดีกว่า" แทนที่จะเดาจากคลังของ
+            # แถวอื่นของพนักงานคนเดียวกัน หรือจากประวัติขาย 2 ปี (wh_req เดิม) — ว่างไว้ชัดเจน
+            # ดีกว่าเดาผิดแล้วชนคีย์ upsert (รวม WAREHOUSECODE) ภายหลังจนเป้าพองซ้อน
             out.append(
                 {
                     "emp_id": e,
@@ -735,7 +730,7 @@ def _expand_allocations_with_tga_grain(
                     "divisioncode": inferred["divisioncode"] if inferred else "",
                     "areacode": inferred["areacode"] if inferred else "",
                     "provincecode": inferred["provincecode"] if inferred else "",
-                    "warehouse_code": wh_new,
+                    "warehouse_code": "",
                     "dims_inferred": bool(inferred),
                 }
             )
