@@ -260,14 +260,29 @@ def _apply_wh_pin_preview(
         df_final["areacode"] = df_final["areacode"].fillna("")
         df_final["divisioncode"] = df_final["divisioncode"].fillna("")
 
+        # เดิมจุดนี้ใช้ df.apply(func, axis=1) สองรอบ (สลับคลังแถวเดี่ยว + ติดป้าย wh_pin_forced)
+        # ซึ่งเรียก Python function ทีละแถว ช้ามากเมื่อทีมมีพนักงาน×SKU หลักพัน-หมื่นแถว (เช่น
+        # SL225 ที่เจอปัญหาจริง 22 ก.ย. 2026 — กระจายหีบค้างจน "Internal Server Error" แบบที่
+        # Python ตัวเองก็ไม่มีโอกาสได้จับ exception เลย เพราะ worker/timeout ฆ่า process กลาง
+        # คัน) เปลี่ยนมาใช้ pd.merge (vectorized ล้วน ไม่มี Python loop ต่อแถว) แทนทั้งคู่
+        rules_df = pd.DataFrame(
+            [
+                {"sku": k[0], "areacode": k[1], "divisioncode": k[2], "_pin_wh": str(v.get("warehouse_code") or "").strip()}
+                for k, v in rules.items()
+            ]
+        )
+        for c in ("sku", "areacode", "divisioncode"):
+            rules_df[c] = rules_df[c].astype(str).str.strip()
+        df_final["sku"] = df_final["sku"].astype(str).str.strip()
+
         # คนละวิธีกันสองแบบตามจำนวนแถวของ (emp_id, sku) นั้น:
         #   ≥2 แถว (คลังแตกอยู่แล้วจริง) — ใช้ _apply_warehouse_pin_rules ตัวเต็ม (ตัวเดียว
         #     กับตอนส่งจริง) ซึ่งรวมเป็นแถวใหม่ + ล้างแถวเก่าเป็น 0 (จำเป็นสำหรับตอนส่งจริง
-        #     ที่ต้องส่ง 0 ทับคลังเก่าใน Target Sun)
+        #     ที่ต้องส่ง 0 ทับคลังเก่าใน Target Sun) — เมธอดนี้วนตาม "กลุ่มที่ match" เท่านั้น
+        #     (ไม่ใช่ทุกแถว) จึงไม่ช้าเหมือนสองจุดข้างล่าง
         #   1 แถว (ไม่เคยแตกคลัง แต่คลังนั้นไม่ตรงกติกา) — แก้ warehouse_code ในแถวเดิมตรง ๆ
         #     ไม่ต้องสร้างแถวใหม่/ไม่ต้องล้างเป็น 0 (ไม่มีปัญหา upsert key ที่ Step 3 ต้องกัน
-        #     เหมือนตอนส่งจริง) — รอบแรกตั้งใจข้ามกรณีนี้ไปเฉย ๆ แล้วพบว่าเป็นเคสจริงที่พบบ่อย
-        #     (SL225/S543/411140 22 ก.ย. 2026) ผู้ใช้ต้องการให้ครอบคลุมด้วย ไม่ใช่แค่คนคลังแตก
+        #     เหมือนตอนส่งจริง)
         grp_sizes = df_final.groupby(["emp_id", "sku"])["emp_id"].transform("size")
         df_multi = df_final[grp_sizes >= 2]
         df_single = df_final[grp_sizes < 2].copy()
@@ -280,34 +295,27 @@ def _apply_wh_pin_preview(
                     "optimize: กติกาบังคับคลังรวมผลกระจาย Step 3 ให้แล้ว sup=%s %d กลุ่ม (%d หีบย้าย)",
                     sup_id, stats["matched_groups"], stats["boxes_moved"],
                 )
-        if not df_single.empty:
-            switched = 0
-
-            def _maybe_switch_wh(row):
-                nonlocal switched
-                key = (str(row["sku"]).strip(), str(row["areacode"]).strip(), str(row["divisioncode"]).strip())
-                rule = rules.get(key)
-                if rule:
-                    target_wh = str(rule.get("warehouse_code") or "").strip()
-                    if target_wh and str(row.get("warehouse_code") or "").strip() != target_wh:
-                        row["warehouse_code"] = target_wh
-                        switched += 1
-                return row
-
-            df_single = df_single.apply(_maybe_switch_wh, axis=1)
+        if not df_single.empty and not rules_df.empty:
+            df_single = pd.merge(df_single, rules_df, on=["sku", "areacode", "divisioncode"], how="left")
+            has_rule = df_single["_pin_wh"].notna() & (df_single["_pin_wh"] != "")
+            needs_switch = has_rule & (df_single["warehouse_code"].astype(str).str.strip() != df_single["_pin_wh"])
+            switched = int(needs_switch.sum())
             if switched:
+                df_single.loc[needs_switch, "warehouse_code"] = df_single.loc[needs_switch, "_pin_wh"]
                 logger.info(
                     "optimize: กติกาบังคับคลังสลับคลังแถวเดี่ยวใน Step 3 ให้แล้ว sup=%s %d แถว",
                     sup_id, switched,
                 )
+            df_single = df_single.drop(columns=["_pin_wh"])
         df_final = pd.concat([df_single, df_multi], ignore_index=True)
 
-        def _forced_wh(r: pd.Series) -> str:
-            key = (str(r["sku"]).strip(), str(r["areacode"]).strip(), str(r["divisioncode"]).strip())
-            rule = rules.get(key)
-            return str(rule.get("warehouse_code") or "").strip() if rule else ""
-
-        df_final["wh_pin_forced"] = df_final.apply(_forced_wh, axis=1)
+        if not rules_df.empty:
+            df_final = df_final.drop(columns=["wh_pin_forced"])  # เดี๋ยวจะ merge เข้ามาใหม่ — ชื่อชนของเดิมที่ตั้ง "" ไว้ตอนต้นฟังก์ชัน
+            df_final = pd.merge(
+                df_final, rules_df.rename(columns={"_pin_wh": "wh_pin_forced"}),
+                on=["sku", "areacode", "divisioncode"], how="left",
+            )
+            df_final["wh_pin_forced"] = df_final["wh_pin_forced"].fillna("")
         df_final = df_final.drop(columns=["areacode", "divisioncode"])
         return df_final
     except Exception as e:
