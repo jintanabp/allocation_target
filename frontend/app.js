@@ -15965,10 +15965,12 @@ function adminRenderWarehousePinRulesTable() {
     body.innerHTML = rules.map((r) => {
       const id = r._tmp_id || r.id;
       const skus = r.skus || [];
-      const skuLabel = skus.length <= 3 ? skus.join(", ") : `${skus.slice(0, 3).join(", ")} +${skus.length - 3}`;
       return `<tr>
       <td><input type="checkbox" ${_whPinSelectedRuleIds.has(id) ? "checked" : ""} onchange="adminWhPinRuleRowToggle('${escapeHtml(id)}', this.checked)" aria-label="เลือกแถวนี้" /></td>
-      <td>${escapeHtml(r.section)} <span class="admin-period-bar__meta" title="${escapeHtml(skus.join(", "))}">(${skus.length} SKU: ${escapeHtml(skuLabel)})</span></td>
+      <td>
+        <div class="wh-pin-row-section">${escapeHtml(r.section)}</div>
+        <span class="wh-pin-sku-badge" title="${escapeHtml(skus.join(", "))}">${skus.length} SKU</span>
+      </td>
       <td>${escapeHtml(_whPinAreaLabel(r.areacode))}</td>
       <td>${escapeHtml(r.divisioncode)}</td>
       <td>${escapeHtml(r.warehouse_code)}</td>
