@@ -10400,11 +10400,18 @@ tr.emp-row--no-target .emp-tag {
   color: var(--text-1);
 }
 #adminView .alloc-rules-pickrow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+/* "ภาค" มักมีหลายตัวเลือกติ๊กพร้อมกัน (ยาวกว่า Division/คลังที่เป็น select บรรทัดเดียว
+   มาก) — ถ้าแบ่ง 3 คอลัมน์เท่ากันแบบเดิม ภาคจะถูกบีบจนตกบรรทัดทั้งที่ Division/คลังยังอยู่
+   บรรทัดเดียวสบาย ๆ เลยยกให้ "ภาค" ขึ้นแถวเต็มความกว้างของตัวเอง แล้ว Division/คลังแบ่ง
+   กันคนละครึ่งแถวถัดไป (label ตัวแรกในมาร์กอัปคือ "ภาค" เสมอ) */
 #adminView .wh-pin-pickgrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
   gap: 10px 14px;
   margin-bottom: 8px;
+}
+#adminView .wh-pin-pickgrid > label:first-child {
+  grid-column: 1 / -1;
 }
 #adminView .wh-pin-pickgrid label {
   display: block;
@@ -10518,10 +10525,13 @@ tr.emp-row--no-target .emp-tag {
   color: #DC2626;
 }
 #adminPanelWarehousePinRules .wh-pin-bulk-del:not(:disabled):hover { background: #FEF2F2; }
+/* overflow: hidden เฉย ๆ เคยตัดคอลัมน์ขวา (ตั้งโดย/ปุ่มลบ) หายไปเงียบ ๆ เมื่อตารางกว้าง
+   กว่าการ์ด (จอแคบ/มีหลาย SKU) — auto ให้เลื่อนแนวนอนได้แทน มุมโค้งยังอยู่เหมือนเดิม */
 #adminPanelWarehousePinRules .wh-pin-table-wrap {
   border: 1px solid var(--border);
   border-radius: var(--r-md);
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 #adminPanelWarehousePinRules .wh-pin-table-wrap .admin-table { margin: 0; }
 #adminPanelWarehousePinRules .wh-pin-table-wrap .admin-table thead th {
