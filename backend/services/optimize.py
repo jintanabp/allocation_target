@@ -1547,7 +1547,21 @@ def run_optimization_service(
     # เรียกหลัง atomic_write_csv/create_target_excel แล้วเท่านั้น — ตั้งใจไม่ให้การรวมคลัง
     # ตรงนี้หลุดเข้า result_*.csv/Excel (ไฟล์ยังเป็นผลดิบ) เพราะใช้แค่ปรับสิ่งที่ Step 3
     # แสดงบนจอให้ตรงกับสิ่งที่จะเกิดขึ้นจริงตอนส่ง — lakehouse.py ยังรวมคลังซ้ำอีกทีตอนส่งจริง
-    df_final = _apply_wh_pin_preview(df_final, sup_id, target_month, target_year)
+    #
+    # กันพลาดอีกชั้นนอก try/except ภายในฟังก์ชันเอง — เจอจริงว่ากระจายหีบทั้งก้อนพังเพราะ
+    # ฟีเจอร์นี้ (22 ก.ย. 2026, ยังไม่ทราบสาเหตุแน่ชัด) ฟีเจอร์นี้เป็นแค่ "โชว์ล่วงหน้า" ไม่ควร
+    # มีทางทำให้กระจายหีบ (ฟังก์ชันหลักที่ทุกคนต้องใช้) ล้มทั้งก้อนได้เด็ดขาด ไม่ว่าจะเกิดบั๊ก
+    # อะไรก็ตามในนี้ — ถ้าพังให้ log ไว้แล้วคืนผลดิบก่อนเรียกฟังก์ชันนี้แทน
+    try:
+        df_final = _apply_wh_pin_preview(df_final, sup_id, target_month, target_year)
+    except Exception as e:
+        logger.error(
+            "optimize: _apply_wh_pin_preview ล้มทั้งฟังก์ชัน (ไม่ควรเกิด) sup=%s — "
+            "ข้ามไปใช้ผลดิบแทน ไม่ให้กระทบการกระจายหีบหลัก: %s",
+            sup_id, e, exc_info=True,
+        )
+        if "wh_pin_forced" not in df_final.columns:
+            df_final["wh_pin_forced"] = ""
 
     return {
         "allocations": df_final.to_dict(orient="records"),
