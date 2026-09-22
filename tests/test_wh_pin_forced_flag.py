@@ -1,16 +1,21 @@
 """
-กติกาบังคับคลังเดียว — ต้องโชว์ในตารางผลกระจาย (ขั้นตอนคำนวณ) ล่วงหน้าด้วย ไม่ใช่รู้ตัว
-ตอน "ตรวจไฟล์ก่อนส่ง" อย่างเดียว (ผู้ใช้ขอ 22 ก.ย. 2026 หลังเจอว่าตารางกระจายไม่บอกอะไรเลย)
+กติกาบังคับคลังเดียว — ต้องมีผลจริงตั้งแต่ตอนกดกระจาย (Step 3) ไม่ใช่รู้ตัวแค่ตอน "ตรวจ
+ไฟล์ก่อนส่ง" อย่างเดียว (ผู้ใช้ขอ 22 ก.ย. 2026 สองรอบ — รอบแรกขอแค่ป้ายเตือนล่วงหน้า
+รอบสองขอให้บังคับจริงตั้งแต่ตอนกระจายเลย เพราะป้ายอย่างเดียวไม่พอ)
 
-เทสฟังก์ชัน backend/services/optimize.py::_attach_wh_pin_forced ตรง ๆ — ฟังก์ชันนี้เติม
-คอลัมน์ "wh_pin_forced" (รหัสคลังที่จะถูกบังคับ หรือ "" ถ้าไม่โดน) ให้ทุกแถวผลกระจาย โดย
+เทสฟังก์ชัน backend/services/optimize.py::_apply_wh_pin_preview ตรง ๆ — ฟังก์ชันนี้:
+1. รวมคลังจริง (เรียก lakehouse.py::_apply_warehouse_pin_rules ตัวเดียวกับตอนส่งจริงเป๊ะ ๆ)
+   ให้ผลกระจายที่ Step 3 เห็น "ตรงกับสิ่งที่จะเกิดตอนส่งจริง" เสมอ
+2. เติมคอลัมน์ "wh_pin_forced" (รหัสคลังที่ถูกบังคับ หรือ "" ถ้าไม่โดน) จากผลที่รวมแล้ว
+   ให้หัว SKU ในตาราง Step 3 โชว์ป้าย 🔒 ได้
+
 จับคู่ (sku, areacode, divisioncode) เหมือน lakehouse.py::_apply_warehouse_pin_rules
-ทุกประการ — areacode/divisioncode มาจาก data/tga_lines_<sup>_<year>_<month>.csv
-(ไฟล์เดียวกับที่ /data/employees เขียนไว้ตอนโหลดทีมในงวดเดียวกัน)
+ทุกประการ — areacode/divisioncode มาจาก data/tga_lines_<sup>_<year>_<month>.csv (ไฟล์
+เดียวกับที่ /data/employees เขียนไว้ตอนโหลดทีมในงวดเดียวกัน) ไม่ต้องต่อ Fabric เพิ่ม
 
-คนละเรื่องกับ tests/test_warehouse_pin_apply.py ที่เทส _apply_warehouse_pin_rules (การ
-บังคับใช้จริงตอนสร้างไฟล์ส่ง) — ที่นี่แค่โชว์ "ล่วงหน้า" ให้ซุปเห็นก่อนกดส่ง ไม่แตะ
-ตัวเลขกระจาย/ไฟล์ result_*.csv/Excel เลย
+คนละเรื่องกับ tests/test_warehouse_pin_apply.py ที่เทส _apply_warehouse_pin_rules ตรง ๆ
+(เทสนั้นครอบคลุมตรรกะการรวมคลังเองอยู่แล้ว — ที่นี่เน้นว่า optimize.py เรียกมันถูกจังหวะ/
+ถูกคอลัมน์ และไม่กระทบไฟล์ result_*.csv/Excel)
 """
 
 from __future__ import annotations
@@ -43,7 +48,7 @@ def _grain_row(emp, sku, area="3", div="S", wh="G001"):
     }
 
 
-class WhPinForcedFlagTest(unittest.TestCase):
+class WhPinPreviewTest(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self._cwd = os.getcwd()
@@ -70,9 +75,11 @@ class WhPinForcedFlagTest(unittest.TestCase):
 
     def test_no_rules_configured_is_a_cheap_no_op(self):
         self._write_grain([_grain_row("E1", "SKU1")])
-        df = pd.DataFrame([{"emp_id": "E1", "sku": "SKU1", "allocated_boxes": 10}])
-        out = opt._attach_wh_pin_forced(df, SUP, MONTH, YEAR)
+        df = pd.DataFrame([{"emp_id": "E1", "sku": "SKU1", "allocated_boxes": 10, "warehouse_code": "G001"}])
+        out = opt._apply_wh_pin_preview(df, SUP, MONTH, YEAR)
         self.assertEqual(out["wh_pin_forced"].tolist(), [""])
+        self.assertEqual(out["allocated_boxes"].tolist(), [10])
+        self.assertEqual(out["warehouse_code"].tolist(), ["G001"])
 
     def test_matching_rows_get_forced_warehouse_others_stay_blank(self):
         self._rule(skus=["SKU1"], area="3", div="S", wh="G010")
@@ -82,37 +89,65 @@ class WhPinForcedFlagTest(unittest.TestCase):
             _grain_row("E2", "SKU1", area="5", div="S"),   # ภาคไม่ตรงกติกา
         ])
         df = pd.DataFrame([
-            {"emp_id": "E1", "sku": "SKU1", "allocated_boxes": 10},
-            {"emp_id": "E1", "sku": "SKU2", "allocated_boxes": 4},
-            {"emp_id": "E2", "sku": "SKU1", "allocated_boxes": 6},
+            {"emp_id": "E1", "sku": "SKU1", "allocated_boxes": 10, "warehouse_code": "G010"},
+            {"emp_id": "E1", "sku": "SKU2", "allocated_boxes": 4, "warehouse_code": "R082"},
+            {"emp_id": "E2", "sku": "SKU1", "allocated_boxes": 6, "warehouse_code": "R303"},
         ])
-        out = opt._attach_wh_pin_forced(df, SUP, MONTH, YEAR)
+        out = opt._apply_wh_pin_preview(df, SUP, MONTH, YEAR)
         got = dict(zip(zip(out["emp_id"], out["sku"]), out["wh_pin_forced"]))
         self.assertEqual(got[("E1", "SKU1")], "G010")
         self.assertEqual(got[("E1", "SKU2")], "")
         self.assertEqual(got[("E2", "SKU1")], "")
+        # E2/SKU1 ไม่ตรงกติกา (ภาคไม่ตรง) — คลัง/หีบต้องไม่ถูกแตะ
+        e2 = out[(out["emp_id"] == "E2") & (out["sku"] == "SKU1")].iloc[0]
+        self.assertEqual(e2["warehouse_code"], "R303")
+        self.assertEqual(int(e2["allocated_boxes"]), 6)
 
-    def test_wh_split_employee_both_warehouse_rows_flagged_the_same(self):
-        """พนักงานคลังแตก (2 แถวต่อ SKU เดียวกัน คนละ warehouse_code) ต้องได้ wh_pin_forced
-        เดียวกันทั้งคู่ — สอดคล้องกับความหมายจริงคือ "งวดนี้ SKU ตัวนี้จะไปรวมที่คลังเดียว"
-        ไม่ว่าตารางบนจอจะยังโชว์แบ่งคลังตามประวัติแบบไหนก็ตาม"""
+    def test_split_warehouse_employee_gets_actually_consolidated_not_just_labeled(self):
+        """ผู้ใช้ขอ 22 ก.ย. 2026 รอบสอง: "พอกดกระจาย มันก็จะไม่เอาหีบไปลงที่สินค้าในคลัง
+        นั้นแล้ว" — พนักงานคลังแตก (2 แถวคนละคลัง ไม่ใช่คลังปักหมุดเลยสักแถว) ต้องเห็น
+        หีบรวมเป็นแถวเดียวที่คลังปักหมุดจริง ๆ ในผลกระจาย ไม่ใช่แค่ติดป้ายเตือนเฉย ๆ"""
         self._rule(skus=["SKU1"], area="3", div="S", wh="G010")
         self._write_grain([_grain_row("E1", "SKU1", area="3", div="S")])
         df = pd.DataFrame([
-            {"emp_id": "E1", "sku": "SKU1", "allocated_boxes": 6, "warehouse_code": "R082"},
-            {"emp_id": "E1", "sku": "SKU1", "allocated_boxes": 4, "warehouse_code": "G002"},
+            {"emp_id": "E1", "sku": "SKU1", "allocated_boxes": 6, "warehouse_code": "R082", "hist_avg": 4.0},
+            {"emp_id": "E1", "sku": "SKU1", "allocated_boxes": 4, "warehouse_code": "G002", "hist_avg": 2.0},
         ])
-        out = opt._attach_wh_pin_forced(df, SUP, MONTH, YEAR)
-        self.assertEqual(out["wh_pin_forced"].tolist(), ["G010", "G010"])
+        out = opt._apply_wh_pin_preview(df, SUP, MONTH, YEAR)
+        self.assertEqual(int(out["allocated_boxes"].sum()), 10)  # ผลรวมยังตรงเป้าเดิม (I1)
+        old_wh_rows = out[out["warehouse_code"].isin(["R082", "G002"])]
+        self.assertTrue((old_wh_rows["allocated_boxes"] == 0).all())
+        pinned = out[out["warehouse_code"] == "G010"]
+        self.assertEqual(len(pinned), 1)
+        self.assertEqual(int(pinned.iloc[0]["allocated_boxes"]), 10)
+        self.assertEqual(pinned.iloc[0]["wh_pin_forced"], "G010")
+        # คอลัมน์ประวัติเทียบเคียง (hist_avg) ต้องรวมข้ามแถวไปด้วย ไม่ใช่ก็อปแค่แถวแรก
+        self.assertAlmostEqual(float(pinned.iloc[0]["hist_avg"]), 6.0)
+
+    def test_single_warehouse_employee_is_left_untouched_but_still_labeled(self):
+        """พนักงานคลังเดียว (ไม่เคยแตก) แม้คลังนั้นจะไม่ใช่คลังปักหมุด — ตกลงกับผู้ใช้ไว้ว่า
+        กระทบเฉพาะคนที่มีประวัติคลังแตกจริงเท่านั้น คนกลุ่มนี้ไม่ต้องแตะหีบ/คลังในตาราง
+        (ยังได้ป้าย 🔒 เตือนไว้เฉย ๆ — ตอนส่งจริงจะถูกสลับคลังให้แน่นอนอยู่ดี)"""
+        self._rule(skus=["SKU1"], area="3", div="S", wh="G010")
+        self._write_grain([_grain_row("E1", "SKU1", area="3", div="S")])
+        df = pd.DataFrame([
+            {"emp_id": "E1", "sku": "SKU1", "allocated_boxes": 8, "warehouse_code": "R082"},
+        ])
+        out = opt._apply_wh_pin_preview(df, SUP, MONTH, YEAR)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out.iloc[0]["warehouse_code"], "R082")
+        self.assertEqual(int(out.iloc[0]["allocated_boxes"]), 8)
+        self.assertEqual(out.iloc[0]["wh_pin_forced"], "G010")
 
     def test_missing_grain_file_is_graceful(self):
-        df = pd.DataFrame([{"emp_id": "E1", "sku": "SKU1", "allocated_boxes": 10}])
-        out = opt._attach_wh_pin_forced(df, SUP, MONTH, YEAR)
+        df = pd.DataFrame([{"emp_id": "E1", "sku": "SKU1", "allocated_boxes": 10, "warehouse_code": "G001"}])
+        out = opt._apply_wh_pin_preview(df, SUP, MONTH, YEAR)
         self.assertEqual(out["wh_pin_forced"].tolist(), [""])
+        self.assertEqual(int(out["allocated_boxes"].sum()), 10)
 
     def test_empty_df_is_returned_as_is(self):
         df = pd.DataFrame(columns=["emp_id", "sku", "allocated_boxes"])
-        out = opt._attach_wh_pin_forced(df, SUP, MONTH, YEAR)
+        out = opt._apply_wh_pin_preview(df, SUP, MONTH, YEAR)
         self.assertTrue(out.empty)
 
 

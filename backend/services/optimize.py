@@ -51,6 +51,7 @@ from ..generate_excel import create_target_excel
 from ..schemas import OptimizeRequest
 from ..fabric_dax_connector import FabricDAXConnector
 from . import alloc_rules_store, no_target_store
+from .lakehouse import _apply_warehouse_pin_rules
 from .sku_link_store import collapse_hist_to_canonical, expand_skus_for_dax, read_links
 from .warehouse_pin_rules_store import rules_by_key
 from .wh_split import (
@@ -194,23 +195,36 @@ def _wh_value_shares(
         return value_shares_for_reverse_map(reverse_map, {})
 
 
-def _attach_wh_pin_forced(
+def _apply_wh_pin_preview(
     df_final: pd.DataFrame,
     sup_id: str,
     target_month: int,
     target_year: int,
 ) -> pd.DataFrame:
     """
-    เติมคอลัมน์ `wh_pin_forced` (รหัสคลัง หรือ "" ถ้าไม่โดนกติกา) ให้ทุกแถวผลกระจาย —
-    ใช้แค่โชว์ในตาราง Step 3 (บอกซุปล่วงหน้าว่า SKU นี้จะถูกบังคับคลังเดียวตอนส่งจริง)
-    ไม่กระทบตัวเลขกระจาย/ไฟล์ result_*.csv/Excel เลย เพราะเรียกหลังเขียนไฟล์เหล่านั้นแล้ว
+    ผลกระจายที่ Step 3 เห็น ต้องไม่ใส่หีบไปคลังที่กติกาบังคับคลังเดียวห้ามไว้อีกต่อไป —
+    ผู้ใช้ขอ (22 ก.ย. 2026) หลังพบว่าเดิมกดกระจายแล้วยังเห็นหีบปนหลายคลังตามประวัติเหมือน
+    เดิม (มีแค่ป้าย 🔒 เตือนเฉย ๆ) ทั้งที่ตอนส่งจริงจะถูกรวมคลังอยู่ดี — จึงเรียก
+    lakehouse.py::_apply_warehouse_pin_rules ตัวเดียวกับตอนส่งจริงเป๊ะ ๆ ที่นี่เลย แทนที่
+    จะแค่ติดป้าย ผลคือ Step 3 กับตอนส่งเห็นตรงกันเสมอ ไม่มีทางขัดกันอีก
 
-    จับคู่ด้วย (sku, areacode, divisioncode) เหมือน backend/services/lakehouse.py::
-    _apply_warehouse_pin_rules ทุกประการ — areacode/divisioncode ต่อ (emp_id, sku) มาจาก
-    tga_grain_cache_path ที่ /data/employees เขียนไว้ตอนโหลดทีมนี้ในงวดเดียวกันแล้ว
-    (คนละคอลัมน์กับ warehouse_code ที่ใช้แบ่งพนักงานหลายคลังข้างบน)
+    **ขอบเขต (ตกลงกับผู้ใช้ไว้แล้ว):** รวมคลังจริงเฉพาะ (emp_id, sku) ที่มีแถวคลังแตกอยู่
+    แล้ว (≥2 แถว) เท่านั้น — พนักงานคลังเดียวที่บังเอิญไม่ตรงคลังปักหมุดจะยังได้ป้าย 🔒 เตือน
+    แต่ตัวหีบ/คลังในตารางไม่ถูกแตะ (คนกลุ่มนี้ไม่เคยมีปัญหาคลังปนอยู่แล้ว การันตีด้วย
+    _apply_warehouse_pin_rules เองสำหรับส่งจริงตอนหลังอยู่ดี)
+
+    **ไม่กระทบไฟล์ result_*.csv/Excel เลย** — เรียกหลัง atomic_write_csv/create_target_excel
+    เขียนไฟล์เหล่านั้นเสร็จแล้วเท่านั้น (ไฟล์ยังเป็นผลดิบจากเครื่องคำนวณ ไม่ผ่านการรวมคลัง)
+    ตอนส่งจริง lakehouse.py จะเรียกฟังก์ชันเดียวกันนี้ซ้ำอีกที — ถ้า Step 3 รวมไปแล้วรอบนี้
+    ก็แค่ no-op (มีเทสยืนยัน test_group_already_fully_on_pinned_warehouse_is_untouched)
+
+    areacode/divisioncode ต่อ (emp_id, sku) มาจาก tga_grain_cache_path ที่ /data/employees
+    เขียนไว้ตอนโหลดทีมนี้ในงวดเดียวกันแล้ว (คนละคอลัมน์กับ warehouse_code ที่ใช้แบ่ง
+    พนักงานหลายคลังข้างบน) — ไม่ต้องต่อ Fabric เพิ่ม
     """
     if df_final is None or df_final.empty:
+        if df_final is not None:
+            df_final["wh_pin_forced"] = pd.Series(dtype="object")
         return df_final
     df_final = df_final.copy()
     df_final["wh_pin_forced"] = ""
@@ -241,6 +255,26 @@ def _attach_wh_pin_forced(
         df_final["areacode"] = df_final["areacode"].fillna("")
         df_final["divisioncode"] = df_final["divisioncode"].fillna("")
 
+        # รวมคลังจริงเฉพาะ (emp_id, sku) ที่ "มีคลังแตกอยู่แล้วจริง" (≥2 แถว) เท่านั้น —
+        # คนคลังเดียวที่บังเอิญไม่ตรงคลังปักหมุดปล่อยผ่านไม่แตะที่นี่ (จงใจ ตามที่ตกลงกับ
+        # ผู้ใช้ไว้ — "กระทบเฉพาะพนักงานที่มีประวัติขายจากหลายคลังเท่านั้น") เพราะกลุ่ม 1
+        # แถวถ้าส่งเข้า _apply_warehouse_pin_rules จะได้แถวใหม่คืนมาแทนที่จะแก้ในแถวเดิม
+        # (ตั้งใจไว้แบบนั้นสำหรับตอนส่งจริงที่ต้องส่ง 0 ทับคลังเก่าจริงใน Target Sun) กลาย
+        # เป็นแถวปลอมซ้อนสำหรับคนที่ไม่เคยมีปัญหาคลังแตกมาก่อนเลย
+        grp_sizes = df_final.groupby(["emp_id", "sku"])["emp_id"].transform("size")
+        df_multi = df_final[grp_sizes >= 2]
+        df_single = df_final[grp_sizes < 2]
+        if not df_multi.empty:
+            df_multi, stats = _apply_warehouse_pin_rules(
+                df_multi, sup_id, target_month, target_year
+            )
+            if stats.get("matched_groups"):
+                logger.info(
+                    "optimize: กติกาบังคับคลังรวมผลกระจาย Step 3 ให้แล้ว sup=%s %d กลุ่ม (%d หีบย้าย)",
+                    sup_id, stats["matched_groups"], stats["boxes_moved"],
+                )
+        df_final = pd.concat([df_single, df_multi], ignore_index=True)
+
         def _forced_wh(r: pd.Series) -> str:
             key = (str(r["sku"]).strip(), str(r["areacode"]).strip(), str(r["divisioncode"]).strip())
             rule = rules.get(key)
@@ -250,7 +284,7 @@ def _attach_wh_pin_forced(
         df_final = df_final.drop(columns=["areacode", "divisioncode"])
         return df_final
     except Exception as e:
-        logger.warning("wh pin forced flags skipped: %s", e)
+        logger.warning("wh pin preview skipped: %s", e)
         df_final["wh_pin_forced"] = ""
         return df_final
 
@@ -1483,9 +1517,10 @@ def run_optimization_service(
         scope_sup_ids=target_sup_ids if summed_target else [],
     )
 
-    # เติมหลัง atomic_write_csv/create_target_excel แล้วเท่านั้น — ตั้งใจไม่ให้คอลัมน์นี้
-    # หลุดเข้า result_*.csv/Excel เพราะใช้แค่โชว์ในตาราง Step 3 บนจอ ไม่เกี่ยวกับไฟล์ส่งจริง
-    df_final = _attach_wh_pin_forced(df_final, sup_id, target_month, target_year)
+    # เรียกหลัง atomic_write_csv/create_target_excel แล้วเท่านั้น — ตั้งใจไม่ให้การรวมคลัง
+    # ตรงนี้หลุดเข้า result_*.csv/Excel (ไฟล์ยังเป็นผลดิบ) เพราะใช้แค่ปรับสิ่งที่ Step 3
+    # แสดงบนจอให้ตรงกับสิ่งที่จะเกิดขึ้นจริงตอนส่ง — lakehouse.py ยังรวมคลังซ้ำอีกทีตอนส่งจริง
+    df_final = _apply_wh_pin_preview(df_final, sup_id, target_month, target_year)
 
     return {
         "allocations": df_final.to_dict(orient="records"),

@@ -1937,6 +1937,18 @@ def _sup_target_boxes_by_sku(sup_id: str, month: int, year: int) -> dict[str, in
     return targets
 
 
+# คอลัมน์ที่เป็น "จำนวนสะสม" ต่อแถว (เหมือน allocated_boxes) — ต้องรวมข้ามกลุ่มไปด้วย ไม่ใช่
+# ก็อปแค่แถวแรก ไม่งั้นแถวใหม่ที่ backend/services/optimize.py::_apply_wh_pin_preview ส่งมา
+# (มีคอลัมน์ประวัติเทียบเคียงติดมาด้วย) จะโชว์ประวัติของ "แค่คลังหนึ่งในกลุ่ม" แทนที่จะเป็น
+# ผลรวมจริงของคนคนนั้น — ผู้เรียกเดิม (ตอนส่งจริง) ไม่มีคอลัมน์พวกนี้อยู่แล้วจึงไม่กระทบ
+_WH_PIN_SUM_ACROSS_GROUP_COLS = (
+    "hist_avg",
+    "hist_ly_same_month",
+    "hist_prev_month",
+    "baseline_boxes",
+)
+
+
 def _apply_warehouse_pin_rules(
     df: pd.DataFrame, sup_id: str, month: int, year: int,
 ) -> tuple[pd.DataFrame, dict[str, int]]:
@@ -2007,8 +2019,16 @@ def _apply_warehouse_pin_rules(
         )
         zero_idx.extend(grp.index[~already_pinned].tolist())
 
+        # ก็อปทุกคอลัมน์จากแถวแรกของกลุ่มไว้ก่อน (เผื่อผู้เรียกมีคอลัมน์เสริมนอกเหนือชุด
+        # หลักที่นี่รู้จัก เช่น optimize.py::_apply_wh_pin_preview ที่มี hist_avg/ราคา/ชื่อ
+        # แบรนด์ ฯลฯ ติดมาด้วยสำหรับโชว์ผลตอนคำนวณ Step 3) แล้วทับเฉพาะคีย์กลุ่ม + ฟิลด์ที่
+        # ต้องรวม/เปลี่ยนจริง — ผู้เรียกเดิม (ตอนส่งจริง) มีแค่ 8 คอลัมน์นี้อยู่แล้วจึงไม่ต่าง
         row0 = grp.iloc[0]
-        extra_rows.append(
+        extra_row = row0.to_dict()
+        for col in _WH_PIN_SUM_ACROSS_GROUP_COLS:
+            if col in grp.columns:
+                extra_row[col] = pd.to_numeric(grp[col], errors="coerce").fillna(0).sum()
+        extra_row.update(
             {
                 "emp_id": emp_id,
                 "sku": sku,
@@ -2020,6 +2040,7 @@ def _apply_warehouse_pin_rules(
                 "warehouse_code": target_wh,
             }
         )
+        extra_rows.append(extra_row)
         stats["matched_groups"] += 1
         stats["boxes_moved"] += moved
         stats["rows_zeroed"] += int((~already_pinned).sum())
