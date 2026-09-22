@@ -5380,6 +5380,12 @@ function _skuTierBadgeHtml(sku) {
   return `<span class="tiered-badge tiered-badge--strict" title="SKU รอง — ยึดสัดส่วนประวัติแน่น ±12%">รอง</span>`;
 }
 
+function _skuWhPinBadgeHtml(sku, pinBySku) {
+  const wh = pinBySku?.get(String(sku || "").trim());
+  if (!wh) return "";
+  return `<span class="badge-wh-pin" title="SKU นี้มีกติกาบังคับคลังเดียว — ไม่ว่าตารางนี้จะโชว์แบ่งคลังยังไง เป้าทั้งหมดจะถูกรวมไปที่คลัง ${escH(wh)} เพียงคลังเดียวตอนส่งเข้า Target Sun">🔒 ${escH(wh)}</span>`;
+}
+
 function _skuLineValue(s) {
   const boxes = Number(s.supervisor_target_boxes) || 0;
   const p = Number(_sec1PriceStates(s).price) || 0;
@@ -6793,16 +6799,23 @@ function renderResult(allocs) {
   const _freshSkuSet = new Set(
     (S.recentReallocSkus || []).map((x) => String(x || "").trim()).filter(Boolean)
   );
+  // SKU ที่โดนกติกาบังคับคลังเดียว (มาจาก backend ต่อแถว emp×sku — พอเจอตัวแรกที่มีค่า
+  // ก็พอ เพราะกติกาผูกกับ sku+ภาค+division ของทีมนี้ ไม่ใช่รายพนักงาน)
+  const pinBySku = new Map();
+  for (const a of allocs) {
+    if (a.wh_pin_forced && !pinBySku.has(a.sku)) pinBySku.set(a.sku, a.wh_pin_forced);
+  }
   headerHtml += `<tr><th class="result-sticky-left result-sticky-left--sm"${smWhRowspan}>S/M</th><th class="result-sticky-left result-sticky-left--wh"${smWhRowspan}>W/H</th>`;
   skus.forEach(s => {
     const info = _skuInfoByCode.get(s) || {};
     const price = _skuPriceMap[s] ?? 0;
     const newBadge = _skuNewBadgeHtml(s);
     const tierBadge = _skuTierBadgeHtml(s);
+    const whPinBadge = _skuWhPinBadgeHtml(s, pinBySku);
     const fresh = _freshSkuSet.has(String(s).trim());
     const freshBadge = fresh ? `<span class="badge-fresh" title="เพิ่งกระจายใหม่จากเป้าที่เพิ่ม/เปลี่ยน">เพิ่งกระจาย</span>` : "";
     headerHtml += `<th class="r sku-th${fresh ? " sku-th--fresh" : ""}">` +
-      `<div class="sku-th-code">${s} ${newBadge}${tierBadge}${freshBadge}</div>` +
+      `<div class="sku-th-code">${s} ${newBadge}${tierBadge}${whPinBadge}${freshBadge}</div>` +
       `<div class="sku-th-brand">${escH(info.brand_name_thai || info.brand_name_english || "")}</div>` +
       `<div class="sku-th-price">${fmt(price)} <span class="muted">บาท/หีบ</span></div>` +
       `</th>`;

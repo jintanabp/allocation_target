@@ -52,6 +52,7 @@ from ..schemas import OptimizeRequest
 from ..fabric_dax_connector import FabricDAXConnector
 from . import alloc_rules_store, no_target_store
 from .sku_link_store import collapse_hist_to_canonical, expand_skus_for_dax, read_links
+from .warehouse_pin_rules_store import rules_by_key
 from .wh_split import (
     _norm_wh,
     alloc_key,
@@ -191,6 +192,67 @@ def _wh_value_shares(
     except Exception as e:
         logger.warning("wh value shares from tga grain: %s", e)
         return value_shares_for_reverse_map(reverse_map, {})
+
+
+def _attach_wh_pin_forced(
+    df_final: pd.DataFrame,
+    sup_id: str,
+    target_month: int,
+    target_year: int,
+) -> pd.DataFrame:
+    """
+    เติมคอลัมน์ `wh_pin_forced` (รหัสคลัง หรือ "" ถ้าไม่โดนกติกา) ให้ทุกแถวผลกระจาย —
+    ใช้แค่โชว์ในตาราง Step 3 (บอกซุปล่วงหน้าว่า SKU นี้จะถูกบังคับคลังเดียวตอนส่งจริง)
+    ไม่กระทบตัวเลขกระจาย/ไฟล์ result_*.csv/Excel เลย เพราะเรียกหลังเขียนไฟล์เหล่านั้นแล้ว
+
+    จับคู่ด้วย (sku, areacode, divisioncode) เหมือน backend/services/lakehouse.py::
+    _apply_warehouse_pin_rules ทุกประการ — areacode/divisioncode ต่อ (emp_id, sku) มาจาก
+    tga_grain_cache_path ที่ /data/employees เขียนไว้ตอนโหลดทีมนี้ในงวดเดียวกันแล้ว
+    (คนละคอลัมน์กับ warehouse_code ที่ใช้แบ่งพนักงานหลายคลังข้างบน)
+    """
+    if df_final is None or df_final.empty:
+        return df_final
+    df_final = df_final.copy()
+    df_final["wh_pin_forced"] = ""
+    path = tga_grain_cache_path(sup_id, target_month, target_year)
+    if not os.path.exists(path):
+        return df_final
+    try:
+        rules = rules_by_key()
+        if not rules:
+            return df_final
+        dg = pd.read_csv(
+            path,
+            dtype={"sku": str, "emp_id": str, "areacode": str, "divisioncode": str},
+        )
+        if dg.empty or "areacode" not in dg.columns or "divisioncode" not in dg.columns:
+            return df_final
+        dg["emp_id"] = dg["emp_id"].astype(str).str.strip()
+        dg["sku"] = dg["sku"].astype(str).str.strip()
+        dg["areacode"] = dg["areacode"].fillna("").astype(str).str.strip()
+        dg["divisioncode"] = dg["divisioncode"].fillna("").astype(str).str.strip()
+        dg = dg.drop_duplicates(subset=["emp_id", "sku"])
+        df_final = pd.merge(
+            df_final,
+            dg[["emp_id", "sku", "areacode", "divisioncode"]],
+            on=["emp_id", "sku"],
+            how="left",
+        )
+        df_final["areacode"] = df_final["areacode"].fillna("")
+        df_final["divisioncode"] = df_final["divisioncode"].fillna("")
+
+        def _forced_wh(r: pd.Series) -> str:
+            key = (str(r["sku"]).strip(), str(r["areacode"]).strip(), str(r["divisioncode"]).strip())
+            rule = rules.get(key)
+            return str(rule.get("warehouse_code") or "").strip() if rule else ""
+
+        df_final["wh_pin_forced"] = df_final.apply(_forced_wh, axis=1)
+        df_final = df_final.drop(columns=["areacode", "divisioncode"])
+        return df_final
+    except Exception as e:
+        logger.warning("wh pin forced flags skipped: %s", e)
+        df_final["wh_pin_forced"] = ""
+        return df_final
 
 
 def _maybe_split_hist(
@@ -1420,6 +1482,10 @@ def run_optimization_service(
         ),
         scope_sup_ids=target_sup_ids if summed_target else [],
     )
+
+    # เติมหลัง atomic_write_csv/create_target_excel แล้วเท่านั้น — ตั้งใจไม่ให้คอลัมน์นี้
+    # หลุดเข้า result_*.csv/Excel เพราะใช้แค่โชว์ในตาราง Step 3 บนจอ ไม่เกี่ยวกับไฟล์ส่งจริง
+    df_final = _attach_wh_pin_forced(df_final, sup_id, target_month, target_year)
 
     return {
         "allocations": df_final.to_dict(orient="records"),
