@@ -10399,23 +10399,123 @@ tr.emp-row--no-target .emp-tag {
 #adminView .wh-pin-area-group {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 10px;
+  gap: 8px;
   margin-top: 6px;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
+  padding: 2px 0;
   min-height: 38px;
 }
 #adminView .wh-pin-area-item {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 7px;
   font-size: 13px;
   color: var(--text-2);
   cursor: pointer;
   white-space: nowrap;
+  padding: 7px 14px;
+  border: 1.5px solid var(--border-md);
+  border-radius: 999px;
+  background: var(--white);
+  transition: border-color .15s ease, background .15s ease, color .15s ease, box-shadow .15s ease;
+}
+#adminView .wh-pin-area-item:hover { border-color: var(--accent-light); }
+#adminView .wh-pin-area-item:has(input:checked) {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
 }
 #adminView .wh-pin-area-item input { accent-color: var(--accent); cursor: pointer; }
+
+/* ── กติกาบังคับคลัง: การ์ดขั้นตอน 1-2-3 ให้ทำตามลำดับได้ง่ายขึ้น ── */
+#adminPanelWarehousePinRules .wh-pin-help { display: flex; gap: 10px; align-items: flex-start; }
+#adminPanelWarehousePinRules .wh-pin-help::before {
+  content: "💡";
+  font-size: 18px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+#adminPanelWarehousePinRules .wh-pin-card {
+  padding: 20px 22px;
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+}
+#adminPanelWarehousePinRules .wh-pin-step-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+#adminPanelWarehousePinRules .wh-pin-step-head > div:not(.wh-pin-step-num) { flex: 1 1 auto; min-width: 0; }
+#adminPanelWarehousePinRules .wh-pin-step-num {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13.5px;
+  font-weight: 700;
+  margin-top: 1px;
+}
+#adminPanelWarehousePinRules .wh-pin-step-head .alloc-rules-subtitle {
+  margin: 0 0 3px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+#adminPanelWarehousePinRules .wh-pin-step-hint {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+#adminPanelWarehousePinRules .wh-pin-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--accent-bg);
+  color: var(--accent-strong);
+  font-weight: 600;
+  font-size: 12px;
+}
+#adminPanelWarehousePinRules .wh-pin-add-btn {
+  border-color: var(--accent-brd);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+#adminPanelWarehousePinRules .wh-pin-add-btn:hover { background: var(--accent-bg); border-color: var(--accent); }
+#adminPanelWarehousePinRules .wh-pin-bulk-del { margin-left: auto; align-self: center; }
+#adminPanelWarehousePinRules .wh-pin-bulk-del:not(:disabled) {
+  border-color: #DC2626;
+  color: #DC2626;
+}
+#adminPanelWarehousePinRules .wh-pin-bulk-del:not(:disabled):hover { background: #FEF2F2; }
+#adminPanelWarehousePinRules .wh-pin-table-wrap {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+#adminPanelWarehousePinRules .wh-pin-table-wrap .admin-table { margin: 0; }
+#adminPanelWarehousePinRules .wh-pin-table-wrap .admin-table thead th {
+  background: var(--accent-bg);
+  color: var(--accent-strong);
+}
+#adminPanelWarehousePinRules .wh-pin-save-bar {
+  padding: 16px 22px;
+  border-radius: var(--r-lg);
+  background: var(--white);
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+#adminPanelWarehousePinRules .wh-pin-save-bar .admin-btn-primary { padding: 10px 22px; font-size: 14px; }
 
 .wh-pin-sku-modal { max-width: 560px; }
 .wh-pin-sku-modal-list {
@@ -10423,19 +10523,25 @@ tr.emp-row--no-target .emp-tag {
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
-  padding: 4px 8px;
+  padding: 6px;
 }
 .wh-pin-sku-modal-item {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 7px 4px;
+  padding: 9px 10px;
   font-size: 13.5px;
   color: var(--text-2);
   cursor: pointer;
-  border-bottom: 1px solid var(--border);
+  border-radius: var(--r-md);
+  transition: background .12s ease;
 }
-.wh-pin-sku-modal-item:last-child { border-bottom: none; }
+.wh-pin-sku-modal-item:hover { background: var(--accent-bg); }
+.wh-pin-sku-modal-item:has(input:checked) {
+  background: var(--accent-bg);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
 .wh-pin-sku-modal-item input { accent-color: var(--accent); cursor: pointer; flex-shrink: 0; width: 16px; height: 16px; }
 #adminView .alloc-rules-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 #adminView .alloc-rules-chip {

@@ -1675,21 +1675,37 @@
             </div>
           </div>
 
-          <div class="admin-help-strip">
+          <div class="admin-help-strip wh-pin-help">
             <p><strong>กติกานี้ทำอะไร:</strong> บางกลุ่มสินค้ามีเป้ากระจายอยู่หลายคลังตามประวัติขาย ทั้งที่ต้องการให้กลุ่มนั้น (ในภาค+division ที่เลือก) ถูกส่งเป้าไปที่ <strong>คลังเดียวเท่านั้น</strong></p>
             <p><strong>มีผลตอนไหน:</strong> ตอน<strong>「ตรวจไฟล์ก่อนส่ง」หรือส่งจริง</strong>เท่านั้น — ตารางผลกระจายที่ซุปเห็นตอนกดคำนวณอาจยังโชว์หลายคลังปนกันตามประวัติเหมือนเดิม เพราะคลังไม่เคยเป็นส่วนหนึ่งของการคำนวณหีบเลย ระบบจะรวมเป็นคลังเดียว + ล้างคลังเก่าเป็น 0 ให้อัตโนมัติตอนสร้างไฟล์ส่งจริง</p>
           </div>
 
-          <div class="alloc-rules-block">
-            <h3 class="alloc-rules-subtitle">เพิ่มกติกาใหม่</h3>
+          <div class="alloc-rules-block wh-pin-card">
+            <div class="wh-pin-step-head">
+              <span class="wh-pin-step-num">1</span>
+              <div>
+                <h3 class="alloc-rules-subtitle">เลือกสินค้าที่จะปักหมุด</h3>
+                <p class="wh-pin-step-hint">เลือกกลุ่มสินค้าเพื่อกรองรายการ แล้วติ๊กเฉพาะ SKU ที่ต้องการ (ไม่จำเป็นต้องเอาทั้งกลุ่ม)</p>
+              </div>
+            </div>
             <label>กลุ่มสินค้า (Section)
               <select id="adminWhPinSection" class="admin-select admin-select--sm" onchange="whPinSectionPicked()" aria-label="เลือกกลุ่มสินค้า"></select>
             </label>
-            <div class="alloc-rules-pickrow" style="margin-top:8px;">
+            <div class="alloc-rules-pickrow" style="margin-top:10px;">
               <button type="button" id="adminWhPinOpenSkuModalBtn" class="admin-btn-ghost admin-btn-ghost--sm" onclick="whPinOpenSkuModal()" disabled>+ เลือกสินค้าที่จะปักหมุด</button>
-              <span id="adminWhPinSelectedSkusSummary" class="admin-period-bar__meta" aria-live="polite"></span>
+              <span id="adminWhPinSelectedSkusSummary" class="admin-period-bar__meta wh-pin-badge" aria-live="polite"></span>
             </div>
-            <div class="wh-pin-pickgrid" style="margin-top:14px;">
+          </div>
+
+          <div class="alloc-rules-block wh-pin-card">
+            <div class="wh-pin-step-head">
+              <span class="wh-pin-step-num">2</span>
+              <div>
+                <h3 class="alloc-rules-subtitle">กำหนดภาค / Division / คลัง</h3>
+                <p class="wh-pin-step-hint">เลือกได้หลายภาคพร้อมกัน — ระบบจะสร้างกติกาแยกให้อัตโนมัติทีละภาค ด้วย SKU/division/คลังชุดเดียวกัน</p>
+              </div>
+            </div>
+            <div class="wh-pin-pickgrid">
               <label>ภาค (เลือกได้หลายภาค)
                 <div id="adminWhPinAreaGroup" class="wh-pin-area-group" aria-label="เลือกภาค">
                   <span class="admin-empty">เลือกสินค้าก่อน</span>
@@ -1704,31 +1720,37 @@
             </div>
             <p id="adminWhPinSectionHint" class="alloc-rules-note"></p>
             <div class="alloc-rules-pickrow">
-              <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminWhPinRulesAdd()" title="เพิ่มกติกานี้ลงตาราง (ยังไม่มีผลจนกว่าจะกดบันทึก)">+ เพิ่ม</button>
+              <button type="button" class="admin-btn-ghost admin-btn-ghost--sm wh-pin-add-btn" onclick="adminWhPinRulesAdd()" title="เพิ่มกติกานี้ลงตาราง (ยังไม่มีผลจนกว่าจะกดบันทึก)">+ เพิ่มกติกา</button>
               <span id="adminWhPinAddMsg" class="admin-period-bar__meta" aria-live="polite"></span>
             </div>
           </div>
 
-          <div class="alloc-rules-block">
-            <div class="alloc-rules-pickrow" style="justify-content:space-between;">
-              <h3 class="alloc-rules-subtitle" style="margin:0;">กติกาที่ตั้งไว้</h3>
-              <button type="button" id="adminWhPinBulkDeleteBtn" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminWhPinRulesRemoveSelected()" disabled>ลบที่เลือก</button>
+          <div class="alloc-rules-block wh-pin-card">
+            <div class="wh-pin-step-head">
+              <span class="wh-pin-step-num">3</span>
+              <div>
+                <h3 class="alloc-rules-subtitle">กติกาที่ตั้งไว้</h3>
+                <p class="wh-pin-step-hint">ตรวจสอบก่อนกดบันทึก — เลือกหลายแถวแล้วลบทีเดียวได้</p>
+              </div>
+              <button type="button" id="adminWhPinBulkDeleteBtn" class="admin-btn-ghost admin-btn-ghost--sm wh-pin-bulk-del" onclick="adminWhPinRulesRemoveSelected()" disabled>ลบที่เลือก</button>
             </div>
-            <table class="admin-table">
-              <thead>
-                <tr>
-                  <th><input type="checkbox" id="adminWhPinSelectAll" onchange="adminWhPinRulesToggleAll(this.checked)" aria-label="เลือกทุกแถว" /></th>
-                  <th>กลุ่มสินค้า</th><th>ภาค</th><th>Division</th><th>คลัง</th><th>ตั้งโดย</th><th></th>
-                </tr>
-              </thead>
-              <tbody id="adminWhPinRulesTableBody">
-                <tr><td colspan="7" class="admin-empty">ยังไม่มีกติกา</td></tr>
-              </tbody>
-            </table>
+            <div class="wh-pin-table-wrap">
+              <table class="admin-table">
+                <thead>
+                  <tr>
+                    <th><input type="checkbox" id="adminWhPinSelectAll" onchange="adminWhPinRulesToggleAll(this.checked)" aria-label="เลือกทุกแถว" /></th>
+                    <th>กลุ่มสินค้า</th><th>ภาค</th><th>Division</th><th>คลัง</th><th>ตั้งโดย</th><th></th>
+                  </tr>
+                </thead>
+                <tbody id="adminWhPinRulesTableBody">
+                  <tr><td colspan="7" class="admin-empty">ยังไม่มีกติกา</td></tr>
+                </tbody>
+              </table>
+            </div>
           </div>
 
-          <div class="alloc-rules-actions">
-            <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminSaveWarehousePinRules()" title="บันทึกกติกาทั้งหมดลงเซิร์ฟเวอร์">บันทึก</button>
+          <div class="alloc-rules-actions wh-pin-save-bar">
+            <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminSaveWarehousePinRules()" title="บันทึกกติกาทั้งหมดลงเซิร์ฟเวอร์">บันทึกกติกาทั้งหมด</button>
             <span id="adminWhPinMsg" class="admin-period-bar__meta" aria-live="polite"></span>
           </div>
         </section>
