@@ -1,11 +1,16 @@
 """
 กติกาบังคับคลังเดียว — ต้องมีผลจริงตั้งแต่ตอนกดกระจาย (Step 3) ไม่ใช่รู้ตัวแค่ตอน "ตรวจ
-ไฟล์ก่อนส่ง" อย่างเดียว (ผู้ใช้ขอ 22 ก.ย. 2026 สองรอบ — รอบแรกขอแค่ป้ายเตือนล่วงหน้า
-รอบสองขอให้บังคับจริงตั้งแต่ตอนกระจายเลย เพราะป้ายอย่างเดียวไม่พอ)
+ไฟล์ก่อนส่ง" อย่างเดียว (ผู้ใช้ขอ 22 ก.ย. 2026 สามรอบในวันเดียว — รอบแรกขอแค่ป้ายเตือน
+ล่วงหน้า รอบสองขอให้บังคับจริงตั้งแต่ตอนกระจายเลย รอบสามขยายให้ครอบคนคลังเดียวด้วย
+หลังเจอเคสจริง SL225/S543/SKU 411140 ที่คลังเดียว (ไม่เคยแตก) ไม่ถูกแตะเพราะรอบสองจำกัด
+ไว้แค่คนคลังแตกเท่านั้น)
 
 เทสฟังก์ชัน backend/services/optimize.py::_apply_wh_pin_preview ตรง ๆ — ฟังก์ชันนี้:
-1. รวมคลังจริง (เรียก lakehouse.py::_apply_warehouse_pin_rules ตัวเดียวกับตอนส่งจริงเป๊ะ ๆ)
-   ให้ผลกระจายที่ Step 3 เห็น "ตรงกับสิ่งที่จะเกิดตอนส่งจริง" เสมอ
+1. รวมคลังจริงให้ทุกแถวที่ (sku, areacode, divisioncode) ตรงกติกา ไม่ว่าจะเคยคลังแตก
+   หรือไม่ก็ตาม — คลังแตก (≥2 แถว) เรียก lakehouse.py::_apply_warehouse_pin_rules ตัวเดียว
+   กับตอนส่งจริงเป๊ะ ๆ (รวมเป็นแถวใหม่+ล้างแถวเก่าเป็น 0) ส่วนคลังเดียว (1 แถว) แก้
+   warehouse_code ในแถวเดิมตรง ๆ (ไม่ต้องสร้างแถวใหม่ ไม่มีปัญหา upsert key แบบตอนส่งจริง)
+   ผลคือ Step 3 เห็น "ตรงกับสิ่งที่จะเกิดตอนส่งจริง" เสมอ
 2. เติมคอลัมน์ "wh_pin_forced" (รหัสคลังที่ถูกบังคับ หรือ "" ถ้าไม่โดน) จากผลที่รวมแล้ว
    ให้หัว SKU ในตาราง Step 3 โชว์ป้าย 🔒 ได้
 
@@ -124,10 +129,11 @@ class WhPinPreviewTest(unittest.TestCase):
         # คอลัมน์ประวัติเทียบเคียง (hist_avg) ต้องรวมข้ามแถวไปด้วย ไม่ใช่ก็อปแค่แถวแรก
         self.assertAlmostEqual(float(pinned.iloc[0]["hist_avg"]), 6.0)
 
-    def test_single_warehouse_employee_is_left_untouched_but_still_labeled(self):
-        """พนักงานคลังเดียว (ไม่เคยแตก) แม้คลังนั้นจะไม่ใช่คลังปักหมุด — ตกลงกับผู้ใช้ไว้ว่า
-        กระทบเฉพาะคนที่มีประวัติคลังแตกจริงเท่านั้น คนกลุ่มนี้ไม่ต้องแตะหีบ/คลังในตาราง
-        (ยังได้ป้าย 🔒 เตือนไว้เฉย ๆ — ตอนส่งจริงจะถูกสลับคลังให้แน่นอนอยู่ดี)"""
+    def test_single_warehouse_employee_gets_switched_in_place_too(self):
+        """พนักงานคลังเดียว (ไม่เคยแตก) แต่คลังนั้นไม่ใช่คลังปักหมุด — ต้องถูกสลับคลังให้ตรง
+        กติกาด้วยเหมือนกัน ไม่ใช่แค่คนคลังแตก (เจอเคสจริง SL225/S543/411140 22 ก.ย. 2026:
+        S543 มีคลังเดียวคือ G080 ไม่เคยแตก แต่กติกาไม่ทำงานเพราะรอบแรกจำกัดไว้แค่คลังแตก)
+        แก้ในแถวเดิมตรง ๆ ไม่สร้างแถวใหม่ (ไม่มีปัญหา upsert key แบบตอนส่งจริง)"""
         self._rule(skus=["SKU1"], area="3", div="S", wh="G010")
         self._write_grain([_grain_row("E1", "SKU1", area="3", div="S")])
         df = pd.DataFrame([
@@ -135,9 +141,20 @@ class WhPinPreviewTest(unittest.TestCase):
         ])
         out = opt._apply_wh_pin_preview(df, SUP, MONTH, YEAR)
         self.assertEqual(len(out), 1)
-        self.assertEqual(out.iloc[0]["warehouse_code"], "R082")
+        self.assertEqual(out.iloc[0]["warehouse_code"], "G010")
         self.assertEqual(int(out.iloc[0]["allocated_boxes"]), 8)
         self.assertEqual(out.iloc[0]["wh_pin_forced"], "G010")
+
+    def test_single_warehouse_employee_already_on_pinned_warehouse_is_a_no_op(self):
+        self._rule(skus=["SKU1"], area="3", div="S", wh="G010")
+        self._write_grain([_grain_row("E1", "SKU1", area="3", div="S")])
+        df = pd.DataFrame([
+            {"emp_id": "E1", "sku": "SKU1", "allocated_boxes": 8, "warehouse_code": "G010"},
+        ])
+        out = opt._apply_wh_pin_preview(df, SUP, MONTH, YEAR)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out.iloc[0]["warehouse_code"], "G010")
+        self.assertEqual(int(out.iloc[0]["allocated_boxes"]), 8)
 
     def test_missing_grain_file_is_graceful(self):
         df = pd.DataFrame([{"emp_id": "E1", "sku": "SKU1", "allocated_boxes": 10, "warehouse_code": "G001"}])

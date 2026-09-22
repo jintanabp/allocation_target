@@ -208,10 +208,15 @@ def _apply_wh_pin_preview(
     lakehouse.py::_apply_warehouse_pin_rules ตัวเดียวกับตอนส่งจริงเป๊ะ ๆ ที่นี่เลย แทนที่
     จะแค่ติดป้าย ผลคือ Step 3 กับตอนส่งเห็นตรงกันเสมอ ไม่มีทางขัดกันอีก
 
-    **ขอบเขต (ตกลงกับผู้ใช้ไว้แล้ว):** รวมคลังจริงเฉพาะ (emp_id, sku) ที่มีแถวคลังแตกอยู่
-    แล้ว (≥2 แถว) เท่านั้น — พนักงานคลังเดียวที่บังเอิญไม่ตรงคลังปักหมุดจะยังได้ป้าย 🔒 เตือน
-    แต่ตัวหีบ/คลังในตารางไม่ถูกแตะ (คนกลุ่มนี้ไม่เคยมีปัญหาคลังปนอยู่แล้ว การันตีด้วย
-    _apply_warehouse_pin_rules เองสำหรับส่งจริงตอนหลังอยู่ดี)
+    **ขอบเขต:** ครอบทุกแถวที่ (sku, areacode, divisioncode) ตรงกติกา ไม่ว่าพนักงานจะเคย
+    คลังแตกหรือไม่ก็ตาม — สองวิธีคนละแบบตามจำนวนแถวของ (emp_id, sku):
+      - ≥2 แถว (คลังแตกอยู่แล้วจริง) → `_apply_warehouse_pin_rules` ตัวเต็ม (รวมเป็นแถวใหม่
+        + ล้างแถวเก่าเป็น 0 — จำเป็นสำหรับตอนส่งจริงที่ต้อง 0 ทับคลังเก่าใน Target Sun)
+      - 1 แถว (ไม่เคยแตกคลัง แต่คลังนั้นไม่ตรงกติกา) → แก้ `warehouse_code` ในแถวเดิมตรง ๆ
+        ไม่ต้องสร้างแถวใหม่ (ไม่มีปัญหา upsert key แบบตอนส่งจริง)
+    รอบแรก (22 ก.ย. 2026 เช้า) เคยจำกัดแค่กรณี ≥2 แถวเท่านั้น แล้วพบเคสจริงที่พลาด
+    (SL225/S543/SKU 411140 — คลังเดียวคือ G080 ไม่ตรงกติกา แต่ไม่ถูกแตะเพราะไม่เคยคลังแตก)
+    จึงขยายให้ครอบกรณี 1 แถวด้วยในบ่ายวันเดียวกัน
 
     **ไม่กระทบไฟล์ result_*.csv/Excel เลย** — เรียกหลัง atomic_write_csv/create_target_excel
     เขียนไฟล์เหล่านั้นเสร็จแล้วเท่านั้น (ไฟล์ยังเป็นผลดิบจากเครื่องคำนวณ ไม่ผ่านการรวมคลัง)
@@ -255,15 +260,17 @@ def _apply_wh_pin_preview(
         df_final["areacode"] = df_final["areacode"].fillna("")
         df_final["divisioncode"] = df_final["divisioncode"].fillna("")
 
-        # รวมคลังจริงเฉพาะ (emp_id, sku) ที่ "มีคลังแตกอยู่แล้วจริง" (≥2 แถว) เท่านั้น —
-        # คนคลังเดียวที่บังเอิญไม่ตรงคลังปักหมุดปล่อยผ่านไม่แตะที่นี่ (จงใจ ตามที่ตกลงกับ
-        # ผู้ใช้ไว้ — "กระทบเฉพาะพนักงานที่มีประวัติขายจากหลายคลังเท่านั้น") เพราะกลุ่ม 1
-        # แถวถ้าส่งเข้า _apply_warehouse_pin_rules จะได้แถวใหม่คืนมาแทนที่จะแก้ในแถวเดิม
-        # (ตั้งใจไว้แบบนั้นสำหรับตอนส่งจริงที่ต้องส่ง 0 ทับคลังเก่าจริงใน Target Sun) กลาย
-        # เป็นแถวปลอมซ้อนสำหรับคนที่ไม่เคยมีปัญหาคลังแตกมาก่อนเลย
+        # คนละวิธีกันสองแบบตามจำนวนแถวของ (emp_id, sku) นั้น:
+        #   ≥2 แถว (คลังแตกอยู่แล้วจริง) — ใช้ _apply_warehouse_pin_rules ตัวเต็ม (ตัวเดียว
+        #     กับตอนส่งจริง) ซึ่งรวมเป็นแถวใหม่ + ล้างแถวเก่าเป็น 0 (จำเป็นสำหรับตอนส่งจริง
+        #     ที่ต้องส่ง 0 ทับคลังเก่าใน Target Sun)
+        #   1 แถว (ไม่เคยแตกคลัง แต่คลังนั้นไม่ตรงกติกา) — แก้ warehouse_code ในแถวเดิมตรง ๆ
+        #     ไม่ต้องสร้างแถวใหม่/ไม่ต้องล้างเป็น 0 (ไม่มีปัญหา upsert key ที่ Step 3 ต้องกัน
+        #     เหมือนตอนส่งจริง) — รอบแรกตั้งใจข้ามกรณีนี้ไปเฉย ๆ แล้วพบว่าเป็นเคสจริงที่พบบ่อย
+        #     (SL225/S543/411140 22 ก.ย. 2026) ผู้ใช้ต้องการให้ครอบคลุมด้วย ไม่ใช่แค่คนคลังแตก
         grp_sizes = df_final.groupby(["emp_id", "sku"])["emp_id"].transform("size")
         df_multi = df_final[grp_sizes >= 2]
-        df_single = df_final[grp_sizes < 2]
+        df_single = df_final[grp_sizes < 2].copy()
         if not df_multi.empty:
             df_multi, stats = _apply_warehouse_pin_rules(
                 df_multi, sup_id, target_month, target_year
@@ -272,6 +279,26 @@ def _apply_wh_pin_preview(
                 logger.info(
                     "optimize: กติกาบังคับคลังรวมผลกระจาย Step 3 ให้แล้ว sup=%s %d กลุ่ม (%d หีบย้าย)",
                     sup_id, stats["matched_groups"], stats["boxes_moved"],
+                )
+        if not df_single.empty:
+            switched = 0
+
+            def _maybe_switch_wh(row):
+                nonlocal switched
+                key = (str(row["sku"]).strip(), str(row["areacode"]).strip(), str(row["divisioncode"]).strip())
+                rule = rules.get(key)
+                if rule:
+                    target_wh = str(rule.get("warehouse_code") or "").strip()
+                    if target_wh and str(row.get("warehouse_code") or "").strip() != target_wh:
+                        row["warehouse_code"] = target_wh
+                        switched += 1
+                return row
+
+            df_single = df_single.apply(_maybe_switch_wh, axis=1)
+            if switched:
+                logger.info(
+                    "optimize: กติกาบังคับคลังสลับคลังแถวเดี่ยวใน Step 3 ให้แล้ว sup=%s %d แถว",
+                    sup_id, switched,
                 )
         df_final = pd.concat([df_single, df_multi], ignore_index=True)
 
