@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -32,6 +33,32 @@ logger = logging.getLogger("target_allocation")
 
 _PREPARE_DIR = Path("data/ts_prepare")
 _PREPARE_TTL_SEC = 30 * 60
+
+# กันกดส่งซ้ำ/retry ระหว่างที่ POST เดิมของ token เดียวกันยังค้างอยู่จริง (ได้ถึง
+# TARGETSUN_IMPORT_TIMEOUT_SEC วินาที ค่าเริ่มต้น 600) — ไม่มีตัวนี้แล้ว double-click หรือ
+# client timeout-then-retry จะยิงไฟล์เดิมเข้า Target Sun จริงสองรอบ เป็น in-process lock
+# ล้วนๆ ใช้ได้เพราะทั้งระบบรันเป็น uvicorn worker เดียวเท่านั้น (ข้อสมมติที่มีอยู่แล้ว
+# ทั้งระบบ ดู docs/CONCURRENCY.md) ไม่ต้องล็อกข้าม process
+_import_in_flight_lock = threading.Lock()
+_import_in_flight_tokens: set[str] = set()
+
+
+def _claim_import_token(token: str) -> None:
+    with _import_in_flight_lock:
+        if token in _import_in_flight_tokens:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "send_already_in_progress",
+                    "message": "กำลังส่งไฟล์นี้อยู่ — กรุณารอสักครู่ อย่ากดส่งซ้ำ",
+                },
+            )
+        _import_in_flight_tokens.add(token)
+
+
+def _release_import_token(token: str) -> None:
+    with _import_in_flight_lock:
+        _import_in_flight_tokens.discard(token)
 
 
 def _prepare_dir() -> Path:
@@ -509,49 +536,57 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
     token = (req.prepare_token or "").strip()
     if not token:
         raise HTTPException(400, detail="ไม่มี prepare_token")
-    content, fname, meta = _load_prepare_bundle(token, req.sup_id)
-    nrow = int(meta.get("rows_sent") or 0)
-    zero_rows = int(meta.get("zero_rows_sent") or 0)
-    dropped_dims = int(meta.get("rows_dropped_missing_dims") or 0)
-    not_in_ts = meta.get("rows_not_in_targetsun") or []
-    shortfall = meta.get("shortfall") or []
-    bundle_emp_codes = meta.get("emp_codes") if isinstance(meta.get("emp_codes"), list) else []
-    bundle_month = int(meta.get("target_month") or req.target_month)
-    bundle_year = int(meta.get("target_year") or req.target_year)
 
-    # อ่านสด "ก่อนส่ง" ให้ใกล้เวลา POST จริงที่สุด (ลดโอกาสทีมอื่นแทรกส่งระหว่างรอ) —
-    # ใช้เทียบจำนวนแถวหลังส่งสำเร็จใน _attach_readback
-    before_row_snapshot = _live_target_snapshot(
-        req.sup_id, bundle_month, bundle_year, bundle_emp_codes
-    )
-
+    # จับจองก่อนแตะ bundle เลย — กันคำขอที่สองด้วย token เดียวกันมาระหว่างที่คำขอแรก
+    # ยังไม่ทันลบ bundle ทิ้ง (โหลด+POST ยังไม่เสร็จ) ไม่งั้นทั้งสองคำขอจะโหลด bundle
+    # เดิมสำเร็จแล้วยิง POST เข้า Target Sun จริงคนละรอบ
+    _claim_import_token(token)
     try:
-        out = _post_targetsun_multipart(
-            content,
-            fname,
-            nrow=nrow,
-            zero_rows=zero_rows,
-            dropped_dims=dropped_dims,
-            not_in_ts=not_in_ts if isinstance(not_in_ts, list) else [],
-            shortfall=shortfall if isinstance(shortfall, list) else [],
+        content, fname, meta = _load_prepare_bundle(token, req.sup_id)
+        nrow = int(meta.get("rows_sent") or 0)
+        zero_rows = int(meta.get("zero_rows_sent") or 0)
+        dropped_dims = int(meta.get("rows_dropped_missing_dims") or 0)
+        not_in_ts = meta.get("rows_not_in_targetsun") or []
+        shortfall = meta.get("shortfall") or []
+        bundle_emp_codes = meta.get("emp_codes") if isinstance(meta.get("emp_codes"), list) else []
+        bundle_month = int(meta.get("target_month") or req.target_month)
+        bundle_year = int(meta.get("target_year") or req.target_year)
+
+        # อ่านสด "ก่อนส่ง" ให้ใกล้เวลา POST จริงที่สุด (ลดโอกาสทีมอื่นแทรกส่งระหว่างรอ) —
+        # ใช้เทียบจำนวนแถวหลังส่งสำเร็จใน _attach_readback
+        before_row_snapshot = _live_target_snapshot(
+            req.sup_id, bundle_month, bundle_year, bundle_emp_codes
+        )
+
+        try:
+            out = _post_targetsun_multipart(
+                content,
+                fname,
+                nrow=nrow,
+                zero_rows=zero_rows,
+                dropped_dims=dropped_dims,
+                not_in_ts=not_in_ts if isinstance(not_in_ts, list) else [],
+                shortfall=shortfall if isinstance(shortfall, list) else [],
+            )
+        finally:
+            _delete_prepare_bundle(token)
+
+        out["prepare_token"] = token
+        return _attach_readback(
+            out,
+            sup_id=req.sup_id,
+            month=bundle_month,
+            year=bundle_year,
+            sku_totals=meta.get("sku_totals") if isinstance(meta.get("sku_totals"), dict) else {},
+            emp_codes=bundle_emp_codes,
+            new_rows_count=int(meta.get("new_rows_count") or 0),
+            new_rows_with_boxes_count=int(meta.get("new_rows_with_boxes_count") or 0),
+            stale_rows_cleared_count=int(meta.get("stale_rows_cleared_count") or 0),
+            before_row_snapshot=before_row_snapshot,
+            file_row_keys=meta.get("import_row_keys") if isinstance(meta.get("import_row_keys"), list) else [],
         )
     finally:
-        _delete_prepare_bundle(token)
-
-    out["prepare_token"] = token
-    return _attach_readback(
-        out,
-        sup_id=req.sup_id,
-        month=bundle_month,
-        year=bundle_year,
-        sku_totals=meta.get("sku_totals") if isinstance(meta.get("sku_totals"), dict) else {},
-        emp_codes=bundle_emp_codes,
-        new_rows_count=int(meta.get("new_rows_count") or 0),
-        new_rows_with_boxes_count=int(meta.get("new_rows_with_boxes_count") or 0),
-        stale_rows_cleared_count=int(meta.get("stale_rows_cleared_count") or 0),
-        before_row_snapshot=before_row_snapshot,
-        file_row_keys=meta.get("import_row_keys") if isinstance(meta.get("import_row_keys"), list) else [],
-    )
+        _release_import_token(token)
 
 
 def import_allocations_to_targetsun(req: LakehouseUploadRequest) -> dict:
