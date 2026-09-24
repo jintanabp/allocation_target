@@ -2352,6 +2352,10 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
 .admin-log-level--error { background: var(--red-bg); color: var(--red); }
 .admin-log-level--warn { background: var(--amber-bg); color: var(--amber); }
 .admin-log-level--info { background: var(--accent-bg); color: var(--accent); }
+/* แถวที่ตรวจจำนวนแถว Target Sun แล้วผิดปกติ — ต้องเด่นกว่าแถวปกติทันทีที่กวาดตา
+   ไม่ใช่ต้องอ่านคอลัมน์สถานะทีละแถวถึงจะรู้ */
+.admin-row--issue { background: var(--red-bg) !important; }
+.admin-row--issue:hover { background: var(--red-bg) !important; }
 #adminPanelData {
   display: flex;
   flex-direction: column;
