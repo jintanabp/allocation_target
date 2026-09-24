@@ -2079,6 +2079,61 @@ def _filter_usage_items_for_admin(admin: dict, items: list[dict]) -> list[dict]:
     ]
 
 
+@router.get("/targetsun/row-count-checks")
+def admin_targetsun_row_count_checks(
+    # ใช้สิทธิ์เดิม "usage_logs" (คำอธิบายสิทธิ์นี้ใน admin_capabilities.py บอกตรงๆ
+    # ว่าครอบคลุม "การส่งเข้า Target Sun" อยู่แล้ว) ไม่ต้องเปิดสิทธิ์ใหม่
+    admin: dict = Depends(require_capability("usage_logs")),
+    target_month: int | None = Query(None, ge=1, le=12),
+    target_year: int | None = Query(None, ge=2020, le=2100),
+    only_issues: bool = Query(False, description="กรองเหลือแต่แถวที่จำนวนแถวผิดที่คาด"),
+    limit: int = Query(500, ge=1, le=2000),
+):
+    """
+    ผลตรวจจำนวนแถวใน Target Sun ก่อน/หลังส่ง — หน้าจอเฉพาะให้แอดมินดูย้อนหลังได้เอง
+
+    ไม่ต้องรอผู้ใช้มาแจ้งหรือไปไล่ /admin/usage-logs ปนกับเหตุการณ์อื่นทั้งหมด —
+    ดึงเฉพาะเหตุการณ์ action=send_targetsun ที่มีผลตรวจจำนวนแถวติดมาด้วย
+    (context.row_count_checked) แล้วเรียงให้แถวที่ผิดปกติ (ok=false) ขึ้นก่อน
+    """
+    scan_all = target_month is None and target_year is None
+    items = read_logs(
+        action="send_targetsun",
+        limit=limit,
+        target_year=target_year,
+        target_month=target_month,
+        scan_all=scan_all,
+    )
+    items = _filter_usage_items_for_admin(admin, items)
+
+    checks: list[dict[str, Any]] = []
+    for it in items:
+        ctx = it.get("context") or {}
+        if not isinstance(ctx, dict) or ctx.get("row_count_checked") is None:
+            continue
+        checks.append(
+            {
+                "ts": it.get("ts"),
+                "email": it.get("email"),
+                "sup_id": it.get("sup_id"),
+                "target_month": it.get("target_month"),
+                "target_year": it.get("target_year"),
+                "checked": ctx.get("row_count_checked"),
+                "ok": ctx.get("row_count_ok"),
+                "before_count": ctx.get("row_count_before"),
+                "after_count": ctx.get("row_count_after"),
+                "expected_new_rows": ctx.get("row_count_expected_new"),
+                "unexpected_extra_rows": ctx.get("row_count_unexpected_extra"),
+            }
+        )
+
+    if only_issues:
+        checks = [c for c in checks if c.get("ok") is False]
+    # ผิดปกติขึ้นก่อนเสมอ ในกลุ่มเดียวกันเรียงเวลาล่าสุดก่อน (read_logs คืนแบบนี้อยู่แล้ว)
+    checks.sort(key=lambda c: (c.get("ok") is not False,))
+    return {"items": checks, "issue_count": sum(1 for c in checks if c.get("ok") is False)}
+
+
 @router.get("/usage-logs/export-xlsx")
 def admin_export_usage_logs_xlsx(
     admin: dict = Depends(require_admin_scoped),

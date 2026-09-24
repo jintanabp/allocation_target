@@ -9744,7 +9744,19 @@ function _confirmStaleTargetBeforeSend(chunks) {
  * ตาข่ายชั้นเดียวที่จับได้ว่าปลายทางปฏิเสธหรือข้ามบางแถวเงียบ ๆ ทั้งที่ตอบว่าสำเร็จ
  * ย้อนไม่ได้แล้ว จึงเป็นการรายงานให้ไปตรวจ ไม่ใช่ประตู
  */
-function _showReadbackMismatchModal(issues, extraNoteHtml = "") {
+function _rowCountIssueHtml({ supId, rc }) {
+  const extra = Number(rc.unexpected_extra_rows) || 0;
+  const sign = extra > 0 ? "+" : "";
+  return `<div class="shortfall-sku"><div class="shortfall-sku__head"><div>`
+    + `<strong>ทีม ${escH(supId)}</strong>`
+    + `<div class="shortfall-sku__nums">ก่อน ${Number(rc.before_count).toLocaleString("th-TH")}`
+    + ` → หลัง <strong>${Number(rc.after_count).toLocaleString("th-TH")}</strong> แถว `
+    + `(คาดแถวใหม่ ${Number(rc.expected_new_rows).toLocaleString("th-TH")}) `
+    + `<strong class="${extra > 0 ? "rx-up" : "rx-down"}">ส่วนเกิน ${sign}${extra.toLocaleString("th-TH")}</strong>`
+    + `</div></div></div></div>`;
+}
+
+function _showReadbackMismatchModal(issues, rowCountIssues = [], rowCountTotal = null, extraNoteHtml = "") {
   const blocks = issues.map(({ supId, readback }) => {
     const rows = (readback.diffs || []).map((d) => {
       const sku = String(d.sku || "");
@@ -9759,18 +9771,42 @@ function _showReadbackMismatchModal(issues, extraNoteHtml = "") {
     return `<div style="margin-bottom:10px;"><strong>ทีม ${escH(supId)}</strong>${rows}</div>`;
   }).join("");
 
+  // จำนวนแถวผิดที่คาด — คนละอาการกับยอดหีบข้างบน (แถวซ้ำคนละคลังบวกยอดกันแล้ว
+  // ยังเท่าไฟล์ที่ส่งไปพอดี ยอดหีบเลยดูปกติทั้งที่มีแถวซ้ำเกิดขึ้นจริง)
+  const rcBlocks = rowCountIssues.map(_rowCountIssueHtml).join("");
+  const rcTotalHtml = rowCountTotal
+    ? `<div class="shortfall-sku"><div class="shortfall-sku__head"><div><strong>รวมทั้งภาค</strong>`
+      + `<div class="shortfall-sku__nums">ก่อน ${rowCountTotal.before.toLocaleString("th-TH")}`
+      + ` → หลัง <strong>${rowCountTotal.after.toLocaleString("th-TH")}</strong> แถว `
+      + `(คาดแถวใหม่ ${rowCountTotal.expected.toLocaleString("th-TH")}) `
+      + `<strong class="${rowCountTotal.unexpected > 0 ? "rx-up" : "rx-down"}">ส่วนเกินรวม `
+      + `${rowCountTotal.unexpected > 0 ? "+" : ""}${rowCountTotal.unexpected.toLocaleString("th-TH")}</strong>`
+      + `</div></div></div></div>`
+    : "";
+
   const boxes = issues.reduce((n, i) => n + (Number(i.readback?.diff_boxes) || 0), 0);
-  _showInfoModal({
-    title: "ส่งแล้ว — แต่ยอดที่ลงจริงไม่ตรงกับไฟล์",
-    bodyHtml:
-      `<p style="margin:0;text-align:left;line-height:1.7;color:var(--red);">`
+  const title = issues.length
+    ? "ส่งแล้ว — แต่ยอดที่ลงจริงไม่ตรงกับไฟล์"
+    : "ส่งแล้ว — แต่จำนวนแถวใน Target Sun ไม่ตรงที่คาด";
+  const qtyIntroHtml = issues.length
+    ? `<p style="margin:0;text-align:left;line-height:1.7;color:var(--red);">`
       + `<strong>ตรวจหลังส่งแล้วพบว่ายอดใน Target Sun ไม่เท่ากับไฟล์ที่ส่งไป `
       + `(ต่างรวม ${boxes > 0 ? "+" : ""}${boxes.toLocaleString("th-TH")} หีบ)</strong></p>`
+    : "";
+  const rcIntroHtml = rowCountIssues.length
+    ? `<p style="margin:${issues.length ? "10px" : "0"} 0 0;text-align:left;line-height:1.7;color:var(--red);">`
+      + `<strong>จำนวนแถวจริงเพิ่มขึ้นไม่ตรงกับที่คาด — อาจมีแถวซ้ำเกิดขึ้นใน Target Sun</strong></p>`
+    : "";
+  _showInfoModal({
+    title,
+    bodyHtml:
+      qtyIntroHtml
+      + rcIntroHtml
       + `<p style="margin:10px 0 0;text-align:left;line-height:1.7;color:var(--text-2);">`
-      + `แปลว่าปลายทางรับไม่ครบ — กรุณาตรวจใน Target Sun แล้วแจ้ง IT พร้อมรหัสทีมและงวดนี้ `
+      + `แปลว่าปลายทางรับไม่ครบหรือมีแถวซ้ำ — กรุณาตรวจใน Target Sun แล้วแจ้ง IT พร้อมรหัสทีมและงวดนี้ `
       + `อย่าเพิ่งกดส่งซ้ำจนกว่าจะรู้สาเหตุ</p>`
       + extraNoteHtml
-      + `<div class="shortfall-list">${blocks}</div>`,
+      + `<div class="shortfall-list">${blocks}${rcBlocks}${rcTotalHtml}</div>`,
     primaryLabel: null,
     secondaryLabel: "ปิด",
   });
@@ -10075,8 +10111,16 @@ function _handleTargetSunImportResponse(res, j, opts = {}) {
   const droppedDims = Number(j.rows_not_in_targetsun_count ?? j.rows_dropped_missing_dims) || 0;
   const notInTs = j.rows_not_in_targetsun;
   closeLakehouseUploadModal();
+  // จำนวนแถวจริงก่อน/หลังส่ง — โชว์ทุกครั้งที่ตรวจได้ ไม่ใช่แค่ตอนผิดปกติ ผู้ใช้จะได้
+  // เห็นเลขนี้เป็นปกติ ไม่ใช่เห็นครั้งแรกตอนมีปัญหาแล้วงงว่าคืออะไร
+  const rc = j?.readback?.row_count;
+  const rcLine = rc?.checked
+    ? ` · แถวใน Target Sun: ก่อน ${Number(rc.before_count).toLocaleString("th-TH")} → หลัง ${Number(rc.after_count).toLocaleString("th-TH")}` +
+      ` (${rc.actual_new_rows >= 0 ? "+" : ""}${Number(rc.actual_new_rows).toLocaleString("th-TH")})` +
+      (rc.ok === false ? " ⚠" : "")
+    : "";
   toast(
-    `✅ ส่งเข้า Target Sun แล้ว — เพิ่มใหม่ ${inserted.toLocaleString("th-TH")} · แก้ไข ${updated.toLocaleString("th-TH")} · ข้าม ${skipped.toLocaleString("th-TH")} (ส่ง ${rowsSent.toLocaleString("th-TH")} แถว)`,
+    `✅ ส่งเข้า Target Sun แล้ว — เพิ่มใหม่ ${inserted.toLocaleString("th-TH")} · แก้ไข ${updated.toLocaleString("th-TH")} · ข้าม ${skipped.toLocaleString("th-TH")} (ส่ง ${rowsSent.toLocaleString("th-TH")} แถว)${rcLine}`,
     "green"
   );
   _showNotInTargetSunModal(droppedDims, notInTs);
@@ -10345,6 +10389,9 @@ async function _doLakehouseUploadInner() {
   let confirmedStale = false;
   // ทีมที่ยอดลงจริงไม่ตรงไฟล์ — รวมไว้แจ้งทีเดียวหลังส่งจบ
   const readbackIssues = [];
+  // ผลตรวจ "จำนวนแถวจริง" ก่อน/หลังส่งของทุกทีมที่ตรวจได้ (ไม่ใช่แค่ทีมที่ผิดปกติ) —
+  // ใช้ทั้งแจ้งเตือนตอนผิดปกติ และรวมเป็นยอด "ทั้งภาค" ตอนส่งหลายทีมพร้อมกัน
+  const rowCountResults = [];
   // ผลรายทีมของเฟสส่ง — เดิมทีมกลางล้มแล้ว return ทิ้งทันที ผู้ใช้จึงไม่รู้ว่า
   // ทีมไหนส่งไปแล้วบ้าง (ย้อนไม่ได้) ทีมไหนยังไม่ได้ส่ง และรายการที่ต้องไป
   // เกลี่ยหีบเองใน Target Sun ก็หายไปด้วยเพราะโค้ดสรุปอยู่ท้ายฟังก์ชัน
@@ -10558,6 +10605,9 @@ async function _doLakehouseUploadInner() {
       if (j?.readback?.checked && j.readback.ok === false) {
         readbackIssues.push({ supId: basePayload.sup_id, readback: j.readback });
       }
+      if (j?.readback?.row_count?.checked) {
+        rowCountResults.push({ supId: basePayload.sup_id, rc: j.readback.row_count });
+      }
       sentSupIds.push(basePayload.sup_id);
       sentCount += 1;
     }
@@ -10599,11 +10649,27 @@ async function _doLakehouseUploadInner() {
     return;
   }
 
+  // จำนวนแถวผิดที่คาด (แถวซ้ำ/insert หาย) — เตือนเหมือนยอดลงจริงไม่ตรงไฟล์
+  const rowCountIssues = rowCountResults.filter((r) => r.rc?.ok === false);
+  // รวมทั้งภาค — เฉพาะตอนส่งมากกว่า 1 ทีมพร้อมกัน ไม่งั้นก็คือเลขของทีมเดียวซ้ำ
+  // (jobs/legacyJobs ประกาศในบล็อก try ด้านบน หลุดสโคปแล้วตรงนี้ — ใช้ sentSupIds
+  // ที่ประกาศนอก try แทน นับทีมที่ส่งสำเร็จจริงทั้งหมดในรอบนี้)
+  const rowCountTotal = sentSupIds.length > 1 && rowCountResults.length
+    ? rowCountResults.reduce((acc, { rc }) => ({
+        before: acc.before + (Number(rc.before_count) || 0),
+        after: acc.after + (Number(rc.after_count) || 0),
+        expected: acc.expected + (Number(rc.expected_new_rows) || 0),
+        unexpected: acc.unexpected + (Number(rc.unexpected_extra_rows) || 0),
+      }), { before: 0, after: 0, expected: 0, unexpected: 0 })
+    : null;
+
   // ยอดลงจริงไม่ตรงไฟล์ด่วนกว่า และเปิดได้ทีละกล่อง — ถ้ามีรายการที่ต้องไปเกลี่ยเองด้วย
   // ให้พ่วงเป็นบรรทัดเดียวในกล่องเดียวกัน จะได้ไม่หายไปเงียบ ๆ
-  if (readbackIssues.length) {
+  if (readbackIssues.length || rowCountIssues.length) {
     _showReadbackMismatchModal(
       readbackIssues,
+      rowCountIssues,
+      rowCountTotal,
       pending.length
         ? `<p style="margin:10px 0 0;text-align:left;line-height:1.7;color:var(--amber);">`
           + `นอกจากนี้ยังมี <strong>${pending.length}</strong> SKU ที่ไม่ได้ถูกส่ง `
@@ -16254,6 +16320,69 @@ function adminInitUsageLogsPanel() {
   _adminFillMonthSelectAll(document.getElementById("adminUsageLogMonth"));
   _adminBindPeriodReload(["adminUsageLogMonth", "adminUsageLogYear"], adminLoadUsageLogs);
   adminLoadUsageLogs();
+
+  _adminFillMonthSelectAll(document.getElementById("adminRowCountCheckMonth"));
+  _adminBindPeriodReload(["adminRowCountCheckMonth", "adminRowCountCheckYear"], adminLoadRowCountChecks);
+  adminLoadRowCountChecks();
+}
+
+/**
+ * ผลตรวจจำนวนแถว Target Sun ก่อน/หลังส่ง — แยกจากตารางบันทึกการใช้งานทั่วไปข้างบน
+ * เพราะแอดมินต้องกวาดตาเจอความผิดปกติได้ทันที ไม่ใช่ไปนั่งไล่ทีละบรรทัดปนกับ
+ * เหตุการณ์อื่นทั้งหมด (ดู backend/routers/admin.py admin_targetsun_row_count_checks)
+ */
+async function adminLoadRowCountChecks() {
+  const tbody = document.getElementById("adminRowCountChecksTable");
+  const countEl = document.getElementById("adminRowCountCheckCount");
+  if (!tbody) return;
+  const onlyIssues = document.getElementById("adminRowCountCheckOnlyIssues")?.checked;
+  tbody.innerHTML = `<tr><td colspan="8" class="admin-empty">กำลังโหลด…</td></tr>`;
+  if (countEl) countEl.textContent = "";
+  try {
+    const q = _adminPeriodFilterQuery("adminRowCountCheckMonth", "adminRowCountCheckYear");
+    q.set("limit", "500");
+    if (onlyIssues) q.set("only_issues", "true");
+    const res = await fetchWithTimeout(`${API_BASE_URL}/admin/targetsun/row-count-checks?${q}`, {}, 20000);
+    const data = await res.json().catch(() => ({}));
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (countEl) {
+      countEl.textContent = items.length
+        ? `แสดง ${items.length.toLocaleString("th-TH")} รายการ` +
+          (Number(data.issue_count) > 0 ? ` — ผิดปกติ ${Number(data.issue_count).toLocaleString("th-TH")} รายการ` : "")
+        : "ยังไม่มีบันทึก";
+    }
+    if (!items.length) {
+      tbody.innerHTML = `<tr><td colspan="8" class="admin-empty">ยังไม่มีบันทึกการตรวจจำนวนแถวในช่วงนี้</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = items.map((r) => {
+      const ts = escapeHtml(_fmtLogTimeBangkok(r.ts));
+      const period = (r.target_month && r.target_year)
+        ? `${String(r.target_month).padStart(2, "0")}/${r.target_year}` : "—";
+      const notChecked = r.checked === false;
+      const isIssue = r.ok === false;
+      const statusHtml = notChecked
+        ? `<span class="admin-log-level admin-log-level--warn">ตรวจไม่ได้</span>`
+        : isIssue
+          ? `<span class="admin-log-level admin-log-level--error">⚠ ผิดปกติ</span>`
+          : `<span class="admin-log-level admin-log-level--info">ปกติ</span>`;
+      const extra = Number(r.unexpected_extra_rows);
+      const extraTxt = Number.isFinite(extra) ? `${extra > 0 ? "+" : ""}${extra.toLocaleString("th-TH")}` : "—";
+      return `<tr${isIssue ? ' class="admin-row--issue"' : ""}>
+        <td>${ts}</td>
+        <td>${escapeHtml(String(r.sup_id || "—"))}</td>
+        <td>${escapeHtml(period)}</td>
+        <td>${Number.isFinite(Number(r.before_count)) ? Number(r.before_count).toLocaleString("th-TH") : "—"}</td>
+        <td>${Number.isFinite(Number(r.after_count)) ? Number(r.after_count).toLocaleString("th-TH") : "—"}</td>
+        <td>${Number.isFinite(Number(r.expected_new_rows)) ? Number(r.expected_new_rows).toLocaleString("th-TH") : "—"}</td>
+        <td>${escapeHtml(extraTxt)}</td>
+        <td>${statusHtml}</td>
+      </tr>`;
+    }).join("");
+  } catch (e) {
+    if (countEl) countEl.textContent = "";
+    tbody.innerHTML = `<tr><td colspan="8" class="admin-empty">${escapeHtml(e.message || String(e))}</td></tr>`;
+  }
 }
 
 /**

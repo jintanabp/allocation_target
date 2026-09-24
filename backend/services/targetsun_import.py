@@ -20,9 +20,11 @@ from requests import exceptions as req_exc
 
 from ..schemas import LakehouseUploadRequest
 from .lakehouse import (
+    _live_target_snapshot,
     assert_target_snapshot_is_fresh,
     prepare_lakehouse_xlsx,
     verify_after_send,
+    verify_row_count_after_send,
 )
 from .targetsun_endpoints import targetsun_import_excel_url
 
@@ -74,6 +76,7 @@ def _save_prepare_bundle(
     new_rows_count: int = 0,
     new_rows_with_boxes_count: int = 0,
     stale_rows_cleared_count: int = 0,
+    import_row_keys: list | None = None,
 ) -> None:
     _prepare_dir()
     (_prepare_dir() / f"{token}.xlsx").write_bytes(content)
@@ -101,6 +104,9 @@ def _save_prepare_bundle(
         "new_rows_with_boxes_count": int(new_rows_with_boxes_count),
         # แถวเป้าเก่าที่หลุดจากรอบนี้แล้วถูกล้าง (ส่ง 0 ไปทับ) — ค8
         "stale_rows_cleared_count": int(stale_rows_cleared_count),
+        # คีย์เต็มของทุกแถวในไฟล์นี้ — ใช้เทียบกับสแนปช็อต "ก่อนส่ง" ตอนตรวจจำนวนแถว
+        # หลังส่ง (verify_row_count_after_send) หาว่ากี่แถวที่ Target Sun ยังไม่เคยมี
+        "import_row_keys": [str(k) for k in (import_row_keys or [])],
         # คู่ที่ผู้ใช้ต้องไปเพิ่มจำนวนเองใน Target Sun — ต้องติดไปถึงหน้าจอ "ส่งสำเร็จ"
         "shortfall": shortfall,
         "shortfall_boxes": sum(int(s.get("missing_boxes") or 0) for s in shortfall),
@@ -236,6 +242,7 @@ def prepare_targetsun_import(req: LakehouseUploadRequest) -> dict:
         new_rows_count=int(df.attrs.get("new_rows_count") or 0),
         new_rows_with_boxes_count=int(df.attrs.get("new_rows_with_boxes_count") or 0),
         stale_rows_cleared_count=int(df.attrs.get("stale_rows_cleared_count") or 0),
+        import_row_keys=list(df.attrs.get("import_row_keys") or []),
     )
     logger.info(
         "TargetSun prepare: token=%s rows=%d build=%.2fs",
@@ -453,6 +460,8 @@ def _attach_readback(
     new_rows_count: int = 0,
     new_rows_with_boxes_count: int = 0,
     stale_rows_cleared_count: int = 0,
+    before_row_snapshot: dict | None = None,
+    file_row_keys: list | None = None,
 ) -> dict:
     """
     ตรวจซ้ำหลังส่งว่ายอด "ลงจริง" ครบตามไฟล์ไหม แล้วแนบผลไปกับคำตอบ
@@ -484,6 +493,14 @@ def _attach_readback(
         sent_by_sku=sku_totals or {},
         emp_codes=list(emp_codes or []),
     )
+    out["readback"]["row_count"] = verify_row_count_after_send(
+        sup_id,
+        int(month),
+        int(year),
+        emp_codes=list(emp_codes or []),
+        before_snapshot=before_row_snapshot,
+        file_keys=set(file_row_keys or []),
+    )
     return out
 
 
@@ -498,6 +515,15 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
     dropped_dims = int(meta.get("rows_dropped_missing_dims") or 0)
     not_in_ts = meta.get("rows_not_in_targetsun") or []
     shortfall = meta.get("shortfall") or []
+    bundle_emp_codes = meta.get("emp_codes") if isinstance(meta.get("emp_codes"), list) else []
+    bundle_month = int(meta.get("target_month") or req.target_month)
+    bundle_year = int(meta.get("target_year") or req.target_year)
+
+    # อ่านสด "ก่อนส่ง" ให้ใกล้เวลา POST จริงที่สุด (ลดโอกาสทีมอื่นแทรกส่งระหว่างรอ) —
+    # ใช้เทียบจำนวนแถวหลังส่งสำเร็จใน _attach_readback
+    before_row_snapshot = _live_target_snapshot(
+        req.sup_id, bundle_month, bundle_year, bundle_emp_codes
+    )
 
     try:
         out = _post_targetsun_multipart(
@@ -516,13 +542,15 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
     return _attach_readback(
         out,
         sup_id=req.sup_id,
-        month=meta.get("target_month") or req.target_month,
-        year=meta.get("target_year") or req.target_year,
+        month=bundle_month,
+        year=bundle_year,
         sku_totals=meta.get("sku_totals") if isinstance(meta.get("sku_totals"), dict) else {},
-        emp_codes=meta.get("emp_codes") if isinstance(meta.get("emp_codes"), list) else [],
+        emp_codes=bundle_emp_codes,
         new_rows_count=int(meta.get("new_rows_count") or 0),
         new_rows_with_boxes_count=int(meta.get("new_rows_with_boxes_count") or 0),
         stale_rows_cleared_count=int(meta.get("stale_rows_cleared_count") or 0),
+        before_row_snapshot=before_row_snapshot,
+        file_row_keys=meta.get("import_row_keys") if isinstance(meta.get("import_row_keys"), list) else [],
     )
 
 
@@ -558,6 +586,17 @@ def import_allocations_to_targetsun(req: LakehouseUploadRequest) -> dict:
         t_build - t0,
     )
 
+    # ต้องคำนวณ emp_codes ก่อน POST (ไม่ใช่หลัง เหมือนเดิม) เพราะต้องใช้อ่านสด
+    # "ก่อนส่ง" ให้ใกล้เวลาจริงที่สุด — ค่าที่คำนวณล้วน ๆ ไม่กระทบ payload/URL/POST เอง
+    emp_codes = (
+        sorted({str(e).strip() for e in df["SALESMANCODE"] if str(e).strip()})
+        if "SALESMANCODE" in df.columns
+        else []
+    )
+    before_row_snapshot = _live_target_snapshot(
+        req.sup_id, int(req.target_month), int(req.target_year), emp_codes
+    )
+
     out = _post_targetsun_multipart(
         content,
         fname,
@@ -583,11 +622,6 @@ def import_allocations_to_targetsun(req: LakehouseUploadRequest) -> dict:
         if {"PRODUCTCODE", "QUANTITYCASE"} <= set(df.columns) and nrow
         else {}
     )
-    emp_codes = (
-        sorted({str(e).strip() for e in df["SALESMANCODE"] if str(e).strip()})
-        if "SALESMANCODE" in df.columns
-        else []
-    )
     return _attach_readback(
         out,
         sup_id=req.sup_id,
@@ -598,4 +632,6 @@ def import_allocations_to_targetsun(req: LakehouseUploadRequest) -> dict:
         new_rows_count=int(df.attrs.get("new_rows_count") or 0),
         new_rows_with_boxes_count=int(df.attrs.get("new_rows_with_boxes_count") or 0),
         stale_rows_cleared_count=int(df.attrs.get("stale_rows_cleared_count") or 0),
+        before_row_snapshot=before_row_snapshot,
+        file_row_keys=list(df.attrs.get("import_row_keys") or []),
     )

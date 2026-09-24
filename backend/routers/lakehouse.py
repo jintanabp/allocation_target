@@ -93,6 +93,22 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
         elif rb.get("checked") is False and ok:
             rb_note = f" · ตรวจยอดหลังส่งไม่ได้ ({rb.get('reason') or '-'})"
             caveats.append("ตรวจยอดหลังส่งไม่ได้")
+        # จำนวนแถวจริงก่อน/หลังส่ง — จับแถวซ้ำคนละคลัง (11.3/SL453) ที่ยอดหีบต่อ SKU
+        # ข้างบนมองไม่เห็น เพราะสองแถวคนละคลังบวกยอดกันแล้วยังเท่าไฟล์ที่ส่งไปพอดี
+        rc = rb.get("row_count") or {}
+        rc_note = ""
+        if rc.get("checked") and rc.get("ok") is False:
+            extra = rc.get("unexpected_extra_rows") or 0
+            sign = "+" if extra > 0 else ""
+            rc_note = (
+                f" · ⚠ จำนวนแถวไม่ตรงที่คาด ก่อน={rc.get('before_count')} "
+                f"หลัง={rc.get('after_count')} คาดแถวใหม่={rc.get('expected_new_rows')} "
+                f"ส่วนเกิน={sign}{extra}"
+            )
+            level = "error"
+            caveats.append("จำนวนแถวไม่ตรงที่คาด")
+        elif rc.get("checked") is False and ok:
+            rc_note = f" · ตรวจจำนวนแถวหลังส่งไม่ได้ ({rc.get('reason') or '-'})"
         # แถวที่ "สร้างใหม่" เพราะปลายทางไม่เคยมีคู่นี้ (dims_inferred) — เสี่ยงคลัง
         # ไม่ตรงกับที่ปลายทางมีอยู่แล้วจากคลังอื่น แล้วกลายเป็นแถวคู่ขนานคนละคลัง
         # (11.3 / ปริศนา SL453) — เห็นได้เฉพาะตอนไล่ log เท่านั้น ไม่มีทางรู้จากที่อื่น
@@ -151,6 +167,7 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
                 + ("" if ok else f" · {ts.get('resultMsg') or ''}")
                 + exc_note
                 + rb_note
+                + rc_note
                 + new_rows_note
                 + stale_cleared_note
             ),
@@ -169,6 +186,12 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
                 "emp_ids_truncated": len(emp_ids) > _MAX_LOGGED_EMP_IDS,
                 "readback_checked": rb.get("checked"),
                 "readback_ok": rb.get("ok"),
+                "row_count_checked": rc.get("checked"),
+                "row_count_ok": rc.get("ok"),
+                "row_count_before": rc.get("before_count"),
+                "row_count_after": rc.get("after_count"),
+                "row_count_expected_new": rc.get("expected_new_rows"),
+                "row_count_unexpected_extra": rc.get("unexpected_extra_rows"),
                 "new_rows_count": new_rows,
                 "new_rows_with_boxes_count": new_rows_boxes,
                 "stale_rows_cleared_count": stale_cleared,

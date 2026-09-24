@@ -1549,6 +1549,50 @@
             </table>
           </div>
         </section>
+
+        <section class="admin-card admin-card--panel">
+          <div class="admin-card-header">
+            <div>
+              <h2 class="admin-card__title">ตรวจแถวซ้ำ Target Sun</h2>
+              <p class="admin-card__hint">จำนวนแถวจริงก่อน/หลังส่งของแต่ละครั้ง — แถวที่ผิดปกติขึ้นก่อนเสมอ</p>
+            </div>
+            <div class="admin-period-bar">
+              <label class="admin-period-bar__field">เดือน
+                <select id="adminRowCountCheckMonth" class="admin-select admin-select--sm"></select>
+              </label>
+              <label class="admin-period-bar__field">ปี
+                <input type="number" id="adminRowCountCheckYear" class="field-input field-input--sm admin-period-input" min="2020" max="2100" placeholder="ทุกปี" />
+              </label>
+              <label class="admin-period-bar__field admin-period-bar__field--checkbox">
+                <input type="checkbox" id="adminRowCountCheckOnlyIssues" onchange="adminLoadRowCountChecks()" />
+                เฉพาะที่ผิดปกติ
+              </label>
+              <button type="button" class="admin-btn-refresh admin-btn-refresh--sm" onclick="adminLoadRowCountChecks()" title="โหลดรายการล่าสุด">
+                <span class="admin-btn-refresh__icon" aria-hidden="true">↻</span>
+                <span>โหลดใหม่</span>
+              </button>
+              <span id="adminRowCountCheckCount" class="admin-period-bar__meta" aria-live="polite"></span>
+            </div>
+          </div>
+          <div class="admin-help-strip admin-help-strip--compact">
+            <p>เทียบจำนวนแถวจริงใน Target Sun ก่อน/หลังกดส่งแต่ละครั้ง — ถ้า「ส่วนเกิน」ไม่ใช่ 0 แปลว่าจำนวนแถวที่เพิ่มขึ้นจริงไม่ตรงกับที่คาด (แถวซ้ำ หรือ insert หายเงียบๆ) ควรตรวจใน Target Sun ก่อนส่งงวดถัดไป</p>
+          </div>
+          <div id="adminRowCountChecksBody" class="admin-table-wrap admin-table-wrap--panel">
+            <table class="admin-table admin-table--zebra admin-table--log">
+              <thead><tr>
+                <th class="log-col-time">เวลา</th>
+                <th class="log-col-sup">ทีม</th>
+                <th>งวด</th>
+                <th>ก่อน</th>
+                <th>หลัง</th>
+                <th>คาดแถวใหม่</th>
+                <th>ส่วนเกิน</th>
+                <th>สถานะ</th>
+              </tr></thead>
+              <tbody id="adminRowCountChecksTable"><tr><td colspan="8" class="admin-empty">กำลังโหลด…</td></tr></tbody>
+            </table>
+          </div>
+        </section>
       </div>
 
       <div id="adminPanelFeedback" class="admin-panel" data-panel="feedback" style="display:none;">

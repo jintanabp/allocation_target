@@ -1298,18 +1298,37 @@ def _shortfall_from_dropped_rows(
     return out
 
 
-def _live_target_boxes_by_sku(
-    sup_id: str, month: int, year: int, emp_codes: list[str]
-) -> dict[str, int] | None:
+def _live_target_row_key(row: dict) -> str:
     """
-    เป้าปัจจุบันใน Target Sun ต่อ SKU ของทีมนี้ — best effort คืน None เมื่อดูไม่ได้
+    คีย์เต็มของหนึ่งแถว Target Sun (sku + คีย์ upsert 6 ตัว) — normalize เหมือน
+    ตอนสร้างไฟล์ส่งใน _build_tga_upload_dataframe เป๊ะ (คอลัมน์ out ที่นั่น: SALESTYPE/
+    DIVISIONCODE/PROVINCECODE/WAREHOUSECODE ผ่าน _cell_str, AREACODE ผ่าน _areacode_str,
+    SALESMANCODE ผ่าน norm_emp_code) ต้องใช้ฟังก์ชัน normalize ชุดเดียวกันทั้งสองฝั่ง
+    ไม่งั้นสองฝั่ง drift แล้วฟ้องเท็จตั้งแต่วันแรก
+    """
+    return "|".join(
+        [
+            str(row.get("PRODUCTCODE") or "").strip(),
+            norm_emp_code(row.get("SALESMANCODE")),
+            _cell_str(row.get("SALESTYPE")),
+            _cell_str(row.get("DIVISIONCODE")),
+            _areacode_str(row.get("AREACODE")),
+            _cell_str(row.get("PROVINCECODE")),
+            _cell_str(row.get("WAREHOUSECODE")),
+        ]
+    )
 
-    อ่านอย่างเดียว ไม่เขียนอะไรกลับ ใช้สองที่:
-      - ก่อนส่ง: เทียบว่าเป้าที่ดึงมาตอนขั้นที่ 1 ยังตรงกับของจริงไหม
-      - หลังส่ง: เทียบว่ายอดลงจริงครบตามไฟล์ที่ส่งไปไหม
 
-    เทียบได้เฉพาะตอนที่แหล่งเป้าคือ Target Sun เท่านั้น ถ้าระบบตั้งให้อ่านจาก Fabric
-    ตัวเลขสองฝั่งมาจากคนละที่ การเอามาเทียบกันจะฟ้องผิดตลอด
+def _live_target_snapshot(
+    sup_id: str, month: int, year: int, emp_codes: list[str]
+) -> dict[str, Any] | None:
+    """
+    อ่านสด 1 ครั้งจาก Target Sun — คืนทั้งยอดหีบต่อ SKU, จำนวนแถว, และชุดคีย์ระดับแถว
+
+    เดิมมีแต่ยอดหีบต่อ SKU (_live_target_boxes_by_sku) ซึ่งจับไม่ได้เลยถ้าแถวซ้ำ
+    คนละคลังสองแถวบวกกันแล้วยอดยังเท่าของเดิม (บั๊กจริงที่เคยเกิด — ดู
+    verify_row_count_after_send) จึงต้องเก็บจำนวนแถว/คีย์ไว้ตั้งแต่อ่านครั้งแรก
+    กันต้องยิง Target Sun ซ้ำสองรอบเวลาผู้เรียกต้องใช้ทั้งสองอย่าง
     """
     from . import targetsun_read as tsr
 
@@ -1323,7 +1342,8 @@ def _live_target_boxes_by_sku(
         rows = result.get("rows")
         if not isinstance(rows, list):
             return None
-        out: dict[str, int] = {}
+        by_sku: dict[str, int] = {}
+        keys: set[str] = set()
         for r in rows:
             if not isinstance(r, dict):
                 continue
@@ -1334,11 +1354,32 @@ def _live_target_boxes_by_sku(
                 qty = int(float(r.get("QUANTITYCASE") or 0))
             except (TypeError, ValueError):
                 qty = 0
-            out[sku] = out.get(sku, 0) + qty
-        return out
+            by_sku[sku] = by_sku.get(sku, 0) + qty
+            keys.add(_live_target_row_key(r))
+        return {"by_sku": by_sku, "row_count": len(rows), "keys": keys}
     except Exception as e:  # อ่านไม่ได้ต้องไม่ทำให้เส้นทางหลักพัง
         logger.warning("อ่านเป้าปัจจุบันจาก Target Sun ไม่ได้ (%s): %s", sup_id, e)
         return None
+
+
+def _live_target_boxes_by_sku(
+    sup_id: str, month: int, year: int, emp_codes: list[str]
+) -> dict[str, int] | None:
+    """
+    เป้าปัจจุบันใน Target Sun ต่อ SKU ของทีมนี้ — best effort คืน None เมื่อดูไม่ได้
+
+    อ่านอย่างเดียว ไม่เขียนอะไรกลับ ใช้สองที่:
+      - ก่อนส่ง: เทียบว่าเป้าที่ดึงมาตอนขั้นที่ 1 ยังตรงกับของจริงไหม
+      - หลังส่ง: เทียบว่ายอดลงจริงครบตามไฟล์ที่ส่งไปไหม
+
+    เทียบได้เฉพาะตอนที่แหล่งเป้าคือ Target Sun เท่านั้น ถ้าระบบตั้งให้อ่านจาก Fabric
+    ตัวเลขสองฝั่งมาจากคนละที่ การเอามาเทียบกันจะฟ้องผิดตลอด
+
+    ตัวจริงอยู่ใน _live_target_snapshot (อ่านครั้งเดียวได้ทั้งยอดหีบ/จำนวนแถว/คีย์) —
+    ฟังก์ชันนี้คง signature เดิมไว้เพราะมีที่เรียกอยู่แล้วหลายจุดและเทสต์ mock ชื่อนี้ตรง ๆ
+    """
+    snap = _live_target_snapshot(sup_id, month, year, emp_codes)
+    return snap["by_sku"] if snap is not None else None
 
 
 def team_emp_codes_from_grain(sup_id: str, month: int, year: int) -> list[str]:
@@ -1547,6 +1588,69 @@ def verify_after_send(
         }
     except Exception as e:
         logger.warning("ตรวจยอดหลังส่งไม่สำเร็จ (%s): %s", sup_id, e)
+        return {"checked": False, "reason": "error"}
+
+
+def verify_row_count_after_send(
+    sup_id: str,
+    month: int,
+    year: int,
+    *,
+    emp_codes: list[str],
+    before_snapshot: dict | None,
+    file_keys: set,
+) -> dict:
+    """
+    ตรวจ "จำนวนแถวจริง" ก่อน/หลังส่ง — จับแถวซ้ำคนละคลัง (11.3 / ปริศนา SL453) ที่
+    verify_after_send (ยอดหีบรวมต่อ SKU) มองไม่เห็น เพราะสองแถวคนละคลังบวกยอดกันแล้ว
+    ยังเท่าไฟล์ที่ส่งไปพอดี
+
+    expected_new_rows_from_file คือคีย์ในไฟล์ที่ "ก่อนส่ง" ยังไม่มีอยู่จริงใน Target Sun
+    (ไม่ใช่ new_rows_count เดิมที่นับแค่ระดับคู่พนักงาน×สินค้าจาก local cache — คนละ
+    ความหมาย และคนละความละเอียด)
+
+    ห้าม raise เด็ดขาด — เหมือน verify_after_send: ส่งไปแล้วย้อนไม่ได้ ตรงนี้คือรายงาน
+    ล้วน ๆ ไม่ใช่ประตู
+    """
+    try:
+        if before_snapshot is None:
+            return {"checked": False, "reason": "before_unavailable"}
+        after_snapshot = _live_target_snapshot(sup_id, month, year, emp_codes)
+        if after_snapshot is None:
+            return {"checked": False, "reason": "after_unavailable"}
+
+        before_count = int(before_snapshot.get("row_count") or 0)
+        after_count = int(after_snapshot.get("row_count") or 0)
+        before_keys = before_snapshot.get("keys") or set()
+        expected_new_rows = len(set(file_keys or set()) - set(before_keys))
+        actual_new_rows = after_count - before_count
+        unexpected_extra_rows = actual_new_rows - expected_new_rows
+
+        result = {
+            "checked": True,
+            "ok": unexpected_extra_rows == 0,
+            "before_count": before_count,
+            "after_count": after_count,
+            "actual_new_rows": actual_new_rows,
+            "expected_new_rows": expected_new_rows,
+            "unexpected_extra_rows": unexpected_extra_rows,
+        }
+        if unexpected_extra_rows != 0:
+            logger.error(
+                "จำนวนแถวใน Target Sun หลังส่งไม่ตรงที่คาด %s %s-%02d: "
+                "ก่อน=%d หลัง=%d (%+d) คาดแถวใหม่=%d ส่วนเกิน=%+d",
+                str(sup_id or "").strip().upper(),
+                year,
+                month,
+                before_count,
+                after_count,
+                actual_new_rows,
+                expected_new_rows,
+                unexpected_extra_rows,
+            )
+        return result
+    except Exception as e:
+        logger.warning("ตรวจจำนวนแถวหลังส่งไม่สำเร็จ (%s): %s", sup_id, e)
         return {"checked": False, "reason": "error"}
 
 
@@ -2661,6 +2765,24 @@ def _build_tga_upload_dataframe(
     final.attrs["new_rows_count"] = new_rows
     final.attrs["new_rows_with_boxes_count"] = new_rows_with_boxes
     final.attrs["stale_rows_cleared_count"] = stale_rows_cleared
+    # คีย์เต็มของทุกแถวที่กำลังจะส่ง (sku + คีย์ upsert 6 ตัว) — ใช้เทียบกับ "ก่อนส่ง"
+    # ตอน verify_row_count_after_send หาว่ากี่แถวที่ Target Sun ยังไม่เคยมี (คีย์เดียว
+    # กับ _live_target_row_key ทุกประการ ไม่งั้นสองฝั่ง drift แล้วฟ้องเท็จ)
+    final.attrs["import_row_keys"] = (
+        final["PRODUCTCODE"].astype(str).str.strip()
+        + "|"
+        + final["SALESMANCODE"].astype(str)
+        + "|"
+        + final["SALESTYPE"].astype(str)
+        + "|"
+        + final["DIVISIONCODE"].astype(str)
+        + "|"
+        + final["AREACODE"].astype(str)
+        + "|"
+        + final["PROVINCECODE"].astype(str)
+        + "|"
+        + final["WAREHOUSECODE"].astype(str)
+    ).tolist()
     final.attrs["wh_pin_matched_groups"] = wh_pin_stats["matched_groups"]
     final.attrs["wh_pin_boxes_moved"] = wh_pin_stats["boxes_moved"]
     final.attrs["wh_pin_rows_zeroed"] = wh_pin_stats["rows_zeroed"]
