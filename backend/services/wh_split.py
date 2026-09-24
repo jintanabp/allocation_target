@@ -143,7 +143,11 @@ def expand_employee_rows(
         unique_whs = sorted(set(whs), key=lambda x: (x == "", x))
         if len(unique_whs) < 2:
             nr = dict(row)
-            nr["warehouse_code"] = _norm_wh(nr.get("warehouse_code")) or (unique_whs[0] if unique_whs else "")
+            # คลังจริงจาก TGA (unique_whs) ต้องชนะค่าที่ติดมากับแถวเสมอ ไม่ใช่กลับกัน —
+            # เดิมให้ค่าที่ติดมาก่อน เผื่อเป็นค่าเดาเก่าที่หลุดมาจากจอ (ดู
+            # tests/test_destination_blank_warehouse_wins.py) ตอนนี้เลิกเดาคลังแล้ว
+            # (24 ก.ย. 2026) แต่ยังคงลำดับนี้ไว้เป็นการป้องกันสองชั้น
+            nr["warehouse_code"] = (unique_whs[0] if unique_whs else "") or _norm_wh(nr.get("warehouse_code"))
             nr["wh_split"] = False
             nr["alloc_key"] = alloc_key(emp, nr.get("warehouse_code"), wh_split=False)
             out.append(nr)

@@ -51,7 +51,7 @@ from ..generate_excel import create_target_excel
 from ..schemas import OptimizeRequest
 from ..fabric_dax_connector import FabricDAXConnector
 from . import alloc_rules_store, no_target_store
-from .lakehouse import _apply_warehouse_pin_rules
+from .lakehouse import _apply_warehouse_pin_rules, _boxes_by_sku
 from .sku_link_store import collapse_hist_to_canonical, expand_skus_for_dax, read_links
 from .warehouse_pin_rules_store import rules_by_key
 from .wh_split import (
@@ -322,6 +322,64 @@ def _apply_wh_pin_preview(
         logger.warning("wh pin preview skipped: %s", e)
         df_final["wh_pin_forced"] = ""
         return df_final
+
+
+def _apply_wh_pin_preview_guarded(
+    df_final: pd.DataFrame,
+    sup_id: str,
+    target_month: int,
+    target_year: int,
+) -> tuple[pd.DataFrame, dict]:
+    """
+    ห่อ _apply_wh_pin_preview ด้วยด่านยอดหีบ (I1) — คืน (df ที่จะใช้จริง, wh_pin_debug)
+
+    ด่าน I1 หลักในเส้นทาง /optimize ตรวจ df_final "ก่อน" เรียกฟังก์ชันนี้เท่านั้น (ก่อน
+    เขียนไฟล์/Excel) ขั้นบังคับคลังสำหรับพรีวิวรันทีหลัง ไม่มีอะไรตรวจซ้ำว่ายอดยังตรงเป้า
+    อยู่ไหม ทั้งที่เป็นสิ่งที่ผู้ใช้เห็นบนจอ Step 3 จริง ๆ (ต่างจากไฟล์ที่เขียนไปแล้ว/ของที่
+    ส่งจริงซึ่งมีด่าน _assert_file_preserves_payload_totals ของตัวเองแยกต่างหากตอนส่ง)
+
+    ถ้ายอดเปลี่ยนหรือฟังก์ชันพัง (BaseException ตั้งใจ — กันแม้กระทั่งอะไรที่ไม่ใช่
+    Exception ปกติ) ให้ถอยไปใช้ df_final ดิบ (ผ่านด่าน I1 หลักมาแล้ว) แทนเสมอ — ห้ามปล่อย
+    ตัวเลขที่ยอดไม่ตรงเป้าไปให้ผู้ใช้เห็นบนจอเด็ดขาด
+    """
+    wh_pin_debug: dict = {"stage": "calling"}
+    try:
+        before_boxes_by_sku = _boxes_by_sku(df_final)
+        df_after_pin = _apply_wh_pin_preview(df_final, sup_id, target_month, target_year)
+        after_boxes_by_sku = _boxes_by_sku(df_after_pin)
+        if after_boxes_by_sku != before_boxes_by_sku:
+            diff_skus = {
+                sku: {"before": before_boxes_by_sku.get(sku, 0), "after": after_boxes_by_sku.get(sku, 0)}
+                for sku in sorted(set(before_boxes_by_sku) | set(after_boxes_by_sku))
+                if after_boxes_by_sku.get(sku, 0) != before_boxes_by_sku.get(sku, 0)
+            }
+            logger.error(
+                "_apply_wh_pin_preview ทำยอดหีบต่อ SKU เปลี่ยน sup=%s — ใช้ผลดิบแทน (%d SKU): %s",
+                sup_id, len(diff_skus), dict(list(diff_skus.items())[:5]),
+            )
+            return df_final, {
+                "stage": "totals_mismatch_reverted",
+                "diff_sku_count": len(diff_skus),
+                "diff_skus_preview": dict(list(diff_skus.items())[:10]),
+            }
+        wh_pin_debug["stage"] = "ok"
+        return df_after_pin, wh_pin_debug
+    except BaseException as e:
+        import traceback as _tb
+
+        tb_text = _tb.format_exc()
+        logger.error(
+            "optimize: _apply_wh_pin_preview ล้มทั้งฟังก์ชัน sup=%s — ข้ามไปใช้ผลดิบแทน: %s\n%s",
+            sup_id, e, tb_text,
+        )
+        if "wh_pin_forced" not in df_final.columns:
+            df_final["wh_pin_forced"] = ""
+        return df_final, {
+            "stage": "crashed",
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "traceback_tail": tb_text[-2000:],
+        }
 
 
 def _maybe_split_hist(
@@ -1556,32 +1614,12 @@ def run_optimization_service(
     # ตรงนี้หลุดเข้า result_*.csv/Excel (ไฟล์ยังเป็นผลดิบ) เพราะใช้แค่ปรับสิ่งที่ Step 3
     # แสดงบนจอให้ตรงกับสิ่งที่จะเกิดขึ้นจริงตอนส่ง — lakehouse.py ยังรวมคลังซ้ำอีกทีตอนส่งจริง
     #
-    # เปิดกลับมาทดสอบแบบมีสายรัดนิรภัยพิเศษ (22 ก.ย. 2026 กลางคืน รอบ 2) — ไม่มีทางเข้าถึง
-    # data/app.log บนเซิร์ฟเวอร์ได้เลย จึงเปลี่ยนกลยุทธ์: ครอบด้วย try/except ที่กว้างที่สุด
-    # เท่าที่จะทำได้ (ครอบตั้งแต่ก่อนเรียกฟังก์ชันเผื่อพังตอน import/setup ด้วย) แล้วเก็บ
-    # ข้อความ error diagnostic ไว้ใน response field ที่ frontend เพิกเฉยอยู่แล้ว (ไม่กระทบ UI)
-    # ให้ผู้ใช้ก็อปจาก DevTools Network tab (ที่ทำได้อยู่แล้ว) ส่งกลับมาแทนการง้อ log บนเซิร์ฟเวอร์
-    wh_pin_debug: dict = {"stage": "not_started"}
-    try:
-        wh_pin_debug["stage"] = "calling"
-        df_final = _apply_wh_pin_preview(df_final, sup_id, target_month, target_year)
-        wh_pin_debug["stage"] = "ok"
-    except BaseException as e:  # BaseException ตั้งใจ — กันแม้กระทั่งอะไรที่ไม่ใช่ Exception ปกติ
-        import traceback as _tb
-
-        tb_text = _tb.format_exc()
-        logger.error(
-            "optimize: _apply_wh_pin_preview ล้มทั้งฟังก์ชัน sup=%s — ข้ามไปใช้ผลดิบแทน: %s\n%s",
-            sup_id, e, tb_text,
-        )
-        wh_pin_debug = {
-            "stage": "crashed",
-            "error_type": type(e).__name__,
-            "error_message": str(e),
-            "traceback_tail": tb_text[-2000:],
-        }
-        if "wh_pin_forced" not in df_final.columns:
-            df_final["wh_pin_forced"] = ""
+    # มีด่านยอดหีบ (I1) ของตัวเองอยู่ใน _apply_wh_pin_preview_guarded แล้ว (24 ก.ย. 2026) —
+    # เดิมมีแค่สายรัดกัน crash (22 ก.ย. 2026 กลางคืน รอบ 2) แต่ไม่เคยเช็คว่ายอดยังตรงเป้า
+    # อยู่ไหมหลังขั้นนี้ ทั้งที่รันหลังด่าน I1 หลัก (บรรทัด 1503) ไปแล้ว
+    df_final, wh_pin_debug = _apply_wh_pin_preview_guarded(
+        df_final, sup_id, target_month, target_year
+    )
 
     return {
         "allocations": df_final.to_dict(orient="records"),

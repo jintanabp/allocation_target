@@ -139,7 +139,13 @@ class ApplyWhHintsTrustExistingTest(unittest.TestCase):
 
 
 class _FakeFabricWarehouseGuess:
-    """จำลอง get_warehouse_by_emp คืนคลังที่เดาจากประวัติขาย — ไม่ต่อเน็ตจริง"""
+    """
+    จำลอง Fabric connector — get_warehouse_by_emp คืนค่าที่ห้ามถูกใช้อีกต่อไป
+
+    เลิกเรียก get_warehouse_by_emp (เดาจากประวัติขาย 2 ปี) แล้วโดยตั้งใจ (24 ก.ย. 2026)
+    เมธอดนี้ยังอยู่ในเฟกไว้เจตนา คืนค่าที่ต่างจากทุกอย่างอื่นในเทส ("ZZZ_MUST_NOT_BE_USED")
+    เพื่อพิสูจน์ว่าโค้ดไม่เรียกมันอีกแล้ว ไม่ใช่แค่ไม่ทดสอบ
+    """
 
     def get_tga_lakehouse_dims_by_emp_sku(self, emp_list, sku_list):
         return pd.DataFrame()
@@ -148,7 +154,9 @@ class _FakeFabricWarehouseGuess:
         return pd.DataFrame()
 
     def get_warehouse_by_emp(self, emp_list):
-        return pd.DataFrame([{"emp_id": e, "warehouse_code": "G002"} for e in emp_list])
+        return pd.DataFrame(
+            [{"emp_id": e, "warehouse_code": "ZZZ_MUST_NOT_BE_USED"} for e in emp_list]
+        )
 
 
 class EnrichEmpDimensionsSkipGateTest(unittest.TestCase):
@@ -178,14 +186,27 @@ class EnrichEmpDimensionsSkipGateTest(unittest.TestCase):
             )
         self.assertEqual(out.iloc[0]["warehouse_code"], "")
 
-    def test_skip_false_still_uses_the_historical_guess(self):
-        """กิ่ง grain ไม่พอทั้งทีมจริง ๆ (skip=False) ยังต้องพึ่งค่าเดาเหมือนเดิม"""
+    def test_skip_false_no_longer_calls_the_historical_guess(self):
+        """
+        กิ่ง grain ไม่พอทั้งทีมจริง ๆ (skip=False) — เดิมพึ่งค่าเดาจากประวัติขาย 2 ปี
+        เลิกทำแล้ว (24 ก.ย. 2026) เหลือแค่ wh_hint (ค่าที่ resolve มาก่อนแล้วจริง ๆ ใน
+        rows_raw) เป็นทางเดียว ไม่มี hint ให้ = ว่างไว้ ห้าม fallback ไปเดาอีก
+        """
         with patch.object(lh, "FabricDAXConnector", return_value=_FakeFabricWarehouseGuess()):
             out = lh._enrich_emp_dimensions(
-                self._df(), [{"emp_id": "E1", "warehouse_code": "G002"}],
+                self._df(), [{"emp_id": "E1", "warehouse_code": ""}],
                 skip_emp_sku_dim_merge=False,
             )
-        self.assertEqual(out.iloc[0]["warehouse_code"], "G002")
+        self.assertEqual(out.iloc[0]["warehouse_code"], "")
+
+    def test_skip_false_still_uses_wh_hint_when_already_resolved(self):
+        """wh_hint (คลังที่ resolve จาก grain รายบรรทัดมาก่อนแล้ว ไม่ใช่ค่าเดา) ยังใช้ได้ปกติ"""
+        with patch.object(lh, "FabricDAXConnector", return_value=_FakeFabricWarehouseGuess()):
+            out = lh._enrich_emp_dimensions(
+                self._df(), [{"emp_id": "E1", "warehouse_code": "R082"}],
+                skip_emp_sku_dim_merge=False,
+            )
+        self.assertEqual(out.iloc[0]["warehouse_code"], "R082")
 
 
 class FullPipelineReproducesTheSl380IncidentTest(unittest.TestCase):

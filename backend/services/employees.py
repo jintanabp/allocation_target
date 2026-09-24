@@ -1145,14 +1145,11 @@ def load_employees_payload(
         logger.warning("ตรวจยอดขายย้อนหลังเป็น 0 ไม่สำเร็จ: %s", e)
 
     # ── Step 6: Warehouse ─────────────────────────────────
-    try:
-        df_wh = fabric.get_warehouse_by_emp(emp_list)
-        if not df_wh.empty:
-            df_emp = pd.merge(
-                df_emp, df_wh[["emp_id", "warehouse_code"]], on="emp_id", how="left"
-            )
-    except Exception as e:
-        logger.warning("warehouse: %s", e)
+    # เลิกเดาคลังจากประวัติขาย 2 ปี (get_warehouse_by_emp) แล้วโดยตั้งใจ (24 ก.ย. 2026) —
+    # เคยเป็นต้นตอบั๊กแถวซ้ำ SL380/SL530/SL525 ในฝั่งส่งจริงมาแล้ว ตรงนี้เป็นแค่ค่าที่
+    # โชว์บนจอก่อนส่ง แต่ถ้าโชว์ค่าเดาไว้ก็เสี่ยงให้ผู้ใช้เข้าใจผิดว่าคือคลังจริงที่จะถูกส่ง
+    # ไม่มีคลังจริงให้เชื่อ = ปล่อยว่างไว้ชัดเจนดีกว่า (คลังจริงตอนส่งอ่านจาก TGA grain
+    # แยกอีกที ไม่พึ่งค่านี้อยู่แล้ว)
     if "warehouse_code" not in df_emp.columns:
         df_emp["warehouse_code"] = ""
     df_emp["warehouse_code"] = df_emp["warehouse_code"].fillna("")

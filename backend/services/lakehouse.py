@@ -1907,7 +1907,6 @@ def _enrich_emp_dimensions(
 
     df_es = pd.DataFrame()
     df_emp = pd.DataFrame()
-    df_wh = pd.DataFrame()
     logger.info(
         "lakehouse enrich: Fabric DAX (emp=%d sku=%d skip_emp_sku=%s)",
         len(emp_list),
@@ -1925,10 +1924,12 @@ def _enrich_emp_dimensions(
             df_emp = fabric.get_tga_lakehouse_dims_by_emp(emp_list)
         except Exception as e:
             logger.warning("get_tga_lakehouse_dims_by_emp: %s", e)
-        try:
-            df_wh = fabric.get_warehouse_by_emp(emp_list)
-        except Exception as e:
-            logger.warning("get_warehouse_by_emp (lakehouse): %s", e)
+        # เลิกเรียก fabric.get_warehouse_by_emp (เดาจากประวัติขาย 2 ปี, cross_sold_history_2y_qu)
+        # แล้วโดยตั้งใจ (24 ก.ย. 2026) — เป็นต้นตอบั๊กแถวซ้ำ SL380/SL530/SL525 มาแล้ว
+        # คลังที่เหลือใช้ได้มีแค่ 2 แหล่ง: get_tga_lakehouse_dims_by_emp (MAX จาก
+        # tga_target_salesman_next เอง — ของจริงจาก Target Sun แค่หยาบกว่า) กับ wh_hint
+        # (ค่าที่ resolve จาก grain รายบรรทัดมาก่อนแล้ว) ไม่มีแหล่งไหนเป็นการเดาอีกต่อไป
+        # ไม่มีคลังจริงให้เชื่อ = ปล่อยว่างไว้ชัดเจน (WAREHOUSECODE ว่างส่งได้ปกติ)
     except Exception as e:
         logger.warning("Fabric connector (lakehouse enrich): %s", e)
 
@@ -1955,28 +1956,17 @@ def _enrich_emp_dimensions(
 
     if skip_emp_sku_dim_merge:
         # แถวจาก grain resolve คลังมาแล้ว (รวมคลังว่างจริง) ฟังก์ชันนี้ถูกเรียกเพราะ dim
-        # อื่น (เช่น divisioncode) ยังขาด ไม่ใช่เพราะคลังไม่รู้ — ห้ามเอาค่าเดาจากประวัติ
-        # ขาย (df_wh) หรือ wh_hint มาทับคลังที่ resolve มาแล้ว (ดู SL380/SL530/SL525)
+        # อื่น (เช่น divisioncode) ยังขาด ไม่ใช่เพราะคลังไม่รู้ — ห้ามเอา wh_hint มาทับ
+        # คลังที่ resolve มาแล้ว (ดู SL380/SL530/SL525)
         if "warehouse_code" not in df.columns:
             df["warehouse_code"] = ""
-    elif not df_wh.empty:
-        df = df.merge(
-            df_wh.rename(columns={"warehouse_code": "warehouse_hist"}),
-            on="emp_id",
-            how="left",
-        )
-        if "warehouse_code" not in df.columns:
-            df["warehouse_code"] = ""
-        df["warehouse_code"] = df.apply(
-            lambda row: _cell_str(row.get("warehouse_code"))
-            or _cell_str(row.get("warehouse_hist"))
-            or wh_hint.get(str(row["emp_id"]).strip(), ""),
-            axis=1,
-        )
-        if "warehouse_hist" in df.columns:
-            df = df.drop(columns=["warehouse_hist"])
-        df["warehouse_code"] = _coalesce_col(df, "warehouse_code", _emp_fb_series("warehouse_code"))
     else:
+        # ไม่มีการเดาจากประวัติขาย 2 ปีอีกต่อไป (24 ก.ย. 2026) — เหลือแค่ wh_hint (คลังที่
+        # resolve จาก grain รายบรรทัดมาก่อนแล้ว) กับ _emp_fb_series (MAX จาก
+        # tga_target_salesman_next เอง ผ่าน get_tga_lakehouse_dims_by_emp) ทั้งคู่เป็น
+        # ข้อมูลจริงจาก Target Sun ไม่ใช่การเดา ไม่มีทั้งคู่ = ว่างไว้ชัดเจน
+        if "warehouse_code" not in df.columns:
+            df["warehouse_code"] = ""
         df["warehouse_code"] = df.apply(
             lambda row: _cell_str(row.get("warehouse_code"))
             or wh_hint.get(str(row["emp_id"]).strip(), ""),

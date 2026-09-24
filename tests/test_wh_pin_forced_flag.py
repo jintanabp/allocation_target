@@ -30,6 +30,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -166,6 +167,62 @@ class WhPinPreviewTest(unittest.TestCase):
         df = pd.DataFrame(columns=["emp_id", "sku", "allocated_boxes"])
         out = opt._apply_wh_pin_preview(df, SUP, MONTH, YEAR)
         self.assertTrue(out.empty)
+
+
+class WhPinPreviewGuardedTest(unittest.TestCase):
+    """
+    _apply_wh_pin_preview_guarded — ด่าน I1 ที่ห่อ _apply_wh_pin_preview (24 ก.ย. 2026)
+
+    ด่าน I1 หลักใน run_optimization_service ตรวจ df_final "ก่อน" เรียก
+    _apply_wh_pin_preview เท่านั้น (ก่อนเขียนไฟล์/Excel) — ขั้นบังคับคลังพรีวิวรันทีหลัง
+    ไม่เคยถูกตรวจซ้ำว่ายอดยังตรงเป้าอยู่ไหม ทั้งที่เป็นสิ่งที่ผู้ใช้เห็นบนจอ Step 3 จริง ๆ
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._cwd = os.getcwd()
+        os.chdir(self._tmp.name)
+        os.makedirs("data", exist_ok=True)
+
+    def tearDown(self):
+        os.chdir(self._cwd)
+        self._tmp.cleanup()
+
+    def _df(self):
+        return pd.DataFrame(
+            [{"emp_id": "E1", "sku": "SKU1", "allocated_boxes": 10, "warehouse_code": "G001"}]
+        )
+
+    def test_normal_case_passes_through_unchanged(self):
+        """ไม่มีกติกาบังคับคลังตั้งไว้ — ยอดไม่เปลี่ยน ต้องได้ stage=ok"""
+        out, debug = opt._apply_wh_pin_preview_guarded(self._df(), SUP, MONTH, YEAR)
+        self.assertEqual(debug["stage"], "ok")
+        self.assertEqual(int(out["allocated_boxes"].sum()), 10)
+
+    def test_totals_changed_reverts_to_the_raw_frame(self):
+        """
+        จำลอง _apply_wh_pin_preview ทำยอดหีบเพี้ยน (บั๊กสมมติ) — ต้องถอยไปใช้ df ดิบ
+        ที่ผ่านด่าน I1 หลักมาแล้ว ห้ามปล่อยยอดที่ผิดไปให้ผู้ใช้เห็นบนจอเด็ดขาด
+        """
+        df_in = self._df()
+        broken = pd.DataFrame(
+            [{"emp_id": "E1", "sku": "SKU1", "allocated_boxes": 999, "warehouse_code": "G010"}]
+        )
+        with patch.object(opt, "_apply_wh_pin_preview", return_value=broken):
+            out, debug = opt._apply_wh_pin_preview_guarded(df_in, SUP, MONTH, YEAR)
+        self.assertEqual(debug["stage"], "totals_mismatch_reverted")
+        self.assertEqual(debug["diff_sku_count"], 1)
+        # คืนค่า df ดิบ (ก่อนเรียก _apply_wh_pin_preview) ไม่ใช่ผลที่ยอดเพี้ยน
+        self.assertEqual(int(out["allocated_boxes"].sum()), 10)
+        self.assertEqual(out.iloc[0]["warehouse_code"], "G001")
+
+    def test_crash_reverts_to_the_raw_frame_too(self):
+        df_in = self._df()
+        with patch.object(opt, "_apply_wh_pin_preview", side_effect=RuntimeError("boom")):
+            out, debug = opt._apply_wh_pin_preview_guarded(df_in, SUP, MONTH, YEAR)
+        self.assertEqual(debug["stage"], "crashed")
+        self.assertEqual(int(out["allocated_boxes"].sum()), 10)
+        self.assertEqual(out.iloc[0]["wh_pin_forced"], "")
 
 
 if __name__ == "__main__":
