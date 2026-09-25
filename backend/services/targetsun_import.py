@@ -23,7 +23,9 @@ from ..schemas import LakehouseUploadRequest
 from .lakehouse import (
     _live_target_snapshot,
     assert_target_snapshot_is_fresh,
+    norm_emp_code,
     prepare_lakehouse_xlsx,
+    team_emp_codes_from_grain,
     verify_after_send,
     verify_row_count_after_send,
 )
@@ -104,6 +106,7 @@ def _save_prepare_bundle(
     new_rows_with_boxes_count: int = 0,
     stale_rows_cleared_count: int = 0,
     import_row_keys: list | None = None,
+    confirmed_stale_target: bool = False,
 ) -> None:
     _prepare_dir()
     (_prepare_dir() / f"{token}.xlsx").write_bytes(content)
@@ -138,6 +141,10 @@ def _save_prepare_bundle(
         "shortfall": shortfall,
         "shortfall_boxes": sum(int(s.get("missing_boxes") or 0) for s in shortfall),
         "upload_user_code": upload_user_code,
+        # ผู้ใช้ยืนยันแล้วตอน prepare ว่าเป้าเปลี่ยนก็ส่งตามแผนเดิม — ตอน import ด่านตรวจ
+        # เป้าซ้ำต้องรู้ด้วย (คำขอ import ที่มี token ไม่ได้พก confirm_stale_target มา)
+        # ไม่งั้นเคสที่ยืนยันแล้วจะโดนบล็อกซ้ำที่ด่านนี้ตลอด ส่งไม่ได้เลย
+        "confirmed_stale_target": bool(confirmed_stale_target),
         "created_at": time.time(),
     }
     (_prepare_dir() / f"{token}.json").write_text(
@@ -270,6 +277,7 @@ def prepare_targetsun_import(req: LakehouseUploadRequest) -> dict:
         new_rows_with_boxes_count=int(df.attrs.get("new_rows_with_boxes_count") or 0),
         stale_rows_cleared_count=int(df.attrs.get("stale_rows_cleared_count") or 0),
         import_row_keys=list(df.attrs.get("import_row_keys") or []),
+        confirmed_stale_target=bool(getattr(req, "confirm_stale_target", False)),
     )
     logger.info(
         "TargetSun prepare: token=%s rows=%d build=%.2fs",
@@ -553,9 +561,46 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
         bundle_year = int(meta.get("target_year") or req.target_year)
 
         # อ่านสด "ก่อนส่ง" ให้ใกล้เวลา POST จริงที่สุด (ลดโอกาสทีมอื่นแทรกส่งระหว่างรอ) —
-        # ใช้เทียบจำนวนแถวหลังส่งสำเร็จใน _attach_readback
+        # ใช้ทั้งเทียบจำนวนแถวหลังส่งสำเร็จใน _attach_readback และตรวจซ้ำว่าเป้ายังไม่ขยับ
+        # ข้างล่างนี้ (อ่านครั้งเดียวพอ ไม่ต้องยิง Target Sun ซ้ำสองรอบ)
         before_row_snapshot = _live_target_snapshot(
             req.sup_id, bundle_month, bundle_year, bundle_emp_codes
+        )
+
+        # เดิมด่านนี้เรียกแค่ตอน prepare — ระหว่างเตรียมครบทุกทีม/ถามยืนยัน/ตรวจยอดรวม
+        # ทั้งชุด แล้วค่อยวน import ทีละทีม (แต่ละ POST ค้างได้ถึง
+        # TARGETSUN_IMPORT_TIMEOUT_SEC วินาที) เป้าอาจขยับอีกรอบได้ในช่วงนี้โดยไม่มีอะไร
+        # จับได้เลย ตรวจซ้ำตรงนี้อีกทีด้วยค่าที่อ่านสดมาแล้วข้างบน (ไม่ยิงซ้ำ) — ยึดการ
+        # ยืนยันที่จดไว้ใน bundle ตอน prepare ถ้าผู้ใช้ยืนยันมาแล้วก็ไม่ถามซ้ำ
+        # ตรงนี้ (นี่คือด่านสำหรับดักการเปลี่ยนแปลง "ใหม่" ระหว่างรอ ไม่ใช่ถามซ้ำของเดิม)
+        #
+        # ต้องเทียบด้วยพนักงาน "ทั้งทีม" ชุดเดียวกับตอน prepare (เป้าทีมใน snapshot
+        # ครอบคนทั้งทีม) — bundle_emp_codes คือแค่คนที่อยู่ในไฟล์ ถ้ามีคนในทีมไม่อยู่ใน
+        # ไฟล์ (เช่นคนที่ไม่ต้องตั้งเป้า) ยอดสดจะน้อยกว่าเป้าแล้วฟ้อง "เป้าเปลี่ยน" ผิด
+        # บล็อกการส่งทุกครั้ง · ใช้ค่าที่อ่านมาแล้วได้เฉพาะตอนสองชุดตรงกันเท่านั้น
+        # ไม่มีไฟล์ grain (ไม่ควรเกิดเพราะตัวสร้างไฟล์ต้องใช้ grain) — ถอยไปใช้คนในไฟล์
+        # ดีกว่าปล่อยด่านนี้ข้ามไปเงียบ ๆ
+        team_codes = (
+            team_emp_codes_from_grain(req.sup_id, bundle_month, bundle_year)
+            or list(bundle_emp_codes)
+        )
+        same_people = {norm_emp_code(e) for e in team_codes} == {
+            norm_emp_code(e) for e in bundle_emp_codes
+        }
+        fresh_kwargs: dict = {"emp_codes": team_codes}
+        if same_people:
+            fresh_kwargs["live_by_sku"] = (
+                before_row_snapshot["by_sku"] if before_row_snapshot else None
+            )
+        assert_target_snapshot_is_fresh(
+            req.sup_id,
+            bundle_month,
+            bundle_year,
+            confirmed=bool(
+                getattr(req, "confirm_stale_target", False)
+                or meta.get("confirmed_stale_target")
+            ),
+            **fresh_kwargs,
         )
 
         try:

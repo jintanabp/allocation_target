@@ -7776,7 +7776,13 @@ function revertResultCell(empId, sku, wh) {
   // ทำให้ตารางใหญ่หน่วงและเลื่อนกลับไปบนสุดทุกครั้งที่กด ↺
   autoRebalance(true, { skipRender: true });
   _syncResultTableAfterRebalance();
-  saveDraft(true);
+  // จุดเดียวกับ _persistAfterCellLock/onResultEdit — ต้องบันทึกแยกทีมในโหมดรวมภาค
+  // ไม่งั้น snapshot ของทีมเจ้าของปนแถวของเพื่อนทีม (ดูคอมเมนต์ใน autoRebalance)
+  if (S.compositeAllocView && _regionalAggregateWritable()) {
+    queueRegionalAllocationSave(_deriveAllocStatus());
+  } else {
+    saveDraft(true);
+  }
   toast(
     wasLockOnly
       ? `ปลดล็อก ${empId} · ${sku} แล้ว — ระบบเกลี่ยช่องนี้ได้อีกครั้ง`
@@ -8459,7 +8465,22 @@ function autoRebalance(silent = false, opts = {}) {
     );
   }
   if (changed && !silent) toast("⚖️ เกลี่ยส่วนต่างหีบสำเร็จ (แจกจ่ายให้พนักงานอื่นแล้ว)", "green");
-  if (changed) saveDraft(true);
+  if (changed) {
+    // โหมดรวมภาค/รวมหน่วย (S.compositeAllocView) ต้องบันทึกแยกทีมผ่าน
+    // queueRegionalAllocationSave เหมือนทุกจุดอื่นที่บันทึกหลังแก้ตาราง
+    // (_persistAfterCellLock, onResultEdit) — saveDraft(true) เพียวๆ ตรงนี้เคย
+    // เรียก queueServerAllocationSave ซึ่ง default เป็น sup_id=S.supId (ทีมเจ้าของที่
+    // กำลังดูอยู่) + allocations=S.allocations (แถวของทุกทีมที่ merge ไว้ในจอ) ทำให้
+    // snapshot ของทีมเจ้าของปนแถวของเพื่อนทีมทุกครั้งที่ autoRebalance เกลี่ยแล้ว
+    // เปลี่ยนอะไรสักอย่าง (พบจากผลตรวจสอบระบบ 24 ก.ย. 2026) — จุดที่เรียกตัวนี้ต่อ
+    // (_persistAfterCellLock/onResultEdit) มีการเช็คแบบนี้อยู่แล้วก็จริง แต่เช็คได้
+    // "หลัง" autoRebalance คืนค่ามาแล้ว ไม่ทันกันการบันทึกผิดที่เกิดขึ้นในนี้ก่อน
+    if (S.compositeAllocView && _regionalAggregateWritable()) {
+      queueRegionalAllocationSave(_deriveAllocStatus());
+    } else {
+      saveDraft(true);
+    }
+  }
   // เก็บผลไว้ที่นี่จุดเดียว — แผง "ขอให้รีเช็ค" จะได้บอกสถานะล่าสุดเสมอ
   // เดิมเก็บเฉพาะตอนกดคำนวณครั้งแรก (จุดเดียวใน _doOptimize) อีก 5 ทางที่เรียกตัวนี้
   // (แก้เลข · คืนค่ารายช่อง · คืนค่าทั้งตาราง · คำนวณใหม่คงค่าที่แก้ · คำนวณใหม่เฉพาะ SKU)
@@ -10092,7 +10113,13 @@ function _handleTargetSunImportResponse(res, j, opts = {}) {
       if (n > 0) _showNotInTargetSunModal(n, detail.rows_not_in_targetsun);
     }
     const msg = _userFacingError(_formatApiErrorDetail(j), "ส่งข้อมูลไม่สำเร็จ");
-    throw new Error(msg);
+    // คืน false แทนการ throw — ตอนอยู่กลางลูปส่งหลายทีม (_doLakehouseUploadInner)
+    // การ throw จะหลุดไป catch นอกสุดทันที ข้าม failedSup/_showPartialSendSummaryModal
+    // ไปเลย ผู้ใช้จึงไม่รู้ว่าทีมก่อนหน้าเข้า Target Sun ไปแล้วจริงหรือยัง — ผิดพลาดแบบ
+    // HTTP (timeout/500/เน็ตหลุด) ต้องแสดงผลแบบเดียวกับที่ปลายทางปฏิเสธคำขอ (ts.success
+    // === false ข้างล่าง) ซึ่งตัวเรียกทุกจุดเช็คค่าที่คืนมาอยู่แล้ว ไม่ได้พึ่ง throw
+    toast("❌ ส่งข้อมูลไม่สำเร็จ: " + msg, "red");
+    return false;
   }
   const ts = j.targetsun || {};
   if (ts.success === false) {
@@ -10567,7 +10594,20 @@ async function _doLakehouseUploadInner() {
     for (let i = 0; i < legacyJobs.length; i++) {
       const { basePayload } = legacyJobs[i];
       if (confirmedManualTopup) basePayload.confirm_manual_topup = true;
-      if (!(await _importTargetSunForPayload(basePayload))) {
+      let okLegacy = false;
+      try {
+        okLegacy = await _importTargetSunForPayload(basePayload);
+      } catch (e) {
+        // เน็ตหลุด/หมดเวลาระหว่างรอคำตอบ — fetch throw ไม่มี response ให้ดู
+        // คำขออาจถึง Target Sun ไปแล้วก็ได้ ต้องบอกผู้ใช้ให้ตรวจก่อนส่งซ้ำ
+        _clearTargetSunProgressTimer();
+        toast("❌ ไม่ได้รับคำตอบจาก server: " + _userFacingError(e), "red");
+        failedSup = { supId: basePayload.sup_id, uncertain: true };
+        legacyJobs.slice(i + 1).forEach((x) => notSentSupIds.push(x.supId));
+        jobs.forEach((x) => notSentSupIds.push(x.supId));
+        break;
+      }
+      if (!okLegacy) {
         // หยุดที่ทีมนี้ แต่ต้องไม่ทิ้งงานสรุปท้ายฟังก์ชัน — ผู้ใช้ต้องรู้ว่า
         // ทีมก่อนหน้าส่งไปแล้วจริง ๆ และเหลือทีมไหนที่ยังไม่ได้ส่ง
         failedSup = { supId: basePayload.sup_id };
@@ -10593,7 +10633,19 @@ async function _doLakehouseUploadInner() {
         allocations: [],
         prepare_token: token,
       };
-      const { res, j } = await _fetchTargetSunImport(importBody);
+      let res, j;
+      try {
+        ({ res, j } = await _fetchTargetSunImport(importBody));
+      } catch (e) {
+        // เน็ตหลุด/หมดเวลาระหว่างรอคำตอบ (fetch throw ไม่มี response) — เดิมหลุดไป
+        // catch นอกสุดทันที ข้ามกล่องสรุปรายทีมไปเลย ทั้งที่นี่คือกรณีที่อันตรายที่สุด
+        // เพราะ server อาจส่งเข้า Target Sun ไปแล้วแต่คำตอบมาไม่ถึง
+        _clearTargetSunProgressTimer();
+        toast("❌ ไม่ได้รับคำตอบจาก server: " + _userFacingError(e), "red");
+        failedSup = { supId: basePayload.sup_id, uncertain: true };
+        jobs.slice(i + 1).forEach((x) => notSentSupIds.push(x.supId));
+        break;
+      }
       _clearTargetSunProgressTimer();
       setGlobalBusyProgress(95, "กำลังสรุปผล…", UX.busySendTargetHint);
       if (!_handleTargetSunImportResponse(res, j, { supId: basePayload.sup_id })) {
@@ -10643,6 +10695,7 @@ async function _doLakehouseUploadInner() {
     _showPartialSendSummaryModal({
       sent: sentSupIds,
       failed: failedSup.supId,
+      failedUncertain: !!failedSup.uncertain,
       notSent: notSentSupIds,
       pending,
     });
@@ -10692,7 +10745,7 @@ async function _doLakehouseUploadInner() {
    เดิมเจอทีมล้มแล้ว return ทันที ผู้ใช้เห็นแค่ toast ว่าทีมนั้นล้ม โดยไม่รู้ว่า
    ทีมก่อนหน้าเข้า Target Sun ไปแล้ว (ย้อนไม่ได้) และไม่รู้ว่าเหลือทีมไหน
    ที่ยังไม่ได้ส่ง — ต้องส่งซ้ำเฉพาะทีมที่เหลือ ไม่ใช่ส่งใหม่ทั้งชุด */
-function _showPartialSendSummaryModal({ sent, failed, notSent, pending }) {
+function _showPartialSendSummaryModal({ sent, failed, notSent, pending, failedUncertain = false }) {
   const chip = (s, cls) =>
     `<span class="send-sum__chip send-sum__chip--${cls}">${escapeHtml(s)}</span>`;
   const line = (label, ids, cls, note) =>
@@ -10710,8 +10763,12 @@ function _showPartialSendSummaryModal({ sent, failed, notSent, pending }) {
       <div class="send-sum">
         ${line("เข้า Target Sun แล้ว", sent, "ok",
                "ข้อมูลเข้าไปแล้วจริง ย้อนคืนไม่ได้ — ห้ามส่งทีมเหล่านี้ซ้ำ")}
-        ${line("ล้มที่ทีมนี้", [failed], "bad",
-               "ดูข้อความที่เพิ่งแจ้งเพื่อแก้ต้นเหตุ แล้วส่งทีมนี้ใหม่")}
+        ${failedUncertain
+          ? line("ไม่รู้ผล — คำตอบมาไม่ถึง", [failed], "bad",
+                 "เน็ตหลุดหรือรอนานเกินระหว่างส่ง ทีมนี้<strong>อาจเข้า Target Sun ไปแล้ว</strong> "
+                 + "— ตรวจเป้าใน Target Sun ก่อน อย่าเพิ่งกดส่งซ้ำ")
+          : line("ล้มที่ทีมนี้", [failed], "bad",
+                 "ดูข้อความที่เพิ่งแจ้งเพื่อแก้ต้นเหตุ แล้วส่งทีมนี้ใหม่")}
         ${line("ยังไม่ได้ส่ง", notSent, "wait",
                "หยุดไว้ตั้งแต่ทีมที่ล้ม — ยังไม่มีอะไรเข้า Target Sun")}
         ${
@@ -13804,7 +13861,13 @@ async function runReAllocationForSkus(skus, opts = {}) {
   requestAnimationFrame(() => adjustResultStickyGap());
   qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
   toast(`✅ กระจายใหม่เฉพาะ ${changedSet.size} สินค้า — ตารางเน้นคอลัมน์ที่เพิ่งกระจายไว้ให้`, "green");
-  saveDraft(true);
+  // จุดเดียวกับ _persistAfterCellLock/onResultEdit — ต้องบันทึกแยกทีมในโหมดรวมภาค
+  // ไม่งั้น snapshot ของทีมเจ้าของปนแถวของเพื่อนทีม (ดูคอมเมนต์ใน autoRebalance)
+  if (S.compositeAllocView && _regionalAggregateWritable()) {
+    queueRegionalAllocationSave(_deriveAllocStatus());
+  } else {
+    saveDraft(true);
+  }
   // พาไปดูคอลัมน์แรกที่เพิ่งกระจาย
   const first = changed[0];
   setTimeout(() => {

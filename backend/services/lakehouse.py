@@ -1462,6 +1462,9 @@ def target_drift_for_sups(
     }
 
 
+_UNSET = object()
+
+
 def assert_target_snapshot_is_fresh(
     sup_id: str,
     month: int,
@@ -1469,6 +1472,7 @@ def assert_target_snapshot_is_fresh(
     *,
     emp_codes: list[str] | None = None,
     confirmed: bool = False,
+    live_by_sku: dict[str, int] | None = _UNSET,  # type: ignore[assignment]
 ) -> None:
     """
     เตือนเมื่อเป้าใน Target Sun เปลี่ยนไปหลังจากผู้ใช้โหลดข้อมูลขั้นที่ 1
@@ -1483,14 +1487,22 @@ def assert_target_snapshot_is_fresh(
     **เรียกจากเส้นทางส่งจริงเท่านั้น** ห้ามย้ายกลับเข้าไปใน _build_tga_upload_dataframe
     ตัวสร้างไฟล์ต้องทำงานได้แบบออฟไลน์ล้วน (อ่านแต่ cache ในเครื่อง) ไม่งั้นการ
     ดาวน์โหลด Excel และเทสต์ที่สร้างไฟล์จะยิงเน็ตขึ้น Target Sun โดยไม่มีใครตั้งใจ
+
+    `live_by_sku` — ให้ผู้เรียกที่อ่านสดมาแล้ว (เช่น ตอน import ที่อ่าน
+    _live_target_snapshot อยู่แล้วเพื่อตรวจจำนวนแถวหลังส่ง) ส่งค่ามาใช้ต่อได้เลย
+    ไม่ต้องยิง Target Sun ซ้ำสองรอบ — ไม่ระบุ (ค่าเริ่มต้น) จึงอ่านเองตามเดิม
+    ระบุเป็น None ตรงๆ หมายถึง "อ่านมาแล้วแต่ไม่สำเร็จ" ก็จะไม่บล็อกเหมือนอ่านเองไม่ได้
     """
     if confirmed:
         return
     snapshot = _sup_target_boxes_by_sku(sup_id, month, year)
     if not snapshot:
         return
-    codes = list(emp_codes) if emp_codes is not None else team_emp_codes_from_grain(sup_id, month, year)
-    live = _live_target_boxes_by_sku(sup_id, month, year, codes)
+    if live_by_sku is _UNSET:
+        codes = list(emp_codes) if emp_codes is not None else team_emp_codes_from_grain(sup_id, month, year)
+        live = _live_target_boxes_by_sku(sup_id, month, year, codes)
+    else:
+        live = live_by_sku
     if live is None:
         return
 

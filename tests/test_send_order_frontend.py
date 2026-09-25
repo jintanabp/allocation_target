@@ -291,5 +291,114 @@ class TestSendOrder(unittest.TestCase):
             self.assertIn(flag, self.src, f"ต้องตั้ง {flag} แยกกัน")
 
 
+def _function_body_skip_default_param_braces(name: str) -> str:
+    """
+    เหมือน _function_source_any แต่ข้ามวงเล็บปีกกาใน default param (เช่น `opts = {}`)
+    ก่อนหา body จริง — ตัวเดิมเจอ `{` แรกหลังชื่อฟังก์ชันแล้วหยุด พอ signature มี
+    `opts = {}` เลยได้ก้อนว่างของ default param แทนตัว body จริงทั้งฟังก์ชัน
+    """
+    src = open(APP_JS, encoding="utf-8").read()
+    m = re.search(rf"^(?:async\s+)?function {re.escape(name)}\(", src, re.MULTILINE)
+    if not m:
+        raise AssertionError(f"ไม่พบฟังก์ชัน {name} ใน app.js")
+    # ไล่หาวงเล็บกลมปิดที่จับคู่กับตัวเปิดของ parameter list ก่อน
+    paren_depth = 1
+    i = m.end()
+    while paren_depth > 0:
+        if src[i] == "(":
+            paren_depth += 1
+        elif src[i] == ")":
+            paren_depth -= 1
+        i += 1
+    start = src.index("{", i)
+    depth = 0
+    for j in range(start, len(src)):
+        if src[j] == "{":
+            depth += 1
+        elif src[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[start:j + 1]
+    raise AssertionError(f"หาปลายฟังก์ชัน {name} ไม่เจอ")
+
+
+class TestHttpFailureMidBatchStaysVisible(unittest.TestCase):
+    """
+    _handleTargetSunImportResponse ต้องคืน false เมื่อ HTTP ไม่ ok ไม่ใช่ throw
+
+    ของเดิม throw ตรงนี้ — พออยู่กลางลูปส่งหลายทีม (_doLakehouseUploadInner) การ throw
+    จะหลุดไป catch นอกสุดทันที ข้าม failedSup/_showPartialSendSummaryModal ไปเลย ผู้ใช้
+    จึงไม่รู้ว่าทีมก่อนหน้าเข้า Target Sun ไปแล้วจริงหรือยัง (เน็ตหลุด/timeout/500 ระหว่าง
+    ส่งทีมกลางๆ ของชุด) — ทุกจุดที่เรียกฟังก์ชันนี้เช็คค่าที่คืนมาเป็น boolean อยู่แล้ว
+    ไม่ได้พึ่ง throw เลยสักจุด
+    """
+
+    def setUp(self):
+        self.src = _function_body_skip_default_param_braces("_handleTargetSunImportResponse")
+
+    def test_does_not_throw_on_http_failure(self):
+        not_ok_branch = self.src[self.src.index("if (!res.ok)"):]
+        # ตัดเฉพาะช่วงก่อนถึง "const ts = j.targetsun" (จุดเริ่มกิ่งสำเร็จ)
+        end = not_ok_branch.find("const ts = j.targetsun")
+        branch = not_ok_branch[:end] if end != -1 else not_ok_branch
+        self.assertNotIn(
+            "throw new Error", branch,
+            "กิ่ง !res.ok ต้องไม่ throw — ต้อง toast + return false เหมือนกิ่ง ts.success===false",
+        )
+        self.assertIn("return false", branch)
+        self.assertIn("toast(", branch)
+
+    def test_all_call_sites_check_the_boolean_return_not_try_catch(self):
+        """ทุกจุดที่เรียกต้องเช็คค่าที่คืนมา (ไม่ใช่ throw แล้วหวังให้ caller ดักจับ)"""
+        src = open(APP_JS, encoding="utf-8").read()
+        calls = [
+            m for m in re.finditer(r"_handleTargetSunImportResponse\(", src)
+            if not re.search(r"(?:async\s+)?function\s*$", src[max(0, m.start() - 20):m.start()])
+        ]
+        self.assertGreaterEqual(len(calls), 2, "ควรมีอย่างน้อยจุดเรียกตรงและผ่าน wrapper")
+        for m in calls:
+            # หาบรรทัดที่เรียก แล้วดูว่าเป็นส่วนหนึ่งของ if(...)/return(...) ไม่ใช่ลอย ๆ
+            line_start = src.rfind("\n", 0, m.start()) + 1
+            line_end = src.find("\n", m.end())
+            line = src[line_start:line_end]
+            self.assertTrue(
+                "return" in line or "if" in line or "await _handleTargetSunImportResponse" in line,
+                f"จุดเรียก _handleTargetSunImportResponse ต้องใช้ค่าที่คืนมา: {line.strip()}",
+            )
+
+
+class TestNetworkFailureMidBatchStaysVisible(unittest.TestCase):
+    """
+    เน็ตหลุด/หมดเวลาจริง (fetch throw ไม่มี response) ระหว่างส่งทีมหนึ่งในชุด ต้องได้
+    กล่องสรุปรายทีมเหมือนกัน — การคืน false ใน _handleTargetSunImportResponse ช่วยได้
+    แค่ตอน server ตอบ HTTP error กลับมา ถ้า fetch throw เองจะหลุดไป catch นอกสุดข้าม
+    กล่องสรุปไปเลย ซึ่งเป็นกรณีที่อันตรายที่สุด (server อาจส่งเข้าไปแล้วแต่คำตอบมาไม่ถึง)
+    """
+
+    def setUp(self):
+        self.src = _function_body_skip_default_param_braces("_doLakehouseUploadInner")
+
+    def test_token_loop_catches_fetch_throw_as_uncertain_failure(self):
+        i = self.src.index("await _fetchTargetSunImport(importBody)")
+        before = self.src[max(0, i - 200):i]
+        self.assertIn("try {", before, "ต้องครอบ _fetchTargetSunImport ด้วย try ในลูป")
+        after = self.src[i:i + 900]
+        self.assertIn("catch (e)", after)
+        self.assertIn("uncertain: true", after)
+        self.assertIn("break;", after)
+
+    def test_legacy_loop_catches_throw_as_uncertain_failure(self):
+        i = self.src.index("await _importTargetSunForPayload(basePayload)")
+        after = self.src[i:i + 900]
+        self.assertIn("catch (e)", after)
+        self.assertIn("uncertain: true", after)
+
+    def test_summary_modal_warns_that_the_team_may_already_be_in(self):
+        self.assertIn("failedUncertain: !!failedSup.uncertain", self.src)
+        modal = _function_body_skip_default_param_braces("_showPartialSendSummaryModal")
+        self.assertIn("failedUncertain", modal)
+        self.assertIn("อาจเข้า Target Sun ไปแล้ว", modal)
+
+
 if __name__ == "__main__":
     unittest.main()

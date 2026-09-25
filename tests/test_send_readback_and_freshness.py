@@ -132,6 +132,28 @@ class TestTargetFreshness(unittest.TestCase):
         with patch.object(lh, "_live_target_boxes_by_sku", return_value={"X": 1}):
             lh.assert_target_snapshot_is_fresh("SLNOFILE", 8, 2026, emp_codes=["E1"])
 
+    def test_live_by_sku_override_skips_the_internal_read(self):
+        """
+        ผู้เรียกที่อ่านสดมาแล้ว (เช่น import_prepared_targetsun ที่อ่าน
+        _live_target_snapshot อยู่แล้วเพื่อตรวจจำนวนแถว) ส่งค่ามาใช้ต่อได้เลย ไม่ต้อง
+        ยิง Target Sun ซ้ำสองรอบ
+        """
+        with patch.object(lh, "_live_target_boxes_by_sku") as spy:
+            with self.assertRaises(HTTPException) as ctx:
+                lh.assert_target_snapshot_is_fresh(
+                    self.SUP, 8, 2026, emp_codes=["E1"], live_by_sku={"X": 99, "Y": 5},
+                )
+            spy.assert_not_called()
+        self.assertEqual(ctx.exception.detail["drifts"][0]["sku"], "X")
+
+    def test_live_by_sku_override_none_means_unreadable_not_unchanged(self):
+        """ระบุ live_by_sku=None ตรงๆ = 'อ่านมาแล้วแต่ไม่สำเร็จ' ต้องไม่บล็อก เหมือนอ่านเองไม่ได้"""
+        with patch.object(lh, "_live_target_boxes_by_sku") as spy:
+            lh.assert_target_snapshot_is_fresh(
+                self.SUP, 8, 2026, emp_codes=["E1"], live_by_sku=None,
+            )
+            spy.assert_not_called()
+
 
 class TestBuilderStaysOffline(unittest.TestCase):
     """
@@ -150,14 +172,20 @@ class TestBuilderStaysOffline(unittest.TestCase):
             )
 
     def test_send_path_does_the_freshness_check(self):
+        """
+        3 จุด: prepare, import (ขั้น 2 — เดิมไม่มี ปิดช่องว่างที่เป้าขยับระหว่าง
+        เตรียมครบทุกทีม/ถามยืนยัน/ตรวจยอดรวมทั้งชุด แล้วค่อยวน import ทีละทีมซึ่งแต่ละ
+        POST ค้างได้นานถึง TARGETSUN_IMPORT_TIMEOUT_SEC วินาที — 24 ก.ย. 2026),
+        และเส้นทางส่งรวดเดียว (legacy)
+        """
         import inspect
 
         from backend.services import targetsun_import as ti
 
         src = inspect.getsource(ti)
         self.assertEqual(
-            src.count("assert_target_snapshot_is_fresh("), 2,
-            "ต้องเรียกทั้งเส้นทาง prepare และเส้นทางส่งรวดเดียว",
+            src.count("assert_target_snapshot_is_fresh("), 3,
+            "ต้องเรียกทั้งเส้นทาง prepare, import ขั้น 2, และเส้นทางส่งรวดเดียว",
         )
 
     def test_live_calls_to_the_real_system_are_blocked(self):
