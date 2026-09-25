@@ -87,7 +87,7 @@ class TestTargetSunBulk(unittest.TestCase):
     def test_no_deadlock_under_lock(self):
         """
         set_targetsun_flag_bulk ทำ read+write ใต้ _STORE_LOCK เดียว
-        _STORE_LOCK เป็น Lock ธรรมดา ถ้าเผลอเรียก write_rows() (ซึ่งจับ lock ซ้ำ)
+        (_STORE_LOCK เป็น RLock ตั้งแต่ 25 ก.ย. 2026 — เดิมเป็น Lock ธรรมดา เทสนี้เฝ้าไว้ต่อ) ถ้าเผลอเรียก write_rows() (ซึ่งจับ lock ซ้ำ)
         จะค้างตาย — เทสต์นี้จับได้ด้วย timeout
         """
         done = threading.Event()

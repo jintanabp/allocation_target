@@ -7,9 +7,10 @@ from __future__ import annotations
 import json
 import logging
 import os
-import tempfile
 import threading
 from typing import Any, Callable
+
+from ..core.atomic_io import atomic_write_text, read_locked
 
 logger = logging.getLogger("target_allocation")
 
@@ -311,8 +312,11 @@ def read_rows_unlocked() -> list[dict[str, Any]]:
         logger.warning("user_access JSON ไม่พบ: %s", path)
         return []
     try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
+        # ล็อกต่อ path ตัวเดียวกับตัวเขียน — บน Windows ถ้าอ่านค้าง handle ไว้ตอนตัวเขียน
+        # os.replace ตัวเขียนจะพัง PermissionError (ดู core/atomic_io.py)
+        with read_locked(path):
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
     except (OSError, json.JSONDecodeError) as e:
         logger.error("อ่าน user_access JSON ไม่ได้ %s: %s", path, e)
         raise PermissionError(
@@ -330,28 +334,16 @@ def read_rows() -> list[dict[str, Any]]:
 
 def _write_rows_unlocked(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
-    เขียนไฟล์โดย **ไม่จับ _STORE_LOCK** — ผู้เรียกต้องถืออยู่แล้ว
+    เขียนไฟล์โดย **ไม่จับ _STORE_LOCK** — ผู้เรียกต้องถืออยู่แล้ว (mutate_rows/write_rows)
 
-    _STORE_LOCK เป็น threading.Lock ธรรมดา ไม่ใช่ RLock
-    เรียก write_rows() ซ้อนอยู่ในบล็อกที่ถือ lock อยู่จะ deadlock ทันที
-    ตัวที่ต้องทำ read-modify-write ครบรอบใต้ lock เดียวจึงต้องใช้ตัวนี้
+    เขียนผ่าน atomic_write_text (temp + os.replace + retry) — เดิมเขียน temp+replace เอง
+    ไม่มี retry บน Windows ถ้า antivirus/ตัวทำ index ถือไฟล์ค้างชั่วขณะ os.replace พัง
+    PermissionError แล้วการบันทึกผู้ใช้ของแอดมินล้มเป็น 500 (เจอจริงในชุดเทส 25 ก.ย. 2026)
     """
     normalized = _dedupe_rows(rows)
     path = user_access_json_path()
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     payload = json.dumps(normalized, ensure_ascii=False, indent=2) + "\n"
-    dir_name = os.path.dirname(path) or "."
-    fd, tmp = tempfile.mkstemp(prefix=".user_access_", suffix=".json", dir=dir_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(payload)
-        os.replace(tmp, path)
-    except Exception:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    atomic_write_text(path, payload)
     logger.info("บันทึก user_access %d แถว → %s", len(normalized), path)
     return normalized
 

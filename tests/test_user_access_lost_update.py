@@ -361,6 +361,33 @@ class MutateRowsContractTest(_TmpStore):
         )
 
 
+class WriteSurvivesTransientPermissionErrorTest(_TmpStore):
+    """
+    Windows: antivirus/ตัวทำ index ถือไฟล์ค้างชั่วขณะ → os.replace ได้ PermissionError
+    เดิมตัวเขียนของ user_access ไม่มี retry เลย การบันทึกของแอดมินล้มเป็น 500 (เจอจริงใน
+    ชุดเทส 25 ก.ย. 2026) · ตอนนี้เขียนผ่าน atomic_io ซึ่ง retry ให้
+    """
+
+    def test_one_permission_error_on_replace_is_retried(self):
+        from backend.core import atomic_io
+
+        real_replace = os.replace
+        calls = {"n": 0}
+
+        def flaky(src, dst):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise PermissionError("locked by antivirus")
+            return real_replace(src, dst)
+
+        with patch.object(atomic_io.os, "replace", side_effect=flaky):
+            uas.upsert_row(email="a@example.test", userpl="SL001", note="retry-ok")
+        self.assertGreaterEqual(calls["n"], 2, "ต้อง retry หลัง PermissionError")
+        self.assertEqual(self.rows()[("a@example.test", "SL001")]["note"], "retry-ok")
+        leftovers = [f for f in os.listdir(self._tmp.name) if f != "user_access.json"]
+        self.assertEqual(leftovers, [], "ไม่ควรเหลือไฟล์ temp ค้าง")
+
+
 class NoEndpointWritesAStaleCopyTest(unittest.TestCase):
     """เฝ้าไว้: ห้ามมี endpoint ไหนกลับไปใช้ write_rows() / delete_row() กับแถวที่อ่านไว้ก่อน"""
 
