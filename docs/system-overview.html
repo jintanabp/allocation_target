@@ -283,11 +283,11 @@ UI จึงแสดงแค่ 4 ตัว ยิงผ่าน API ตร�
 <tr><td><strong>I1</strong></td><td>ผลรวมหีบต่อ SKU = เป้าหีบ เป๊ะ ๆ</td><td><code>/optimize</code> ตอบ 409 · ไม่เขียนไฟล์ ไม่สร้าง Excel</td></tr>
 <tr><td><strong>I2</strong></td><td>เซลล์ที่ล็อกออกมาตรงค่าที่ล็อก</td><td>คีย์ normalize ที่ประตูเข้า · ล็อกเกินเป้าตอบ 400</td></tr>
 <tr><td><strong>I3</strong></td><td>หีบเป็นจำนวนเต็ม ไม่ติดลบ</td><td>ปัดเป็น int ครั้งเดียวที่ประตูเข้า</td></tr>
-<tr><td><strong>I4</strong></td><td><code>force_min_one</code> → ทุกคนได้ ≥ 1 หีบ (เมื่อเป้า ≥ จำนวนคน)</td><td>รอดผ่านทั้ง proportional → LP → greedy</td></tr>
+<tr><td><strong>I4</strong></td><td><code>force_min_one</code> → ทุกคนได้ ≥ 1 หีบ (เมื่อเป้า ≥ จำนวนคน)</td><td>รอดผ่านทั้ง proportional → LP → greedy · ทั้ง 3 ชั้นตัดสินด้วย <code>_min_one_floor()</code> — ล็อกจนแจกคนละ 1 ไม่พอ = ไม่บังคับเฉพาะ SKU นั้น (I1 ชนะ)</td></tr>
 <tr><td><strong>I5</strong></td><td>เซลล์อยู่ในรั้ว % จาก baseline</td><td>ข้อจำกัดใน LP + ขอบเขตใน greedy</td></tr>
 <tr><td><strong>I6</strong></td><td>SKU รหัสเดียวถูกกระจายรอบเดียว</td><td>ยุบซ้ำก่อนแบ่งกลุ่มตามแบรนด์</td></tr>
 <tr><td><strong>I7</strong></td><td>โหมดรวมภาคไม่ปน <em>ตัวตน</em> ข้ามทีม</td><td>คีย์ล็อกมีรหัสซุปนำหน้า · ห้าม fallback ไปรหัสผู้จัดการ</td></tr>
-<tr><td><strong>I9</strong></td><td>คู่ emp×sku ที่ไม่เคยขายกันเลยใน 12 เดือน = เป้า 0 (กติกา opt-in)</td><td><code>_never_sold_plan()</code> ก่อน <code>_proportional</code> เสมอ · เฉลี่ยแทนถ้าทั้งทีมไม่มีประวัติ หรือเป้าเกิน 5 เท่าของประวัติ</td></tr>
+<tr><td><strong>I9</strong></td><td>คู่ emp×sku ที่ไม่เคยขายกันเลยใน 12 เดือน = เป้า 0 (กติกา opt-in)</td><td><code>_never_sold_plan()</code> ก่อน <code>_proportional</code> เสมอ · เฉลี่ยแทนถ้าทั้งทีมไม่มีประวัติ หรือเป้าเกิน 5 เท่าของประวัติ · ปิดเฉพาะ SKU ถ้าคนเคยขายถูกล็อกครบแต่ยังเหลือหีบ (<code>sellers_all_locked</code>)</td></tr>
 </table></div>
 <p style="color:var(--ink-3);font-size:14px">เปิด/ปิดได้ทั้งระบบหรือรายทีมจากหน้าแอดมิน แท็บ「กติกาการเกลี่ย」— ไม่ต้อง deploy (ดู §11)</p>
 
@@ -431,6 +431,12 @@ PROVINCECODE · WAREHOUSECODE · QUANTITYCASE · EFFECTIVEDATE · UPDATEDATE · 
   เพราะเลขเก่ายังค้างอยู่เต็มก้อน ไปเติมแค่ส่วนขาดจะเกินเป้า</li>
   <li><strong>รายการ SKU ที่ต้องไปแก้เองไม่หายเมื่อปิดกล่อง</strong> — ค้างเป็นแถบเหลืองบนหน้าผลลัพธ์
   (แยกตามทีม+งวด, เก็บใน localStorage) จนกว่าจะกด「แก้ครบแล้ว」หรือส่งรอบใหม่แล้วไม่เหลือ SKU ที่ขาด</li>
+  <li><strong>เป้าเปลี่ยนหลังโหลดขั้นที่ 1</strong> — ตรวจทั้งตอน prepare และ<strong>ซ้ำตอน import ก่อน POST</strong>
+  (409 <code>send_target_stale</code>) · กดยืนยันตอน prepare แล้วไม่ถามซ้ำ (จดไว้ใน bundle)</li>
+  <li><strong>กันส่งซ้อน</strong> — token เดียวกันส่งได้ทีละคำขอ (409 <code>send_already_in_progress</code>)</li>
+  <li><strong>ตรวจหลังส่ง</strong> — ยอดที่ลงจริง + จำนวนแถวก่อน/หลัง (จับแถวซ้ำคนละคลัง)</li>
+  <li><strong>ส่งหลายทีมแล้วหยุดกลางทาง</strong> — กล่อง「ส่งไม่ครบทุกทีม」แยก ส่งแล้ว / ล้ม / <strong>ไม่รู้ผล</strong>
+  (เน็ตหลุด — อาจเข้าไปแล้ว ห้ามส่งซ้ำก่อนตรวจ) / ยังไม่ได้ส่ง</li>
 </ul>
 
 <h2 id="roles">9 · บทบาทและสิทธิ์</h2>

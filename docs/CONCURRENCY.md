@@ -132,7 +132,7 @@ client บันทึก → ส่ง if_match_version: 3
 |---|---|---|
 | `core/atomic_io.py` | `RLock` ต่อ path | torn read + `os.replace` ชนกัน (Windows) |
 | `services/allocation_store.py` | `_STORE_LOCK` (**RLock**) | CAS + `mark_sent_targetsun` RMW |
-| `services/user_access_store.py` | `_STORE_LOCK` (**RLock**) + `mutate_rows()` | อ่าน→แก้→เขียน รอบเดียวใต้ล็อกเดียว (ทุก endpoint ผู้ใช้/สิทธิ์ในหน้าแอดมิน) |
+| `services/user_access_store.py` | `_STORE_LOCK` (**RLock**) + `mutate_rows()` + `atomic_write_text` | อ่าน→แก้→เขียน รอบเดียวใต้ล็อกเดียว (ทุก endpoint ผู้ใช้/สิทธิ์ในหน้าแอดมิน) · retry ตอน `os.replace` โดน PermissionError |
 | `services/fabric_cache.py` | `_LOCK` | เขียน cache |
 | `services/app_runtime_settings.py` | `_LOCK` | เขียน settings |
 | `services/usage_log_store.py` | `_LOCK` | append/rewrite jsonl |

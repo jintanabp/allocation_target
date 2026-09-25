@@ -160,10 +160,10 @@ Methods: `get_tga_max_effective_raw`, `get_tga_target_salesman_granular`, `get_t
 ### Workflow อัปเดตสิทธิ์
 
 ```bash
-python scripts/import_user_access_from_division_xlsx.py
-python scripts/rebuild_access_hierarchy.py
-python scripts/validate_access_with_dim.py
-python scripts/repair_user_access.py
+python scripts/access/import_user_access_from_division_xlsx.py
+python scripts/access/rebuild_access_hierarchy.py
+python scripts/access/validate_access_with_dim.py
+python scripts/access/repair_user_access.py
 ```
 
 ---
