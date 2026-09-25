@@ -7297,6 +7297,14 @@ function _neverSoldReviewLines() {
       + (heavy.length > 5 ? ` … และอีก ${heavy.length - 5} สินค้า` : "")
     );
   }
+  // คนที่เคยขายถูกล็อกไว้ครบทุกคน หีบที่เหลือจึงต้องไปอยู่กับคนไม่เคยขาย (ยอดรวมห้ามขาด)
+  const allLocked = items.filter(([, v]) => v?.reason === "sellers_all_locked");
+  if (allLocked.length) {
+    out.push(
+      `${allLocked.length.toLocaleString("th-TH")} สินค้าที่คนเคยขายถูกล็อกไว้ครบทุกคน — `
+      + `หีบที่เหลือจึงไปอยู่กับคนที่ไม่เคยขาย ถ้าไม่ต้องการให้ปรับตัวเลขที่ล็อกไว้`
+    );
+  }
   if (evened.length) {
     const noSeller = evened.filter(([, v]) => v.reason === "no_seller").length;
     const push = evened.length - noSeller;
@@ -12536,8 +12544,14 @@ function checkAndLoadDraft() {
         draftToast += "\n\n" + mergeMsgs.map(m => m.text).join("\n");
       }
       toast(draftToast, mergeMsgs.some(m => m.type === "warn") ? "red" : "green");
+      // ตอนนี้ไม่มีที่ไหนเรียก checkAndLoadDraft แล้ว (ตรวจ 25 ก.ย. 2026) — กันไว้เหมือนจุดอื่น
+      // ถ้าถูกต่อกลับมาใช้ในโหมดรวมภาค จะได้ไม่บันทึกแถวข้ามทีมลง snapshot ทีมเจ้าของ
       try {
-        saveDraft(true);
+        if (S.compositeAllocView && _regionalAggregateWritable()) {
+          queueRegionalAllocationSave(_deriveAllocStatus());
+        } else {
+          saveDraft(true);
+        }
       } catch (_) {
         /* ignore */
       }

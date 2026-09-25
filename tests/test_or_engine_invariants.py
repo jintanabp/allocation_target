@@ -164,6 +164,65 @@ class TestRegressionPerFinding(unittest.TestCase):
                 total = int(out.loc[out.sku == "900001", "allocated_boxes"].sum())
                 self.assertEqual(total, 10, f"กระจายรวม {total} หีบ แต่เป้า 10 หีบ")
 
+    def test_F4_force_min_one_lock_that_makes_one_each_impossible_keeps_lp(self):
+        """
+        ติ๊ก "ทุกคนอย่างน้อย 1 หีบ" แล้วล็อกช่องจนหีบที่เหลือแจกคนละ 1 ไม่พอ
+        (5 คน เป้า 5 ล็อก E1 ไว้ 3 → เหลือ 2 แต่คนที่ไม่ได้ล็อก 4 คน)
+
+        เดิม LP ยังบังคับขั้นต่ำ 1 ให้ทั้ง 4 คน → หาคำตอบไม่ได้ทั้งทีม แล้วถอยไปแบ่งตาม
+        สัดส่วนทุก SKU (เสียการเกลี่ยเงินหมดเพราะ SKU เดียว) — ตอนนี้ทุกชั้นใช้กติกา
+        เดียวกัน (_min_one_floor): แจกไม่พอ = ไม่บังคับเฉพาะ SKU นั้น (I1 ชนะ I4)
+        """
+        emps = [f"E{i+1}" for i in range(5)]
+        df_emp = pd.DataFrame([{"emp_id": e, "yellow_target": 1000.0} for e in emps])
+        df_sku = pd.DataFrame([
+            {"sku": "900010", "supervisor_target_boxes": 5, "price_per_box": 100.0},
+            {"sku": "900011", "supervisor_target_boxes": 50, "price_per_box": 100.0},
+        ])
+        df_hist = pd.DataFrame([
+            {"emp_id": e, "sku": s, "hist_boxes": h}
+            for e, h in zip(emps, (10, 5, 3, 1, 1)) for s in ("900010", "900011")
+        ])
+        locks = [{"emp_id": "E1", "sku": "900010", "locked_boxes": 3}]
+        for strat in STRATEGIES:
+            with self.subTest(strategy=strat):
+                out = allocate_boxes(
+                    df_emp, df_sku, df_hist, strategy=strat,
+                    force_min_one=True, locked_edits=locks,
+                )
+                self.assertFalse(
+                    out.attrs.get("optimization_fallback"),
+                    "LP ต้องไม่ล้มทั้งทีมเพราะ SKU เดียวที่แจกคนละ 1 ไม่พอ",
+                )
+                for _, r in df_sku.iterrows():
+                    got = int(out.loc[out.sku == r["sku"], "allocated_boxes"].sum())
+                    self.assertEqual(got, int(r["supervisor_target_boxes"]), f"[{strat}] {r['sku']}")
+                cell = out[(out.emp_id == "E1") & (out.sku == "900010")]
+                self.assertEqual(int(cell["allocated_boxes"].iloc[0]), 3)
+
+    def test_F4b_force_min_one_still_applies_when_locks_leave_enough(self):
+        """ล็อกแล้วยังเหลือพอ (ล็อก E1 ไว้ 1 จากเป้า 5) → ทุกคนยังต้องได้ >= 1"""
+        emps = [f"E{i+1}" for i in range(5)]
+        df_emp = pd.DataFrame([{"emp_id": e, "yellow_target": 1000.0} for e in emps])
+        df_sku = pd.DataFrame(
+            [{"sku": "900012", "supervisor_target_boxes": 9, "price_per_box": 100.0}]
+        )
+        df_hist = pd.DataFrame([
+            {"emp_id": e, "sku": "900012", "hist_boxes": h}
+            for e, h in zip(emps, (10, 5, 3, 1, 0))
+        ])
+        locks = [{"emp_id": "E1", "sku": "900012", "locked_boxes": 1}]
+        for strat in STRATEGIES:
+            with self.subTest(strategy=strat):
+                out = allocate_boxes(
+                    df_emp, df_sku, df_hist, strategy=strat,
+                    force_min_one=True, locked_edits=locks,
+                )
+                per = out[out.sku == "900012"].set_index("emp_id")["allocated_boxes"]
+                for e in emps:
+                    self.assertGreaterEqual(int(per.get(e, 0)), 1, f"{e} [{strat}]")
+                self.assertEqual(int(per.sum()), 9, f"[{strat}]")
+
     def test_F2_locks_exceeding_target_do_not_overshoot(self):
         """ล็อกรวม 15 หีบ แต่เป้า 10 → ต้องไม่ปล่อยผลที่เกินเป้าออกมาเงียบ ๆ"""
         emps = [f"E{i+1}" for i in range(3)]

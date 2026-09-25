@@ -205,6 +205,71 @@ class NeverSoldZeroTest(unittest.TestCase):
         self.assertEqual(got.get("E05"), 9, f"ล็อกต้องอยู่ครบ — ได้ {got}")
         self.assertEqual(sum(got.values()), 100)
 
+    def test_fallback_path_agrees_with_lp_on_force_min_one(self):
+        """
+        ทางสำรอง (_proportional ตอน LP ล้ม) ต้องให้คนไม่เคยขายได้ 1 หีบเหมือน LP เมื่อติ๊ก
+        "ทุกคนอย่างน้อย 1 หีบ" — เดิมทางนี้ตัดพวกเขาออกจากการแบ่งเลยได้ 0 ผลจึงต่างกัน
+        ตามว่ารอบนั้นไปจบที่ LP หรือถอยมาทางสำรอง
+        """
+        from backend.OR_engine import _proportional
+
+        emps = team(5)
+        df_emp, df_sku, df_hist, _ = make(
+            emps, {"A": 100}, {(e, "A"): 5.0 for e in emps}, {("E02", "A"): 600.0},
+        )
+        zero = {(e, "A") for e in emps if e != "E02"}
+        out = _proportional(df_emp, df_sku, df_hist, "L3M", True, {}, zero_pairs=zero)
+        got = boxes(out, "A")
+        self.assertEqual(sum(got.values()), 100)
+        for e in emps:
+            if e != "E02":
+                self.assertEqual(got.get(e), 1, f"{e} ต้องได้พอดี 1 หีบ — ได้ {got}")
+        self.assertEqual(got.get("E02"), 96)
+
+    def test_all_sellers_locked_leftover_goes_to_non_sellers_without_lp_fallback(self):
+        """
+        ทางหลุดที่ 3: คนเคยขายคนเดียว (E02) ถูกล็อกไว้ 40 จากเป้า 100 — อีก 60 หีบไปได้
+        แค่คนไม่เคยขาย (ห้ามขาดเป้า) เดิมกติกายังตัดพวกเขาเป็น 0 → LP หาคำตอบไม่ได้ทั้ง
+        ทีม ถอยไปแบ่งตามสัดส่วนทุก SKU · ตอนนี้ยกเว้นเฉพาะ SKU นั้น + บอกใน summary
+        """
+        from backend.OR_engine import _never_sold_plan
+
+        emps = team(5)
+        df_emp, df_sku, df_hist, df_12 = make(
+            emps,
+            {"A": 100, "B": 200},
+            {(e, s): 5.0 for e in emps for s in "AB"},
+            {("E02", "A"): 600.0, **{(e, "B"): 50.0 for e in emps}},
+        )
+        locks = [{"emp_id": "E02", "sku": "A", "locked_boxes": 40}]
+        out = allocate_boxes(df_emp, df_sku, df_hist, df_sold_12m=df_12, locked_edits=locks)
+        got = boxes(out, "A")
+        self.assertEqual(got.get("E02"), 40)
+        self.assertEqual(sum(got.values()), 100)
+        self.assertFalse(out.attrs.get("optimization_fallback"), "LP ต้องไม่ล้มทั้งทีม")
+
+        zp, _even, summary = _never_sold_plan(
+            df_12, df_emp, df_sku, {("E02", "A"): 40}, push_multiple=5.0
+        )
+        self.assertFalse([p for p in zp if p[1] == "A"], "SKU A ต้องไม่มีคู่ถูกตัดเป็น 0")
+        self.assertEqual(summary["A"]["reason"], "sellers_all_locked")
+        self.assertEqual(summary["A"]["left_for_non_sellers"], 60)
+
+    def test_all_sellers_locked_covering_whole_target_keeps_rule(self):
+        """ล็อกคนเคยขายไว้เต็มเป้าพอดี — ไม่มีอะไรเหลือให้แบ่ง กติกายังทำงานตามปกติ"""
+        emps = team(5)
+        df_emp, df_sku, df_hist, df_12 = make(
+            emps, {"A": 100}, {(e, "A"): 5.0 for e in emps}, {("E02", "A"): 600.0},
+        )
+        got = boxes(
+            allocate_boxes(
+                df_emp, df_sku, df_hist, df_sold_12m=df_12,
+                locked_edits=[{"emp_id": "E02", "sku": "A", "locked_boxes": 100}],
+            ),
+            "A",
+        )
+        self.assertEqual(got, {"E02": 100})
+
     def test_force_min_one_still_gives_everyone_one_box(self):
         """
         ผู้ใช้ติ๊ก "ทุกคนอย่างน้อย 1 หีบ" = สั่งชัดกว่ากติกาอัตโนมัติ

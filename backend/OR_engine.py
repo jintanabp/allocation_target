@@ -594,6 +594,30 @@ def _never_sold_plan(
         ]
         if not blocked:
             continue
+
+        # ทางหลุดที่ 3: คนที่เคยขายถูกล็อกไว้ "หมดทุกคน" แต่ยังเหลือหีบให้แบ่ง — หีบที่
+        # เหลือไปได้แค่คนที่ไม่เคยขาย (ห้ามขาดเป้า I1 ชนะ) ถ้ายังตัดพวกเขาเป็น 0 ไว้ LP
+        # จะหาคำตอบไม่ได้ "ทั้งทีม" แล้วถอยไปแบ่งตามสัดส่วนทุก SKU (เสียการเกลี่ยเงิน
+        # หมดเพราะ SKU เดียว) — ยกเว้นกติกาเฉพาะ SKU นี้ บอกผู้ใช้ผ่าน summary ให้รู้
+        free_sellers = [e for e in sellers if (e, sku_key) not in locked_map]
+        if not free_sellers:
+            locked_sum = 0
+            for (le, ls), lv in locked_map.items():
+                if _norm_sku(ls) == sku_key and str(le).strip() in emp_set:
+                    try:
+                        locked_sum += max(0, int(lv))
+                    except (TypeError, ValueError):
+                        pass
+            if tgt - locked_sum > 0:
+                summary[sku_key] = {
+                    "reason": "sellers_all_locked",
+                    "sellers": len(sellers),
+                    "team": len(employees),
+                    "target_boxes": tgt,
+                    "left_for_non_sellers": tgt - locked_sum,
+                }
+                continue
+
         zero_pairs.update((e, sku_key) for e in blocked)
         summary[sku_key] = {
             "reason": "zeroed",
@@ -635,6 +659,37 @@ def _spread_one_each(total_target, n_emps) -> bool:
         return 0 < int(total_target) < int(n_emps)
     except (TypeError, ValueError):
         return False
+
+
+def _min_one_floor(force_min_one: bool, total_target, employees, locked_map, sku) -> int:
+    """
+    ขั้นต่ำต่อคนของ SKU นี้เมื่อติ๊ก "ทุกคนอย่างน้อย 1 หีบ" (I4) — กติกาเดียวทุกชั้น
+
+    บังคับ 1 หีบเมื่อ (ก) เป้า >= จำนวนคนทั้งทีม ตามเอกสาร **และ** (ข) หีบที่เหลือหลัง
+    หักช่องที่ล็อกยังพอแจกคนที่ไม่ได้ล็อกได้คนละ 1 จริง — ข้อ (ข) เคยมีแค่ใน _proportional
+    ส่วน LP/ตัวเกลี่ยเงินดูแค่ (ก) พอผู้ใช้ล็อกช่องจนแจกคนละ 1 ไม่พอ LP จึงหาคำตอบไม่ได้
+    "ทั้งทีม" แล้วถอยไปแบ่งตามสัดส่วนทุก SKU (เสียการเกลี่ยเงินหมด เพราะ SKU เดียว)
+    I1 (ห้ามเกินเป้า) ชนะ I4 เสมอเมื่อขัดกัน
+    """
+    if not force_min_one:
+        return 0
+    emps = [str(e).strip() for e in (employees or [])]
+    try:
+        t = int(round(float(total_target or 0)))
+    except (TypeError, ValueError):
+        return 0
+    if not emps or t < len(emps):
+        return 0
+    lm = locked_map or {}
+    locked_sum = 0
+    free_n = 0
+    for e, e_raw in zip(emps, employees):
+        v = lm.get((e_raw, sku), lm.get((e, sku)))
+        if v is None:
+            free_n += 1
+        else:
+            locked_sum += max(0, int(v))
+    return 1 if (t - locked_sum) >= free_n else 0
 
 
 def _distribute_even_integers(total: int, n_slots: int) -> list[int]:
@@ -974,10 +1029,16 @@ def _proportional(
         if total <= 0 or not active_employees:
             continue
 
-        # force_min_one: กระจายอย่างน้อย 1 หีบ/คน เฉพาะเมื่อเป้าหีบ >= จำนวนพนักงาน
-        base_box = 0
-        if force_min_one and total >= len(active_employees):
-            base_box = 1
+        # force_min_one: กระจายอย่างน้อย 1 หีบ/คน — กติกาเดียวกับ LP/ตัวเกลี่ยเงิน
+        # (_min_one_floor) คนไม่เคยขายที่ถูกตัดออกจาก active ก็ได้ 1 หีบด้วย เพราะคำสั่ง
+        # ของผู้ใช้ชนะกติกาอัตโนมัติ (I9) — เดิมทางนี้ให้ 0 แต่ LP ให้ 1 ผลจึงต่างกัน
+        # ตามว่าไปจบที่ LP หรือถอยมาทางนี้
+        base_box = _min_one_floor(force_min_one, total_orig, employees, locked_map, sku)
+        if base_box:
+            for e in employees:
+                if e not in locked_emps and e not in active_employees:
+                    results.append({"emp_id": e, "sku": sku, "allocated_boxes": 1})
+                    total -= 1
             total -= len(active_employees)
 
         # ── คำนวณ hist weight ──
@@ -1176,15 +1237,15 @@ def _greedy_revenue_balancer(
         scale = total_possible_rev / total_target_rev
         target_rev = {e: float(target_rev.get(e, 0) or 0) * scale for e in emps}
 
+    _floor_cache: dict = {}
+
     def _min_floor_boxes(sku: str) -> int:
-        """สอดคล้อง _proportional / LP: อย่างน้อย 1 หีบ/คนเมื่อเป้าหีบ SKU นั้น >= จำนวนพนักงาน"""
-        if not force_min_one or n_emps <= 0:
-            return 0
-        try:
-            t = int(round(float(target_boxes.get(sku, 0) or 0)))
-        except (TypeError, ValueError):
-            t = 0
-        return 1 if t >= n_emps else 0
+        """กติกาเดียวกับ _proportional / LP (_min_one_floor)"""
+        if sku not in _floor_cache:
+            _floor_cache[sku] = _min_one_floor(
+                force_min_one, target_boxes.get(sku, 0), emps, locked_map, sku
+            )
+        return _floor_cache[sku]
     
     alloc = {}
     for emp in emps: alloc[emp] = {s: 0 for s in sku_prices.keys()}
@@ -1479,6 +1540,12 @@ def _lp_optimize(
     if tiered_allocation and strict_band_pct < band_pct - 1e-9:
         strict_attempts.append(band_pct)
 
+    # ขั้นต่ำ force_min_one ต่อ SKU — กติกาเดียวกับ _proportional/ตัวเกลี่ยเงิน (I4)
+    min_box_by_sku = {
+        sku: _min_one_floor(force_min_one, target_boxes[sku], employees, locked_map, sku)
+        for sku in skus
+    }
+
     time_limit = min(60, max(15, (len(employees) * len(skus)) // 8))
     last_status = "Not Solved"
     x: dict = {}
@@ -1504,7 +1571,7 @@ def _lp_optimize(
                         _vname("x", emp, sku), lowBound=val, upBound=val, cat="Integer"
                     )
                     continue
-                min_box = 1 if force_min_one and int(target_boxes[sku]) >= len(employees) else 0
+                min_box = min_box_by_sku[sku]
                 even_base = None
                 if sku_key in even_skus and base_map:
                     even_base = int(base_map.get((str(emp).strip(), sku_key), 0))
@@ -1540,7 +1607,7 @@ def _lp_optimize(
                     if sku_key in even_skus:
                         continue
                     base = int(base_map.get((str(emp).strip(), sku_key), 0))
-                    min_box = 1 if force_min_one and int(target_boxes[sku]) >= len(employees) else 0
+                    min_box = min_box_by_sku[sku]
                     if base <= 0:
                         # baseline 0 ไม่มีรั้ว % ให้อ้างอิง — ใช้เพดานสัมบูรณ์แทน (I5)
                         if _zero_baseline_cap_enabled():
