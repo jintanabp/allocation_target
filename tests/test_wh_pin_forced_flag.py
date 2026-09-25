@@ -71,8 +71,8 @@ class WhPinPreviewTest(unittest.TestCase):
         os.chdir(self._cwd)
         self._tmp.cleanup()
 
-    def _write_grain(self, rows):
-        pd.DataFrame(rows).to_csv(f"data/tga_lines_{SUP}_{YEAR}_{MONTH:02d}.csv", index=False)
+    def _write_grain(self, rows, sup=SUP):
+        pd.DataFrame(rows).to_csv(f"data/tga_lines_{sup}_{YEAR}_{MONTH:02d}.csv", index=False)
 
     def _rule(self, skus, area="3", div="S", wh="G010", section="702"):
         store.write_rules([
@@ -167,6 +167,50 @@ class WhPinPreviewTest(unittest.TestCase):
         df = pd.DataFrame(columns=["emp_id", "sku", "allocated_boxes"])
         out = opt._apply_wh_pin_preview(df, SUP, MONTH, YEAR)
         self.assertTrue(out.empty)
+
+    def test_cross_team_employee_in_aggregate_mode_still_gets_pinned(self):
+        """
+        ผลตรวจสอบระบบ 24 ก.ย. 2026: โหมดรวมภาค/รวมหน่วยมีพนักงานหลายทีมใน df_final
+        เดียว — เดิมอ่าน grain แค่ไฟล์ทีมเจ้าของ (SUP) พนักงานทีมอื่นเลยไม่มี
+        areacode/divisioncode ให้จับคู่กติกาเลย ทั้งที่ตอนส่งจริง lakehouse.py เติม
+        ข้ามทีมให้อยู่แล้ว (ภาคเหนือได้คลังปักหมุด ภาคกลางไม่ได้ ทั้งที่กติกาครอบทั้งคู่)
+        """
+        OTHER_SUP = "SLWHPINFCST_CENTRAL"
+        self._rule(skus=["SKU1"], area="3", div="S", wh="G010")
+        # E1 อยู่ในไฟล์ของทีมเจ้าของ (SUP) ตามปกติ
+        self._write_grain([_grain_row("E1", "SKU1", area="3", div="S")], sup=SUP)
+        # E2 อยู่ "เฉพาะ" ไฟล์ของอีกทีม (จำลองพนักงานทีมอื่นที่ถูกดึงเข้ามาโหมดรวมภาค)
+        self._write_grain([_grain_row("E2", "SKU1", area="3", div="S")], sup=OTHER_SUP)
+
+        df = pd.DataFrame([
+            {"emp_id": "E1", "sku": "SKU1", "allocated_boxes": 10, "warehouse_code": "R082"},
+            {"emp_id": "E2", "sku": "SKU1", "allocated_boxes": 6, "warehouse_code": "R303"},
+        ])
+        # เรียกโดยระบุ sup_id เป็นทีมเจ้าของ (SUP) เหมือนตอนดูโหมดรวมภาคจริง —
+        # df_final มีพนักงานของทีมอื่นปนอยู่แล้วจาก caller (optimize.py ชั้นบน)
+        out = opt._apply_wh_pin_preview(df, SUP, MONTH, YEAR)
+
+        got_wh = dict(zip(out["emp_id"], out["warehouse_code"]))
+        got_forced = dict(zip(out["emp_id"], out["wh_pin_forced"]))
+        self.assertEqual(got_wh["E1"], "G010", "ทีมเจ้าของต้องยังถูกบังคับคลังตามปกติ")
+        self.assertEqual(got_forced["E1"], "G010")
+        self.assertEqual(
+            got_wh["E2"], "G010",
+            "พนักงานทีมอื่นในโหมดรวมภาคต้องถูกบังคับคลังเหมือนกัน ไม่ใช่แค่ทีมเจ้าของ",
+        )
+        self.assertEqual(got_forced["E2"], "G010")
+        # ยอดหีบรวมต้องยังตรงเป้าเดิมเป๊ะ (I1) แม้เติม grain ข้ามทีมมา
+        self.assertEqual(int(out["allocated_boxes"].sum()), 16)
+
+    def test_cross_team_lookup_does_not_touch_emp_id_values(self):
+        """merge ด้วยคีย์ normalize แยก ต้องไม่เปลี่ยนค่า emp_id จริงที่คืนกลับไปจอ"""
+        self._rule(skus=["SKU1"], area="3", div="S", wh="G010")
+        self._write_grain([_grain_row("e1", "SKU1", area="3", div="S")], sup=SUP)
+        df = pd.DataFrame([
+            {"emp_id": "e1", "sku": "SKU1", "allocated_boxes": 5, "warehouse_code": "R082"},
+        ])
+        out = opt._apply_wh_pin_preview(df, SUP, MONTH, YEAR)
+        self.assertEqual(out.iloc[0]["emp_id"], "e1")  # ตัวพิมพ์เดิมต้องไม่ถูกแก้
 
 
 class WhPinPreviewGuardedTest(unittest.TestCase):

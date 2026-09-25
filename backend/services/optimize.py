@@ -51,7 +51,12 @@ from ..generate_excel import create_target_excel
 from ..schemas import OptimizeRequest
 from ..fabric_dax_connector import FabricDAXConnector
 from . import alloc_rules_store, no_target_store
-from .lakehouse import _apply_warehouse_pin_rules, _boxes_by_sku
+from .lakehouse import (
+    _apply_warehouse_pin_rules,
+    _boxes_by_sku,
+    _read_tga_grain_across_teams,
+    norm_emp_code,
+)
 from .sku_link_store import collapse_hist_to_canonical, expand_skus_for_dax, read_links
 from .warehouse_pin_rules_store import rules_by_key
 from .wh_split import (
@@ -233,30 +238,67 @@ def _apply_wh_pin_preview(
         return df_final
     df_final = df_final.copy()
     df_final["wh_pin_forced"] = ""
-    path = tga_grain_cache_path(sup_id, target_month, target_year)
-    if not os.path.exists(path):
-        return df_final
     try:
         rules = rules_by_key()
         if not rules:
             return df_final
-        dg = pd.read_csv(
-            path,
-            dtype={"sku": str, "emp_id": str, "areacode": str, "divisioncode": str},
-        )
-        if dg.empty or "areacode" not in dg.columns or "divisioncode" not in dg.columns:
+
+        path = tga_grain_cache_path(sup_id, target_month, target_year)
+        if os.path.exists(path):
+            dg = pd.read_csv(
+                path,
+                dtype={"sku": str, "emp_id": str, "areacode": str, "divisioncode": str},
+            )
+            if dg.empty or "areacode" not in dg.columns or "divisioncode" not in dg.columns:
+                dg = pd.DataFrame(columns=["emp_id", "sku", "areacode", "divisioncode"])
+            else:
+                dg["emp_id"] = dg["emp_id"].astype(str).str.strip()
+                dg["sku"] = dg["sku"].astype(str).str.strip()
+                dg["areacode"] = dg["areacode"].fillna("").astype(str).str.strip()
+                dg["divisioncode"] = dg["divisioncode"].fillna("").astype(str).str.strip()
+                dg = dg[["emp_id", "sku", "areacode", "divisioncode"]]
+        else:
+            dg = pd.DataFrame(columns=["emp_id", "sku", "areacode", "divisioncode"])
+
+        # โหมดรวมภาค/รวมหน่วยมีพนักงานหลายทีมใน df_final เดียว — ไฟล์ grain ของทีม
+        # เจ้าของอย่างเดียวไม่มี dim ให้คนทีมอื่น กติกาบังคับคลังจึงไม่จับคู่ให้พวกเขา
+        # ทั้งที่ตอนส่งจริง lakehouse.py::_build_tga_upload_dataframe เติมข้ามทีมแบบนี้
+        # อยู่แล้ว (_read_tga_grain_across_teams) ผลคือ Step 3 กับของที่ส่งจริงเห็นคนละ
+        # อย่างกันเฉพาะพนักงานทีมอื่นในโหมดรวมภาค (พบจากผลตรวจสอบระบบ 24 ก.ย. 2026 —
+        # ภาคเหนือได้คลังปักหมุดตามกติกา ภาคกลางไม่ได้ ทั้งที่กติกาครอบทั้งคู่)
+        _final_emps = {
+            norm_emp_code(e) for e in df_final["emp_id"].astype(str) if str(e).strip()
+        }
+        _have_emps = {norm_emp_code(e) for e in dg["emp_id"]} if not dg.empty else set()
+        _missing_emps = _final_emps - _have_emps
+        if _missing_emps:
+            _extra = _read_tga_grain_across_teams(target_month, target_year, _missing_emps)
+            if not _extra.empty and {"areacode", "divisioncode"} <= set(_extra.columns):
+                _extra = _extra[["emp_id", "sku", "areacode", "divisioncode"]].copy()
+                _extra["emp_id"] = _extra["emp_id"].astype(str).str.strip()
+                _extra["sku"] = _extra["sku"].astype(str).str.strip()
+                _extra["areacode"] = _extra["areacode"].fillna("").astype(str).str.strip()
+                _extra["divisioncode"] = _extra["divisioncode"].fillna("").astype(str).str.strip()
+                dg = pd.concat([dg, _extra], ignore_index=True) if not dg.empty else _extra
+                logger.info(
+                    "optimize wh pin preview: เติม grain ข้ามทีม %d แถว ให้พนักงาน %d คน sup=%s",
+                    len(_extra), _extra["emp_id"].nunique(), sup_id,
+                )
+
+        if dg.empty:
             return df_final
-        dg["emp_id"] = dg["emp_id"].astype(str).str.strip()
-        dg["sku"] = dg["sku"].astype(str).str.strip()
-        dg["areacode"] = dg["areacode"].fillna("").astype(str).str.strip()
-        dg["divisioncode"] = dg["divisioncode"].fillna("").astype(str).str.strip()
-        dg = dg.drop_duplicates(subset=["emp_id", "sku"])
+        # ใช้คีย์ join แบบ normalize แยกต่างหาก ไม่แก้ emp_id ตัวจริงใน df_final —
+        # คอลัมน์นี้ถูกคืนกลับไปให้ frontend ตรง ๆ (df_final.to_dict) ห้ามเปลี่ยนรูปแบบ
+        dg["_join_emp"] = dg["emp_id"].map(norm_emp_code)
+        dg = dg.drop_duplicates(subset=["_join_emp", "sku"])
+        df_final["_join_emp"] = df_final["emp_id"].astype(str).map(norm_emp_code)
         df_final = pd.merge(
             df_final,
-            dg[["emp_id", "sku", "areacode", "divisioncode"]],
-            on=["emp_id", "sku"],
+            dg[["_join_emp", "sku", "areacode", "divisioncode"]],
+            on=["_join_emp", "sku"],
             how="left",
         )
+        df_final = df_final.drop(columns=["_join_emp"])
         df_final["areacode"] = df_final["areacode"].fillna("")
         df_final["divisioncode"] = df_final["divisioncode"].fillna("")
 
