@@ -9,11 +9,13 @@ import logging
 import os
 import tempfile
 import threading
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger("target_allocation")
 
-_STORE_LOCK = threading.Lock()
+# RLock: mutate_rows() เรียก fn ของผู้เรียกใต้ล็อก และ fn มักเรียกตัวช่วยที่อ่าน
+# read_rows() ซ้ำข้างใน (ตรวจขอบเขต/คำนวณทีมที่เห็น) — Lock ธรรมดาจะ deadlock ทันที
+_STORE_LOCK = threading.RLock()
 
 
 def _repo_root() -> str:
@@ -355,8 +357,36 @@ def _write_rows_unlocked(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def write_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    เขียนทับทั้งไฟล์ — **ห้ามใช้คู่กับ read_rows() เพื่อแก้บางแถว** (read→แก้→write)
+
+    สองจังหวะนั้นจับล็อกคนละรอบ แอดมินสองคนกดบันทึกพร้อมกัน คนที่เขียนทีหลังจะเขียน
+    ทับด้วยสำเนาที่อ่านไว้ก่อนการแก้ของอีกคน การแก้นั้นหายเงียบ ๆ — ใช้ mutate_rows()
+    ตัวนี้เหลือไว้สำหรับเขียนชุดใหม่ทั้งชุดที่ไม่ได้อิงของเดิม (สคริปต์นำเข้า/เทส)
+    """
     with _STORE_LOCK:
         return _write_rows_unlocked(rows)
+
+
+def mutate_rows(
+    fn: Callable[[list[dict[str, Any]]], list[dict[str, Any]] | None],
+) -> list[dict[str, Any]]:
+    """
+    อ่าน → แก้ → เขียน รอบเดียวใต้ล็อกเดียว — ทางเดียวที่ถูกสำหรับการแก้บางแถว
+
+    `fn` ได้สำเนาของแถวล่าสุด (แก้ได้เลยไม่กระทบของเดิม) แล้วคืนชุดใหม่ที่จะเขียน
+      - คืน None = ไม่ต้องเขียนอะไร (คืนแถวปัจจุบันกลับไป)
+      - raise อะไรก็ตาม (เช่น HTTPException 404/409/403) = ไม่เขียนอะไรเลย ไฟล์คงเดิม
+    การตรวจเงื่อนไขทุกอย่าง (มีแถวนี้ไหม ซ้ำไหม อยู่ในขอบเขตไหม) ต้องทำ **ใน fn** จะได้
+    ตรวจกับข้อมูลล่าสุดจริง ไม่ใช่ข้อมูลที่อ่านไว้ก่อนแอดมินอีกคนบันทึก
+    ถูกต้องเฉพาะตอนรัน uvicorn 1 worker (เหมือนล็อกอื่นทั้งระบบ — docs/CONCURRENCY.md)
+    """
+    with _STORE_LOCK:
+        rows = read_rows_unlocked()
+        out = fn([dict(r) for r in rows])
+        if out is None:
+            return rows
+        return _write_rows_unlocked(out)
 
 
 def row_key(email: str, userpl: str) -> tuple[str, str]:
@@ -372,45 +402,57 @@ def find_row(rows: list[dict[str, Any]], email: str, userpl: str) -> dict[str, A
 
 
 def upsert_row(
-    rows: list[dict[str, Any]],
+    rows: list[dict[str, Any]] | None = None,
     *,
     email: str,
     userpl: str,
     can_import_targetsun: bool | None = None,
     note: str | None = None,
 ) -> list[dict[str, Any]]:
+    """
+    เพิ่ม/แก้แถวเดียว — `rows` คงไว้เพื่อ signature เดิมเท่านั้น **ไม่ถูกใช้**
+    (เดิมเขียนทับจากสำเนาที่ผู้เรียกอ่านมาก่อน = การแก้ของคนอื่นระหว่างนั้นหาย)
+    """
     k = row_key(email, userpl)
-    out: list[dict[str, Any]] = []
-    found = False
-    for r in rows:
-        if (r.get("email"), r.get("userpl")) == k:
-            found = True
-            nr = dict(r)
-            if can_import_targetsun is not None:
-                nr["can_import_targetsun"] = bool(can_import_targetsun)
-            if note is not None:
-                nr["note"] = str(note).strip()
-            out.append(nr)
-        else:
+
+    def _apply(cur: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        found = False
+        for r in cur:
+            if (r.get("email"), r.get("userpl")) == k:
+                found = True
+                if can_import_targetsun is not None:
+                    r["can_import_targetsun"] = bool(can_import_targetsun)
+                if note is not None:
+                    r["note"] = str(note).strip()
             out.append(r)
-    if not found:
-        out.append(
-            {
-                "email": k[0],
-                "userpl": k[1],
-                "can_import_targetsun": bool(can_import_targetsun),
-                "note": str(note or "").strip(),
-            }
-        )
-    return write_rows(out)
+        if not found:
+            out.append(
+                {
+                    "email": k[0],
+                    "userpl": k[1],
+                    "can_import_targetsun": bool(can_import_targetsun),
+                    "note": str(note or "").strip(),
+                }
+            )
+        return out
+
+    return mutate_rows(_apply)
 
 
-def delete_row(rows: list[dict[str, Any]], email: str, userpl: str) -> list[dict[str, Any]]:
+def delete_row(
+    rows: list[dict[str, Any]] | None, email: str, userpl: str
+) -> list[dict[str, Any]]:
+    """ลบแถวเดียว — `rows` คงไว้เพื่อ signature เดิมเท่านั้น **ไม่ถูกใช้** (ดู upsert_row)"""
     k = row_key(email, userpl)
-    out = [r for r in rows if (r.get("email"), r.get("userpl")) != k]
-    if len(out) == len(rows):
-        raise ValueError("ไม่พบแถวที่จะลบ")
-    return write_rows(out)
+
+    def _apply(cur: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out = [r for r in cur if (r.get("email"), r.get("userpl")) != k]
+        if len(out) == len(cur):
+            raise ValueError("ไม่พบแถวที่จะลบ")
+        return out
+
+    return mutate_rows(_apply)
 
 
 def emails_with_targetsun(rows: list[dict[str, Any]] | None = None) -> set[str]:
@@ -462,15 +504,15 @@ def set_targetsun_flag_bulk(
 def set_email_targetsun_flag(email: str, enabled: bool) -> list[dict[str, Any]]:
     """ตั้ง can_import_targetsun ให้ทุกแถวของอีเมลนี้"""
     em = normalized_email(email)
-    rows = read_rows()
-    changed = False
-    out: list[dict[str, Any]] = []
-    for r in rows:
-        nr = dict(r)
-        if normalized_email(nr.get("email")) == em:
-            nr["can_import_targetsun"] = bool(enabled)
-            changed = True
-        out.append(nr)
-    if not changed:
-        raise ValueError("ไม่พบอีเมลในรายการ")
-    return write_rows(out)
+
+    def _apply(cur: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        changed = False
+        for r in cur:
+            if normalized_email(r.get("email")) == em:
+                r["can_import_targetsun"] = bool(enabled)
+                changed = True
+        if not changed:
+            raise ValueError("ไม่พบอีเมลในรายการ")
+        return cur
+
+    return mutate_rows(_apply)

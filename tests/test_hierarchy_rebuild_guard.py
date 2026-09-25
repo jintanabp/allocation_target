@@ -68,11 +68,14 @@ class TestRebuildIsGuarded(unittest.TestCase):
 
         src = inspect.getsource(admin_router.admin_rebuild_access_hierarchy)
         self.assertIn("_shrinking_manager_teams", src)
+        # ตรวจอยู่ใน fn ของ mutate_rows ก่อน "return enriched" — raise ตรงนั้น = ไม่เขียนอะไรเลย
+        body = src[src.index("def _rebuild("):]
         self.assertLess(
-            src.index("_shrinking_manager_teams"),
-            src.index("write_rows(enriched)"),
+            body.index("_shrinking_manager_teams"),
+            body.index("return enriched"),
             "ต้องตรวจก่อนเขียนไฟล์ ไม่ใช่เขียนทับแล้วค่อยบอก",
         )
+        self.assertIn("mutate_rows(_rebuild)", src)
         self.assertIn("confirm_shrink", src)
 
     def test_route_is_dev_only(self):

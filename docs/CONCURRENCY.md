@@ -132,7 +132,7 @@ client บันทึก → ส่ง if_match_version: 3
 |---|---|---|
 | `core/atomic_io.py` | `RLock` ต่อ path | torn read + `os.replace` ชนกัน (Windows) |
 | `services/allocation_store.py` | `_STORE_LOCK` (**RLock**) | CAS + `mark_sent_targetsun` RMW |
-| `services/user_access_store.py` | `_STORE_LOCK` | ⚠️ จับแยกใน read/write — **ยังมี lost update** |
+| `services/user_access_store.py` | `_STORE_LOCK` (**RLock**) + `mutate_rows()` | อ่าน→แก้→เขียน รอบเดียวใต้ล็อกเดียว (ทุก endpoint ผู้ใช้/สิทธิ์ในหน้าแอดมิน) |
 | `services/fabric_cache.py` | `_LOCK` | เขียน cache |
 | `services/app_runtime_settings.py` | `_LOCK` | เขียน settings |
 | `services/usage_log_store.py` | `_LOCK` | append/rewrite jsonl |
@@ -179,6 +179,16 @@ data/Final_Dashboard_{SUP}_{YYYY}_{MM}.xlsx
 
 ## ที่ยังไม่ได้แก้ (รู้อยู่)
 
+> **แก้แล้ว (25 ก.ย. 2026):** `config/user_access.json` lost update — `routers/admin.py` เคยทำ
+> `read_rows()` → แก้ → `write_rows()` ซึ่งจับ `_STORE_LOCK` คนละรอบ แอดมิน 2 คนบันทึกพร้อมกัน
+> การแก้ของคนหนึ่งหายเงียบ ๆ ทั้งที่ได้ HTTP 200 (วัดในแซนด์บ็อกซ์: ยิงพร้อมกัน 41 คำขอ หาย
+> 24 รายการ) · ตอนนี้ทุก endpoint (เพิ่ม/แก้/ลบผู้ใช้, สิทธิ์ส่ง Target Sun, ตั้ง role,
+> rebuild ลำดับสิทธิ์) ใช้ `user_access_store.mutate_rows(fn)` — การตรวจ 404/409/ขอบเขต ทำใน
+> `fn` กับแถวล่าสุด raise = ไม่เขียน · `_STORE_LOCK` เป็น RLock เพราะ `fn` เรียกตัวช่วยที่อ่าน
+> `read_rows()` ซ้ำ · `write_rows()` เหลือไว้เขียนชุดใหม่ทั้งชุดเท่านั้น
+> (`tests/test_user_access_lost_update.py`) · สคริปต์ `scripts/access/*` รันเป็นโปรเซสแยก
+> ล็อกในโปรเซสช่วยไม่ได้ — อย่ารันตอนมีแอดมินกำลังแก้ผู้ใช้
+>
 > **แก้แล้ว (25 ก.ย. 2026):** `data/managers_cache.json` — เอกสารเดิมโทษ `services/managers.py`
 > แต่ตัวนั้นใช้ `atomic_write_json` ใต้ `_CACHE_LOCK` มาตั้งแต่ก่อนแล้ว ตัวที่ยังเขียนด้วย
 > `open(..., "w")` จริงคือ `services/access_hierarchy.py::persist_hierarchy` (เขียนทั้ง
@@ -187,9 +197,6 @@ data/Final_Dashboard_{SUP}_{YYYY}_{MM}.xlsx
 > (`tests/test_access_hierarchy_persist.py`) · `services/fabric_cache.py` ก็ย้ายมาใช้
 > `atomic_io` แล้ว (ได้ retry-on-PermissionError ตามไปด้วย)
 
-- **`config/user_access.json` lost update** — `routers/admin.py` ทำ `read_rows()` → แก้ → `write_rows()`
-  แต่ `_STORE_LOCK` ถูกจับ *แยกกัน* ข้างในแต่ละฟังก์ชัน ไม่ได้ถือคร่อม RMW
-  admin 2 คนแก้คนละ user พร้อมกัน → การแก้ของคนหนึ่งหาย
 - **export/download TOCTOU** — เขียนไฟล์ตาม sup+brand แล้วให้ client มา GET ทีหลัง
   สองคนที่ดูแล SL **และ** brand เดียวกัน (เช่น manager + supervisor) export พร้อมกันจะทับกัน
 - **cache ราย SL อื่น ๆ ยังใช้ `to_csv` ตรง ๆ** (`employees.py` hist/tga_grain) — torn read ได้

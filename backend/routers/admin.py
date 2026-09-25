@@ -59,13 +59,10 @@ from ..services.access_control import (
 from ..services.usage_log_store import log_from_user
 from ..services.user_access_store import (
     apply_inferred_access_fields,
-    delete_row,
+    mutate_rows,
     normalized_email,
     normalize_userpl,
     read_rows,
-    set_email_targetsun_flag,
-    upsert_row,
-    write_rows,
 )
 from ..services import alloc_rules_store, dev_bundle, emp_assignment_store, feedback_store, no_target_store
 from ..services import warehouse_pin_rules_store
@@ -315,9 +312,6 @@ def create_user_access(
     upl = normalize_userpl(body.userpl)
     if "@" not in em or not upl:
         raise HTTPException(status_code=400, detail="อีเมลหรือ USERPL ไม่ถูกต้อง")
-    rows = read_rows()
-    if any(r["email"] == em and r["userpl"] == upl for r in rows):
-        raise HTTPException(status_code=409, detail="มีแถวนี้อยู่แล้ว")
     new_row: dict[str, Any] = {
         "email": em,
         "userpl": upl,
@@ -327,7 +321,15 @@ def create_user_access(
     _patch_row_meta(new_row, body)
     # ผู้ดูแลสร้างคนนอกขอบเขตไม่ได้ — ตรวจ "ค่าที่จะบันทึก" ไม่ใช่แค่ตัวผู้เรียก
     ensure_row_in_admin_scope(admin, new_row)
-    write_rows(rows + [new_row])
+
+    # ตรวจซ้ำ + เขียน ใต้ล็อกเดียว (mutate_rows) — เดิม read_rows() แล้ว write_rows()
+    # แยกกัน แอดมินอีกคนบันทึกคั่นกลางแล้วการแก้ของเขาหายเงียบ ๆ
+    def _add(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if any(r["email"] == em and r["userpl"] == upl for r in rows):
+            raise HTTPException(status_code=409, detail="มีแถวนี้อยู่แล้ว")
+        return rows + [new_row]
+
+    mutate_rows(_add)
     invalidate_user_access_cache()
     _sync_access_hierarchy(admin, f"เพิ่มผู้ใช้ {em}")
     _audit_admin(
@@ -346,41 +348,48 @@ def update_user_access(
 ) -> dict[str, Any]:
     em = normalized_email(body.email)
     upl = normalize_userpl(body.userpl)
-    rows = read_rows()
-    existing = next((r for r in rows if r["email"] == em and r["userpl"] == upl), None)
-    if not existing:
-        raise HTTPException(status_code=404, detail="ไม่พบแถว")
-    ensure_row_in_admin_scope(admin, existing)
-
     new_em = normalized_email(body.new_email) if body.new_email else em
     new_upl = normalize_userpl(body.new_userpl) if body.new_userpl else upl
-    if "@" not in new_em or not new_upl:
-        raise HTTPException(status_code=400, detail="อีเมลหรือ USERPL ใหม่ไม่ถูกต้อง")
 
-    if (new_em, new_upl) != (em, upl):
-        if any(
-            r["email"] == new_em and r["userpl"] == new_upl
+    # อ่านแถวเดิม + ตรวจ + เขียน ใต้ล็อกเดียว (mutate_rows) — แก้จากแถว "ล่าสุด" เสมอ
+    # ไม่ใช่สำเนาที่อ่านไว้ก่อนแอดมินอีกคนบันทึก (ไม่งั้นการแก้ของเขาหายเงียบ ๆ)
+    captured: dict[str, dict[str, Any]] = {}
+
+    def _update(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        existing = next((r for r in rows if r["email"] == em and r["userpl"] == upl), None)
+        if not existing:
+            raise HTTPException(status_code=404, detail="ไม่พบแถว")
+        ensure_row_in_admin_scope(admin, existing)
+
+        if "@" not in new_em or not new_upl:
+            raise HTTPException(status_code=400, detail="อีเมลหรือ USERPL ใหม่ไม่ถูกต้อง")
+
+        if (new_em, new_upl) != (em, upl):
+            if any(
+                r["email"] == new_em and r["userpl"] == new_upl
+                for r in rows
+                if not (r["email"] == em and r["userpl"] == upl)
+            ):
+                raise HTTPException(status_code=409, detail="อีเมล + USERPL ใหม่ซ้ำกับแถวอื่น")
+
+        updated_row = dict(existing)
+        updated_row["email"] = new_em
+        updated_row["userpl"] = new_upl
+        if body.can_import_targetsun is not None:
+            updated_row["can_import_targetsun"] = bool(body.can_import_targetsun)
+        if body.note is not None:
+            updated_row["note"] = str(body.note).strip()
+        _patch_row_meta(updated_row, body)
+        # ตรวจปลายทางด้วย ไม่งั้นย้ายคนออกนอกภาคตัวเองได้
+        ensure_row_in_admin_scope(admin, updated_row)
+        captured["existing"], captured["updated"] = existing, updated_row
+        return [
+            updated_row if r["email"] == em and r["userpl"] == upl else r
             for r in rows
-            if not (r["email"] == em and r["userpl"] == upl)
-        ):
-            raise HTTPException(status_code=409, detail="อีเมล + USERPL ใหม่ซ้ำกับแถวอื่น")
+        ]
 
-    updated_row = dict(existing)
-    updated_row["email"] = new_em
-    updated_row["userpl"] = new_upl
-    if body.can_import_targetsun is not None:
-        updated_row["can_import_targetsun"] = bool(body.can_import_targetsun)
-    if body.note is not None:
-        updated_row["note"] = str(body.note).strip()
-    _patch_row_meta(updated_row, body)
-    # ตรวจปลายทางด้วย ไม่งั้นย้ายคนออกนอกภาคตัวเองได้
-    ensure_row_in_admin_scope(admin, updated_row)
-
-    out = [
-        updated_row if r["email"] == em and r["userpl"] == upl else r
-        for r in rows
-    ]
-    write_rows(out)
+    mutate_rows(_update)
+    existing, updated_row = captured["existing"], captured["updated"]
     invalidate_user_access_cache()
     _sync_access_hierarchy(admin, f"แก้ผู้ใช้ {em}")
     _audit_admin(
@@ -399,15 +408,20 @@ def remove_user_access(
 ) -> dict[str, Any]:
     em = normalized_email(body.email)
     upl = normalize_userpl(body.userpl)
-    rows = read_rows()
-    existing = next((r for r in rows if r["email"] == em and r["userpl"] == upl), None)
-    if not existing:
-        raise HTTPException(status_code=404, detail="ไม่พบแถว")
-    ensure_row_in_admin_scope(admin, existing)
-    try:
-        delete_row(rows, em, upl)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+    captured: dict[str, dict[str, Any]] = {}
+
+    # หา + ตรวจขอบเขต + ลบ ใต้ล็อกเดียว (mutate_rows) — เดิมลบจากสำเนาที่อ่านไว้ก่อน
+    # การแก้ของแอดมินอีกคนระหว่างนั้นจึงถูกเขียนทับหายไปด้วย
+    def _delete(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        existing = next((r for r in rows if r["email"] == em and r["userpl"] == upl), None)
+        if not existing:
+            raise HTTPException(status_code=404, detail="ไม่พบแถว")
+        ensure_row_in_admin_scope(admin, existing)
+        captured["existing"] = existing
+        return [r for r in rows if not (r["email"] == em and r["userpl"] == upl)]
+
+    mutate_rows(_delete)
+    existing = captured["existing"]
     invalidate_user_access_cache()
     _sync_access_hierarchy(admin, f"ลบผู้ใช้ {em}")
     _audit_admin(
@@ -423,16 +437,22 @@ def set_targetsun_for_email(
     admin: dict = Depends(require_admin_scoped),
 ) -> dict[str, Any]:
     em = normalized_email(body.email)
-    # อีเมลหนึ่งมีได้หลายแถว — ทุกแถวต้องอยู่ในภาคที่ดูแล ไม่งั้นเปิดสิทธิ์ข้ามภาคได้
-    target_rows = [r for r in read_rows() if normalized_email(r.get("email")) == em]
-    if not target_rows:
-        raise HTTPException(status_code=404, detail="ไม่พบอีเมลนี้")
-    for r in target_rows:
-        ensure_row_in_admin_scope(admin, r)
-    try:
-        set_email_targetsun_flag(em, body.enabled)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+    target_rows: list[dict[str, Any]] = []
+
+    # ตรวจขอบเขตกับแถวล่าสุด + เขียน ใต้ล็อกเดียว (mutate_rows)
+    def _toggle(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        # อีเมลหนึ่งมีได้หลายแถว — ทุกแถวต้องอยู่ในภาคที่ดูแล ไม่งั้นเปิดสิทธิ์ข้ามภาคได้
+        mine = [r for r in rows if normalized_email(r.get("email")) == em]
+        if not mine:
+            raise HTTPException(status_code=404, detail="ไม่พบอีเมลนี้")
+        for r in mine:
+            ensure_row_in_admin_scope(admin, r)
+        for r in mine:
+            r["can_import_targetsun"] = bool(body.enabled)
+        target_rows.extend(mine)
+        return rows
+
+    mutate_rows(_toggle)
     invalidate_user_access_cache()
     _audit_admin(
         admin, "admin_targetsun_toggle",
@@ -495,95 +515,104 @@ def set_user_role(
     elif not scope:
         scope = DEFAULT_ADMIN_SCOPE
 
-    # หัวหน้าแอดมินแตะได้เฉพาะคนในขอบเขตตัวเอง — ทั้งตอนมอบและตอนถอด
-    if not (admin.get("auth_disabled") or admin.get("role") == ROLE_DEV):
-        target_rows = [r for r in read_rows() if normalized_email(r.get("email")) == em]
-        for r in target_rows:
-            ensure_row_in_admin_scope(admin, r)
-        if not target_rows and role:
-            raise HTTPException(
-                status_code=403,
-                detail="หัวหน้าแอดมินเพิ่มสิทธิ์ให้อีเมลที่ยังไม่มีในระบบไม่ได้ — ให้ Dev เป็นคนเพิ่ม",
+    # ทั้งหมดข้างล่าง (ตรวจขอบเขต/ตรวจภาค/แก้แถว) อยู่ใต้ล็อกเดียวกับการเขียน (mutate_rows)
+    # ตรวจกับแถวล่าสุดเสมอ และการแก้ของแอดมินคนอื่นระหว่างนี้ไม่ถูกเขียนทับหาย
+    result: dict[str, Any] = {}
+
+    def _set_role(current_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        # หัวหน้าแอดมินแตะได้เฉพาะคนในขอบเขตตัวเอง — ทั้งตอนมอบและตอนถอด
+        if not (admin.get("auth_disabled") or admin.get("role") == ROLE_DEV):
+            target_rows = [r for r in current_rows if normalized_email(r.get("email")) == em]
+            for r in target_rows:
+                ensure_row_in_admin_scope(admin, r)
+            if not target_rows and role:
+                raise HTTPException(
+                    status_code=403,
+                    detail="หัวหน้าแอดมินเพิ่มสิทธิ์ให้อีเมลที่ยังไม่มีในระบบไม่ได้ — ให้ Dev เป็นคนเพิ่ม",
+                )
+
+        div = str(body.acc_division or "").strip()
+        region = str(body.acc_region or "").strip()
+
+        # ขอบเขตที่แคบกว่า "ทุกคนในระบบ" ต้องรู้ภาค/ดิวิชันของเจ้าตัว ไม่งั้นได้ขอบเขตว่าง
+        # = ผู้ดูแลที่เข้าหน้าแอดมินแล้วเจอ 403 ทุก API ดูเหมือน "ไม่มีสิทธิ์อะไรเลย"
+        # เคยเกิดจริงกับบัญชีผู้ดูแลที่ไม่มีตำแหน่งงาน (ไม่มีภาค/ดิวิชันให้อ้างอิง)
+        # บล็อกตั้งแต่ตอนบันทึกดีกว่าปล่อยให้ไปตายตอนเจ้าตัวล็อกอิน
+        if role in ADMIN_ROLES and scope != ADMIN_SCOPE_ALL:
+            existing = [r for r in current_rows if normalized_email(r.get("email")) == em]
+            has_place = bool(div or region) or any(
+                str(r.get("acc_region") or "").strip() or str(r.get("acc_division") or "").strip()
+                for r in existing
             )
+            if not has_place:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"บัญชีนี้ยังไม่มีภาค/Division จึงใช้ขอบเขต "
+                        f"'{ADMIN_SCOPE_LABELS.get(scope, scope)}' ไม่ได้ (จะกลายเป็นผู้ดูแลที่ทำอะไรไม่ได้เลย) "
+                        "— เลือกขอบเขต 'ทุกคนในระบบ' หรือระบุภาค/Division ให้บัญชีนี้ก่อน"
+                    ),
+                )
 
-    div = str(body.acc_division or "").strip()
-    region = str(body.acc_region or "").strip()
+        rows = current_rows
+        touched = 0
+        dropped = 0
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            if normalized_email(r.get("email")) == em:
+                r = dict(r)
+                if role:
+                    r["role"] = role
+                else:
+                    r.pop("role", None)
+                if scope:
+                    r["admin_scope"] = scope
+                else:
+                    r.pop("admin_scope", None)
+                # เติมภาค/ดิวิชันได้เฉพาะแถวที่ไม่มีตำแหน่งงาน (บัญชีแอดมินอย่างเดียว)
+                # แถวของ Supervisor/Manager ต้องแก้ที่หน้าผู้ใช้ กันเขียนทับภาคจริงของเขา
+                if str(r.get("login_kind") or "standard").strip() == "standard":
+                    if div:
+                        r["acc_division"] = div
+                    if region:
+                        r["acc_region"] = region
+                touched += 1
+                # ถอดสิทธิ์จากบัญชีที่ไม่มีรหัส SL = ไม่เหลือเหตุผลให้มีแถวนี้อยู่
+                # ลบทิ้งให้ชัด ๆ ดีกว่าปล่อยให้หายเงียบตอนอ่านไฟล์รอบหน้า
+                if not role and not str(r.get("userpl") or "").strip():
+                    dropped += 1
+                    continue
+            out.append(r)
 
-    # ขอบเขตที่แคบกว่า "ทุกคนในระบบ" ต้องรู้ภาค/ดิวิชันของเจ้าตัว ไม่งั้นได้ขอบเขตว่าง
-    # = ผู้ดูแลที่เข้าหน้าแอดมินแล้วเจอ 403 ทุก API ดูเหมือน "ไม่มีสิทธิ์อะไรเลย"
-    # เคยเกิดจริงกับบัญชีผู้ดูแลที่ไม่มีตำแหน่งงาน (ไม่มีภาค/ดิวิชันให้อ้างอิง)
-    # บล็อกตั้งแต่ตอนบันทึกดีกว่าปล่อยให้ไปตายตอนเจ้าตัวล็อกอิน
-    if role in ADMIN_ROLES and scope != ADMIN_SCOPE_ALL:
-        existing = [r for r in read_rows() if normalized_email(r.get("email")) == em]
-        has_place = bool(div or region) or any(
-            str(r.get("acc_region") or "").strip() or str(r.get("acc_division") or "").strip()
-            for r in existing
-        )
-        if not has_place:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"บัญชีนี้ยังไม่มีภาค/Division จึงใช้ขอบเขต "
-                    f"'{ADMIN_SCOPE_LABELS.get(scope, scope)}' ไม่ได้ (จะกลายเป็นผู้ดูแลที่ทำอะไรไม่ได้เลย) "
-                    "— เลือกขอบเขต 'ทุกคนในระบบ' หรือระบุภาค/Division ให้บัญชีนี้ก่อน"
-                ),
-            )
-
-    rows = read_rows()
-    touched = 0
-    dropped = 0
-    out: list[dict[str, Any]] = []
-    for r in rows:
-        if normalized_email(r.get("email")) == em:
-            r = dict(r)
-            if role:
-                r["role"] = role
-            else:
-                r.pop("role", None)
+        created = False
+        if not touched:
+            if not role:
+                raise HTTPException(status_code=404, detail="ไม่พบอีเมลนี้")
+            # อีเมลใหม่ = สร้างบัญชี "แอดมินอย่างเดียว" ไม่มีตำแหน่งงาน ไม่มีรหัส SL
+            # จึงไม่เห็นข้อมูลทีมใด ๆ บนแดชบอร์ด — มีไว้ดูแลระบบเท่านั้น
+            new_row: dict[str, Any] = {
+                "email": em,
+                "userpl": "",
+                "can_import_targetsun": False,
+                "note": "บัญชีผู้ดูแลระบบ (ไม่มีตำแหน่งงาน)",
+                "login_kind": "standard",
+                "role": role,
+            }
             if scope:
-                r["admin_scope"] = scope
-            else:
-                r.pop("admin_scope", None)
-            # เติมภาค/ดิวิชันได้เฉพาะแถวที่ไม่มีตำแหน่งงาน (บัญชีแอดมินอย่างเดียว)
-            # แถวของ Supervisor/Manager ต้องแก้ที่หน้าผู้ใช้ กันเขียนทับภาคจริงของเขา
-            if str(r.get("login_kind") or "standard").strip() == "standard":
-                if div:
-                    r["acc_division"] = div
-                if region:
-                    r["acc_region"] = region
-            touched += 1
-            # ถอดสิทธิ์จากบัญชีที่ไม่มีรหัส SL = ไม่เหลือเหตุผลให้มีแถวนี้อยู่
-            # ลบทิ้งให้ชัด ๆ ดีกว่าปล่อยให้หายเงียบตอนอ่านไฟล์รอบหน้า
-            if not role and not str(r.get("userpl") or "").strip():
-                dropped += 1
-                continue
-        out.append(r)
+                new_row["admin_scope"] = scope
+            if div:
+                new_row["acc_division"] = div
+            if region:
+                new_row["acc_region"] = region
+            out.append(new_row)
+            touched = 1
+            created = True
 
-    created = False
-    if not touched:
-        if not role:
-            raise HTTPException(status_code=404, detail="ไม่พบอีเมลนี้")
-        # อีเมลใหม่ = สร้างบัญชี "แอดมินอย่างเดียว" ไม่มีตำแหน่งงาน ไม่มีรหัส SL
-        # จึงไม่เห็นข้อมูลทีมใด ๆ บนแดชบอร์ด — มีไว้ดูแลระบบเท่านั้น
-        new_row: dict[str, Any] = {
-            "email": em,
-            "userpl": "",
-            "can_import_targetsun": False,
-            "note": "บัญชีผู้ดูแลระบบ (ไม่มีตำแหน่งงาน)",
-            "login_kind": "standard",
-            "role": role,
-        }
-        if scope:
-            new_row["admin_scope"] = scope
-        if div:
-            new_row["acc_division"] = div
-        if region:
-            new_row["acc_region"] = region
-        out.append(new_row)
-        touched = 1
-        created = True
+        result.update(touched=touched, dropped=dropped, created=created)
+        return out
 
-    write_rows(out)
+    mutate_rows(_set_role)
+    touched, dropped, created = result["touched"], result["dropped"], result["created"]
     invalidate_user_access_cache()
     # ตั้ง role สร้างแถวใหม่ได้ (บัญชีแอดมินอย่างเดียว) ลำดับสิทธิ์ต้องรู้จักด้วย
     _sync_access_hierarchy(admin, f"ตั้ง role ให้ {em}")
@@ -1946,37 +1975,42 @@ def admin_rebuild_access_hierarchy(
         load_hierarchy_payload,
         persist_hierarchy,
     )
-    from ..services.user_access_store import write_rows
-
-    rows = read_user_access_rows()
-    enriched = enrich_rows_with_visibility(rows)
-    payload = build_hierarchy_payload(enriched)
-
     try:
         current = load_hierarchy_payload()
     except Exception:  # อ่านของเดิมไม่ได้ = เทียบไม่ได้ ปล่อยให้เขียนได้ตามปกติ
         current = {}
-    shrink = _shrinking_manager_teams(current, payload)
-    if shrink and not (body and body.confirm_shrink):
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "hierarchy_rebuild_shrinks_teams",
-                "message": (
-                    f"ยังไม่ได้อัปเดต — จะทำให้ผู้จัดการ {len(shrink)} คนเห็นทีมใต้สังกัดน้อยลง"
-                ),
-                "hint_th": (
-                    "มักเกิดเมื่อแถวของผู้จัดการไม่มี Division/ภาค ระบบจึงคำนวณทีมกลับไม่ได้ "
-                    "ให้เติมข้อมูลให้ครบก่อน หรือนำเข้าจากไฟล์ roster ใหม่ "
-                    "ถ้ายืนยันว่าตั้งใจ ให้ส่ง confirm_shrink"
-                ),
-                "shrinking": shrink[:20],
-                "shrinking_count": len(shrink),
-                "confirm_field": "confirm_shrink",
-            },
-        )
 
-    write_rows(enriched)
+    # คำนวณจากแถวล่าสุด + ตรวจทีมหด + เขียน ใต้ล็อกเดียว (mutate_rows) — เดิมอ่านแถวไว้
+    # ก่อนแล้วค่อย write_rows(enriched) ทีหลัง แอดมินที่แก้ผู้ใช้ระหว่างนั้นจะหายทั้งหมด
+    captured: dict[str, Any] = {}
+
+    def _rebuild(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        enriched = enrich_rows_with_visibility(rows)
+        payload = build_hierarchy_payload(enriched)
+        shrink = _shrinking_manager_teams(current, payload)
+        if shrink and not (body and body.confirm_shrink):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "hierarchy_rebuild_shrinks_teams",
+                    "message": (
+                        f"ยังไม่ได้อัปเดต — จะทำให้ผู้จัดการ {len(shrink)} คนเห็นทีมใต้สังกัดน้อยลง"
+                    ),
+                    "hint_th": (
+                        "มักเกิดเมื่อแถวของผู้จัดการไม่มี Division/ภาค ระบบจึงคำนวณทีมกลับไม่ได้ "
+                        "ให้เติมข้อมูลให้ครบก่อน หรือนำเข้าจากไฟล์ roster ใหม่ "
+                        "ถ้ายืนยันว่าตั้งใจ ให้ส่ง confirm_shrink"
+                    ),
+                    "shrinking": shrink[:20],
+                    "shrinking_count": len(shrink),
+                    "confirm_field": "confirm_shrink",
+                },
+            )
+        captured.update(payload=payload, shrink=shrink)
+        return enriched
+
+    mutate_rows(_rebuild)
+    payload, shrink = captured["payload"], captured["shrink"]
     path = persist_hierarchy(payload)
     invalidate_user_access_cache()
     _audit_admin(
