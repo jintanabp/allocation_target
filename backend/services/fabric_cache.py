@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import shutil
-import tempfile
 import threading
 import time
 from datetime import datetime, timezone
@@ -14,9 +13,13 @@ from typing import Any
 
 import pandas as pd
 
+from ..core.atomic_io import atomic_write_csv, atomic_write_json, read_locked
+
 logger = logging.getLogger("target_allocation")
 
-_LOCK = threading.Lock()
+# RLock ไม่ใช่ Lock — write_tga_skus_csv ถือตัวนี้อยู่แล้วเรียก _write_json_cache ต่อ
+# (เขียน csv + meta เป็นคู่) ถ้าเป็น Lock ธรรมดาจะ deadlock ตั้งแต่ครั้งแรกที่ถูกเรียก
+_LOCK = threading.RLock()
 
 
 def _repo_root() -> str:
@@ -120,8 +123,9 @@ def _read_meta(
         return None
     try:
         if path.endswith(".json"):
-            with open(path, encoding="utf-8") as f:
-                doc = json.load(f)
+            with read_locked(path):
+                with open(path, encoding="utf-8") as f:
+                    doc = json.load(f)
         else:
             return None
         cached_at_raw = str(doc.get("cached_at") or "").strip()
@@ -155,18 +159,10 @@ def _write_json_cache(path: str, payload: dict[str, Any]) -> None:
         "cached_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         **payload,
     }
+    # atomic_io แทนการเขียน temp+replace เอง — ได้ retry ตอน os.replace โดน PermissionError
+    # (antivirus/ตัวทำ index ของ Windows ถือไฟล์ค้าง) และล็อกต่อ path ร่วมกับตัวอ่าน
     with _LOCK:
-        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(doc, f, ensure_ascii=False)
-            os.replace(tmp, path)
-        except Exception:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
+        atomic_write_json(path, doc)
 
 
 def product_price_asof(year: int, month: int) -> str:
@@ -257,7 +253,8 @@ def read_tga_skus_csv(year: int, month: int) -> pd.DataFrame | None:
     if not doc:
         return None
     try:
-        return pd.read_csv(path, dtype=str)
+        with read_locked(path):
+            return pd.read_csv(path, dtype=str)
     except Exception as e:
         logger.warning("fabric tga skus read %s: %s", path, e)
         return None
@@ -269,7 +266,7 @@ def write_tga_skus_csv(year: int, month: int, df: pd.DataFrame) -> None:
     path = _tga_skus_path(year, month)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with _LOCK:
-        df.to_csv(path, index=False)
+        atomic_write_csv(path, df, index=False)
         _write_json_cache(path + ".meta.json", {"row_count": len(df)})
 
 

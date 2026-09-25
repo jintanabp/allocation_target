@@ -811,11 +811,14 @@ def preview_sku_link(
     canonical_sku: str = Query(..., min_length=1),
     year: int = Query(..., ge=2000, le=2100),
     month: int = Query(..., ge=1, le=12),
-    _user: dict = Depends(require_admin_or_marketing_team),
+    user: dict = Depends(require_admin_or_marketing_team),
 ) -> dict[str, Any]:
     """ทดสอบยอดประวัติ 3M / LY หลังรวม alias"""
     canon = normalize_sku(canonical_sku)
     sup = super_code.strip().upper()
+    # ตอบยอดขายรายทีม — ผู้ดูแลต้องดูได้เฉพาะทีมในภาคตัวเอง (เหมือน /supervisor-team)
+    if user.get("role") in ADMIN_ROLES:
+        ensure_sup_in_admin_scope(user, sup)
     team = load_supervisor_team(sup, target_year=year, target_month=month, force_refresh=False)
     emp_list = [
         str(e.get("emp_id") or "").strip()
@@ -1046,7 +1049,7 @@ def sku_link_catalog(
     year: int | None = Query(None, ge=2000, le=2100),
     month: int | None = Query(None, ge=1, le=12),
     super_code: str | None = Query(default=None, description="ไม่บังคับ — ใช้ cache ทีมเดียวถ้าระบุ"),
-    _user: dict = Depends(require_admin_or_marketing_team),
+    user: dict = Depends(require_admin_or_marketing_team),
 ) -> dict[str, Any]:
     """รายการสินค้าที่มีเป้าในงวดปัจจุบัน — เฉพาะ SKU ที่มีเป้าหีบ > 0 (ไม่แสดงรหัสเก่าที่ไม่มีเป้าในงวดนี้)"""
     from ..core.tga_period import expected_allocation_period_ce
@@ -1065,6 +1068,10 @@ def sku_link_catalog(
     fabric_error: str | None = None
 
     if sup:
+        # ระบุทีม = อ่านแคชเป้าของทีมนั้น — ผู้ดูแลต้องอยู่ในขอบเขต (ไม่ระบุทีมคือรายการ
+        # เป้าทั้งงวดระดับ SKU ซึ่งเป็นข้อมูลกลางของหน้าผูกรหัส ไม่ผูกกับภาคใด)
+        if user.get("role") in ADMIN_ROLES:
+            ensure_sup_in_admin_scope(user, sup)
         payload = read_cached_employee_payload(sup, month, year)
         source_sup = sup
         if payload is None:

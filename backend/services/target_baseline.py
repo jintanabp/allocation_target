@@ -114,26 +114,37 @@ def capture_baseline_once(
         if not skus and not emps:
             return False   # ไม่มีอะไรให้เก็บ อย่าสร้างไฟล์เปล่าไว้กันการเก็บครั้งหน้า
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        doc = {
-            "sup_id": str(sup_id or "").strip().upper(),
-            "target_month": int(month),
-            "target_year": int(year),
-            "captured_at": _now_iso(),
-            "captured_by": str(captured_by or "").strip(),
-            "total_target_boxes": sum(s["supervisor_target_boxes"] for s in skus),
-            "total_target_sun": round(sum(e["target_sun"] for e in emps), 2),
-            "skus": skus,
-            "employees": emps,
-        }
-        atomic_write_json(path, doc, indent=2)
-        logger.info(
-            "เก็บเป้าตั้งต้น %s %s-%02d: %d SKU (%d หีบ), %d คน",
-            sup_id, year, month, len(skus), doc["total_target_boxes"], len(emps),
-        )
-        return True
+        # "เช็คว่ายังไม่มี → เขียน" ต้องอยู่ใต้ล็อกเดียวกัน — เปิดงวดใหม่พร้อมกันสองแท็บ
+        # ครั้งแรก ทั้งคู่ผ่านด่าน isfile ข้างบนได้ แล้วคนที่สองเขียนทับของคนแรกเงียบ ๆ
+        # (ผิดสัญญา "เขียนครั้งเดียว") · ล็อกเป็น RLock ต่อ path ตัวเดียวกับที่
+        # atomic_write_json ใช้ จึงซ้อนกันได้ไม่ deadlock (ใช้ได้เฉพาะ 1 worker เหมือนทั้งโมดูล)
+        with read_locked(path):
+            if os.path.isfile(path):
+                return False
+            return _write_baseline(path, sup_id, month, year, skus, emps, captured_by)
     except Exception as e:
         logger.warning("เก็บเป้าตั้งต้นไม่สำเร็จ (%s %s-%02d): %s", sup_id, year, month, e)
         return False
+
+
+def _write_baseline(path, sup_id, month, year, skus, emps, captured_by) -> bool:
+    doc = {
+        "sup_id": str(sup_id or "").strip().upper(),
+        "target_month": int(month),
+        "target_year": int(year),
+        "captured_at": _now_iso(),
+        "captured_by": str(captured_by or "").strip(),
+        "total_target_boxes": sum(s["supervisor_target_boxes"] for s in skus),
+        "total_target_sun": round(sum(e["target_sun"] for e in emps), 2),
+        "skus": skus,
+        "employees": emps,
+    }
+    atomic_write_json(path, doc, indent=2)
+    logger.info(
+        "เก็บเป้าตั้งต้น %s %s-%02d: %d SKU (%d หีบ), %d คน",
+        sup_id, year, month, len(skus), doc["total_target_boxes"], len(emps),
+    )
+    return True
 
 
 def restore_baseline_to_target_files(sup_id: str, month: int, year: int) -> dict[str, Any]:

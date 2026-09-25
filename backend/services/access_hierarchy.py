@@ -9,8 +9,11 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from typing import Any
+
+from ..core.atomic_io import atomic_write_json, read_locked
 
 from .user_access_store import apply_inferred_access_fields, read_rows, real_userpl
 
@@ -351,8 +354,9 @@ def existing_by_manager() -> dict[str, list[str]]:
     if not os.path.isfile(path):
         return {}
     try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
+        with read_locked(path):
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
     except (OSError, json.JSONDecodeError) as e:
         logger.warning("อ่าน by_manager เดิมไม่ได้: %s", e)
         return {}
@@ -438,16 +442,27 @@ def build_hierarchy_payload(
     }
 
 
+# สองไฟล์นี้ต้องมาจาก payload ชุดเดียวกัน — rebuild พร้อมกันสองคำขอ (หน้าแอดมิน +
+# startup/อ่านครั้งแรกที่ไม่มีไฟล์) ห้ามสลับกันเขียนจนได้ไฟล์หนึ่งจากรอบ A อีกไฟล์จากรอบ B
+_PERSIST_LOCK = threading.Lock()
+
+
 def persist_hierarchy(payload: dict[str, Any]) -> str:
+    """
+    เขียน config/access_hierarchy.json + data/managers_cache.json
+
+    เดิมใช้ open(..., "w") ตรง ๆ ทั้งคู่ — ไฟล์ถูกตัดเหลือ 0 ไบต์ก่อนเขียนใหม่ คนที่ login
+    ตรงจังหวะนั้นอ่านได้ไฟล์ครึ่งใบ (ตัวอ่านตกไป rebuild จาก roster ใหม่ = ช้า) และบน
+    Windows ถ้ามีคนเปิดอ่านค้างอยู่ การเขียนพังด้วย PermissionError · ตอนนี้ใช้
+    atomic_write_json (temp + replace + retry) ล็อกต่อ path ตัวเดียวกับ managers.py
+    """
     path = access_hierarchy_json_path()
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-        f.write("\n")
     cache_path = os.path.join(_repo_root(), "data", "managers_cache.json")
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-    with open(cache_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False)
+    with _PERSIST_LOCK:
+        atomic_write_json(path, payload, indent=2)
+        atomic_write_json(cache_path, payload)
     logger.info(
         "access hierarchy persisted: %d managers, %d supervisors → %s",
         len(payload.get("manager_codes") or []),
@@ -461,8 +476,9 @@ def load_hierarchy_payload() -> dict[str, Any]:
     path = access_hierarchy_json_path()
     if os.path.isfile(path):
         try:
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
+            with read_locked(path):
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
             if isinstance(data, dict) and data.get("by_manager") is not None:
                 return data
         except (OSError, json.JSONDecodeError) as e:

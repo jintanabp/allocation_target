@@ -92,6 +92,58 @@ class TestCaptureOnce(_TmpCwd):
         self.assertFalse(capture_baseline_once(SUP, 9, 2026, None, None))
 
 
+class TestCaptureOnceConcurrent(_TmpCwd):
+    """
+    เปิดงวดใหม่พร้อมกันสองแท็บครั้งแรก — ต้องได้ไฟล์ของคนแรกเท่านั้น
+
+    เดิม "เช็คว่ายังไม่มี → เขียน" ไม่มีล็อก สองคำขอผ่านด่าน isfile พร้อมกันได้ แล้วคน
+    ที่สองเขียนทับของคนแรกเงียบ ๆ (ผิดสัญญาเขียนครั้งเดียว) — ใช้ Event คุมจังหวะให้
+    คำขอแรกค้างอยู่กลางการเขียน ไม่ใช้ sleep เดา
+    """
+
+    def test_second_capture_while_first_is_writing_does_not_overwrite(self):
+        import threading
+        from unittest.mock import patch
+
+        from backend.services import target_baseline as tb
+
+        writing = threading.Event()
+        release = threading.Event()
+        real_write = tb.atomic_write_json
+
+        def slow_write(path, doc, **kw):
+            if doc.get("captured_by") == "first":
+                writing.set()
+                release.wait(5)
+            return real_write(path, doc, **kw)
+
+        results = {}
+
+        def run(who, boxes):
+            results[who] = capture_baseline_once(
+                SUP, 9, 2026, _sku([("A", boxes, 1.0)]), _sun([("E1", 100.0)]),
+                captured_by=who,
+            )
+
+        with patch.object(tb, "atomic_write_json", side_effect=slow_write):
+            t1 = threading.Thread(target=run, args=("first", 10))
+            t1.start()
+            self.assertTrue(writing.wait(5))
+            t2 = threading.Thread(target=run, args=("second", 99))
+            t2.start()
+            # คำขอที่สองต้องรอล็อก ไม่ใช่เขียนแซงไปก่อน
+            t2.join(0.3)
+            self.assertTrue(t2.is_alive(), "คำขอที่สองต้องรอคำขอแรกเขียนเสร็จก่อน")
+            release.set()
+            t1.join(5)
+            t2.join(5)
+
+        self.assertEqual(results, {"first": True, "second": False})
+        doc = read_baseline(SUP, 9, 2026)
+        self.assertEqual(doc["captured_by"], "first")
+        self.assertEqual(doc["total_target_boxes"], 10)
+
+
 class TestDiff(_TmpCwd):
     def setUp(self):
         super().setUp()

@@ -140,6 +140,8 @@ client บันทึก → ส่ง if_match_version: 3
 | `fabric_dax_connector.py` | `_TOKEN_CACHE_LOCK` | เขียน `data/token_cache.bin` (เฉพาะโหมดล็อกอินผู้ใช้) |
 | `services/alloc_rules_store.py` | `_STORE_LOCK` | CAS ด้วย `rev` (ดูหัวข้อ "ไฟล์ global" ด้านบน) |
 | `services/feedback_store.py` | `_STORE_LOCK` | append/แก้สถานะความเห็นผู้ใช้ |
+| `services/access_hierarchy.py` | `_PERSIST_LOCK` + `atomic_write_json` | เขียน `config/access_hierarchy.json` + `data/managers_cache.json` เป็นคู่จากรอบเดียวกัน |
+| `services/target_baseline.py` | `read_locked(path)` คร่อม "เช็ค→เขียน" | เป้าตั้งต้นเขียนครั้งเดียว ไม่ถูกแท็บที่สองทับ |
 
 ## โหลดรวมภาคทำงานขนานกัน (thread pool ซ้อนใน request)
 
@@ -177,11 +179,17 @@ data/Final_Dashboard_{SUP}_{YYYY}_{MM}.xlsx
 
 ## ที่ยังไม่ได้แก้ (รู้อยู่)
 
+> **แก้แล้ว (25 ก.ย. 2026):** `data/managers_cache.json` — เอกสารเดิมโทษ `services/managers.py`
+> แต่ตัวนั้นใช้ `atomic_write_json` ใต้ `_CACHE_LOCK` มาตั้งแต่ก่อนแล้ว ตัวที่ยังเขียนด้วย
+> `open(..., "w")` จริงคือ `services/access_hierarchy.py::persist_hierarchy` (เขียนทั้ง
+> `config/access_hierarchy.json` และ `data/managers_cache.json`) — ย้ายมาใช้ `atomic_write_json`
+> + `_PERSIST_LOCK` แล้ว ตัวอ่าน `load_hierarchy_payload` ครอบ `read_locked` ด้วย
+> (`tests/test_access_hierarchy_persist.py`) · `services/fabric_cache.py` ก็ย้ายมาใช้
+> `atomic_io` แล้ว (ได้ retry-on-PermissionError ตามไปด้วย)
+
 - **`config/user_access.json` lost update** — `routers/admin.py` ทำ `read_rows()` → แก้ → `write_rows()`
   แต่ `_STORE_LOCK` ถูกจับ *แยกกัน* ข้างในแต่ละฟังก์ชัน ไม่ได้ถือคร่อม RMW
   admin 2 คนแก้คนละ user พร้อมกัน → การแก้ของคนหนึ่งหาย
-- **`data/managers_cache.json`** — `services/managers.py` เขียนด้วย `open(..., "w")` ตรง ๆ
-  ไม่มี temp+replace อยู่บน hot path ของ login ทุกครั้ง (มี try/except รองรับ → แค่ช้าลง ไม่พัง)
 - **export/download TOCTOU** — เขียนไฟล์ตาม sup+brand แล้วให้ client มา GET ทีหลัง
   สองคนที่ดูแล SL **และ** brand เดียวกัน (เช่น manager + supervisor) export พร้อมกันจะทับกัน
 - **cache ราย SL อื่น ๆ ยังใช้ `to_csv` ตรง ๆ** (`employees.py` hist/tga_grain) — torn read ได้
