@@ -10163,6 +10163,15 @@ function _markAllocationSentTargetSun(supId = null) {
 }
 
 function _handleTargetSunImportResponse(res, j, opts = {}) {
+  if (!res.ok && res.status === 504) {
+    // server หมดเวลารอ Target Sun — ของอาจลงไปแล้ว ห้ามบอกว่าไม่สำเร็จ (ผลตรวจ §2.4)
+    opts.uncertain = true;
+    toast(
+      "⚠ หมดเวลารอคำตอบจาก Target Sun — ไม่รู้ว่าลงแล้วหรือยัง ตรวจยอดใน Target Sun ก่อนส่งซ้ำ",
+      "red"
+    );
+    return false;
+  }
   if (!res.ok) {
     if (res.status === 403) {
       S.canImportTargetSun = false;
@@ -10275,6 +10284,9 @@ function _targetSunPrepareUnsupported(status, body) {
 }
 
 async function _fetchTargetSunImport(body) {
+  // ต้องรอนานกว่างานฝั่ง server ที่แย่ที่สุด: อ่านก่อนส่ง 120s + POST 600s + อ่านหลังส่ง 2×120s
+  // = 960s (ค่าเริ่มต้น) · เดิมรอ 600s หน้าเว็บจึงเลิกรอก่อน ทั้งที่ server ส่งสำเร็จ
+  // แล้วหน้าจอขึ้น "ไม่รู้ผล" และไม่ประทับว่าส่งแล้ว (ผลตรวจ §2.4)
   const res = await fetchWithTimeout(
     `${API_BASE_URL}/lakehouse/import-targetsun`,
     {
@@ -10282,7 +10294,7 @@ async function _fetchTargetSunImport(body) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     },
-    600000
+    1200000
   );
   const j = await res.json().catch(() => ({}));
   return { res, j };

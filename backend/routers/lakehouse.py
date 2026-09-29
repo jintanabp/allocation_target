@@ -474,16 +474,26 @@ def import_targetsun_from_allocations(
         else:
             result = import_allocations_to_targetsun(req)
     except Exception as e:
+        timed_out = isinstance(e, HTTPException) and e.status_code == 504
         log_from_user(
             user,
             level="error",
             sup_id=req.sup_id,
             action="send_targetsun",
-            message="ส่งเข้า Target Sun ไม่สำเร็จ",
+            # หมดเวลารอ = ปลายทางอาจบันทึกไปแล้ว ห้ามบอกว่า "ไม่สำเร็จ" (ผลตรวจ §2.4)
+            message=(
+                "ส่งเข้า Target Sun ไม่รู้ผล — หมดเวลารอคำตอบ ให้ตรวจยอดใน Target Sun ก่อนส่งซ้ำ"
+                if timed_out
+                else "ส่งเข้า Target Sun ไม่สำเร็จ"
+            ),
             detail=f"งวด {req.target_year}-{req.target_month:02d} · {type(e).__name__}: {e}",
             target_month=int(req.target_month),
             target_year=int(req.target_year),
-            context={"ok": False, "error": type(e).__name__},
+            context={
+                "ok": False,
+                "error": type(e).__name__,
+                "send_status": "unknown" if timed_out else "failed",
+            },
         )
         raise
     _log_targetsun_send(user, req, result)

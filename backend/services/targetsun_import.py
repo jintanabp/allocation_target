@@ -729,8 +729,17 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
                 not_in_ts=not_in_ts if isinstance(not_in_ts, list) else [],
                 shortfall=shortfall if isinstance(shortfall, list) else [],
             )
-        finally:
+        except HTTPException as e:
+            # หมดเวลารอ (504) = ปลายทางอาจยังบันทึกต่อจนเสร็จ ไม่รู้ผลจริง (ผลตรวจ §2.4)
+            # เก็บไฟล์ที่ส่งไว้ให้ dev ตรวจย้อนได้ว่าส่งอะไรไป (หมดอายุเองใน 30 นาที)
+            # ผิดพลาดแบบอื่นลบทิ้งตามเดิม
+            if e.status_code != 504:
+                _delete_prepare_bundle(token)
+            raise
+        except BaseException:
             _delete_prepare_bundle(token)
+            raise
+        _delete_prepare_bundle(token)
 
         out["prepare_token"] = token
         # รอบการส่งรวมภาค — router ใช้ส่งแจ้งเตือนถึงเจ้าของทุก SL ในรอบ
