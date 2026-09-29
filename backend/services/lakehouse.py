@@ -1037,9 +1037,15 @@ def _clear_no_target_employees_in_tga(
     sup_id: str,
     *,
     dg: pd.DataFrame | None = None,
+    only_skus: set[str] | None = None,
 ) -> tuple[pd.DataFrame, list[str]]:
     """
     ล้างเป้าเดิมของคนใน「ไม่ต้องตั้งเป้า」ที่ยังค้างอยู่ใน Target Sun
+
+    only_skus — ส่งแยกแบรนด์/เฉพาะบางสินค้า: ล้างเฉพาะ SKU ในรอบส่งนี้เท่านั้น
+      เดิมล้างทุก SKU ของคนนั้นเสมอ ส่งแบรนด์เดียวแล้วไปเขียนแถว 0 ให้ SKU แบรนด์อื่น
+      ด่านยอดรวมทั้งชุดกับตัวตรวจหลังส่งจึงฟ้องผิดทั้งที่ข้อมูลถูก (ผลตรวจ §2.1)
+      None = ส่งเต็ม ล้างได้ทุก SKU
 
     คนกลุ่มนี้ถูกตัดออกตั้งแต่ตอนกระจาย (`_drop_no_target_employees`) จึงไม่มีแถวใน
     ผลกระจาย → ไม่มีอะไรถูกส่ง → **Target Sun ยังถือเป้าของงวดก่อนไว้เหมือนเดิม**
@@ -1075,6 +1081,8 @@ def _clear_no_target_employees_in_tga(
         emp = no_target_store.norm_emp(r.get("emp_id"))
         sku = str(r.get("sku") or "").strip()
         if not emp or not sku or emp not in blocked:
+            continue
+        if only_skus is not None and sku not in only_skus:
             continue
         if (emp, sku) in present:
             # มีแถวอยู่ในผลกระจายแล้ว (เช่นผู้ใช้ปลดออกจากรายชื่อกลางคัน) — อย่าไปทับ
@@ -2583,13 +2591,17 @@ def _build_tga_upload_dataframe(
     # เฉพาะเส้นทางส่งจริง — ไฟล์ Excel ที่ผู้ใช้โหลดไปดูไม่ต้องมีแถวล้างค่าปนมาให้งง
     stale_rows_cleared = 0
     if drop_incomplete_rows:
-        df, _no_target_cleared = _clear_no_target_employees_in_tga(
-            df, req.sup_id, dg=grain_dg
-        )
         # ล้างแถวที่หลุดจากรอบนี้ (ค8) ต้องเป็นการส่งแบบเต็ม — brand_filter=="ALL" และ
         # ไม่มี sku_filter — ไม่งั้นจะเข้าใจผิดว่า "ตั้งใจไม่เลือกส่ง" คือ "หมดเป้าแล้ว"
         # แล้วไปล้างเป้าที่ยังถูกต้องของ SKU/แบรนด์อื่นที่ไม่ได้อยู่ในรอบส่งนี้
         _full_send = (brand_filter or "ALL").upper() == "ALL" and not sku_filter
+        # คนไม่ต้องตั้งเป้า: ส่งไม่เต็ม = ล้างเฉพาะ SKU ในรอบนี้ (df ถูกกรองแบรนด์/สินค้าแล้ว)
+        df, _no_target_cleared = _clear_no_target_employees_in_tga(
+            df,
+            req.sup_id,
+            dg=grain_dg,
+            only_skus=None if _full_send else set(df["sku"].astype(str).str.strip()),
+        )
         df, stale_rows_cleared = _clear_stale_employee_sku_rows_in_tga(
             df, req.sup_id, dg=grain_dg, full_send=_full_send
         )
