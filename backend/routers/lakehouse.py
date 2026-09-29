@@ -25,6 +25,7 @@ from ..services.targetsun_import import (
     mark_batch_verified,
     prepare_targetsun_import,
 )
+from ..services.send_alerts import notify_row_count_issue
 from ..services.usage_log_store import log_from_user
 
 logger = logging.getLogger("target_allocation.lakehouse_router")
@@ -196,6 +197,12 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
                 "new_rows_count": new_rows,
                 "new_rows_with_boxes_count": new_rows_boxes,
                 "stale_rows_cleared_count": stale_cleared,
+                # รอบการส่งรวมภาค — เชื่อมแถวของทุกทีมที่ส่งพร้อมกันได้
+                "send_batch_id": res.get("send_batch_id"),
+                "batch_sup_ids": list(res.get("batch_sup_ids") or []),
+                # ระบุคนกดกับเจ้าของทีมแยกกัน (ส่งรวมภาค คนกดไม่ใช่เจ้าของทุก SL)
+                "sender_email": user.get("email") or user.get("view_as_email"),
+                "acting_admin_email": user.get("acting_admin_email"),
                 "ok": ok,
             },
         )
@@ -384,4 +391,26 @@ def import_targetsun_from_allocations(
         )
         raise
     _log_targetsun_send(user, req, result)
+    _alert_row_count(user, req, result)
     return result
+
+
+def _alert_row_count(user: dict, req: LakehouseUploadRequest, result: Any) -> None:
+    """
+    นับแถวก่อน/หลังส่งไม่ตรง หรือตรวจไม่ได้ → แจ้งผู้ส่ง เจ้าของ SL dev และแอดมินในขอบเขต
+
+    ห้ามทำให้การส่งที่สำเร็จแล้วกลายเป็นล้มเหลว (notify_row_count_issue ไม่ raise)
+    """
+    res = result if isinstance(result, dict) else {}
+    rb = res.get("readback") or {}
+    if (res.get("targetsun") or {}).get("success") is False:
+        return
+    notify_row_count_issue(
+        user=user,
+        sup_id=req.sup_id,
+        target_month=int(req.target_month),
+        target_year=int(req.target_year),
+        row_count=rb.get("row_count") if isinstance(rb, dict) else None,
+        batch_id=res.get("send_batch_id"),
+        batch_sup_ids=res.get("batch_sup_ids") or [],
+    )

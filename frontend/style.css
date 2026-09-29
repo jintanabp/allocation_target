@@ -6194,6 +6194,34 @@ td.alloc-summary-status--none { color: var(--text-3); opacity: 0.7; }
   filter: brightness(0.97);
 }
 
+/* กระดิ่งบน topbar ใช้หน้าตาเดียวกับกระดิ่งแอดมิน แค่สีแดงเพราะเป็นเรื่องที่ต้องรู้ */
+.topbar-bell {
+  border-color: var(--red-brd, var(--amber-brd));
+  background: var(--red-bg, var(--amber-bg));
+  color: var(--red, var(--amber));
+}
+.topbar-bell .admin-bell__count {
+  background: var(--red, var(--amber));
+}
+.notif-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 0 0 8px;
+  text-align: left;
+}
+.notif-item__title {
+  font-weight: 700;
+  color: var(--text-1, var(--text));
+}
+.notif-item__meta {
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+.notif-item--acked {
+  opacity: 0.55;
+}
+
 .admin-bell--on {
   border-color: var(--amber);
   box-shadow: 0 0 0 2px var(--amber-bg);

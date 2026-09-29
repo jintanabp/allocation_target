@@ -274,6 +274,19 @@ def fetch_max_effective_date(division_code: str, sales_type: str) -> dict:
     return result
 
 
+#: เพดานรหัสพนักงานต่อคำขอ (TARGETSUN_READ_API_SPEC.md ข้อ 7)
+_READ_MAX_CODES = 200
+#: กันวนไม่รู้จบถ้าปลายทางตอบ hasMore ค้าง
+_READ_MAX_PAGES = 50
+
+
+def _int_or_none(v: Any) -> int | None:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def fetch_target_rows(
     target_year: int,
     target_month: int,
@@ -282,6 +295,15 @@ def fetch_target_rows(
     include_zero_quantity: bool = True,
     filter_by_effective_date: bool = True,
 ) -> dict:
+    """
+    อ่านแถวเป้าของพนักงานชุดหนึ่ง — แบ่งคำขอชุดละ 200 รหัส และตามหน้าถัดไปถ้ามี
+
+    result["complete"] = False เมื่ออ่านได้ไม่ครบ ได้แก่
+      - ปลายทางบอกจำนวน (rowCount / totalRows) ไม่ตรงกับแถวที่ได้จริง
+      - hasMore ค้างเกินเพดานหน้า หรือหน้าถัดไปซ้ำหน้าเดิม (ปลายทางไม่รองรับ page)
+    ผู้เรียกที่ใช้นับแถว (ตรวจก่อน/หลังส่ง) ต้องถือว่า "ตรวจไม่ได้" ไม่ใช่นับจากของที่ขาด
+    เดิมยิงคำขอเดียวแล้วใช้ rows ที่ได้เลย ถ้าปลายทางตัดหน้า ตัวเลขจะน้อยกว่าจริงแบบเงียบ ๆ
+    """
     codes = sorted(
         {
             c
@@ -292,21 +314,65 @@ def fetch_target_rows(
     if not codes:
         raise HTTPException(400, detail="ไม่มีรหัสพนักงานสำหรับดึงเป้า")
 
-    body = _request_json(
-        "POST",
-        "targetSalesmanNext/query",
-        json_body={
-            "targetYear": int(target_year),
-            "targetMonth": int(target_month),
-            "salesmanCodes": codes,
-            "includeZeroQuantity": bool(include_zero_quantity),
-            "filterByEffectiveDate": bool(filter_by_effective_date),
-        },
-    )
-    result = body.get("result") or {}
-    if not isinstance(result, dict):
-        result = {}
-    return result
+    merged: dict[str, Any] = {}
+    all_rows: list[Any] = []
+    complete = True
+    for i in range(0, len(codes), _READ_MAX_CODES):
+        chunk = codes[i:i + _READ_MAX_CODES]
+        chunk_rows: list[Any] = []
+        reported: int | None = None
+        prev_first: Any = None
+        page = 1
+        while True:
+            payload: dict[str, Any] = {
+                "targetYear": int(target_year),
+                "targetMonth": int(target_month),
+                "salesmanCodes": chunk,
+                "includeZeroQuantity": bool(include_zero_quantity),
+                "filterByEffectiveDate": bool(filter_by_effective_date),
+            }
+            if page > 1:
+                payload["page"] = page
+            body = _request_json("POST", "targetSalesmanNext/query", json_body=payload)
+            result = body.get("result") or {}
+            if not isinstance(result, dict):
+                result = {}
+            if not merged:
+                merged = {k: v for k, v in result.items() if k != "rows"}
+            rows = result.get("rows")
+            rows = rows if isinstance(rows, list) else []
+            if page > 1 and rows and rows[0] == prev_first:
+                # ปลายทางไม่สนพารามิเตอร์ page แล้วส่งหน้าเดิมกลับมา — หยุด ไม่นับซ้ำ
+                logger.warning("TargetSun read: หน้า %d ซ้ำหน้าเดิม — ถือว่าอ่านไม่ครบ", page)
+                complete = False
+                break
+            prev_first = rows[0] if rows else None
+            chunk_rows.extend(rows)
+            total = _int_or_none(result.get("totalRows"))
+            if total is None and page == 1 and not result.get("hasMore"):
+                total = _int_or_none(result.get("rowCount"))
+            if total is not None:
+                reported = total
+            if result.get("hasMore") and rows:
+                page += 1
+                if page > _READ_MAX_PAGES:
+                    logger.warning("TargetSun read: hasMore เกิน %d หน้า — ถือว่าอ่านไม่ครบ", _READ_MAX_PAGES)
+                    complete = False
+                    break
+                continue
+            break
+        if reported is not None and reported != len(chunk_rows):
+            logger.warning(
+                "TargetSun read: ปลายทางบอก %d แถว แต่ได้จริง %d แถว — ถือว่าอ่านไม่ครบ",
+                reported, len(chunk_rows),
+            )
+            complete = False
+        all_rows.extend(chunk_rows)
+
+    merged["rows"] = all_rows
+    merged["rowCount"] = len(all_rows)
+    merged["complete"] = complete
+    return merged
 
 
 def rows_to_granular_df(rows: list[dict[str, Any]] | None) -> pd.DataFrame:

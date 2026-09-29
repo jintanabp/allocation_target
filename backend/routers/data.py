@@ -27,9 +27,40 @@ from ..services.manager_views import (
     filter_codes_by_unit,
     resolve_aggregate_supervisor_codes,
 )
+from ..services import notification_store
 from ..services.usage_log_store import read_logs
 
 router = APIRouter(tags=["data"])
+
+
+def _inbox_email(user: dict) -> str:
+    """เจ้าของกล่องแจ้งเตือน — โหมดดูแทนเห็นกล่องของคนที่ถูกจำลอง"""
+    return str(user.get("email") or user.get("view_as_email") or "").strip().lower()
+
+
+@router.get("/data/notifications")
+def get_notifications(
+    user: dict = Depends(require_authenticated_user),
+    include_acked: bool = Query(False),
+) -> dict[str, Any]:
+    """กล่องแจ้งเตือนของผู้ใช้ที่ล็อกอินอยู่ — ใหม่สุดก่อน (ไม่ต้องเป็นแอดมิน)"""
+    em = _inbox_email(user)
+    items = notification_store.list_for(em, include_acked=include_acked)
+    return {"items": items, "unread": notification_store.unread_count(em)}
+
+
+@router.post("/data/notifications/{item_id}/ack")
+def ack_notification(
+    item_id: str,
+    user: dict = Depends(require_authenticated_user),
+) -> dict[str, Any]:
+    """กดรับทราบ — เฉพาะผู้รับตัวจริง ห้ามกดแทนระหว่างดูแทน"""
+    if user.get("view_as_email"):
+        raise HTTPException(403, detail="กำลังดูแทนผู้ใช้อื่น — กดรับทราบแทนเขาไม่ได้")
+    em = _inbox_email(user)
+    if not notification_store.acknowledge(em, str(item_id or "").strip()):
+        raise HTTPException(404, detail="ไม่พบรายการแจ้งเตือนนี้")
+    return {"ok": True, "unread": notification_store.unread_count(em)}
 
 
 @router.get("/data/send-history")

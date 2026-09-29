@@ -38,6 +38,19 @@
         <div class="topbar-period" id="topbarPeriodContainer" style="display:none;">
           <span id="topbarPeriodText">—</span>
         </div>
+        <!-- กล่องแจ้งเตือน — โผล่เฉพาะตอนมีเรื่องที่ยังไม่ได้กดรับทราบ (เช่นจำนวนแถวใน
+             Target Sun หลังส่งไม่ตรงที่คาด) ไม่มีเรื่องก็ซ่อน หน้าจอเดิมไม่เปลี่ยน -->
+        <button type="button" class="admin-bell topbar-bell" id="notifBellBtn"
+          onclick="openNotificationsModal()" style="display:none;"
+          title="การแจ้งเตือนที่ยังไม่ได้กดรับทราบ">
+          <svg class="admin-bell__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+            <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+          </svg>
+          <span class="admin-bell__label">แจ้งเตือน</span>
+          <span class="admin-bell__count" id="notifBellCount">0</span>
+        </button>
         <!-- ไอคอนสองอันอยู่ในปุ่มเดียว สลับการแสดงผลด้วย CSS ตาม data-theme
              (ไม่ต้องให้ JS มายุ่งกับเนื้อในปุ่ม) -->
         <button id="themeToggleBtn" class="btn-theme-toggle" type="button"

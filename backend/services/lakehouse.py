@@ -1341,6 +1341,10 @@ def _live_target_snapshot(
         rows = result.get("rows")
         if not isinstance(rows, list):
             return None
+        if result.get("complete") is False:
+            # อ่านไม่ครบ = นับแถวไม่ได้ — ห้ามเอาตัวเลขที่ขาดไปเทียบก่อน/หลังส่ง
+            logger.warning("อ่านเป้าจาก Target Sun ได้ไม่ครบ (%s) — ถือว่าตรวจไม่ได้", sup_id)
+            return None
         by_sku: dict[str, int] = {}
         keys: set[str] = set()
         for r in rows:
@@ -1624,6 +1628,12 @@ def verify_row_count_after_send(
     ล้วน ๆ ไม่ใช่ประตู
     """
     try:
+        # อ่านกับส่งคนละระบบ (เช่น preset test: อ่าน Prod ส่ง UAT) — ตัวเลขก่อน/หลัง
+        # มาจากระบบที่ไม่ได้ถูกเขียน ผลเทียบจึงไม่มีความหมาย ต้องรายงานว่าตรวจไม่ได้
+        from .targetsun_endpoints import targetsun_endpoints_summary
+
+        if str(targetsun_endpoints_summary().get("cross_env") or "") == "1":
+            return {"checked": False, "reason": "cross_env"}
         if before_snapshot is None:
             return {"checked": False, "reason": "before_unavailable"}
         after_snapshot = _live_target_snapshot(sup_id, month, year, emp_codes)

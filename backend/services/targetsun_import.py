@@ -64,6 +64,35 @@ def _release_import_token(token: str) -> None:
         _import_in_flight_tokens.discard(token)
 
 
+# กันสองคนส่งทีมเดียวกันงวดเดียวกันซ้อนกัน — การนับแถว "ก่อนส่ง/หลังส่ง" ของรอบหนึ่ง
+# จะนับแถวของอีกรอบปนเข้ามา แล้วแจ้งเตือนว่าจำนวนแถวไม่ตรงทั้งที่ไม่มีอะไรผิด
+# (token คนละใบจึงไม่ติดล็อกข้างบน) ล็อกในโปรเซสพอ — ระบบรัน worker เดียว
+_team_send_in_flight: set[tuple[str, int, int]] = set()
+
+
+def _claim_team_send(sup_id: str, month: int, year: int) -> tuple[str, int, int]:
+    key = (str(sup_id or "").strip().upper(), int(month), int(year))
+    with _import_in_flight_lock:
+        if key in _team_send_in_flight:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "team_send_in_progress",
+                    "message": (
+                        f"มีการส่งเป้าของทีม {key[0]} งวด {key[1]:02d}/{key[2]} อยู่แล้ว — "
+                        "รอให้รอบนั้นเสร็จก่อน แล้วค่อยส่งอีกครั้ง"
+                    ),
+                },
+            )
+        _team_send_in_flight.add(key)
+    return key
+
+
+def _release_team_send(key: tuple[str, int, int]) -> None:
+    with _import_in_flight_lock:
+        _team_send_in_flight.discard(key)
+
+
 def _prepare_dir() -> Path:
     d = _PREPARE_DIR
     d.mkdir(parents=True, exist_ok=True)
@@ -233,6 +262,7 @@ def mark_batch_verified(metas: list[dict]) -> None:
     client ที่ข้ามการเรียกนั้น (หรือหน้าเว็บรุ่นเก่า) ก็ส่งได้เลย
     """
     tokens = sorted(str(m.get("prepare_token") or "").strip() for m in metas)
+    sup_ids = sorted({str(m.get("sup_id") or "").strip().upper() for m in metas} - {""})
     for m in metas:
         tok = str(m.get("prepare_token") or "").strip()
         if not tok:
@@ -240,6 +270,8 @@ def mark_batch_verified(metas: list[dict]) -> None:
         meta = {k: v for k, v in m.items() if k != "prepare_token"}
         meta["batch_verified"] = True
         meta["batch_tokens"] = tokens
+        # ทีมทั้งหมดในรอบนี้ — ให้แจ้งเตือนผลนับแถวถึงเจ้าของทุก SL ในรอบ
+        meta["batch_sup_ids"] = sup_ids
         atomic_write_text(
             str(_prepare_dir() / f"{tok}.json"), json.dumps(meta, ensure_ascii=False)
         )
@@ -605,6 +637,15 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
     try:
         content, fname, meta = _load_prepare_bundle(token, req.sup_id)
         _assert_batch_verified(token, meta)
+        team_key = _claim_team_send(
+            req.sup_id,
+            int(meta.get("target_month") or req.target_month),
+            int(meta.get("target_year") or req.target_year),
+        )
+    except BaseException:
+        _release_import_token(token)
+        raise
+    try:
         nrow = int(meta.get("rows_sent") or 0)
         zero_rows = int(meta.get("zero_rows_sent") or 0)
         dropped_dims = int(meta.get("rows_dropped_missing_dims") or 0)
@@ -671,6 +712,9 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
             _delete_prepare_bundle(token)
 
         out["prepare_token"] = token
+        # รอบการส่งรวมภาค — router ใช้ส่งแจ้งเตือนถึงเจ้าของทุก SL ในรอบ
+        out["send_batch_id"] = meta.get("send_batch_id") or None
+        out["batch_sup_ids"] = list(meta.get("batch_sup_ids") or [])
         return _attach_readback(
             out,
             sup_id=req.sup_id,
@@ -685,6 +729,7 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
             file_row_keys=meta.get("import_row_keys") if isinstance(meta.get("import_row_keys"), list) else [],
         )
     finally:
+        _release_team_send(team_key)
         _release_import_token(token)
 
 
@@ -701,7 +746,15 @@ def import_allocations_to_targetsun(req: LakehouseUploadRequest) -> dict:
             400,
             detail="การส่งรวมหลายทีมต้องเตรียมไฟล์และตรวจยอดรวมก่อน — กรุณากดส่งใหม่อีกครั้ง",
         )
+    team_key = _claim_team_send(req.sup_id, int(req.target_month), int(req.target_year))
+    try:
+        return _import_allocations_one_shot(req)
+    finally:
+        _release_team_send(team_key)
 
+
+def _import_allocations_one_shot(req: LakehouseUploadRequest) -> dict:
+    """ตัวงานของ import_allocations_to_targetsun — เรียกใต้ล็อกทีม×งวดเท่านั้น"""
     url = targetsun_import_excel_url().strip()
     t0 = time.perf_counter()
     logger.info("TargetSun import: start allocations_in=%d", len(req.allocations or []))

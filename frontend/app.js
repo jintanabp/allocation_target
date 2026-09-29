@@ -10728,6 +10728,8 @@ async function _doLakehouseUploadInner() {
   if (sentCount > 0) {
     _savePendingTopup(pending);
     syncPendingTopupBanner();
+    // server อาจเพิ่งสร้างแจ้งเตือน (จำนวนแถวไม่ตรง/ตรวจไม่ได้) — ให้กระดิ่งขึ้นทันที
+    refreshNotificationBell(true);
   }
 
   // ส่งไม่ครบทุกทีม — บอกให้ชัดว่าอะไรเข้าไปแล้วบ้าง เพราะย้อนคืนไม่ได้
@@ -14940,7 +14942,89 @@ const ADMIN_SORT_GETTERS = {
   targetsun: (r) => (r.can_import_targetsun ? 1 : 0),
 };
 
+/* ── กล่องแจ้งเตือนในแอป ─────────────────────────────────────────────
+   เรื่องที่คนต้องรู้แม้ไม่ได้เป็นคนกด เช่นจำนวนแถวใน Target Sun หลังส่งไม่ตรงที่คาด
+   server ส่งถึงคนกดส่ง เจ้าของ SL dev และแอดมินในขอบเขต (backend/services/send_alerts.py)
+   กระดิ่งโผล่เฉพาะตอนมีเรื่องค้าง — ไม่มีเรื่องก็ซ่อน หน้าจอเดิมไม่เปลี่ยน */
+let _notifLastFetch = 0;
+let _notifItems = [];
+
+async function refreshNotificationBell(force = false) {
+  const btn = document.getElementById("notifBellBtn");
+  if (!btn) return;
+  const onLogin = document.getElementById("loginView")?.style.display !== "none";
+  if (onLogin) { btn.style.display = "none"; return; }
+  if (!force && Date.now() - _notifLastFetch < 60000) return;
+  _notifLastFetch = Date.now();
+  try {
+    const res = await fetchWithTimeout(`${API_BASE_URL}/data/notifications`, {}, 15000);
+    if (!res.ok) return;
+    const j = await res.json().catch(() => ({}));
+    _notifItems = Array.isArray(j.items) ? j.items : [];
+    const n = Number(j.unread) || 0;
+    btn.style.display = n > 0 ? "inline-flex" : "none";
+    const c = document.getElementById("notifBellCount");
+    if (c) c.textContent = n.toLocaleString("th-TH");
+  } catch (e) {
+    console.warn("[notifications]", e);
+  }
+}
+
+function _notifItemHtml(it) {
+  const when = it.created_at ? new Date(it.created_at).toLocaleString("th-TH") : "";
+  return `<div class="notif-item" data-notif-id="${escH(it.id)}">`
+    + `<div class="notif-item__title">⚠ ${escH(it.title || "")}</div>`
+    + `<div>${escH(it.message || "")}</div>`
+    + `<div class="notif-item__meta">${escH(when)}</div>`
+    + `<button type="button" class="btn-logout" style="margin-top:6px;"`
+    + ` onclick="ackNotification('${escH(it.id)}', this)">รับทราบ</button>`
+    + `</div>`;
+}
+
+function openNotificationsModal() {
+  const items = _notifItems || [];
+  _showInfoModal({
+    title: "การแจ้งเตือน",
+    bodyHtml: items.length
+      ? `<p style="margin:0 0 10px;text-align:left;">กด「รับทราบ」เมื่อตรวจแล้ว — `
+        + `ถ้าจำนวนแถวไม่ตรง ให้ตรวจเป้าของทีมนั้นใน Target Sun หรือแจ้ง IT</p>`
+        + `<div style="max-height:360px;overflow-y:auto;">${items.map(_notifItemHtml).join("")}</div>`
+      : `<p style="margin:0;">ไม่มีเรื่องค้าง</p>`,
+    primaryLabel: null,
+    secondaryLabel: "ปิด",
+  });
+}
+
+async function ackNotification(id, btnEl) {
+  if (btnEl) btnEl.disabled = true;
+  try {
+    const res = await fetchWithTimeout(
+      `${API_BASE_URL}/data/notifications/${encodeURIComponent(id)}/ack`,
+      { method: "POST" },
+      15000
+    );
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      toast(_userFacingError(_formatApiErrorDetail(j), "กดรับทราบไม่สำเร็จ"), "red");
+      if (btnEl) btnEl.disabled = false;
+      return;
+    }
+    const box = btnEl?.closest(".notif-item");
+    if (box) {
+      box.classList.add("notif-item--acked");
+      btnEl.textContent = "รับทราบแล้ว";
+    }
+    await refreshNotificationBell(true);
+  } catch (e) {
+    toast("กดรับทราบไม่สำเร็จ: " + _userFacingError(e), "red");
+    if (btnEl) btnEl.disabled = false;
+  }
+}
+
+setInterval(() => { refreshNotificationBell(false); }, 10 * 60 * 1000);
+
 function updateAdminNavVisibility() {
+  refreshNotificationBell(false);
   const topBtn = document.getElementById("adminNavBtn");
   const loginBtn = document.getElementById("adminNavLoginBtn");
   const onLogin = document.getElementById("loginView")?.style.display !== "none";
