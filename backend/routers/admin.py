@@ -2913,6 +2913,9 @@ def admin_target_endpoints_payload() -> dict:
         "read_host_label": summary["read_host_label"],
         "import_host_label": summary["import_host_label"],
         "cross_env": summary["cross_env"] == "1",
+        "settings_file_status": summary.get("settings_file_status"),
+        "using_default_settings": summary.get("using_default_settings") == "1",
+        "manual_url_override": summary.get("manual_url_override") == "1",
     }
 
 

@@ -1600,6 +1600,16 @@ def assert_target_snapshot_is_fresh(
     )
 
 
+def _reads_other_system_than_sends() -> bool:
+    """อ่านกับส่งคนละระบบ (เช่น preset test) — ผลตรวจหลังส่งใช้ไม่ได้"""
+    from .targetsun_endpoints import targetsun_endpoints_summary
+
+    try:
+        return str(targetsun_endpoints_summary().get("cross_env") or "") == "1"
+    except Exception:
+        return False
+
+
 def verify_after_send(
     sup_id: str,
     month: int,
@@ -1617,6 +1627,9 @@ def verify_after_send(
     ห้าม raise เด็ดขาด — ของส่งไปแล้ว ถ้าตรวจไม่ได้ก็แค่บอกว่าตรวจไม่ได้
     ไม่ใช่ทำให้การส่งที่สำเร็จแล้วดูเหมือนล้มเหลว
     """
+    # อ่านกับส่งคนละระบบ = ยอด "ลงจริง" ที่อ่านได้มาจากระบบที่ไม่ได้ถูกเขียน (ผลตรวจ §2.2)
+    if _reads_other_system_than_sends():
+        return {"checked": False, "reason": "cross_env"}
     try:
         if not sent_by_sku:
             return {"checked": False, "reason": "no_rows"}

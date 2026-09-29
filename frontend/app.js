@@ -10039,6 +10039,14 @@ async function _loadSendEnvLabel() {
     el.style.fontWeight = "700";
     el.style.color = isProd ? "var(--red)" : "var(--text-2)";
     if (isProd) el.textContent += " — ระบบจริง";
+    // ไฟล์ตั้งค่าหาย/เสีย หรืออ่านกับส่งคนละระบบ — ผลตรวจหลังส่ง (ยอด/จำนวนแถว) ใช้ไม่ได้
+    const warns = [];
+    if (j.using_default_settings) warns.push("ระบบใช้ปลายทางค่าตั้งต้น (ไฟล์ตั้งค่าหาย) — แจ้ง dev ก่อนส่ง");
+    if (j.cross_env) warns.push(`อ่านเป้าจาก ${String(j.read_host_label || "?")} แต่ส่งไป ${label} — ตรวจยอดหลังส่งไม่ได้`);
+    if (warns.length) {
+      el.textContent += ` · ⚠ ${warns.join(" · ")}`;
+      el.style.color = "var(--amber)";
+    }
   } catch (e) {
     console.warn("[targetsun] อ่านปลายทางไม่ได้:", e);
     el.textContent = "ปลายทางที่จะส่ง: ตรวจสอบไม่ได้";
@@ -15565,13 +15573,20 @@ function adminRenderTargetEndpoints(data) {
       <div><strong>ส่งผลกระจาย (${sendLbl}):</strong> ${sendUrl}</div>`;
   }
   if (cross) {
-    if (data?.cross_env) {
-      cross.style.display = "block";
-      cross.innerHTML = "⚠ โหมดข้ามสภาพแวดล้อม: อ่านเป้าจาก Production แต่ส่งผลไป UAT — ตรวจงวด/effective date ให้ตรงกันก่อนทดสอบ และสลับ Send เป็น Prod เมื่อ go-live";
-    } else {
-      cross.style.display = "none";
-      cross.innerHTML = "";
+    const warns = [];
+    if (data?.using_default_settings) {
+      warns.push("⚠ ไม่พบไฟล์ตั้งค่า (config/app_runtime.json) หรือไฟล์เสีย — ระบบใช้ค่าตั้งต้น "
+        + "「ทดสอบ (อ่าน Prod · ส่ง UAT)」 เอง ไม่ใช่ค่าที่เลือกไว้ · กดเลือกปลายทางใหม่เพื่อบันทึกไฟล์");
     }
+    if (data?.manual_url_override) {
+      warns.push("⚠ มี URL ที่แก้ไว้ในไฟล์ตั้งค่าทับ preset — ปลายทางจริงคือ URL ข้างบน ไม่ใช่ชื่อ preset ที่เลือก");
+    }
+    if (data?.cross_env) {
+      warns.push("⚠ โหมดข้ามสภาพแวดล้อม: อ่านเป้าจาก Production แต่ส่งผลไป UAT — "
+        + "ผลตรวจยอด/จำนวนแถวหลังส่งจะขึ้น「ตรวจไม่ได้」 และสลับ Send เป็น Prod เมื่อ go-live");
+    }
+    cross.style.display = warns.length ? "block" : "none";
+    cross.innerHTML = warns.map((w) => `<div>${escapeHtml(w)}</div>`).join("");
   }
 }
 

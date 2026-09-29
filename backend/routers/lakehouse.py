@@ -388,6 +388,8 @@ def get_send_environment(user: dict = Depends(require_authenticated_user)):
         "import_host_label": s.get("import_host_label"),
         "read_host_label": s.get("read_host_label"),
         "cross_env": s.get("cross_env") == "1",
+        # ไฟล์ตั้งค่าหาย/เสีย → ปลายทางกลับเป็นค่าตั้งต้นเงียบ ๆ — หน้าส่งต้องเตือน
+        "using_default_settings": s.get("using_default_settings") == "1",
     }
 
 
