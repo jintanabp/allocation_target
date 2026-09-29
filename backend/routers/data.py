@@ -28,6 +28,7 @@ from ..services.manager_views import (
     resolve_aggregate_supervisor_codes,
 )
 from ..services import notification_store
+from ..services.error_explain import explain
 from ..services.usage_log_store import read_logs
 
 router = APIRouter(tags=["data"])
@@ -364,6 +365,13 @@ def put_allocation_snapshot(
         # มีปุ่มของมัน (DELETE) หน้าเว็บไม่เคยตั้งใจบันทึกรายการว่าง
         prev = read_snapshot(sid, body.target_month, body.target_year)
         if prev and prev.get("allocations"):
+            log_from_user(
+                user, level="error", sup_id=sid, action="save_allocation",
+                message="ไม่บันทึก — ผลกระจายว่างจะทับผลเดิมของทีม",
+                detail=f"งวด {body.target_year}-{body.target_month:02d} · ผลเดิม {len(prev['allocations'])} แถว",
+                target_month=body.target_month, target_year=body.target_year,
+                context={"ok": False, "explain": explain("empty_allocation_overwrite", {"sup_id": sid})},
+            )
             raise HTTPException(
                 status_code=409,
                 detail={
@@ -422,6 +430,11 @@ def put_allocation_snapshot(
             detail=f"version บนเซิร์ฟเวอร์={e.current.get('version')}",
             target_month=body.target_month,
             target_year=body.target_year,
+            context={"explain": explain("snapshot_conflict", {
+                "sup_id": sid,
+                "rows": [{"reason": f"บันทึกล่าสุดโดย {e.current.get('updated_by') or '-'} "
+                                    f"เมื่อ {e.current.get('updated_at') or '-'}"}],
+            })},
         )
         raise HTTPException(
             status_code=409,
@@ -435,6 +448,12 @@ def put_allocation_snapshot(
             },
         ) from e
     except SnapshotPreconditionRequired as e:
+        log_from_user(
+            user, level="warn", sup_id=sid, action="save_allocation",
+            message="บันทึกไม่ได้ — หน้าเว็บรุ่นเก่า (ไม่ส่ง version)",
+            target_month=body.target_month, target_year=body.target_year,
+            context={"explain": explain("precondition_required")},
+        )
         raise HTTPException(
             status_code=428,
             detail={
@@ -453,6 +472,7 @@ def put_allocation_snapshot(
             detail=str(e),
             target_month=body.target_month,
             target_year=body.target_year,
+            context={"ok": False, "explain": explain("save_invalid", message=str(e))},
         )
         raise HTTPException(status_code=400, detail=str(e)) from e
 

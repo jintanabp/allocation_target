@@ -16874,7 +16874,12 @@ async function adminLoadUsageLogs() {
         }</td>
         <td>${escapeHtml(String(r.sup_id || "—"))}</td>
         <td class="log-action" title="${escapeHtml(String(r.action || ""))}">${escapeHtml(String(r.action || "—"))}${period}</td>
-        <td class="log-msg">${escapeHtml(String(r.message || "—"))}</td>
+        <td class="log-msg">${escapeHtml(String(r.message || "—"))}${
+          r.context?.explain && lvl !== "info"
+            ? `<div class="log-explain"><div><strong>สาเหตุ:</strong> ${escapeHtml(String(r.context.explain.cause || ""))}</div>`
+              + `<div><strong>วิธีแก้:</strong> ${escapeHtml(String(r.context.explain.fix || ""))}</div></div>`
+            : ""
+        }</td>
         <td class="admin-td-actions">${detailBtn}</td>
       </tr>`;
     }).join("");
@@ -16934,8 +16939,55 @@ function _adminExtErr(raw) {
   return { text: "ระบบปลายทางตอบกลับผิดพลาด — แจ้งผู้ดูแลระบบพร้อมรายละเอียดด้านล่าง", raw: s };
 }
 
+/** ข้อมูลอ้างอิงหนึ่งรายการเป็นบรรทัดเดียวที่คนอ่านเข้าใจ (สินค้า · พนักงาน · ตัวเลข) */
+function _explainRefLine(x) {
+  if (x == null || typeof x !== "object") return String(x);
+  const bits = [];
+  if (x.row != null) bits.push(`แถว ${x.row}`);
+  if (x.sup_id) bits.push(`ทีม ${x.sup_id}`);
+  if (x.sku) bits.push(`สินค้า ${x.sku}`);
+  if (x.emp_id) bits.push(`พนักงาน ${x.emp_id}`);
+  if (x.warehouse_code) bits.push(`คลัง ${x.warehouse_code}`);
+  if (x.sending_boxes != null) bits.push(`ส่ง ${x.sending_boxes} / เป้า ${x.expected_boxes}`);
+  if (x.loaded_boxes != null) bits.push(`เป้าตอนโหลด ${x.loaded_boxes} → ตอนนี้ ${x.current_boxes}`);
+  if (x.allocated_sum != null) bits.push(`กระจาย ${x.allocated_sum} / เป้า ${x.expected_boxes}`);
+  if (x.sent != null) bits.push(`ส่ง ${x.sent} / ใน Target Sun ${x.in_targetsun == null ? "ไม่มีแถว" : x.in_targetsun}`);
+  if (Array.isArray(x.teams)) bits.push(`อยู่ทีม ${x.teams.join(", ")}`);
+  if (x.reason) bits.push(String(x.reason));
+  return bits.join(" · ") || JSON.stringify(x);
+}
+
+/** คำอธิบายสำหรับแอดมิน (เกิดอะไร/น่าจะเกิดจาก/วิธีแก้/อ้างอิง) — ผู้ใช้ขอ 29 ก.ย. 2026 */
+function _explainLines(ex, more) {
+  if (!ex || typeof ex !== "object") return [];
+  const out = [
+    `เกิดอะไร: ${ex.title || "—"}`,
+    `น่าจะเกิดจาก: ${ex.cause || "—"}`,
+    `วิธีแก้: ${ex.fix || "—"}`,
+  ];
+  if (ex.server_message) out.push(`ข้อความจากระบบ: ${ex.server_message}`);
+  const refs = ex.refs && typeof ex.refs === "object" ? ex.refs : {};
+  const refLines = [];
+  for (const [k, v] of Object.entries(refs)) {
+    if (k.endsWith("_more")) continue;
+    if (Array.isArray(v)) {
+      for (const x of v) refLines.push(`  - ${_explainRefLine(x)}`);
+      if (refs[`${k}_more`]) refLines.push(`  … อีก ${refs[`${k}_more`]} รายการ`);
+    } else {
+      refLines.push(`  ${k}: ${Array.isArray(v) ? v.join(", ") : v}`);
+    }
+  }
+  if (refLines.length) out.push("ข้อมูลอ้างอิง:", ...refLines);
+  if (Array.isArray(more) && more.length) out.push(`ปัญหาอื่นในรอบเดียวกัน: ${more.join(" · ")}`);
+  out.push(`(รหัส: ${ex.code || "—"})`);
+  return out;
+}
+
 function _adminLogDetailText(r) {
   const lines = [];
+  const ctx0 = r.context && typeof r.context === "object" ? r.context : {};
+  const exLines = _explainLines(ctx0.explain, ctx0.explain_more);
+  if (exLines.length) lines.push(...exLines, "", "── รายละเอียดทางเทคนิค ──");
   if (r.detail) lines.push(String(r.detail));
   const meta = [];
   if (r.role) meta.push(`บทบาท: ${r.role}`);
@@ -16953,6 +17005,7 @@ function _adminLogDetailText(r) {
     lines.push("");
     lines.push("ค่าที่บันทึกไว้:");
     for (const [k, v] of Object.entries(r.context)) {
+      if (k === "explain" || k === "explain_more") continue;  // แสดงแบบอ่านง่ายด้านบนแล้ว
       lines.push(`  ${k}: ${Array.isArray(v) ? (v.length ? v.join(", ") : "—") : (v === null || v === undefined ? "—" : v)}`);
     }
   }
@@ -16963,7 +17016,7 @@ function adminShowUsageDetail(btn) {
   const detail = btn?.dataset?.detail || "";
   if (!detail) return;
   _showInfoModal({
-    title: "รายละเอียด (เทคนิค)",
+    title: "รายละเอียด",
     // dataset คืนค่าที่เบราว์เซอร์ decode กลับมาแล้ว = ข้อความดิบ ต้อง escape อีกรอบก่อนใส่ innerHTML
     // ไม่งั้น log ที่มี <class 'ValueError'> จะถูกตีความเป็นแท็กแล้วหายจากจอ
     bodyHtml: `<pre style="white-space:pre-wrap;font-size:12px;margin:0;">${escapeHtml(detail)}</pre>`,

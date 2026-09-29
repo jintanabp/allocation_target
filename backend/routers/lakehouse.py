@@ -26,6 +26,7 @@ from ..services.targetsun_import import (
     mark_batch_verified,
     prepare_targetsun_import,
 )
+from ..services.error_explain import explain, explain_http
 from ..services.send_alerts import notify_row_count_issue
 from ..services.usage_log_store import log_from_user
 
@@ -64,6 +65,36 @@ def _excluded_sku_summary(res: dict) -> dict:
         "shortfall_sku_count": len(items),
         "shortfall_boxes": int(res.get("shortfall_boxes") or 0),
     }
+
+
+def _send_result_explain(send_status: str, ts: dict, rb: dict, rc: dict) -> dict:
+    """คำอธิบายของปัญหาหลังส่งที่สำคัญที่สุด (+ หัวข้อของปัญหาอื่น) — ว่าง = ปกติ"""
+    found: list[dict] = []
+    if send_status == "unknown":
+        found.append(explain("send_unconfirmed", {"message": str(ts.get("resultMsg") or "")}))
+    elif send_status == "failed":
+        found.append(explain("send_failed", message=str(ts.get("resultMsg") or "Target Sun ปฏิเสธคำขอ")))
+    elif send_status == "partial":
+        r = ts.get("result") if isinstance(ts.get("result"), dict) else {}
+        found.append(explain("send_partial", {
+            "rows": [{"row": e.get("rowNum"), "reason": e.get("message")} for e in (r.get("errors") or [])
+                     if isinstance(e, dict)],
+            "row_count": r.get("skipped"),
+        }))
+    if int(rc.get("unlanded_count") or 0) > 0:
+        found.append(explain("unlanded_rows", rc))
+    elif rc.get("checked") and rc.get("ok") is False:
+        found.append(explain("row_count_mismatch", rc))
+    elif rc.get("checked") is False and send_status in ("ok", "partial"):
+        found.append(explain("row_count_unverified", {"message": str(rc.get("reason") or "")}))
+    if rb.get("checked") and rb.get("ok") is False:
+        found.append(explain("readback_mismatch", rb))
+    if not found:
+        return {}
+    out = {"explain": found[0]}
+    if len(found) > 1:
+        out["explain_more"] = [f["title"] for f in found[1:]]
+    return out
 
 
 def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) -> None:
@@ -226,6 +257,7 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
                 "acting_admin_email": user.get("acting_admin_email"),
                 "send_status": send_status,
                 "ok": ok,
+                **_send_result_explain(send_status, ts, rb, rc),
             },
         )
     except Exception:  # log ต้องไม่ทำให้การส่งพัง — แต่ห้ามหายเงียบ (ผลตรวจ §2.3)
@@ -311,6 +343,8 @@ def _log_prepare_blocked(user: dict, req: LakehouseUploadRequest, e: HTTPExcepti
         "excluded_boxes": int(d.get("excluded_boxes") or 0),
         "shortfall_boxes": int(d.get("shortfall_boxes") or 0),
         "excluded_skus": [str(x) for x in (d.get("excluded_skus") or [])][:_MAX_LOGGED_EXCLUDED_SKUS],
+        # เกิดอะไร / น่าจะเกิดจาก / วิธีแก้ / ข้อมูลอ้างอิง — ให้แอดมินแก้ได้ทันที
+        "explain": explain_http(e),
     }
     msg = str(d.get("message") or "") or "เตรียมไฟล์ส่ง Target Sun ไม่ผ่าน"
     try:
@@ -450,7 +484,7 @@ def resend_unlanded(
             user, level="error", sup_id=req.sup_id, action="send_targetsun_resend",
             message="ส่งซ้ำแถวที่ตกหล่นไม่สำเร็จ",
             detail=str(e.detail)[:500],
-            context={"ok": False, "prepare_token": req.prepare_token[:8]},
+            context={"ok": False, "prepare_token": req.prepare_token[:8], "explain": explain_http(e)},
         )
         raise
     remaining = result.get("remaining_unlanded")
@@ -473,6 +507,9 @@ def resend_unlanded(
             "remaining_sample": result.get("remaining_sample"),
             "prepare_token": req.prepare_token[:8],
             "send_status": result.get("send_status"),
+            **({"explain": explain("unlanded_rows", {
+                "unlanded_count": remaining, "unlanded_sample": result.get("remaining_sample")})}
+               if remaining else {}),
         },
     )
     return result
@@ -543,6 +580,10 @@ def import_targetsun_from_allocations(
                 "ok": False,
                 "error": type(e).__name__,
                 "send_status": "unknown" if timed_out else "failed",
+                "explain": (
+                    explain_http(e) if isinstance(e, HTTPException)
+                    else explain("exception", message=f"{type(e).__name__}: {e}")
+                ),
             },
         )
         raise
