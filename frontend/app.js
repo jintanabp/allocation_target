@@ -11109,7 +11109,9 @@ async function doExport() {
     if (!res.ok) throw new Error(_userFacingError(null, "สร้างไฟล์ไม่สำเร็จ"));
 
     const dlRes = await fetchWithTimeout(
-      `${API_BASE_URL}/download/excel?sup_id=${S.supId}&t=${Date.now()}&brand=${encodeURIComponent(brand)}`,
+      // ส่งงวดไปด้วย — ต้องได้ไฟล์ของงวดที่เพิ่งสร้าง ไม่ใช่ของงวดที่อีกแท็บสร้างทับ
+      `${API_BASE_URL}/download/excel?sup_id=${S.supId}&t=${Date.now()}&brand=${encodeURIComponent(brand)}`
+        + `&target_month=${S.targetMonth}&target_year=${S.targetYear}`,
       {},
       60000
     );

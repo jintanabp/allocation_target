@@ -109,7 +109,7 @@ def export_excel_service(
         if df_export.empty:
             raise HTTPException(404, detail=f"ไม่พบข้อมูลสำหรับแบรนด์ '{brand_filter}'")
 
-    ep = export_result_path(sup_id, brand_filter)
+    ep = export_result_path(sup_id, brand_filter, target_month, target_year)
     atomic_write_csv(ep, df_export, index=False)
 
     # ต้อง "บวก" ไม่ใช่ dict comprehension — พนักงานที่แยกตามคลัง (wh_split) ส่งมา
@@ -121,7 +121,7 @@ def export_excel_service(
 
     create_target_excel(
         result_csv=ep,
-        output_path=excel_export_path(sup_id, brand_filter),
+        output_path=excel_export_path(sup_id, brand_filter, target_month, target_year),
         brand_filter=brand_filter,
         yellow_map=yellow_map,
         sup_id=sup_id,
@@ -161,7 +161,15 @@ def _export_target_boxes_path(sup_id: str, target_month: int, target_year: int) 
         return own
 
 
-def download_excel_response(sup_id: str, brand: str) -> FileResponse:
+def download_excel_response(
+    sup_id: str, brand: str, target_month: int | None = None, target_year: int | None = None
+) -> FileResponse:
+    if target_month and target_year:
+        # ระบุงวดมา = ต้องได้ไฟล์ของงวดนั้นเท่านั้น ห้ามหยิบงวดอื่นแทน (ผลตรวจ §2.7)
+        fpath = excel_export_path(sup_id, brand, target_month, target_year)
+        if not os.path.exists(fpath):
+            raise HTTPException(404, detail="ไม่พบไฟล์ Excel ของงวดนี้ — กดดาวน์โหลดใหม่อีกครั้ง")
+        return _excel_file_response(fpath, sup_id)
     fpath = excel_export_path(sup_id, brand)
     if not os.path.exists(fpath):
         # backward compat: ถ้ายังไม่ได้ export ตามแบรนด์ ให้ลองไฟล์ผลกระจาย
@@ -170,7 +178,10 @@ def download_excel_response(sup_id: str, brand: str) -> FileResponse:
         if not fallback:
             raise HTTPException(404, detail="ไม่พบไฟล์ Excel กรุณา Optimize หรือ Export ก่อน")
         fpath = fallback
+    return _excel_file_response(fpath, sup_id)
 
+
+def _excel_file_response(fpath: str, sup_id: str) -> FileResponse:
     return FileResponse(
         fpath,
         filename=f"Target_{safe_id(sup_id)}.xlsx",
