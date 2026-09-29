@@ -19,6 +19,7 @@ from .services.access_control import (
     is_marketing_email,
     is_region_admin_email,
     normalized_email,
+    parse_allocation_admin_emails,
     role_for_email,
     row_is_in_admin_scope,
     unrestricted_user_context,
@@ -263,14 +264,69 @@ def require_role_manager(
     )
 
 
-def ensure_can_assign_role(actor: dict, target_role: str, target_email: str) -> None:
+def _is_dev_actor(actor: dict) -> bool:
+    return bool(actor.get("auth_disabled") or actor.get("role") == ROLE_DEV)
+
+
+def ensure_can_edit_user_rows(
+    actor: dict, target_email: str, rows: list[dict], *, new_email: str | None = None
+) -> None:
+    """
+    กฎกลางของการแก้แถวผู้ใช้ (เพิ่ม/แก้/ลบ/เปิดปิดสิทธิ์ส่ง) สำหรับคนที่ไม่ใช่ dev
+
+    ช่องโหว่เดิม (ผลตรวจ 28 ก.ย. 2026 §1.1, §1.11): PUT /user-access ใช้ dict(existing)
+    แล้วเปลี่ยนอีเมล — role/admin_scope/สิทธิ์ส่งติดแถวไปครบ แอดมินจึงย้ายแถวของ
+    head_admin/dev มาเป็นอีเมลตัวเองแล้วได้ role นั้นไปเลย หรือเปิดสิทธิ์ให้ตัวเองได้
+
+    `rows` ต้องเป็นแถวล่าสุด (เรียกใน callback ของ mutate_rows)
+      - ห้ามแตะแถวของอีเมลตัวเอง
+      - ห้ามแตะแถวของคนที่มี role (dev/head_admin/admin) หรือ dev จาก ALLOCATION_ADMIN_EMAILS
+      - ห้ามเปลี่ยนอีเมลของแถว (ย้ายแถวไปเป็นอีกคน)
+    """
+    if _is_dev_actor(actor):
+        return
+    em = normalized_email(target_email)
+    actor_email = normalized_email(actor.get("email"))
+    if actor_email and em == actor_email:
+        raise HTTPException(
+            status_code=403,
+            detail="แก้ข้อมูลสิทธิ์ของตัวเองไม่ได้ — ให้ Dev เป็นคนแก้",
+        )
+    if new_email is not None and normalized_email(new_email) != em:
+        raise HTTPException(
+            status_code=403,
+            detail="เปลี่ยนอีเมลของผู้ใช้ไม่ได้ — ให้ลบแล้วเพิ่มใหม่ หรือให้ Dev เป็นคนแก้",
+        )
+    privileged = em in parse_allocation_admin_emails() or any(
+        str(r.get("role") or "").strip()
+        for r in rows
+        if normalized_email(r.get("email")) == em
+    )
+    if privileged:
+        raise HTTPException(
+            status_code=403,
+            detail="บัญชีนี้เป็นผู้ดูแลระบบ — ข้อมูลผู้ใช้ของบัญชีนี้ต้องให้ Dev เป็นคนแก้",
+        )
+
+
+def ensure_can_assign_role(
+    actor: dict,
+    target_role: str,
+    target_email: str,
+    *,
+    target_admin_scope: str = "",
+    current_rows: list[dict] | None = None,
+) -> None:
     """
     หัวหน้าแอดมินมอบได้เฉพาะ role `admin` และห้ามแตะสิทธิ์ของตัวเอง
 
     กันสองอย่างที่ต้องกันเสมอ: เลื่อนขั้นตัวเอง/พวกพ้องเป็น dev หรือหัวหน้าแอดมิน
     และถอดสิทธิ์ตัวเองจนไม่มีใครดูแลต่อ (dev เท่านั้นที่จัดการระดับบนได้)
+
+    เพิ่ม (§1.6): ตรวจ role "ปัจจุบัน" ของคนที่ถูกแก้ด้วย — เดิมดูแค่ role ปลายทาง
+    หัวหน้าแอดมินจึงลดหรือถอด dev/หัวหน้าแอดมินคนอื่นได้ และมอบขอบเขต all ได้
     """
-    if actor.get("auth_disabled") or actor.get("role") == ROLE_DEV:
+    if _is_dev_actor(actor):
         return
     role = str(target_role or "").strip().lower()
     if role and role != ROLE_ADMIN:
@@ -283,6 +339,22 @@ def ensure_can_assign_role(actor: dict, target_role: str, target_email: str) -> 
         raise HTTPException(
             status_code=403,
             detail="แก้สิทธิ์ของตัวเองไม่ได้ — ให้ Dev เป็นคนแก้",
+        )
+    if role and str(target_admin_scope or "").strip().lower() == "all":
+        raise HTTPException(
+            status_code=403,
+            detail="หัวหน้าแอดมินมอบขอบเขต 'ทุกคนในระบบ' ไม่ได้ — ให้ Dev เป็นคนตั้ง",
+        )
+    em = normalized_email(target_email)
+    current = {
+        str(r.get("role") or "").strip().lower()
+        for r in (current_rows or [])
+        if normalized_email(r.get("email")) == em
+    }
+    if em in parse_allocation_admin_emails() or current & {ROLE_DEV, ROLE_HEAD_ADMIN}:
+        raise HTTPException(
+            status_code=403,
+            detail="บัญชีนี้เป็น Dev หรือหัวหน้าแอดมิน — หัวหน้าแอดมินแก้สิทธิ์ของบัญชีนี้ไม่ได้",
         )
 
 

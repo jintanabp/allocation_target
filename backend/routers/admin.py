@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 
 from ..deps import (
     ensure_can_assign_role,
+    ensure_can_edit_user_rows,
     ensure_row_in_admin_scope,
     ensure_sup_in_admin_scope,
     require_admin_or_marketing_team,
@@ -325,6 +326,7 @@ def create_user_access(
     # ตรวจซ้ำ + เขียน ใต้ล็อกเดียว (mutate_rows) — เดิม read_rows() แล้ว write_rows()
     # แยกกัน แอดมินอีกคนบันทึกคั่นกลางแล้วการแก้ของเขาหายเงียบ ๆ
     def _add(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        ensure_can_edit_user_rows(admin, em, rows)
         if any(r["email"] == em and r["userpl"] == upl for r in rows):
             raise HTTPException(status_code=409, detail="มีแถวนี้อยู่แล้ว")
         return rows + [new_row]
@@ -360,6 +362,7 @@ def update_user_access(
         if not existing:
             raise HTTPException(status_code=404, detail="ไม่พบแถว")
         ensure_row_in_admin_scope(admin, existing)
+        ensure_can_edit_user_rows(admin, em, rows, new_email=new_em)
 
         if "@" not in new_em or not new_upl:
             raise HTTPException(status_code=400, detail="อีเมลหรือ USERPL ใหม่ไม่ถูกต้อง")
@@ -417,6 +420,7 @@ def remove_user_access(
         if not existing:
             raise HTTPException(status_code=404, detail="ไม่พบแถว")
         ensure_row_in_admin_scope(admin, existing)
+        ensure_can_edit_user_rows(admin, em, rows)
         captured["existing"] = existing
         return [r for r in rows if not (r["email"] == em and r["userpl"] == upl)]
 
@@ -447,6 +451,7 @@ def set_targetsun_for_email(
             raise HTTPException(status_code=404, detail="ไม่พบอีเมลนี้")
         for r in mine:
             ensure_row_in_admin_scope(admin, r)
+        ensure_can_edit_user_rows(admin, em, rows)
         for r in mine:
             r["can_import_targetsun"] = bool(body.enabled)
         target_rows.extend(mine)
@@ -520,6 +525,10 @@ def set_user_role(
     result: dict[str, Any] = {}
 
     def _set_role(current_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        # ตรวจ role ปัจจุบันของคนที่ถูกแก้กับแถวล่าสุด (§1.6) — ข้างนอกตรวจได้แค่ role ปลายทาง
+        ensure_can_assign_role(
+            admin, role, em, target_admin_scope=scope, current_rows=current_rows
+        )
         # หัวหน้าแอดมินแตะได้เฉพาะคนในขอบเขตตัวเอง — ทั้งตอนมอบและตอนถอด
         if not (admin.get("auth_disabled") or admin.get("role") == ROLE_DEV):
             target_rows = [r for r in current_rows if normalized_email(r.get("email")) == em]

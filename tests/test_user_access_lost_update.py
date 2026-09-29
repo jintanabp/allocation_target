@@ -202,7 +202,11 @@ class TwoAdminsAtOnceTest(_TmpStore):
     def test_role_set_while_another_admin_updates_keeps_both(self):
         self.run_race(
             lambda: admin_router.set_user_role(
-                admin_router.UserRoleBody(email="c@example.test", role="admin", admin_scope="all"),
+                # หัวหน้าแอดมินมอบขอบเขต all ไม่ได้แล้ว (§1.6) — ใช้ขอบเขตดิวิชันแทน
+                admin_router.UserRoleBody(
+                    email="c@example.test", role="admin", admin_scope="division",
+                    acc_division="Div.B",
+                ),
                 admin=HEAD,
             ),
             lambda: admin_router.update_user_access(
