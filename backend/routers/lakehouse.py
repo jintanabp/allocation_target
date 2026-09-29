@@ -293,6 +293,62 @@ def _log_prepare_blocked(user: dict, req: LakehouseUploadRequest, e: HTTPExcepti
         logger.exception("บันทึก prepare_targetsun_blocked ไม่สำเร็จ")
 
 
+def _enforce_send_identity(user: dict, req: LakehouseUploadRequest) -> None:
+    """
+    สองเรื่องที่เดิมเชื่อค่าจากหน้าเว็บตรง ๆ (ผลตรวจ 28 ก.ย. 2026 §1.3)
+
+    1. พนักงานทุกคนในคำขอต้องอยู่ในทีมที่ผู้ส่งมีสิทธิ์ — เดิมตรวจแค่ sup_id แล้วเติม
+       grain ข้ามทีมให้ทุก emp_id ในคำขอ ผู้มีสิทธิ์ส่งจึงใส่รหัสพนักงานทีมไหนก็ได้
+       ลงในคำขอของทีมตัวเองแล้วทับเป้าของเขาได้
+       คนที่ไม่มี grain ในทีมไหนเลยปล่อยผ่าน — แถวของเขาไม่มี dim ถูกตัดทิ้งอยู่แล้ว
+    2. รหัสผู้บันทึก (USERCODE) ต้องเป็นรหัสของผู้ส่งเอง หรือรหัสทีมที่ส่ง — ค่าอื่นแทนด้วยรหัสทีม
+    """
+    from ..services.lakehouse import employee_teams_in_period, norm_emp_code
+
+    unrestricted = user.get("auth_disabled") or user.get("allowed_supervisor_codes") is None
+    if not unrestricted:
+        emps = {norm_emp_code(a.emp_id) for a in (req.allocations or []) if str(a.emp_id or "").strip()}
+        teams = employee_teams_in_period(int(req.target_month), int(req.target_year), emps)
+
+        def _ok(sid: str) -> bool:
+            try:
+                ensure_supervisor_allowed(user, sid)
+                return True
+            except HTTPException:
+                return False
+
+        allowed_cache: dict[str, bool] = {}
+        bad = []
+        for emp in sorted(emps):
+            ts = teams.get(emp) or set()
+            if not ts:
+                continue
+            if not any(allowed_cache.setdefault(t, _ok(t)) for t in ts):
+                bad.append({"emp_id": emp, "teams": sorted(ts)})
+        if bad:
+            logger.warning("ส่ง Target Sun มีพนักงานนอกทีมที่มีสิทธิ์ %s: %s", req.sup_id, bad[:10])
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "send_employee_not_allowed",
+                    "message": (
+                        f"ยังไม่ได้ส่ง — มีพนักงาน {len(bad)} คนที่อยู่ในทีมที่บัญชีนี้ไม่มีสิทธิ์ส่ง"
+                    ),
+                    "employees": bad[:20],
+                },
+            )
+
+    code = str(req.upload_user_code or "").strip().upper()
+    if code and not (user.get("auth_disabled") or user.get("acc_admin_full_access")):
+        own = {
+            str(c).strip().upper()
+            for c in (user.get("userpls_supervisor_pick") or set()) | (user.get("userpls_manager_pick") or set())
+        }
+        if code not in own and code != str(req.sup_id or "").strip().upper():
+            logger.warning("รหัสผู้บันทึก %s ไม่ใช่ของผู้ส่ง — ใช้รหัสทีม %s แทน", code, req.sup_id)
+            req.upload_user_code = str(req.sup_id or "").strip().upper()
+
+
 @router.post("/lakehouse/prepare-targetsun")
 def prepare_targetsun_from_allocations(
     req: LakehouseUploadRequest,
@@ -303,6 +359,7 @@ def prepare_targetsun_from_allocations(
     ensure_own_supervisor_write(user, req.sup_id)
     ensure_targetsun_import_allowed(user)
     ensure_demo_team_not_sent(req.sup_id)
+    _enforce_send_identity(user, req)
     try:
         return prepare_targetsun_import(req)
     except HTTPException as e:
@@ -372,6 +429,8 @@ def import_targetsun_from_allocations(
     ensure_own_supervisor_write(user, req.sup_id)
     ensure_targetsun_import_allowed(user)
     ensure_demo_team_not_sent(req.sup_id)
+    if not (req.prepare_token or "").strip():
+        _enforce_send_identity(user, req)   # ทางส่งรวดเดียว — ทาง token ตรวจไปแล้วตอน prepare
     try:
         if (req.prepare_token or "").strip():
             result = import_prepared_targetsun(req)

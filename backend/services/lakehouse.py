@@ -428,6 +428,48 @@ def _drop_rows_of_reassigned_employees(
     return kept, dropped
 
 
+def employee_teams_in_period(month: int, year: int, emp_ids) -> dict[str, set[str]]:
+    """
+    พนักงานแต่ละคนอยู่ทีมไหนบ้างในงวดนี้ — จากไฟล์ grain ของทุกทีม + การย้ายทีม
+
+    ใช้ตรวจตอนส่ง Target Sun ว่าพนักงานทุกคนในคำขออยู่ในทีมที่ผู้ส่งมีสิทธิ์
+    (ผลตรวจ 28 ก.ย. 2026 §1.3) — ไฟล์ grain ชื่อ tga_lines_{SL}_{Y}_{MM}.csv
+    จึงบอกทีมได้จากชื่อไฟล์ · คนที่ถูกย้ายไปเกลี่ยที่ทีมอื่น (emp_assignments) นับทีมปลายทางด้วย
+    """
+    from . import emp_assignment_store
+
+    want = {norm_emp_code(e) for e in (emp_ids or []) if str(e).strip()}
+    out: dict[str, set[str]] = {e: set() for e in want}
+    if not want:
+        return out
+    suffix = f"_{int(year):04d}_{int(month):02d}.csv"
+    try:
+        names = os.listdir("data")
+    except OSError:
+        names = []
+    # tga_lines_ = แถวเป้าเดิมใน Target Sun · emp_cache_ = รายชื่อทีมจากขั้นที่ 1
+    # (คนที่เพิ่งย้ายซุปมาอาจมีแถวเป้าอยู่แค่ทีมเก่า แต่รายชื่ออยู่ทีมใหม่แล้ว)
+    for prefix in ("tga_lines_", "emp_cache_"):
+        for name in names:
+            if not (name.startswith(prefix) and name.endswith(suffix)):
+                continue
+            sup = name[len(prefix):-len(suffix)].strip().upper()
+            try:
+                dg = pd.read_csv(os.path.join("data", name), dtype=str, keep_default_na=False, usecols=["emp_id"])
+            except Exception:
+                continue
+            for e in {norm_emp_code(x) for x in dg["emp_id"]} & want:
+                out[e].add(sup)
+    try:
+        for r in emp_assignment_store.read_rows():
+            e = norm_emp_code(r.get("emp_id"))
+            if e in want and r.get("to_sup"):
+                out[e].add(str(r["to_sup"]).strip().upper())
+    except Exception as ex:
+        logger.warning("อ่านรายการย้ายทีมไม่ได้: %s", ex)
+    return out
+
+
 def _read_tga_grain_across_teams(
     month: int, year: int, emp_ids: set[str] | list[str]
 ) -> pd.DataFrame:
