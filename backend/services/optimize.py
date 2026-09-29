@@ -72,20 +72,6 @@ from .wh_split import (
 logger = logging.getLogger("target_allocation")
 
 
-def _allow_allocation_mismatch() -> bool:
-    """
-    ทางออกฉุกเฉิน: ปล่อยผลที่ผลรวมไม่ตรงเป้าให้ผ่าน (ค่าเริ่มต้น = ปิด)
-
-    เปิดเฉพาะตอนต้องกู้สถานการณ์หน้างานจริง ๆ และควรปิดกลับทันที
-    เพราะนี่คือกฎ I1 ที่ทั้งระบบยึดอยู่ (ดู docs/ALLOCATION_INVARIANTS.md)
-    """
-    return (os.environ.get("ALLOC_ALLOW_MISMATCH") or "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
-
-
 def _drop_no_target_employees(df_all_targets, sup_id: str, req) -> tuple[Any, list[str]]:
     """
     ตัดพนักงานในรายชื่อ「ไม่ต้องตั้งเป้า」ออกจากคำขอ — คืน (frame ที่เหลือ, รายชื่อที่ตัด)
@@ -929,6 +915,7 @@ def run_optimization_service(
     # กระจายเฉพาะบางสินค้า (ปุ่ม "กระจายเฉพาะสินค้าที่เป้าเพิ่ม") — SKU อื่นไม่ถูกแตะ
     # I1 ยังบังคับเต็มบนเซ็ตที่เลือก: ทุก SKU ที่กระจายรอบนี้ต้องตรงเป้าเป๊ะ
     only_skus = [str(s).strip() for s in (req.only_skus or []) if str(s).strip()]
+    df_sku_full = df_sku  # เป้าทั้งงวด — ใช้ตรวจ I1 หลังรวมผลบางส่วนกับผลเดิม
     if only_skus:
         df_sku = df_sku[df_sku["sku"].isin(set(only_skus))].copy()
         if df_sku.empty:
@@ -1600,25 +1587,23 @@ def run_optimization_service(
     # ต้องตรวจ "ก่อน" เขียนไฟล์และสร้าง Excel
     # เดิมตรวจแล้วแค่ logger.warning จากนั้นก็เขียนไฟล์ สร้าง Excel และตอบ 200 ตามปกติ
     # ผลที่ผิดจึงถึงมือผู้ใช้ในสภาพที่ดูเหมือนสำเร็จทุกประการ
+    #
+    # ไม่มีทางยกเว้น (29 ก.ย. 2026): เดิมมี ALLOC_ALLOW_MISMATCH ให้ปล่อยผลที่ไม่ตรงผ่าน
+    # ถอดออกแล้ว — ยอดหีบห้ามขาดหรือเกินแม้แต่หีบเดียว
     sku_checks = validate_allocation_vs_targets(df_final, df_sku)
     if sku_checks:
         logger.error("allocation vs target mismatch: %s", sku_checks)
-        if not _allow_allocation_mismatch():
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "allocation_mismatch",
-                    "message": (
-                        "ผลกระจายไม่ตรงเป้าหีบ — ระบบไม่บันทึกผลนี้ "
-                        "กรุณาตรวจตัวเลขที่ล็อกไว้แล้วกระจายใหม่"
-                    ),
-                    "sku_total_checks": sku_checks[:20],
-                    "mismatch_count": len(sku_checks),
-                },
-            )
-        logger.warning(
-            "ALLOC_ALLOW_MISMATCH เปิดอยู่ — ปล่อยผลที่ไม่ตรงเป้าผ่าน (%d SKU)",
-            len(sku_checks),
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "allocation_mismatch",
+                "message": (
+                    "ผลกระจายไม่ตรงเป้าหีบ — ระบบไม่บันทึกผลนี้ "
+                    "กรุณาตรวจตัวเลขที่ล็อกไว้แล้วกระจายใหม่"
+                ),
+                "sku_total_checks": sku_checks[:20],
+                "mismatch_count": len(sku_checks),
+            },
         )
 
     # ผูกชื่อไฟล์กับงวด — กันสองงวดของซุปเดียวกันเขียนทับกันแล้ว Excel อ่านผิดงวด
@@ -1630,6 +1615,25 @@ def run_optimization_service(
         # เซิร์ฟเวอร์ทันที (หน้าจอไม่ฟ้องเพราะ merge ฝั่งเบราว์เซอร์เอง) แล้วใครที่
         # กดดาวน์โหลดทีหลังจะได้ไฟล์ที่มีสินค้าไม่กี่ตัว
         df_to_write = _merge_partial_result(result_csv_path, df_final, only_skus)
+        if df_to_write is not df_final:
+            # ผลเดิมของ SKU อื่นถูกรวมกลับเข้ามา — ต้องตรวจ I1 ทั้งงวดอีกรอบ
+            # ไม่งั้นผลเดิมที่ค้างจากเป้าชุดเก่า (เป้าเปลี่ยนแต่ไม่ได้อยู่ในชุดที่เลือก)
+            # จะถูกเขียนกลับลงไฟล์โดยไม่มีใครเทียบกับเป้าปัจจุบัน
+            merged_checks = validate_allocation_vs_targets(df_to_write, df_sku_full)
+            if merged_checks:
+                logger.error("ผลรวมหลังรวมผลบางส่วนไม่ตรงเป้า: %s", merged_checks[:20])
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "allocation_mismatch",
+                        "message": (
+                            "ผลกระจายของสินค้าอื่นที่ไม่ได้เลือกไม่ตรงเป้าปัจจุบัน — "
+                            "ระบบไม่บันทึกผลนี้ กรุณากระจายใหม่ทุกสินค้า"
+                        ),
+                        "sku_total_checks": merged_checks[:20],
+                        "mismatch_count": len(merged_checks),
+                    },
+                )
     atomic_write_csv(result_csv_path, df_to_write, index=False)
 
     yellow_map: dict[str, float] = {}

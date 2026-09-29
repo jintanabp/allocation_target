@@ -22,6 +22,7 @@ from ..services.targetsun_import import (
     import_allocations_to_targetsun,
     import_prepared_targetsun,
     load_prepare_batch,
+    mark_batch_verified,
     prepare_targetsun_import,
 )
 from ..services.usage_log_store import log_from_user
@@ -344,7 +345,10 @@ def verify_send_batch_before_import(
         ensure_own_supervisor_write(user, sup_id)
         ensure_demo_team_not_sent(sup_id)
     ensure_targetsun_import_allowed(user)
-    return verify_send_batch(metas)
+    result = verify_send_batch(metas)
+    # จดผลลง bundle — import ไม่ยอมส่ง token ของชุดรวมภาคที่ยังไม่ผ่านด่านนี้
+    mark_batch_verified(metas)
+    return result
 
 
 @router.post("/lakehouse/import-targetsun")

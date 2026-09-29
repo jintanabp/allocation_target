@@ -512,7 +512,6 @@ client บันทึก → ส่ง if_match_version: 3
 <tr><td><code>AGGREGATE_LOAD_WORKERS</code></td><td>6</td><td>thread โหลดรวมภาค (เพดาน 8) · <code>1</code> = ทีละทีมแบบเดิม</td></tr>
 <tr><td><code>EMPLOYEE_PAYLOAD_CACHE_TTL_SEC</code></td><td>3600</td><td>อายุ cache ขั้น 1 · <code>0</code> = ปิด (ยิง DAX ทุกครั้ง)</td></tr>
 <tr><td><code>ALLOC_ZERO_BASELINE_CAP</code></td><td>ปิด</td><td>เปิดเพดานคนไม่มีประวัติ — <strong>ตัวเลขขยับ 2–3.5%</strong></td></tr>
-<tr><td><code>ALLOC_ALLOW_MISMATCH</code></td><td>ปิด</td><td><strong>ฉุกเฉินเท่านั้น</strong> — ปล่อยผลที่ไม่ตรงเป้าให้ผ่านทั้ง optimize และตอนส่ง</td></tr>
 <tr><td><code>ALLOC_REQUIRE_IF_MATCH</code></td><td>ปิด</td><td>บังคับ client ส่ง version ตอนบันทึก (กัน tab เก่าเขียนทับ)</td></tr>
 <tr><td><code>USE_LEGACY_TARGET_CSV</code></td><td>ปิด</td><td><strong>dev เท่านั้น</strong> — อ่านไฟล์เป้าแบบ global ที่วางเอง</td></tr>
 <tr><td><code>ENABLE_DEBUG_ENDPOINTS</code></td><td>ปิด</td><td>เปิด <code>GET /debug/fabric</code></td></tr>

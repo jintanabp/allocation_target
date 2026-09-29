@@ -19,6 +19,7 @@ import requests
 from fastapi import HTTPException
 from requests import exceptions as req_exc
 
+from ..core.atomic_io import atomic_write_text
 from ..schemas import LakehouseUploadRequest
 from .lakehouse import (
     _live_target_snapshot,
@@ -107,6 +108,9 @@ def _save_prepare_bundle(
     stale_rows_cleared_count: int = 0,
     import_row_keys: list | None = None,
     confirmed_stale_target: bool = False,
+    send_batch_id: str | None = None,
+    full_send: bool = False,
+    team_target_mismatches: list | None = None,
 ) -> None:
     _prepare_dir()
     (_prepare_dir() / f"{token}.xlsx").write_bytes(content)
@@ -145,6 +149,14 @@ def _save_prepare_bundle(
         # เป้าซ้ำต้องรู้ด้วย (คำขอ import ที่มี token ไม่ได้พก confirm_stale_target มา)
         # ไม่งั้นเคสที่ยืนยันแล้วจะโดนบล็อกซ้ำที่ด่านนี้ตลอด ส่งไม่ได้เลย
         "confirmed_stale_target": bool(confirmed_stale_target),
+        # ส่งรวมภาค — token ของชุดนี้ส่งได้ก็ต่อเมื่อยอดรวมทั้งชุดผ่านการตรวจแล้ว
+        # (verify_send_batch → mark_batch_verified) ดู import_prepared_targetsun
+        "send_batch_id": (str(send_batch_id).strip() or None) if send_batch_id else None,
+        "batch_verified": False,
+        # ส่งทุกแบรนด์ทุกสินค้า — ด่านยอดรวมทั้งชุดตรวจ SKU ที่มีเป้าแต่ไม่อยู่ในไฟล์ด้วย
+        "full_send": bool(full_send),
+        # ยอดรายทีมที่ต่างจากเป้าทีม (โหมดรวมภาค ไม่บล็อกรายทีม) — เก็บไว้ให้ตรวจย้อนหลัง
+        "team_target_mismatches": list(team_target_mismatches or [])[:50],
         "created_at": time.time(),
     }
     (_prepare_dir() / f"{token}.json").write_text(
@@ -213,6 +225,44 @@ def load_prepare_batch(tokens: list[str]) -> list[dict]:
     return metas
 
 
+def mark_batch_verified(metas: list[dict]) -> None:
+    """
+    จดลง bundle ทุกใบว่ายอดรวมทั้งชุดผ่านการตรวจแล้ว — เรียกหลัง verify_send_batch ผ่าน
+
+    ด่านนี้ต้องอยู่ที่ server: เดิมการตรวจยอดรวมทั้งภาคอยู่แค่ที่หน้าเว็บเรียก
+    client ที่ข้ามการเรียกนั้น (หรือหน้าเว็บรุ่นเก่า) ก็ส่งได้เลย
+    """
+    tokens = sorted(str(m.get("prepare_token") or "").strip() for m in metas)
+    for m in metas:
+        tok = str(m.get("prepare_token") or "").strip()
+        if not tok:
+            continue
+        meta = {k: v for k, v in m.items() if k != "prepare_token"}
+        meta["batch_verified"] = True
+        meta["batch_tokens"] = tokens
+        atomic_write_text(
+            str(_prepare_dir() / f"{tok}.json"), json.dumps(meta, ensure_ascii=False)
+        )
+
+
+def _assert_batch_verified(token: str, meta: dict) -> None:
+    """token ของการส่งรวมภาคต้องผ่านด่านยอดรวมทั้งชุดก่อนเสมอ ไม่มีทางยืนยันข้าม"""
+    if not str(meta.get("send_batch_id") or "").strip():
+        return  # ส่งทีมเดียว — ด่านรายทีมบังคับยอดตรงเป้าไปแล้วตอน prepare
+    if meta.get("batch_verified") and token in (meta.get("batch_tokens") or []):
+        return
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "send_batch_not_verified",
+            "message": (
+                "ยังไม่ได้ส่ง — การส่งรวมหลายทีมต้องผ่านการตรวจยอดรวมทั้งภาคก่อน"
+            ),
+            "hint_th": "กดส่งใหม่อีกครั้ง ระบบจะตรวจยอดรวมของทุกทีมก่อนส่ง",
+        },
+    )
+
+
 def _delete_prepare_bundle(token: str) -> None:
     tok = (token or "").strip()
     if not tok:
@@ -278,6 +328,9 @@ def prepare_targetsun_import(req: LakehouseUploadRequest) -> dict:
         stale_rows_cleared_count=int(df.attrs.get("stale_rows_cleared_count") or 0),
         import_row_keys=list(df.attrs.get("import_row_keys") or []),
         confirmed_stale_target=bool(getattr(req, "confirm_stale_target", False)),
+        send_batch_id=getattr(req, "send_batch_id", None),
+        full_send=bool(df.attrs.get("full_send")),
+        team_target_mismatches=list(df.attrs.get("team_target_mismatches") or []),
     )
     logger.info(
         "TargetSun prepare: token=%s rows=%d build=%.2fs",
@@ -551,6 +604,7 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
     _claim_import_token(token)
     try:
         content, fname, meta = _load_prepare_bundle(token, req.sup_id)
+        _assert_batch_verified(token, meta)
         nrow = int(meta.get("rows_sent") or 0)
         zero_rows = int(meta.get("zero_rows_sent") or 0)
         dropped_dims = int(meta.get("rows_dropped_missing_dims") or 0)
@@ -641,6 +695,12 @@ def import_allocations_to_targetsun(req: LakehouseUploadRequest) -> dict:
     """
     if (req.prepare_token or "").strip():
         return import_prepared_targetsun(req)
+    if str(getattr(req, "send_batch_id", "") or "").strip():
+        # ทางส่งรวดเดียวไม่มีด่านยอดรวมทั้งชุด — ส่งรวมภาคต้องผ่าน prepare → verify เท่านั้น
+        raise HTTPException(
+            400,
+            detail="การส่งรวมหลายทีมต้องเตรียมไฟล์และตรวจยอดรวมก่อน — กรุณากดส่งใหม่อีกครั้ง",
+        )
 
     url = targetsun_import_excel_url().strip()
     t0 = time.perf_counter()

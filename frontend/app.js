@@ -9247,10 +9247,12 @@ function _lakehouseBrandSkus(brand) {
 
 /**
  * @param {object} [opts]
- * @param {boolean} [opts.confirmTargetMismatch]
- *   ส่งเป็น true เฉพาะ "เส้นทางส่งจริงที่ผู้ใช้กดยืนยันแล้ว" เท่านั้น
- *   ห้ามอ่านจาก S.* เพราะค่าจะค้างข้ามการเรียก แล้วเส้นทางอื่น
- *   (ตรวจอย่างเดียว / ดาวน์โหลด Excel) จะพลอยข้ามการเช็คเป้าไปด้วย
+ * @param {string} [opts.sendBatchId]
+ *   รหัสรอบการส่งรวมหลายทีม — มีค่า = ยอดรายทีมต่างจากเป้าทีมได้ (I7)
+ *   แต่ยอดรวมทั้งชุดต่อ SKU ต้องตรงเป้ารวมพอดี (server ตรวจที่ verify-send-batch
+ *   และไม่ยอมส่ง token ของชุดที่ยังไม่ผ่าน) · ว่าง = ส่งทีมเดียว ต้องตรงเป้าทีมพอดี
+ *
+ *   ไม่มีทางยืนยันข้ามเรื่องยอดหีบแล้ว (29 ก.ย. 2026) — ห้ามขาดหรือเกินแม้แต่หีบเดียว
  */
 function _lakehouseExportPayload(supId = null, brand = null, opts = {}) {
   const sid = supId || S.supId;
@@ -9265,10 +9267,8 @@ function _lakehouseExportPayload(supId = null, brand = null, opts = {}) {
     brand_filter: brandFilter,
     sku_filter: skuFilter,
     allocations: _lakehouseAllocationsFromStep3(_lakehouseMatrixFilterSup(sid), brandFilter, skuFilter),
-    // ผู้ใช้ตรวจรายการที่ไม่ตรงเป้าทีมแล้วกดยืนยัน (ดู _confirmTargetMismatchBeforeSend)
-    // ถ้าไม่ได้ยืนยัน server จะตอบ 409 พร้อมรายการ SKU ที่ไม่ตรง
-    confirm_target_mismatch: !!opts.confirmTargetMismatch,
-    // คนละ flag โดยตั้งใจ — อันนี้แปลว่า "รับทราบว่าบางคู่ไม่มีใน Target Sun
+    send_batch_id: opts.sendBatchId || null,
+    // เรื่อง master data ไม่ใช่ยอดหีบ — "รับทราบว่าบางคู่ไม่มีใน Target Sun
     // และจะไปเพิ่มจำนวนเองที่นั่น" (ดู _confirmManualTopupBeforeSend)
     confirm_manual_topup: !!opts.confirmManualTopup,
     // ยอมให้สร้างแถวเป้าใหม่เสมอ — Target Sun รองรับ insert อยู่แล้ว
@@ -9664,11 +9664,10 @@ function _confirmServerMismatchBeforeSend(chunks) {
               + `แปลว่าเป้า TGA เปลี่ยนหลังจากคุณโหลดข้อมูลขั้นที่ 1 `
               + `กรณีนี้ควร<strong>โหลดขั้นที่ 1 ใหม่แล้วกระจายอีกครั้ง</strong> ไม่ควรกดส่งเลย</p>`
             : `<p style="margin:10px 0 0;text-align:left;line-height:1.7;color:var(--text-2);">`
-              + `ถ้าตั้งใจย้ายหีบข้ามทีมในโหมดรวมภาค กดส่งต่อได้ — แต่ถ้าไม่ได้ตั้งใจ `
-              + `แปลว่าเป้าเปลี่ยนหลังจากคุณโหลดข้อมูล ให้โหลดขั้นที่ 1 ใหม่ก่อน</p>`)
+              + `ยอดหีบต้องเท่าเป้าพอดี ระบบจึง<strong>ไม่ส่ง</strong> — ตรวจช่องที่แก้มือไว้ `
+              + `หรือถ้าเป้าเปลี่ยนหลังจากคุณโหลดข้อมูล ให้โหลดขั้นที่ 1 ใหม่แล้วกระจายอีกครั้ง</p>`)
         + `<div class="shortfall-list">${groups}</div>`,
-      primaryLabel: "ยืนยันส่งตามนี้",
-      onPrimary: () => { decided = true; resolve(true); },
+      primaryLabel: null,
       secondaryLabel: "กลับไปแก้ไข",
       // ปิด/Escape/คลิกนอกกล่อง = ไม่ส่ง — _showInfoModal เรียก onSecondary ให้ทุกทาง
       // (เดิมเฝ้าด้วย MutationObserver บน body ซึ่งพลาดได้แล้ว Promise ค้างถาวร)
@@ -9700,10 +9699,8 @@ function _confirmUnverifiableTargetBeforeSend(chunks) {
         + `<p style="margin:10px 0 0;text-align:left;line-height:1.7;">${list}</p>`
         + `<p style="margin:10px 0 0;text-align:left;line-height:1.7;color:var(--text-2);">`
         + `มักเกิดตอนเปิดผลกระจายที่บันทึกไว้นานแล้วมาส่ง — `
-        + `<strong>กลับไปโหลดข้อมูลขั้นที่ 1 ใหม่</strong> ระบบจะดึงเป้ามาเก็บอีกครั้ง แล้วค่อยส่ง<br>`
-        + `<strong style="color:var(--amber);">ถ้ายืนยันส่งเลย จะไม่มีอะไรตรวจทานยอดให้</strong></p>`,
-      primaryLabel: "ยืนยันส่งทั้งที่ตรวจไม่ได้",
-      onPrimary: () => { decided = true; resolve(true); },
+        + `<strong>กลับไปโหลดข้อมูลขั้นที่ 1 ใหม่</strong> ระบบจะดึงเป้ามาเก็บอีกครั้ง แล้วค่อยส่ง</p>`,
+      primaryLabel: null,
       secondaryLabel: "กลับไปโหลดขั้นที่ 1 ใหม่",
       // ปิด/Escape/คลิกนอกกล่อง = ไม่ส่ง — _showInfoModal เรียก onSecondary ให้ทุกทาง
       // (เดิมเฝ้าด้วย MutationObserver บน body ซึ่งพลาดได้แล้ว Promise ค้างถาวร)
@@ -9912,20 +9909,28 @@ async function _verifySendBatchBeforeImport(jobs) {
   );
   const body = await res.json().catch(() => ({}));
 
-  if (res.ok) {
-    // ตรวจไม่ได้ (เช่นอ่านเป้าบางทีมไม่ได้) ไม่ใช่ตรวจแล้วไม่ผ่าน — ด่านรายทีมถามไปแล้ว
-    if (body?.verified === false) {
-      console.warn("[targetsun] ตรวจยอดรวมทั้งชุดไม่ได้:", body?.reason, body);
-    }
-    return { ok: true };
-  }
+  // ผ่าน = server จดลงไฟล์ที่เตรียมไว้แล้วว่าชุดนี้ตรวจผ่าน (import ไม่ส่งชุดที่ไม่ผ่าน)
+  // ไม่มีทางข้ามขั้นนี้แล้ว — ทั้ง verified:false และ server ที่ไม่มี endpoint นี้ = ไม่ส่ง
+  if (res.ok && body?.verified === true) return { ok: true };
 
   const detail = body?.detail;
-  // server รุ่นเก่ายังไม่มี endpoint นี้ — ตัว 404 ของ FastAPI คือ "Not Found" ตรงตัว
-  // ส่วน 404 เชิงธุรกิจของเราเป็นข้อความไทย (ไฟล์เตรียมหมดอายุ) ต้องไม่เหมารวมกัน
-  if (res.status === 405 || (res.status === 404 && String(detail || "") === "Not Found")) {
-    console.warn("[targetsun] server ยังไม่มีด่านตรวจยอดรวมทั้งชุด — ข้ามขั้นนี้");
-    return { ok: true };
+  if (detail?.code === "send_batch_unverifiable") {
+    popGlobalBusy();
+    await new Promise((resolve) => {
+      let done = false;
+      _showInfoModal({
+        title: "ตรวจยอดรวมไม่ได้ — ยังไม่ได้ส่ง",
+        bodyHtml:
+          `<p style="margin:0;text-align:left;line-height:1.7;">${escH(detail.message || "")}</p>`
+          + `<p style="margin:10px 0 0;text-align:left;line-height:1.7;color:var(--text-2);">`
+          + `${escH(detail.hint_th || "")}</p>`,
+        primaryLabel: null,
+        secondaryLabel: "ปิด",
+        onSecondary: () => { if (!done) { done = true; resolve(); } },
+      });
+    });
+    pushGlobalBusy(UX.busySendStep1, UX.busySendTargetHint);
+    return { ok: false };
   }
   if (detail?.code === "send_batch_sku_partial") {
     return { ok: false, excludeSkus: Array.isArray(detail.exclude_skus) ? detail.exclude_skus : [] };
@@ -10288,24 +10293,57 @@ function _supTargetMismatches(supIds, brand) {
 }
 
 /**
- * เตือน + ให้ยืนยัน ถ้ายอดที่จะส่งไม่ตรงเป้าของทีม
+ * ยอดรวมหลายทีมต่อ SKU ไม่ตรงเป้ารวม — คืน [{supId:"รวม N ทีม", sku, got, target}]
  *
- * กรณีปกติของโหมดรวมภาค: ผู้ใช้ย้ายหีบข้ามทีมโดยตั้งใจ ยอดรายทีมจึงเลื่อน
- * ระบบไม่ห้าม แต่ต้องให้เห็นรายการก่อนว่าทีมไหน SKU ไหน ต่างเท่าไร
+ * ใช้ตอนส่งรวมภาค: รายทีมต่างจากเป้าตัวเองได้ (ย้ายหีบข้ามทีม I7)
+ * แต่ยอดรวมของทุกทีมต่อ SKU ต้องเท่าเป้ารวมพอดี
+ */
+function _batchTargetMismatches(supIds, brand) {
+  const got = {};
+  const target = {};
+  const skuFilter = _lakehouseFreshSkuFilter();
+  for (const sid of supIds || []) {
+    const rows = _lakehouseAllocationsFromStep3(_lakehouseMatrixFilterSup(sid), brand, skuFilter);
+    for (const a of rows) {
+      const sku = String(a.sku || "").trim();
+      if (sku) got[sku] = (got[sku] || 0) + (Number(a.allocated_boxes) || 0);
+    }
+    for (const [sku, t] of Object.entries(_supSkuTargetMap(sid))) {
+      target[sku] = (target[sku] || 0) + (Number(t) || 0);
+    }
+  }
+  const label = `รวม ${(supIds || []).length} ทีม`;
+  const out = [];
+  for (const [sku, total] of Object.entries(got)) {
+    // SKU ที่ไม่มีเป้า = เป้า 0 — มีหีบเมื่อไรคือหีบงอก
+    const tgt = target[sku] === undefined ? 0 : target[sku];
+    if (Number(total) !== Number(tgt)) out.push({ supId: label, sku, got: Number(total), target: Number(tgt) });
+  }
+  return out;
+}
+
+/**
+ * ยอดที่จะส่งไม่ตรงเป้า → บล็อก ไม่มีปุ่มยืนยันส่ง (29 ก.ย. 2026)
  *
- * คืน {proceed, confirmed} — ไม่เก็บลง S.* เพราะค่าจะค้างข้ามการเรียก
- * แล้วเส้นทางอื่น (ตรวจอย่างเดียว / ดาวน์โหลด Excel) จะพลอยข้ามการเช็คไปด้วย
+ * กติกา: ยอดหีบรวมหลังกระจายต้องเท่าเป้าที่เข้ามา ห้ามขาดหรือเกินแม้แต่หีบเดียว
+ *   - ส่งทีมเดียว: ยอดต่อ SKU ของทีมต้องตรงเป้าทีม
+ *   - ส่งหลายทีม (รวมภาค): ยอดรวมทุกทีมต่อ SKU ต้องตรงเป้ารวม รายทีมต่างได้
+ *
+ * ฝั่ง server ตรวจซ้ำอีกชั้นเสมอ ตรงนี้แค่บอกผู้ใช้ให้เร็ว ก่อนเริ่มเตรียมไฟล์
+ * คืน {proceed}
  */
 async function _confirmTargetMismatchBeforeSend(supIds, brand) {
   let issues = [];
   try {
-    issues = _supTargetMismatches(supIds, brand);
+    issues = (supIds || []).length > 1
+      ? _batchTargetMismatches(supIds, brand)
+      : _supTargetMismatches(supIds, brand);
   } catch (e) {
     console.warn("_supTargetMismatches:", e);
-    // ตรวจฝั่ง client ไม่ได้ก็อย่าไปขวาง — ฝั่ง server ยังมีประตูอีกชั้น
-    return { proceed: true, confirmed: false };
+    // ตรวจฝั่ง client ไม่ได้ก็ไปต่อ — server ตรวจยอดอีกชั้นและไม่มีทางกดข้าม
+    return { proceed: true };
   }
-  if (!issues.length) return { proceed: true, confirmed: false };
+  if (!issues.length) return { proceed: true };
 
   const bySup = new Map();
   for (const it of issues) {
@@ -10327,22 +10365,23 @@ async function _confirmTargetMismatchBeforeSend(supIds, brand) {
       + `<ul style="margin:4px 0 0 18px;padding:0;line-height:1.6;">${rows}${more}</ul></div>`;
   }).join("");
 
+  const multi = (supIds || []).length > 1;
   return new Promise((resolve) => {
+    let done = false;
     _showInfoModal({
-      title: "ยอดหีบไม่ตรงเป้าของทีม — ตรวจก่อนส่ง",
+      title: "ยอดหีบไม่ตรงเป้า — ยังไม่ได้ส่ง",
       bodyHtml:
         `<p style="margin:0 0 10px;line-height:1.55;">`
-        + `มี <strong>${issues.length} SKU</strong> ที่ยอดจะส่งไม่เท่ากับเป้าของทีมนั้น `
-        + `มักเกิดจากการ<strong>ย้ายหีบข้ามทีม</strong>ในโหมดรวมภาค`
+        + `มี <strong>${issues.length} SKU</strong> ที่ยอดจะส่งไม่เท่ากับเป้า`
+        + (multi ? `รวมของทุกทีม (ย้ายหีบข้ามทีมได้ แต่ยอดรวมต้องเท่าเดิม)` : `ของทีม`)
+        + ` — ระบบ<strong>ไม่ส่ง</strong>จนกว่ายอดจะตรงพอดี`
         + `</p>`
         + `<div style="max-height:240px;overflow-y:auto;font-size:13px;">${blocks}</div>`
         + `<p style="margin:10px 0 0;font-size:12px;color:var(--text-3);line-height:1.55;">`
-        + `กด「ยืนยันส่ง」ถ้าตั้งใจให้เป็นแบบนี้ · กด「ยกเลิก」แล้วกด「คำนวณใหม่」`
-        + `เพื่อให้ทุกทีมกลับไปตรงเป้าของตัวเอง</p>`,
-      primaryLabel: "ยืนยันส่ง",
-      secondaryLabel: "ยกเลิก",
-      onPrimary: () => resolve({ proceed: true, confirmed: true }),
-      onSecondary: () => resolve({ proceed: false, confirmed: false }),
+        + `ตรวจช่องที่แก้มือไว้ หรือกด「คำนวณใหม่」ให้ยอดกลับมาตรงเป้า แล้วส่งอีกครั้ง</p>`,
+      primaryLabel: null,
+      secondaryLabel: "กลับไปแก้ไข",
+      onSecondary: () => { if (!done) { done = true; resolve({ proceed: false }); } },
     });
   });
 }
@@ -10376,13 +10415,13 @@ async function _doLakehouseUploadInner() {
   if (S.targetSunPreviewMode) {
     if (!await _confirmPreviewSendToTargetSun()) return;
   } else if (!await _confirmIfServerSnapshotStale(S.supId, "ส่ง Target Sun")) return;
-  // ยอดต่อ SKU ของทีมไหนไม่ตรงเป้า (มักเกิดจากย้ายหีบข้ามทีมในโหมดรวมภาค)
-  // ต้องให้ตรวจและยืนยันก่อน — ไม่ส่งเงียบ ๆ
+  // ยอดไม่ตรงเป้า = ไม่ส่ง ไม่มีปุ่มยืนยันข้าม (ส่งทีมเดียวเทียบเป้าทีม · หลายทีมเทียบเป้ารวม)
   const mismatchDecision = await _confirmTargetMismatchBeforeSend(supIds, brand);
   if (!mismatchDecision.proceed) return;
-  // ไม่ใช่ const — ถ้า server จับได้ว่าไม่ตรงเป้าทั้งที่ฝั่งเบราว์เซอร์คิดว่าตรง
-  // (เป้าบน server เปลี่ยนหลังโหลดขั้นที่ 1) จะถามแล้วตั้งค่านี้ใหม่ระหว่างเตรียมไฟล์
-  let confirmedMismatch = mismatchDecision.confirmed;
+  // ส่งหลายทีม = หนึ่งรอบการส่ง — server ตรวจยอดรวมทั้งชุดและผูกทุกไฟล์กับรหัสนี้
+  const sendBatchId = supIds.length > 1
+    ? `b${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
+    : null;
   const hasRows = supIds.some((sid) =>
     _lakehouseAllocationsFromStep3(_lakehouseMatrixFilterSup(sid), brand).length > 0
   );
@@ -10420,7 +10459,6 @@ async function _doLakehouseUploadInner() {
   let sentCount = 0;
   // ผู้ใช้ยืนยันครั้งเดียวแล้วใช้กับทุกทีมในชุดนี้ — ไม่ถามซ้ำราย SL
   let confirmedManualTopup = false;
-  let confirmedUnverifiable = false;
   let confirmedStale = false;
   // ทีมที่ยอดลงจริงไม่ตรงไฟล์ — รวมไว้แจ้งทีเดียวหลังส่งจบ
   const readbackIssues = [];
@@ -10451,20 +10489,17 @@ async function _doLakehouseUploadInner() {
 
     for (let i = 0; i < supIds.length; i++) {
       const supId = supIds[i];
-      // เส้นทางส่งจริงเท่านั้นที่แนบผลการยืนยันไปด้วย
-      const basePayload = _lakehouseExportPayload(supId, brand, {
-        confirmTargetMismatch: confirmedMismatch,
-      });
+      const basePayload = _lakehouseExportPayload(supId, brand, { sendBatchId });
       if (!basePayload.allocations?.length) continue;
       jobs.push({ supId, basePayload, token: null });
     }
 
-    /* วนเตรียมจนกว่าทุกทีมจะได้ token — ประตูฝั่ง server มี 3 ด่าน
-         1) ยอดไม่ตรงเป้าทีม  (409 send_target_mismatch)
-         2) SKU ที่ส่งไม่ครบจะถูกตัดทั้งตัว (409 send_target_shortfall)
-         3) ไม่มีไฟล์เป้าให้ตรวจเลย (409 send_target_unverifiable)
-       ทีมหนึ่งอาจติดด่าน 1 ก่อน พอยืนยันแล้วเตรียมใหม่ค่อยไปติดด่าน 2
-       จึงต้องวนซ้ำได้ ไม่ใช่ผ่านรอบเดียวจบ — แต่ถามผู้ใช้ด่านละครั้งเท่านั้น
+    /* วนเตรียมจนกว่าทุกทีมจะได้ token — ประตูฝั่ง server
+         1) ยอดไม่ตรงเป้าทีม  (409 send_target_mismatch)      → บล็อก ไม่มีปุ่มยืนยัน
+         2) SKU ที่ส่งไม่ครบจะถูกตัดทั้งตัว (409 send_target_shortfall) → ถามได้
+         3) ไม่มีไฟล์เป้าให้ตรวจเลย (409 send_target_unverifiable) → บล็อก ไม่มีปุ่มยืนยัน
+         4) เป้าต้นทางเปลี่ยนหลังโหลด (409 send_target_stale)   → ถามได้
+       ด่านที่ถามได้อาจโผล่ต่อกัน จึงต้องวนซ้ำได้ — แต่ถามผู้ใช้ด่านละครั้งเท่านั้น
        เพดานต้องมากกว่าจำนวนด่านอย่างน้อย 1 รอบ ไว้ให้รอบสุดท้ายได้เตรียมไฟล์จริง */
     for (let round = 0; round < 8; round++) {
       const todo = jobs.filter((j) => !j.token);
@@ -10546,16 +10581,21 @@ async function _doLakehouseUploadInner() {
         continue;
       }
 
-      /* ── ถามด่านละครั้ง ก่อนส่งทีมแรกเสมอ ─────────────────────────── */
-      if (pendingMismatch.length && !confirmedMismatch) {
+      /* ── ยอดไม่ตรงเป้า / ตรวจไม่ได้ = ไม่ส่ง ยังไม่ได้ส่งทีมไหนเลย ─────────── */
+      if (pendingMismatch.length) {
         popGlobalBusy();   // ไม่งั้น modal จะอยู่หลัง overlay
-        const goOn = await _confirmServerMismatchBeforeSend(pendingMismatch);
+        await _confirmServerMismatchBeforeSend(pendingMismatch);
         pushGlobalBusy(UX.busySendStep1, UX.busySendTargetHint);
-        if (!goOn) return;   // กลับไปแก้ไข — ยังไม่ได้ส่งทีมไหนเลย
-        confirmedMismatch = true;
-        jobs.forEach((j) => { if (!j.token) j.basePayload.confirm_target_mismatch = true; });
-        continue;
+        return;
       }
+      if (pendingUnverifiable.length) {
+        popGlobalBusy();
+        await _confirmUnverifiableTargetBeforeSend(pendingUnverifiable);
+        pushGlobalBusy(UX.busySendStep1, UX.busySendTargetHint);
+        return;
+      }
+
+      /* ── ถามด่านละครั้ง ก่อนส่งทีมแรกเสมอ ─────────────────────────── */
       if (pendingShortfall.length && !confirmedManualTopup) {
         const merged = _mergeShortfall(pendingShortfall.map((p) => p.detail.shortfall || []));
         popGlobalBusy();
@@ -10571,15 +10611,6 @@ async function _doLakehouseUploadInner() {
         jobs.forEach((j) => { if (!j.token) j.basePayload.confirm_manual_topup = true; });
         continue;
       }
-      if (pendingUnverifiable.length && !confirmedUnverifiable) {
-        popGlobalBusy();
-        const goOn = await _confirmUnverifiableTargetBeforeSend(pendingUnverifiable);
-        pushGlobalBusy(UX.busySendStep1, UX.busySendTargetHint);
-        if (!goOn) return;
-        confirmedUnverifiable = true;
-        jobs.forEach((j) => { if (!j.token) j.basePayload.confirm_unverifiable_target = true; });
-        continue;
-      }
       if (pendingStale.length && !confirmedStale) {
         popGlobalBusy();
         const goOn = await _confirmStaleTargetBeforeSend(pendingStale);
@@ -10591,9 +10622,7 @@ async function _doLakehouseUploadInner() {
       }
 
       // ยืนยันไปแล้วแต่ยังติดอยู่ — อย่าวนต่อจนไม่รู้จบ
-      const stuck = (
-        pendingMismatch[0] || pendingShortfall[0] || pendingUnverifiable[0] || pendingStale[0]
-      )?.detail;
+      const stuck = (pendingShortfall[0] || pendingStale[0])?.detail;
       throw new Error(_userFacingError(stuck?.message || "", "เตรียมไฟล์ไม่สำเร็จ"));
     }
     jobs = jobs.filter((j) => j.token && j.token !== "__legacy__");

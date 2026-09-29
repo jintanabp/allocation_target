@@ -1226,9 +1226,8 @@ def _shortfall_from_dropped_rows(
       1. ฟังก์ชันนั้นวนจาก df.groupby("sku") คือ "SKU ที่ยังเหลือ" — ถ้า SKU ถูกตัดทั้งตัว
          (สินค้าใหม่ที่ TGA ยังไม่ตั้งเป้าให้ใครในทีมเลย) มันหายไปจาก groupby แล้วผ่านเงียบ
          ตัวนี้ดูจาก "แถวที่ถูกตัด" จึงจับเคสนั้นได้
-      2. 409 ของฟังก์ชันนั้นแปลว่า "แก้มือไม่ตรงเป้า" (ข้ามได้ด้วย confirm_target_mismatch
-         ซึ่งในโหมดรวมภาคเป็นเรื่องปกติตาม I7) — ถ้าเอาปัญหา master data ไปรวม
-         จะถูกกดยืนยันข้ามไปโดยไม่ได้ตั้งใจ
+      2. 409 ของฟังก์ชันนั้นแปลว่า "ยอดไม่ตรงเป้า" (โหมดรวมภาคยกให้ด่านยอดรวมทั้งภาค
+         ตัดสินแทนตาม I7) — ปัญหา master data ต้องแยกเป็นอีกด่าน ไม่ปนกัน
 
     นับเฉพาะแถวที่ allocated_boxes > 0 — ตัดแถวหีบ 0 ไม่ทำให้เป้าขาด (ไม่มีอะไรให้ทับใน Oracle)
     """
@@ -1680,8 +1679,12 @@ def verify_send_batch(metas: list[dict]) -> dict:
          ทั้งภาคจะครึ่ง ๆ กลาง ๆ (บางทีมถูกทับด้วยเลขใหม่ บางทีมค้างเลขเก่า)
       2. ยอดรวมราย SKU ของทั้งชุด เท่าเป้ารวมของทุกทีมในชุด
 
-    เทียบเฉพาะ SKU ที่ชุดนี้กำลังส่งจริง — SKU ที่มีเป้าแต่ไม่ได้ส่งเลยเป็นเรื่องปกติ
-    ของการส่งแยกแบรนด์ และมีด่านรายทีม (check_missing_skus) ดูแลตอนส่งทุกแบรนด์อยู่แล้ว
+    เทียบ SKU ที่ชุดนี้กำลังส่ง — ถ้าทุกทีมส่งทุกแบรนด์ทุกสินค้า (full_send) เทียบ
+    SKU ที่มีเป้าแต่ไม่อยู่ในไฟล์ด้วย ส่วนการส่งแยกแบรนด์ SKU แบรนด์อื่นไม่อยู่ในไฟล์เป็นปกติ
+
+    ตรวจไม่ได้ (ไม่มียอดในไฟล์ / อ่านเป้าไม่ได้) = 409 ห้ามส่ง — ไม่มีการตอบ 200
+    แบบ verified:false ให้หน้าเว็บส่งต่ออีกแล้ว ผ่านแล้วผู้เรียกต้อง mark_batch_verified
+    ให้ทุก token ในชุด (import_prepared_targetsun ไม่ส่ง token ของชุดที่ยังไม่ผ่าน)
     """
     periods = {
         (int(m["target_year"]), int(m["target_month"]))
@@ -1741,15 +1744,30 @@ def verify_send_batch(metas: list[dict]) -> dict:
             },
         )
 
+    batch_ids = {str(m.get("send_batch_id") or "").strip() for m in metas}
+    if len(batch_ids) > 1:
+        # ไฟล์จากคนละรอบส่งปนกัน — ตรวจรวมกันไม่ได้ความหมาย
+        raise HTTPException(
+            400,
+            detail="ไฟล์ที่เตรียมไว้มาจากคนละรอบการส่ง — กรุณากดส่งใหม่อีกครั้ง",
+        )
+
     if missing_totals:
-        logger.warning("ตรวจยอดรวมทั้งชุดไม่ได้: ไฟล์ที่เตรียมไว้บางใบไม่มียอดต่อ SKU (%s)", sup_ids)
-        return {"verified": False, "reason": "no_totals", "sup_ids": sup_ids}
+        # ตรวจไม่ได้ = ห้ามส่ง (เดิมตอบ 200 verified:false แล้วหน้าเว็บส่งต่อ)
+        logger.error("ตรวจยอดรวมทั้งชุดไม่ได้: ไฟล์ที่เตรียมไว้บางใบไม่มียอดต่อ SKU (%s)", sup_ids)
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "send_batch_unverifiable",
+                "message": "ยังไม่ได้ส่ง — ไฟล์ที่เตรียมไว้บางทีมไม่มียอดต่อสินค้าให้ตรวจ",
+                "hint_th": "กดส่งใหม่อีกครั้งเพื่อให้ระบบเตรียมไฟล์ใหม่",
+                "sup_ids": sup_ids,
+            },
+        )
 
-    # ทีมเดียว = ไม่มีการย้ายหีบข้ามทีม ด่านรายทีมตรวจเรื่องเดียวกันไปแล้วและ
-    # ผู้ใช้อาจกดยืนยันความต่างไว้โดยตั้งใจ — ตรงนี้จึงไม่ไปตัดสินซ้ำ
-    if len(per_team) < 2:
-        return {"verified": True, "scope": "single_team", "sup_ids": sup_ids}
-
+    # ทีมเดียวก็ตรวจด้วยสูตรเดียวกัน — ยอดรวมของ "ทีมในชุด" เทียบเป้ารวมของทีมเหล่านั้น
+    # (ทีมเดียว = เทียบเป้าทีม) เดิมข้ามไปเพราะผู้ใช้อาจกดยืนยันความต่างไว้ ตอนนี้
+    # ไม่มีการยืนยันข้ามแล้ว ยอดต้องตรงเสมอ
     targets_total: dict[str, int] = {}
     unreadable: list[str] = []
     year, month = next(iter(periods)) if periods else (None, None)
@@ -1765,42 +1783,51 @@ def verify_send_batch(metas: list[dict]) -> dict:
             targets_total[str(k).strip()] = targets_total.get(str(k).strip(), 0) + int(v)
 
     if unreadable:
-        # ด่านรายทีมบล็อกเรื่องนี้ไปแล้ว (send_target_unverifiable) ถ้ามาถึงตรงนี้แปลว่า
-        # ผู้ใช้ยืนยันไปแล้วว่ายอมส่งทั้งที่ตรวจไม่ได้ — อย่าฟ้องซ้ำด้วยตัวเลขที่ไม่ครบ
-        logger.warning("ตรวจยอดรวมทั้งชุดไม่ได้: อ่านเป้าไม่ได้ %s", unreadable)
-        return {
-            "verified": False,
-            "reason": "missing_targets",
-            "sup_ids": sup_ids,
-            "unreadable_sup_ids": unreadable,
-        }
+        logger.error("ตรวจยอดรวมทั้งชุดไม่ได้: อ่านเป้าไม่ได้ %s", unreadable)
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "send_batch_unverifiable",
+                "message": (
+                    f"ยังไม่ได้ส่ง — อ่านเป้าของทีม {', '.join(unreadable)} ไม่ได้ "
+                    "จึงยืนยันไม่ได้ว่ายอดรวมตรงเป้า"
+                ),
+                "hint_th": "โหลดข้อมูลขั้นที่ 1 ใหม่เพื่อดึงเป้าเข้ามาเก็บอีกครั้ง แล้วค่อยส่ง",
+                "sup_ids": sup_ids,
+                "unreadable_sup_ids": unreadable,
+            },
+        )
+
+    # ส่งทุกแบรนด์ทุกสินค้าทุกทีม = ต้องครบทุก SKU ที่มีเป้า (SKU ที่ไม่อยู่ในไฟล์เลยคือหีบหาย)
+    full_send = bool(metas) and all(bool(m.get("full_send")) for m in metas)
+    keys = set(file_by_sku) | (set(targets_total) if full_send else set())
 
     diffs = []
-    for sku in sorted(set(file_by_sku)):
+    for sku in sorted(keys):
         if sku in excluded:
             continue
-        tgt = targets_total.get(sku)
-        if tgt is None:
-            continue  # ไม่มีเป้าในงวดนี้ — ด่านรายทีมดูแลอยู่
+        # ไม่มีเป้าในงวดนี้ = เป้า 0 — มีหีบเมื่อไรคือหีบงอก
+        tgt = int(targets_total.get(sku, 0))
         got = int(file_by_sku.get(sku, 0))
-        if got != int(tgt):
+        if got != tgt:
             diffs.append(
-                {"sku": sku, "sending_boxes": got, "expected_boxes": int(tgt), "diff": got - int(tgt)}
+                {"sku": sku, "sending_boxes": got, "expected_boxes": tgt, "diff": got - tgt}
             )
 
     if diffs:
         diff_boxes = sum(int(d["diff"]) for d in diffs)
         logger.error("ยอดรวมทั้งชุดไม่ตรงเป้ารวม %s: %s", sup_ids, diffs[:10])
+        scope = f"ทั้ง {len(per_team)} ทีม" if len(per_team) > 1 else f"ทีม {sup_ids[0]}"
         raise HTTPException(
             status_code=409,
             detail={
                 "code": "send_batch_total_mismatch",
                 "message": (
-                    f"ยังไม่ได้ส่ง — ยอดรวมของทั้ง {len(per_team)} ทีมไม่เท่าเป้ารวม "
+                    f"ยังไม่ได้ส่ง — ยอดรวมของ{scope}ไม่เท่าเป้ารวม "
                     f"{len(diffs)} SKU (ต่างรวม {diff_boxes:+,} หีบ)"
                 ),
                 "hint_th": (
-                    "ย้ายหีบข้ามทีมได้ แต่ยอดรวมของภาคต้องเท่าเดิม — "
+                    "ย้ายหีบข้ามทีมได้ แต่ยอดรวมต้องเท่าเดิมพอดี — "
                     "ส่วนต่างแปลว่าหีบหายหรืองอกจริง ให้กลับไปตรวจตารางผลกระจาย "
                     "หรือโหลดข้อมูลขั้นที่ 1 ใหม่แล้วกระจายอีกครั้ง"
                 ),
@@ -1813,9 +1840,9 @@ def verify_send_batch(metas: list[dict]) -> dict:
 
     return {
         "verified": True,
-        "scope": "batch",
+        "scope": "batch" if len(per_team) > 1 else "single_team",
         "sup_ids": sup_ids,
-        "skus_checked": len([s for s in file_by_sku if s not in excluded]),
+        "skus_checked": len([s for s in keys if s not in excluded]),
         "excluded_skus": sorted(excluded),
     }
 
@@ -1989,15 +2016,6 @@ def _enrich_emp_dimensions(
     df["areacode"] = df["areacode"].map(_areacode_str)
     df["warehouse_code"] = df["warehouse_code"].map(_cell_str)
     return df
-
-
-def _allow_send_mismatch() -> bool:
-    """ทางออกฉุกเฉิน — ใช้ตัวเดียวกับประตูใน /optimize เพื่อไม่ให้มีสวิตช์หลายตัว"""
-    return (os.environ.get("ALLOC_ALLOW_MISMATCH") or "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
 
 
 def _sup_target_boxes_by_sku(sup_id: str, month: int, year: int) -> dict[str, int] | None:
@@ -2189,44 +2207,42 @@ def _assert_send_matches_sup_targets(
     month: int,
     year: int,
     *,
-    confirmed: bool = False,
     check_missing_skus: bool = False,
-    unverifiable_confirmed: bool = False,
-) -> None:
+    defer_to_batch: bool = False,
+) -> list[dict]:
     """
     ประตูสุดท้ายก่อนส่งเข้า Target Sun — ผลรวมหีบต่อ SKU ของทีมนี้ต้องตรงเป้าของทีมนี้
 
+    กติกา (ผู้ใช้ยืนยัน 29 ก.ย. 2026): ยอดหีบรวมหลังกระจายต้องเท่าเป้าที่เข้ามา
+    **ห้ามขาดหรือเกินแม้แต่หีบเดียว** และไม่มีปุ่มยืนยันข้าม — เดิมมี
+    confirm_target_mismatch / confirm_unverifiable_target / ALLOC_ALLOW_MISMATCH
+    ให้กดข้ามได้ ตอนนี้ถอดออกทั้งหมด
+
     ทำไมต้องตรวจซ้ำทั้งที่ /optimize ตรวจแล้ว:
       ระหว่าง optimize -> ส่ง ยังมีอีกหลายก้าวที่ไม่มีใครตรวจเลย
-        - แก้มือในตาราง (โหมดรวมภาคย้ายหีบข้ามทีมได้ตามที่ออกแบบไว้)
-        - PUT /data/allocations บันทึก snapshot โดยไม่ตรวจผลรวม
+        - แก้มือในตาราง
+        - PUT /data/allocations บันทึกร่างโดยไม่ตรวจผลรวม (ตั้งใจ — ร่างยังไม่ตรงได้)
         - โหลด snapshot เก่ากลับมาส่ง ทั้งที่เป้า TGA เปลี่ยนไปแล้ว
-      ตัวเลขที่ถึง Target Sun จึงต่างจากเป้าของทีมได้ ทั้งที่ตอนกระจายถูกต้อง
+
+    defer_to_batch — ทีมนี้เป็นส่วนหนึ่งของการส่งรวมภาค (มี send_batch_id)
+      โหมดรวมภาคย้ายหีบข้ามทีมได้ตามกติกา I7 ยอดรายทีมจึงต่างจากเป้าทีมได้
+      สิ่งที่ต้องเท่าเดิมคือ **ยอดรวมทั้งภาคต่อ SKU** ซึ่ง verify_send_batch ตรวจ
+      และ import_prepared_targetsun ไม่ยอมส่ง token ที่ชุดยังไม่ผ่านการตรวจ
+      ตรงนี้จึงคืนรายการที่ต่างไว้เฉย ๆ ไม่บล็อก — แต่ "อ่านเป้าไม่ได้" ยังบล็อกเสมอ
+      เพราะด่านระดับชุดก็ต้องใช้เป้าของทุกทีม
 
     check_missing_skus — ตรวจ "SKU ที่มีเป้าแต่ไม่มีใน payload เลย" ด้วย
       เปิดเฉพาะตอนส่งทุกแบรนด์ เพราะตอนนั้น payload ต้องครอบคลุมทุก SKU ที่มีเป้า
-      ถ้าส่งแยกแบรนด์ payload มีแค่บาง SKU อยู่แล้ว เปิดไว้จะฟ้องผิดทั้งกระดาน
 
-      เคสที่จับได้: หน้าเว็บจำรายชื่อ SKU ไว้ตั้งแต่โหลดขั้นที่ 1 ถ้าหลังจากนั้น
-      มีการนำเข้าเป้า TGA ที่เพิ่ม SKU ใหม่ SKU นั้นจะไม่อยู่ใน payload เลย
-      การวนจาก payload อย่างเดียวจึงไม่มีทางเห็นมัน
+    คืนรายการที่ต่าง (ว่าง = ตรงทุก SKU) · ไม่ defer แล้วมีรายการ = 409
     """
     if df is None or df.empty:
-        return
+        return []
     sid = str(sup_id or "").strip().upper()
     targets = _sup_target_boxes_by_sku(sid, month, year)
     if targets is None:
-        # อ่านเป้าไม่ได้ = ตรวจไม่ได้ → ต้อง "บล็อกไว้ก่อน" ไม่ใช่ปล่อยผ่านเงียบ ๆ
-        #
-        # เดิมตรงนี้ return เฉย ๆ ผลคือประตูที่แข็งแรงที่สุดปิดตัวเองอัตโนมัติ
-        # ในสถานการณ์ที่มันควรทำงานที่สุด: ไฟล์เป้าถูกล้างตามอายุ cache แล้ว
-        # ผู้ใช้เปิด snapshot เก่ามาส่ง — ส่งอะไรก็ได้โดยไม่มีอะไรทัดทาน
+        # อ่านเป้าไม่ได้ = ตรวจไม่ได้ = ห้ามส่ง ไม่มีทางยืนยันข้าม
         # ทางแก้ที่ถูกคือโหลดขั้นที่ 1 ใหม่ให้ระบบดึงเป้ามาเก็บอีกรอบ
-        if unverifiable_confirmed:
-            logger.warning(
-                "ผู้ใช้ยืนยันส่งทั้งที่ไม่มีไฟล์เป้าให้ตรวจ %s %s-%02d", sid, year, month
-            )
-            return
         logger.error("ไม่มีไฟล์เป้าให้ตรวจก่อนส่ง %s %s-%02d — บล็อกไว้", sid, year, month)
         raise HTTPException(
             status_code=409,
@@ -2237,67 +2253,71 @@ def _assert_send_matches_sup_targets(
                     "จึงยืนยันไม่ได้ว่ายอดที่จะส่งตรงกับเป้า"
                 ),
                 "hint_th": (
-                    "กลับไปโหลดข้อมูลขั้นที่ 1 ใหม่เพื่อดึงเป้าเข้ามาเก็บอีกครั้ง "
-                    "แล้วค่อยส่ง — ถ้ายืนยันจะส่งทั้งที่ตรวจไม่ได้ ให้กดยืนยัน"
+                    "กลับไปโหลดข้อมูลขั้นที่ 1 ใหม่เพื่อดึงเป้าเข้ามาเก็บอีกครั้ง แล้วค่อยส่ง"
                 ),
-                "confirm_field": "confirm_unverifiable_target",
                 "sup_id": sid,
                 "target_month": int(month),
                 "target_year": int(year),
             },
         )
 
-    got = df.groupby("sku")["allocated_boxes"].sum().astype(int).to_dict()
-    got = {str(k).strip(): int(v) for k, v in got.items()}
+    boxes = pd.to_numeric(df["allocated_boxes"], errors="coerce").fillna(0)
+    got_raw = boxes.groupby(df["sku"].astype(str).str.strip()).sum().to_dict()
+    got: dict[str, int] = {}
+    for k, v in got_raw.items():
+        fv = float(v)
+        if fv != int(fv):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "send_boxes_not_integer",
+                    "message": f"จำนวนหีบของ SKU {k} ไม่ใช่จำนวนเต็ม ({fv}) — ระบบไม่ส่ง",
+                    "sup_id": sid,
+                },
+            )
+        got[str(k)] = int(fv)
 
-    # วนจาก "SKU ที่มีเป้า" ไม่ใช่ "SKU ที่ส่ง" เมื่อ payload ควรครบ —
-    # ไม่งั้น SKU ที่หายไปทั้งตัวจะไม่เคยถูกหยิบมาเทียบ
-    if check_missing_skus:
-        keys = sorted(set(targets) | set(got))
-    else:
-        keys = sorted(got)
+    # วนจาก "SKU ที่มีเป้า" ด้วยเมื่อ payload ควรครบ — ไม่งั้น SKU ที่หายไปทั้งตัว
+    # จะไม่เคยถูกหยิบมาเทียบ
+    keys = sorted(set(targets) | set(got)) if check_missing_skus else sorted(got)
 
     problems = []
     for sku in keys:
-        tgt = targets.get(sku)
-        if tgt is None:
-            continue  # SKU ไม่มีเป้าในงวดนี้ — ปล่อยให้เส้นทางเดิมจัดการ
+        # SKU ที่ไม่มีเป้าของทีมนี้ = เป้า 0 — มีหีบเมื่อไรคือหีบงอก
+        tgt = int(targets.get(sku, 0))
         total = got.get(sku, 0)
-        if total != int(tgt):
+        if total != tgt:
             problems.append(
                 {
                     "sku": sku,
                     "sending_boxes": int(total),
-                    "expected_boxes": int(tgt),
+                    "expected_boxes": tgt,
                     # ไม่มีแถวเลย ต่างจากส่งมาแต่จำนวนไม่ตรง — หน้าเว็บใช้แยกข้อความ
                     "missing_from_payload": sku not in got,
+                    "no_target": sku not in targets,
                 }
             )
 
     if not problems:
-        return
+        return []
+
+    if defer_to_batch:
+        logger.info(
+            "ส่งรวมภาค: ทีม %s ต่างจากเป้าทีม %d SKU — ให้ด่านยอดรวมทั้งภาคตัดสิน",
+            sid, len(problems),
+        )
+        return problems
 
     logger.error(
         "ส่ง Target Sun ไม่ตรงเป้าทีม %s %s-%02d: %s", sid, year, month, problems[:20]
     )
-    if confirmed:
-        # ผู้ใช้เห็นรายการแล้วและกดยืนยัน — เช่นย้ายหีบข้ามทีมในโหมดรวมภาคโดยตั้งใจ
-        logger.warning(
-            "ผู้ใช้ยืนยันส่งทั้งที่ไม่ตรงเป้าทีม %s (%d SKU ไม่ตรง)", sid, len(problems)
-        )
-        return
-    if _allow_send_mismatch():
-        logger.warning("ALLOC_ALLOW_MISMATCH เปิดอยู่ — ปล่อยให้ส่งทั้งที่ไม่ตรงเป้า")
-        return
-
     missing = [p for p in problems if p.get("missing_from_payload")]
     hint = (
-        "มักเกิดจากการแก้ตัวเลขข้ามทีมในโหมดรวมภาค หรือเป้า Target Sun "
-        "เปลี่ยนหลังจากกระจายไปแล้ว — กด「คำนวณใหม่」แล้วส่งอีกครั้ง"
+        "ยอดหีบต่อสินค้าต้องเท่าเป้าของทีมพอดี — ตรวจช่องที่แก้มือไว้ "
+        "หรือกด「คำนวณใหม่」แล้วส่งอีกครั้ง"
     )
     if missing:
         # SKU ที่ไม่มีในสิ่งที่ส่งเลย = หน้าเว็บยังไม่รู้จักมัน (เป้าเพิ่มมาหลังโหลดขั้นที่ 1)
-        # กด「คำนวณใหม่」เฉย ๆ ไม่พอ ต้องโหลดขั้นที่ 1 ใหม่ให้เห็น SKU ก่อน
         hint = (
             f"มี {len(missing)} SKU ที่มีเป้าแต่ไม่มีอยู่ในผลกระจายเลย — "
             "แปลว่าเป้า TGA เปลี่ยนหลังจากคุณโหลดข้อมูลขั้นที่ 1 "
@@ -2318,7 +2338,6 @@ def _assert_send_matches_sup_targets(
             "mismatch_count": len(problems),
             "missing_sku_count": len(missing),
             "sup_id": sid,
-            "confirm_field": "confirm_target_mismatch",
         },
     )
 
@@ -2416,16 +2435,17 @@ def _build_tga_upload_dataframe(
 
     df = _normalize_allocation_payload(df)
     payload_by_sku = _boxes_by_sku(df)
+    team_target_mismatches: list[dict] = []
     if enforce_targets:
-        _assert_send_matches_sup_targets(
+        team_target_mismatches = _assert_send_matches_sup_targets(
             df,
             req.sup_id,
             int(req.target_month),
             int(req.target_year),
-            confirmed=bool(getattr(req, "confirm_target_mismatch", False)),
             # ส่งทุกแบรนด์ครบทุกสินค้าเท่านั้นที่ payload ควรครอบคลุมทุก SKU ที่มีเป้า
             check_missing_skus=(brand_filter or "ALL").upper() == "ALL" and not sku_filter,
-            unverifiable_confirmed=bool(getattr(req, "confirm_unverifiable_target", False)),
+            # ส่งรวมภาค: ยอดรายทีมต่างได้ (I7) — ด่านยอดรวมทั้งภาคตัดสินแทน
+            defer_to_batch=bool(str(getattr(req, "send_batch_id", "") or "").strip()),
         )
     zero_pairs_full = _zero_sum_emp_sku_pairs(df)
 
@@ -2789,6 +2809,10 @@ def _build_tga_upload_dataframe(
     final.attrs["wh_pin_boxes_moved"] = wh_pin_stats["boxes_moved"]
     final.attrs["wh_pin_rows_zeroed"] = wh_pin_stats["rows_zeroed"]
     final.attrs["wh_pin_new_warehouse_legs"] = wh_pin_stats["new_warehouse_legs"]
+    # ส่งรวมภาค: ยอดรายทีมที่ต่างจากเป้าทีม (ไม่บล็อกที่ด่านนี้) — ให้ bundle จดไว้
+    final.attrs["team_target_mismatches"] = team_target_mismatches
+    # ส่งทุกแบรนด์ทุกสินค้า = ด่านยอดรวมทั้งภาคต้องตรวจ SKU ที่มีเป้าแต่ไม่อยู่ในไฟล์ด้วย
+    final.attrs["full_send"] = (brand_filter or "ALL").upper() == "ALL" and not sku_filter
     return final, dropped_dims, not_in_ts, shortfall
 
 

@@ -282,13 +282,28 @@ class TestSendOrder(unittest.TestCase):
 
     def test_every_gate_sets_its_own_confirm_flag(self):
         """ยืนยันด่านหนึ่งต้องไม่ปลดล็อกอีกด่านที่ผู้ใช้ไม่เคยเห็น"""
-        for flag in (
-            "confirm_target_mismatch",
-            "confirm_manual_topup",
-            "confirm_unverifiable_target",
-            "confirm_stale_target",
-        ):
+        for flag in ("confirm_manual_topup", "confirm_stale_target"):
             self.assertIn(flag, self.src, f"ต้องตั้ง {flag} แยกกัน")
+
+    def test_box_total_gates_have_no_confirm_flag(self):
+        """
+        ยอดหีบไม่ตรงเป้า / ตรวจเป้าไม่ได้ = ไม่ส่ง ไม่มีปุ่มยืนยันข้าม (29 ก.ย. 2026)
+        """
+        with open(APP_JS, encoding="utf-8") as fh:
+            full = fh.read()
+        for flag in ("confirm_target_mismatch", "confirm_unverifiable_target"):
+            self.assertNotIn(flag, full, f"{flag} ต้องไม่ถูกตั้งจากหน้าเว็บแล้ว")
+        for fn in ("_confirmServerMismatchBeforeSend", "_confirmUnverifiableTargetBeforeSend"):
+            m = re.search(rf"function {fn}\((.*?)\n\}}\n", full.replace("\r\n", "\n"), re.S)
+            self.assertIsNotNone(m, fn)
+            self.assertIn("primaryLabel: null", m.group(1), f"{fn} ต้องไม่มีปุ่มส่งต่อ")
+            self.assertNotIn("resolve(true)", m.group(1))
+
+    def test_multi_team_send_carries_a_batch_id(self):
+        with open(APP_JS, encoding="utf-8") as fh:
+            full = fh.read()
+        self.assertIn("send_batch_id: opts.sendBatchId", full)
+        self.assertIn("_lakehouseExportPayload(supId, brand, { sendBatchId })", self.src)
 
 
 def _function_body_skip_default_param_braces(name: str) -> str:
