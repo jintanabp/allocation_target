@@ -11419,11 +11419,24 @@ const _draftPromptSuppressedForKeys = new Set();
 let _serverAllocSaveTimer = null;
 let _regionalAllocSaveTimer = null;
 
+/** ทีม+งวดที่กำลังทำงานอยู่ — ใช้จับว่าระหว่างรอ autosave ผู้ใช้สลับไปที่อื่นแล้วหรือยัง */
+function _allocSaveContextKey() {
+  return `${String(S.supId || "").trim().toUpperCase()}|${S.targetYear}-${S.targetMonth}`
+    + `|${S.compositeAllocView ? "composite" : "single"}`;
+}
+
 function queueRegionalAllocationSave(status = "draft") {
   if (!S.compositeAllocView || !_regionalAggregateWritable()) return;
   if (!S.allocations?.length && status === "draft") return;
   clearTimeout(_regionalAllocSaveTimer);
+  const ctxKey = _allocSaveContextKey();
   _regionalAllocSaveTimer = setTimeout(() => {
+    // สลับทีม/งวด/ออกจากมุมมองรวมภาคไปแล้ว — ห้ามเอาของบนจอตอนนี้ไปบันทึกทับ (ผลตรวจ §3.3)
+    // การบันทึกรวมภาคอิงสถานะบนจอหลายอย่าง (ขอบเขตทีม งวด) จึงข้ามไป ไม่เดาแทน
+    if (_allocSaveContextKey() !== ctxKey) {
+      console.warn("[autosave] ข้ามการบันทึกรวมภาค — สลับทีม/งวดไปแล้ว", ctxKey);
+      return;
+    }
     saveRegionalAllocationSnapshots(S.allocations, status)
       .then((saved) => {
         for (const supId of saved || []) {
@@ -11469,8 +11482,31 @@ function queueServerAllocationSave(status = "draft") {
   if (!_canWriteServerAllocation()) return;
   if (!S.allocations?.length && status === "draft") return;
   clearTimeout(_serverAllocSaveTimer);
+  // จับทีม/งวด/ข้อมูลไว้ตั้งแต่ตอนเข้าคิว (ผลตรวจ §3.3) — เดิมอ่าน S.* ตอนตัวจับเวลาทำงาน
+  // ถ้าผู้ใช้สลับทีมภายใน 800ms ของทีมเดิมจะถูกบันทึกลงชื่อทีมใหม่ ทับ snapshot ของเขา
+  const ctx = {
+    key: _allocSaveContextKey(),
+    supId: S.supId,
+    targetMonth: S.targetMonth,
+    targetYear: S.targetYear,
+    allocations: S.allocations,
+    yellow: S.yellow,
+    yellow_locked: S.yellowLocked,
+    strategy: _strategySummaryTh(_getSelectedStrategies()),
+  };
   _serverAllocSaveTimer = setTimeout(() => {
-    saveServerAllocationSnapshot(status).catch((e) => console.warn("saveServerAllocationSnapshot:", e));
+    // ยังอยู่ที่เดิม = ใช้ของล่าสุดบนจอ (พฤติกรรมเดิม) · ย้ายไปแล้ว = บันทึกของเดิมลงทีม/งวดเดิม
+    const opts = _allocSaveContextKey() === ctx.key ? {} : {
+      supId: ctx.supId,
+      targetMonth: ctx.targetMonth,
+      targetYear: ctx.targetYear,
+      allocations: ctx.allocations,
+      yellow: ctx.yellow,
+      yellow_locked: ctx.yellow_locked,
+      strategy: ctx.strategy,
+      silentSummary: true,
+    };
+    saveServerAllocationSnapshot(status, opts).catch((e) => console.warn("saveServerAllocationSnapshot:", e));
   }, 800);
 }
 
@@ -11584,13 +11620,13 @@ async function saveServerAllocationSnapshot(status = "draft", opts = {}) {
   const attempt = await _withSaveLock(async () => {
     const body = {
       sup_id: supId,
-      target_month: S.targetMonth,
-      target_year: S.targetYear,
+      target_month: opts.targetMonth || S.targetMonth,
+      target_year: opts.targetYear || S.targetYear,
       status,
       allocations: allocs,
       yellow: opts.yellow || S.yellow,
       yellow_locked: opts.yellow_locked || S.yellowLocked,
-      strategy: _strategySummaryTh(_getSelectedStrategies()),
+      strategy: opts.strategy != null ? opts.strategy : _strategySummaryTh(_getSelectedStrategies()),
     };
     // กระจายทั้งภาคคือการตั้งใจทับทุกทีม (ผู้ใช้ยืนยันใน modal「กระจายใหม่ทั้งภาค」แล้ว)
     // จึงไม่ส่ง precondition — ไม่งั้นจะเด้ง modal ถามทีละทีมกลางลูป
@@ -11618,7 +11654,17 @@ async function saveServerAllocationSnapshot(status = "draft", opts = {}) {
       30000
     );
     if (res.status === 409 || res.status === 428) {
-      return { conflict: res.status, j: await res.json().catch(() => ({})) };
+      const j = await res.json().catch(() => ({}));
+      // เฉพาะ "มีคนบันทึกทับ" จริงเท่านั้นที่ไปกล่องให้เลือกโหลดใหม่/เขียนทับ (ผลตรวจ §3.6)
+      // 428 = หน้าเว็บเก่า ต้อง Ctrl+F5 · empty_allocation_overwrite = server กันข้อมูลหาย
+      // เดิมทุกตัวไปกล่องเดียวกัน แล้วขึ้น "บันทึกโดย: ไม่ระบุ" ซึ่งชวนงง
+      if (res.status === 409 && (j?.detail?.code || "snapshot_conflict") === "snapshot_conflict") {
+        return { conflict: res.status, j };
+      }
+      const msg = _formatApiErrorDetail(j) || "บันทึกผลกระจายบน server ไม่สำเร็จ";
+      _logClientError("save_allocation", msg, `sup=${supId} http=${res.status}`);
+      toast("⚠ " + msg, "red");
+      throw new Error(msg);
     }
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));

@@ -359,6 +359,19 @@ def put_allocation_snapshot(
             target_year=body.target_year,
         )
         raise
+    if not body.allocations:
+        # ผลกระจายว่างทับของเดิมที่มีแถว = ข้อมูลหายทั้งทีม (ผลตรวจ §3.3) — การลบจริง
+        # มีปุ่มของมัน (DELETE) หน้าเว็บไม่เคยตั้งใจบันทึกรายการว่าง
+        prev = read_snapshot(sid, body.target_month, body.target_year)
+        if prev and prev.get("allocations"):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "empty_allocation_overwrite",
+                    "message": "ไม่บันทึก — ผลกระจายที่ส่งมาว่างเปล่า จะทับผลเดิมของทีมนี้ทั้งหมด",
+                    "hint_th": "กด Ctrl+F5 แล้วโหลดทีมนี้ใหม่ ถ้าตั้งใจลบผลกระจาย ให้ใช้ปุ่มลบ",
+                },
+            )
     email = str(user.get("email") or user.get("view_as_email") or "").strip()
     payload = body.model_dump()
     expected_version = payload.pop("if_match_version", None)
