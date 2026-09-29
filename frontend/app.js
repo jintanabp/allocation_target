@@ -7371,7 +7371,10 @@ function syncStep3ReviewNotes() {
   const residuals = Array.isArray(S.rebalanceResiduals) ? S.rebalanceResiduals : [];
   if (residuals.length) {
     const skuList = residuals.slice(0, 8).map((r) => `${r.sku} (เป้า ${r.target} ได้ ${r.actual})`).join(", ");
-    lines.push(`หลังเกลี่ยอัตโนมัติ ยังไม่ตรงเป้าหีบ: ${skuList}${residuals.length > 8 ? " …" : ""}`);
+    lines.push(
+      `หลังเกลี่ยอัตโนมัติ ยังไม่ตรงเป้าหีบ: ${skuList}${residuals.length > 8 ? " …" : ""}`
+      + " — ส่ง Target Sun ไม่ได้จนกว่ายอดจะตรงพอดี (ลดช่องที่แก้มือไว้ หรือกดคำนวณใหม่)"
+    );
   }
   const farSkus = new Set();
   for (const a of S.allocations || []) {

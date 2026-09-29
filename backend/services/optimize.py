@@ -891,6 +891,25 @@ def run_optimization_service(
         df_sku["supervisor_target_boxes"], errors="coerce"
     ).fillna(0)
     df_sku = df_sku[df_sku["supervisor_target_boxes"] > 0].copy()
+    # เป้าหีบต้องเป็นจำนวนเต็ม — เดิม engine ปัดแบบ half-even เงียบ ๆ (10.5 → 10)
+    # ยอดที่กระจายจึง "ตรงเป้า" ตามเลขที่ปัดแล้ว แต่ขาดจากเป้าจริงไปครึ่งหีบ
+    # ข้อมูลจริงทุกไฟล์เป็นจำนวนเต็ม (ตรวจ 29 ก.ย. 2026) เจอทศนิยมเมื่อไรแปลว่าต้นทางผิด
+    _frac = df_sku[df_sku["supervisor_target_boxes"] != df_sku["supervisor_target_boxes"].round()]
+    if not _frac.empty:
+        raise HTTPException(
+            400,
+            detail={
+                "code": "target_boxes_not_integer",
+                "message": (
+                    f"เป้าหีบของ {len(_frac)} SKU ไม่ใช่จำนวนเต็ม — ระบบไม่กระจาย "
+                    "เพราะจะปัดเศษทำให้ยอดไม่ตรงเป้าจริง"
+                ),
+                "skus": [
+                    {"sku": str(r["sku"]), "target_boxes": float(r["supervisor_target_boxes"])}
+                    for _, r in _frac.head(20).iterrows()
+                ],
+            },
+        )
     # ยุบ SKU ซ้ำ "ก่อน" แบ่งกลุ่มตามแบรนด์ (I6)
     #
     # allocate_boxes ยุบให้อยู่แล้ว แต่โหมดหลายกลยุทธ์แบ่ง df_sku ตามแบรนด์

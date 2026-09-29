@@ -103,6 +103,13 @@ class TestOptimizeHasNoEscapeHatch(unittest.TestCase):
         self.assertIn("validate_allocation_vs_targets(df_to_write, df_sku_full)", after)
 
 
+class TestFractionalTargetsRejected(unittest.TestCase):
+    def test_optimize_rejects_fractional_target_before_the_engine_rounds_it(self):
+        src = inspect.getsource(opt)
+        at = src.index('"target_boxes_not_integer"')
+        self.assertLess(at, src.index("df_sku_full = df_sku"), "ต้องตรวจก่อนเข้าเครื่องคำนวณ")
+
+
 class TestImportRequiresVerifiedBatch(unittest.TestCase):
     """token ของการส่งรวมภาคต้องผ่านด่านยอดรวมทั้งชุดก่อน — ด่านอยู่ที่ server"""
 
