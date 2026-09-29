@@ -573,7 +573,7 @@ def _post_targetsun_multipart(
         )
     if send_status == "unknown":
         logger.error(
-            "TargetSun ตอบ HTTP %s แต่ไม่บอกว่าสำเร็จหรือไม่ — ถือว่าไม่รู้ผล: %s",
+            "TargetSun ตอบ HTTP %s แต่ไม่บอกว่าสำเร็จหรือไม่ — ถือว่ายังยืนยันผลไม่ได้: %s",
             r.status_code, str(body)[:300],
         )
 
@@ -646,7 +646,7 @@ def _attach_readback(
     if isinstance(ts, dict) and ts.get("success") is False:
         out["readback"] = {"checked": False, "reason": "send_failed"}
         return out
-    # ไม่รู้ผล — ยังอ่านกลับ/นับแถวต่อ เพราะของอาจลงไปแล้วจริง ตัวเลขช่วยให้ตัดสินได้
+    # ยังยืนยันผลไม่ได้ — ยังอ่านกลับ/นับแถวต่อ เพราะของอาจลงไปแล้วจริง ตัวเลขช่วยให้ตัดสินได้
     out["readback"] = verify_after_send(
         sup_id,
         int(month),
@@ -741,7 +741,7 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
                 shortfall=shortfall if isinstance(shortfall, list) else [],
             )
         except HTTPException as e:
-            # หมดเวลารอ (504) = ปลายทางอาจยังบันทึกต่อจนเสร็จ ไม่รู้ผลจริง (ผลตรวจ §2.4)
+            # หมดเวลารอ (504) = ปลายทางอาจยังบันทึกต่อจนเสร็จ ยังยืนยันผลไม่ได้จริง (ผลตรวจ §2.4)
             # เก็บไฟล์ที่ส่งไว้ให้ dev ตรวจย้อนได้ว่าส่งอะไรไป (หมดอายุเองใน 30 นาที)
             # ผิดพลาดแบบอื่นลบทิ้งตามเดิม
             if e.status_code != 504:

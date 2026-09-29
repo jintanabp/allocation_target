@@ -10194,7 +10194,7 @@ function _handleTargetSunImportResponse(res, j, opts = {}) {
   }
   const ts = j.targetsun || {};
   // ปลายทางตอบโดยไม่บอกว่าสำเร็จหรือไม่ (ผลตรวจ §2.3) — เดิมนับเป็นสำเร็จ
-  // ถือว่า "ไม่รู้ผล": หยุดส่งทีมถัดไป และให้ตรวจยอดใน Target Sun ก่อนส่งซ้ำ
+  // ถือว่า "ยังยืนยันผลไม่ได้": หยุดส่งทีมถัดไป และให้ตรวจยอดใน Target Sun ก่อนส่งซ้ำ
   if (j.send_status === "unknown") {
     opts.uncertain = true;
     toast(
@@ -10286,7 +10286,7 @@ function _targetSunPrepareUnsupported(status, body) {
 async function _fetchTargetSunImport(body) {
   // ต้องรอนานกว่างานฝั่ง server ที่แย่ที่สุด: อ่านก่อนส่ง 120s + POST 600s + อ่านหลังส่ง 2×120s
   // = 960s (ค่าเริ่มต้น) · เดิมรอ 600s หน้าเว็บจึงเลิกรอก่อน ทั้งที่ server ส่งสำเร็จ
-  // แล้วหน้าจอขึ้น "ไม่รู้ผล" และไม่ประทับว่าส่งแล้ว (ผลตรวจ §2.4)
+  // แล้วหน้าจอขึ้น "ยังยืนยันผลไม่ได้" และไม่ประทับว่าส่งแล้ว (ผลตรวจ §2.4)
   const res = await fetchWithTimeout(
     `${API_BASE_URL}/lakehouse/import-targetsun`,
     {
@@ -10873,7 +10873,7 @@ function _showPartialSendSummaryModal({ sent, failed, notSent, pending, failedUn
         ${line("เข้า Target Sun แล้ว", sent, "ok",
                "ข้อมูลเข้าไปแล้วจริง ย้อนคืนไม่ได้ — ห้ามส่งทีมเหล่านี้ซ้ำ")}
         ${failedUncertain
-          ? line("ไม่รู้ผล — คำตอบมาไม่ถึง", [failed], "bad",
+          ? line("ยังยืนยันผลไม่ได้ — คำตอบมาไม่ถึง", [failed], "bad",
                  "เน็ตหลุดหรือรอนานเกินระหว่างส่ง ทีมนี้<strong>อาจเข้า Target Sun ไปแล้ว</strong> "
                  + "— ตรวจเป้าใน Target Sun ก่อน อย่าเพิ่งกดส่งซ้ำ")
           : line("ล้มที่ทีมนี้", [failed], "bad",

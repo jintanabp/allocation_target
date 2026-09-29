@@ -2,7 +2,7 @@
 หมดเวลารอ ต้องไม่ทำให้หน้าจอ / log / Target Sun บอกคนละอย่าง (ผลตรวจ 28 ก.ย. 2026 §2.4)
 
 - หน้าเว็บต้องรอนานกว่างานฝั่ง server ที่แย่ที่สุด (อ่าน 120 + POST 600 + อ่านหลัง 2×120)
-- server หมดเวลาตอน POST (504) = "ไม่รู้ผล" ไม่ใช่ "ไม่สำเร็จ" — ปลายทางอาจบันทึกไปแล้ว
+- server หมดเวลาตอน POST (504) = "ยังยืนยันผลไม่ได้" ไม่ใช่ "ไม่สำเร็จ" — ปลายทางอาจบันทึกไปแล้ว
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ class TestServerTimeoutIsUnknown(unittest.TestCase):
             with self.assertRaises(HTTPException):
                 rl.import_targetsun_from_allocations(req, user=user)
         kw = spy.call_args.kwargs
-        self.assertIn("ไม่รู้ผล", kw["message"])
+        self.assertIn("ยังยืนยันผลไม่ได้", kw["message"])
         self.assertNotIn("ไม่สำเร็จ", kw["message"])
         self.assertEqual(kw["context"]["send_status"], "unknown")
 

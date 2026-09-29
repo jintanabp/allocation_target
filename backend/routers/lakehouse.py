@@ -168,7 +168,7 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
             level = "warn" if level == "info" else level
         if send_status == "unknown":
             # ไม่ใช้คำว่า "สำเร็จ" — usage_summary ตัดสินแถวเก่าด้วยข้อความ
-            head = "ส่งเข้า Target Sun ไม่รู้ผล — ปลายทางไม่บอกว่ารับหรือไม่ ให้ตรวจยอดใน Target Sun ก่อนส่งซ้ำ"
+            head = "ส่งเข้า Target Sun แล้ว แต่ยังยืนยันผลไม่ได้ — ปลายทางไม่บอกว่ารับหรือไม่ ให้ตรวจยอดใน Target Sun ก่อนส่งซ้ำ"
         elif not ok:
             head = "ส่งเข้า Target Sun ไม่สำเร็จ"
         else:
@@ -235,7 +235,7 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
                 level="error",
                 sup_id=req.sup_id,
                 action="send_targetsun",
-                message="ส่งเข้า Target Sun ไม่รู้ผล — บันทึกรายละเอียดไม่สำเร็จ",
+                message="ส่งเข้า Target Sun แล้ว แต่ยังยืนยันผลไม่ได้ — บันทึกรายละเอียดไม่สำเร็จ",
                 detail=f"งวด {req.target_year}-{req.target_month:02d} · ดู log ของ server",
                 target_month=int(req.target_month),
                 target_year=int(req.target_year),
@@ -482,7 +482,7 @@ def import_targetsun_from_allocations(
             action="send_targetsun",
             # หมดเวลารอ = ปลายทางอาจบันทึกไปแล้ว ห้ามบอกว่า "ไม่สำเร็จ" (ผลตรวจ §2.4)
             message=(
-                "ส่งเข้า Target Sun ไม่รู้ผล — หมดเวลารอคำตอบ ให้ตรวจยอดใน Target Sun ก่อนส่งซ้ำ"
+                "ส่งเข้า Target Sun แล้ว แต่ยังยืนยันผลไม่ได้ — หมดเวลารอคำตอบ ให้ตรวจยอดใน Target Sun ก่อนส่งซ้ำ"
                 if timed_out
                 else "ส่งเข้า Target Sun ไม่สำเร็จ"
             ),
