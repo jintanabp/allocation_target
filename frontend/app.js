@@ -6516,6 +6516,9 @@ async function _doOptimize(lockedEdits = [], opts = {}) {
         const emps = grouped.get(supId) || [];
         const yellowTargets = emps.map((e) => _yellowTargetPayloadRow(e)).filter(Boolean);
         if (!yellowTargets.length) continue;
+        // กระจายเฉพาะบางสินค้า: ทีมที่ไม่มีสินค้าที่เลือกในเป้าเลย ข้ามไป ไม่ใช่ "กระจายไม่สำเร็จ"
+        const teamTargets = (S.targetBoxesBySup || {})[String(supId).toUpperCase()];
+        if (onlySkus.length && teamTargets && !onlySkus.some((k) => Number(teamTargets[k]) > 0)) continue;
         qs("#runSub").textContent =
           `กำลังกระจาย ${supId} (${i + 1}/${supOrder.length})…`;
         try {
@@ -9788,7 +9791,7 @@ function _showStaleTargetNotice() {
   const changedSkus = [...new Set(chunks.flatMap((c) =>
     (Array.isArray(c.detail?.drifts) ? c.detail.drifts : []).map((d) => String(d.sku || "").trim())
   ).filter(Boolean))];
-  const canQuickFix = !S.compositeAllocView && !S.aggregateMode && !_isAllocReadOnlyView() && changedSkus.length;
+  const canQuickFix = _canPartialRealloc() && changedSkus.length;
   const quickFixHtml = canQuickFix
     ? `<div style="margin:12px 0 0;text-align:left;">`
       + `<button type="button" class="btn-realloc btn-realloc--partial" `
@@ -9796,7 +9799,7 @@ function _showStaleTargetNotice() {
       + `⚡ โหลดเป้าใหม่ แล้วกระจายเฉพาะ ${changedSkus.length} สินค้าที่เปลี่ยน</button>`
       + `<div style="font-size:12px;color:var(--text-3);margin-top:4px;">สินค้าอื่นและตัวเลขที่แก้เองไม่ถูกแตะ — เสร็จแล้วกดส่งใหม่</div></div>`
     : `<p style="margin:10px 0 0;text-align:left;font-size:12px;color:var(--text-3);">`
-      + `มุมมองรวมภาค: กด「โหลดข้อมูลใหม่ทั้งภาค」แล้วกระจายใหม่</p>`;
+      + `มุมมองนี้แก้ผลกระจายไม่ได้ — ให้ผู้ที่มีสิทธิ์แก้ของทีมนั้นโหลดเป้าใหม่แล้วกระจาย</p>`;
 
   return new Promise((resolve) => {
     let done = false;
@@ -13945,7 +13948,7 @@ function syncTargetDriftNotice() {
     })
     .join(" · ");
   const skus = Array.isArray(d.changed_skus) ? d.changed_skus : [];
-  const canRun = !S.compositeAllocView && !_isAllocReadOnlyView();
+  const canRun = _canPartialRealloc();
   const actions =
     (canRun && skus.length
       ? `<button type="button" class="btn-realloc btn-realloc--partial" onclick="reloadThenReallocChanged(${_snapshotEsc(JSON.stringify(skus))})">` +
@@ -13977,13 +13980,15 @@ function syncTargetDriftNotice() {
 async function reloadThenReallocChanged(skus) {
   const list = [...new Set((skus || []).map((x) => String(x).trim()).filter(Boolean))];
   if (!list.length) return;
-  if (S.compositeAllocView || S.aggregateMode) {
-    toast("มุมมองรวมภาค: กด「โหลดข้อมูลใหม่ทั้งภาค」แล้วกระจายใหม่", "amber");
+  if (!_canPartialRealloc()) {
+    toast("มุมมองนี้แก้ผลกระจายไม่ได้", "amber");
     return;
   }
   document.getElementById("infoModal")?.remove();
   try {
-    await refreshDashboardData(true);
+    // รวมภาคโหลดผ่านตัวสลับมุมมองรวมภาค (ดึงสดทุกทีม) · ทีมเดียวโหลดขั้นที่ 1 ของทีม
+    if (S.aggregateMode) await refreshManagerDashboardData({ refresh: true });
+    else await refreshDashboardData(true);
   } catch (e) {
     toast("❌ " + _userFacingError(e, "โหลดเป้าใหม่ไม่สำเร็จ"), "red");
     return;
@@ -14049,7 +14054,7 @@ function _brandsFromSkus() {
  * ที่ขาดคือทางให้ผู้ใช้เลือกเท่านั้น
  */
 function openAllocPickModal() {
-  if (S.compositeAllocView || _isAllocReadOnlyView()) {
+  if (!_canPartialRealloc()) {
     toast("มุมมองนี้แก้ผลกระจายไม่ได้", "amber");
     return;
   }
@@ -14112,9 +14117,20 @@ function openAllocPickModal() {
   });
 }
 
+/**
+ * กระจายใหม่เฉพาะบางสินค้าได้ไหมในมุมมองนี้ (ผู้ใช้ขอ 29 ก.ย. 2026)
+ *
+ * เดิมปิดในมุมมองรวมภาคทั้งหมด ทั้งที่ /optimize รับ only_skus ได้ทั้งแบบรวมเป้าทั้งภาค
+ * และแบบรายทีม และการบันทึกแยกทีมก็รองรับอยู่แล้ว · มุมมองรวมภาคที่แก้ไม่ได้ยังปิดเหมือนเดิม
+ */
+function _canPartialRealloc() {
+  if (_isAllocReadOnlyView()) return false;
+  return !S.compositeAllocView || _regionalAggregateWritable();
+}
+
 /** ปุ่มสองตัวบนการ์ดคำนวณ — โชว์เมื่อมีรายการสินค้าแล้วและมุมมองนี้แก้ได้ */
 function syncAllocExtraButtons() {
-  const editable = !S.compositeAllocView && !_isAllocReadOnlyView();
+  const editable = _canPartialRealloc();
   const pick = document.getElementById("allocPickBtn");
   if (pick) {
     pick.style.display = editable && (S.skus || []).length ? "" : "none";
@@ -14144,8 +14160,21 @@ async function runReAllocationOnlyChanged() {
  * และ "เลือกแบรนด์/สินค้าเอง" (รายการมาจากที่ผู้ใช้ติ๊ก) — ตรรกะ merge ผลกลับเข้า
  * ตารางเป็นเรื่องเดียวกัน จึงต้องอยู่ที่เดียว ไม่งั้นแก้ที่หนึ่งลืมอีกที่
  */
+/**
+ * รวมผลกระจายบางสินค้ากลับเข้าตารางเดิม (แยกออกมาให้เทสต์ได้ — tests/js/partial_merge.test.js)
+ *
+ * SKU ที่กระจายรอบนี้ใช้แถวใหม่ · SKU อื่นคงเดิม · รวมภาค: ทีมที่ไม่อยู่ในผลรอบนี้คงแถวเดิม
+ */
+function _mergePartialAllocs(current, part, changedSet, multiTeam, teamOf) {
+  const teamsInPart = new Set((part || []).map((a) => teamOf(a)));
+  const keep = (current || []).filter((a) =>
+    !changedSet.has(String(a.sku || "").trim())
+    || (multiTeam && !teamsInPart.has(teamOf(a))));
+  return [...keep, ...(part || [])];
+}
+
 async function runReAllocationForSkus(skus, opts = {}) {
-  if (S.compositeAllocView || _isAllocReadOnlyView()) return;
+  if (!_canPartialRealloc()) return;
   const changed = [...new Set((skus || []).map((x) => String(x).trim()).filter(Boolean))];
   if (!changed.length) {
     toast("ยังไม่ได้เลือกสินค้าที่จะกระจาย", "amber");
@@ -14175,8 +14204,12 @@ async function runReAllocationForSkus(skus, opts = {}) {
   S.newProductSkus = [...new Set([...prevNewSkus, ...(S.newProductSkus || [])])];
 
   // merge: SKU ที่กระจายรอบนี้ใช้แถวใหม่ทั้งชุด · SKU อื่นคงเดิมทุกประการ (รวมสถานะล็อก)
-  const keep = (S.allocations || []).filter((a) => !changedSet.has(String(a.sku || "").trim()));
-  const merged = [...keep, ...part];
+  // รวมภาคแบบรายทีม: ทีมที่ไม่อยู่ในผลรอบนี้ (กระจายไม่สำเร็จ หรือไม่มีสินค้าที่เลือกในเป้าทีม)
+  // ต้องคงแถวเดิมของสินค้าเหล่านั้นไว้ — ไม่งั้นแถวของทีมนั้นหายไปทั้งที่ไม่ได้กระจายใหม่เลย
+  // ทีมที่กระจายได้คืนแถวครบทุกคนอยู่แล้ว (เติมหีบ 0 ให้คนที่ไม่ได้ — I8) จึงเทียบระดับทีมได้
+  const merged = _mergePartialAllocs(
+    S.allocations || [], part, changedSet, !!(S.compositeAllocView || S.aggregateMode), _supervisorCodeForAllocRow
+  );
   S.allocations = merged;
   S.recentReallocSkus = [...changedSet];
 
