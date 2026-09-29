@@ -716,6 +716,22 @@ def _spread_one_each(total_target, n_emps) -> bool:
         return False
 
 
+def _eligible_emp_count(employees, sku, zero_pairs) -> int:
+    """
+    จำนวนคนที่มีสิทธิ์รับหีบของ SKU นี้ — ตัวหารของ _spread_one_each
+
+    ต้องหักคนที่กติกาไม่เคยขายตัดเป็น 0 ออก: ทีม 6 คน เป้า 3 หีบ มีคนเคยขายคนเดียว
+    ถ้านับ 6 คน เพดาน "คนละไม่เกิน 1" จะให้คนเคยขายได้ 1 หีบ อีก 2 หีบไม่มีที่ลง
+    ยอดขาดเป้า (I1) แล้ว LP แก้ไม่ได้ ถอยไป fallback ทั้งทีม
+    (พบตอนเทียบ §4.1-2 — ไฟล์ export งวด 10/2026 เกิด 30 จาก 38 ทีมเมื่อเปิดกติกา)
+    ไม่มีกติกา = นับทุกคนเท่าเดิม ผลจึงไม่เปลี่ยน
+    """
+    if not zero_pairs:
+        return len(employees)
+    sku_key = _norm_sku(sku)
+    return sum(1 for e in employees if (str(e).strip(), sku_key) not in zero_pairs)
+
+
 def _min_one_floor(force_min_one: bool, total_target, employees, locked_map, sku) -> int:
     """
     ขั้นต่ำต่อคนของ SKU นี้เมื่อติ๊ก "ทุกคนอย่างน้อย 1 หีบ" (I4) — กติกาเดียวทุกชั้น
@@ -1110,7 +1126,7 @@ def _proportional(
             floored = _even_split_by_rank(
                 total, active_employees, _fair_rank(active_employees, hist_by_emp, yellow_by_emp)
             )
-        elif _spread_one_each(total_orig, len(employees)):
+        elif _spread_one_each(total_orig, _eligible_emp_count(employees, sku, zero_pairs)):
             # เป้าน้อยกว่าจำนวนคน → คนละไม่เกิน 1 หีบ ให้ทั่วถึงตามลำดับประวัติการขาย
             # (เทียบกับ "จำนวนคนทั้งทีม" ไม่ใช่คนที่เหลือหลังหักล็อก — นิยามเดียวกับที่
             #  ผลตรวจรอบ 0 นับ และไม่แกว่งตามว่าผู้ใช้ล็อกช่องไปแล้วกี่ช่อง)
@@ -1213,7 +1229,7 @@ def _greedy_revenue_balancer(
             floor_zero = _min_floor_boxes(sku)
             return (floor_zero, floor_zero)
         bounds = _cell_bounds_by_history(emp, sku)
-        if not _spread_one_each(target_boxes.get(sku, 0), n_emps):
+        if not _spread_one_each(target_boxes.get(sku, 0), _eligible_emp_count(emps, sku, zero_pairs)):
             return bounds
         # ตัวเกลี่ยเงินย้ายหีบทีละใบ ถ้าไม่กั้นตรงนี้มันจะยกหีบไปกองคืนที่คนเดียวได้
         # ทั้งที่ LP/ตัวกระจายตั้งใจแบ่งให้คนละใบ
@@ -1691,7 +1707,7 @@ def _lp_optimize(
         # เพื่อไม่ให้ชนกับรั้วประวัติ (เช่นคนที่ baseline 3 ถูกบังคับ >= 2 อยู่แล้ว)
         # ซึ่งจะทำให้โจทย์แก้ไม่ได้แล้วตกไป fallback ทั้งทีม
         for sku in skus:
-            if not _spread_one_each(target_boxes[sku], len(employees)):
+            if not _spread_one_each(target_boxes[sku], _eligible_emp_count(employees, sku, zero_pairs)):
                 continue
             if _norm_sku(sku) in even_skus:
                 continue
