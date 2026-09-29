@@ -10765,7 +10765,9 @@ async function _doLakehouseUploadInner() {
         readbackIssues.push({ supId: basePayload.sup_id, readback: j.readback });
       }
       if (j?.readback?.row_count?.checked) {
-        rowCountResults.push({ supId: basePayload.sup_id, rc: j.readback.row_count });
+        rowCountResults.push({
+          supId: basePayload.sup_id, rc: j.readback.row_count, token: j.prepare_token || token,
+        });
       }
       sentSupIds.push(basePayload.sup_id);
       sentCount += 1;
@@ -10825,6 +10827,13 @@ async function _doLakehouseUploadInner() {
       }), { before: 0, after: 0, expected: 0, unexpected: 0 })
     : null;
 
+  // แถวที่ลงไม่ครบ/ไม่ตรง — แก้ได้ทันทีด้วยการส่งซ้ำเฉพาะแถวนั้น จึงขึ้นก่อนกล่องอื่น
+  const unlanded = rowCountResults.filter((r) => Number(r.rc?.unlanded_count) > 0 && r.token);
+  if (unlanded.length) {
+    _showUnlandedRowsModal(unlanded);
+    return;
+  }
+
   // ยอดลงจริงไม่ตรงไฟล์ด่วนกว่า และเปิดได้ทีละกล่อง — ถ้ามีรายการที่ต้องไปเกลี่ยเองด้วย
   // ให้พ่วงเป็นบรรทัดเดียวในกล่องเดียวกัน จะได้ไม่หายไปเงียบ ๆ
   if (readbackIssues.length || rowCountIssues.length) {
@@ -10846,6 +10855,68 @@ async function _doLakehouseUploadInner() {
       { shortfall: pending, shortfall_boxes: pending.reduce((s, x) => s + x.missing_boxes, 0) },
       { alreadySent: true }
     );
+  }
+}
+
+/**
+ * แถวที่ส่งไปแล้วแต่ยังไม่ลง/ลงไม่ตรงใน Target Sun (ผู้ใช้ขอ 29 ก.ย. 2026)
+ *
+ * Target Sun ทับแถวเดิมได้แต่ลบไม่ได้ — ทางแก้คือส่งซ้ำเฉพาะแถวนั้น
+ * แถวและจำนวนมาจากไฟล์ที่ server เก็บไว้ ไม่ได้ส่งจากหน้านี้
+ */
+function _showUnlandedRowsModal(items) {
+  const blocks = items.map(({ supId, rc, token }) => {
+    const n = Number(rc.unlanded_count) || 0;
+    const sample = Array.isArray(rc.unlanded_sample) ? rc.unlanded_sample : [];
+    const lines = sample.slice(0, 8).map((u) =>
+      `<li><code>${escH(u.sku)}</code> · พนักงาน ${escH(u.emp_id)} — ส่ง <strong>${Number(u.sent).toLocaleString("th-TH")}</strong>`
+      + ` / ใน Target Sun ${u.in_targetsun == null ? "<strong>ไม่มีแถวนี้</strong>" : Number(u.in_targetsun).toLocaleString("th-TH")}</li>`
+    ).join("");
+    return `<div style="margin-bottom:12px;text-align:left;">
+      <strong>ทีม ${escH(supId)}</strong> — ${n.toLocaleString("th-TH")} แถวยังไม่ลงตามที่ส่ง
+      <ul style="margin:4px 0 6px 18px;padding:0;line-height:1.6;">${lines}${n > 8 ? `<li>… อีก ${(n - 8).toLocaleString("th-TH")} แถว</li>` : ""}</ul>
+      <button type="button" class="btn-run" onclick="resendUnlandedRows('${escH(supId)}','${escH(token)}', this)">
+        ส่งซ้ำเฉพาะแถวที่ตกหล่น (${n.toLocaleString("th-TH")} แถว)</button>
+      <div class="unlanded-result" style="margin-top:6px;font-size:12px;"></div>
+    </div>`;
+  }).join("");
+  _showInfoModal({
+    title: "บางแถวยังไม่ลงใน Target Sun",
+    bodyHtml:
+      `<p style="margin:0 0 10px;text-align:left;line-height:1.7;">ส่งไฟล์ไปแล้ว แต่ Target Sun ยังไม่มีบางแถว`
+      + ` หรือจำนวนไม่ตรงกับที่ส่ง — กดส่งซ้ำเฉพาะแถวเหล่านั้นได้ (ทับค่าเดิม ไม่สร้างแถวซ้ำ)</p>`
+      + blocks,
+    primaryLabel: null,
+    secondaryLabel: "ปิด",
+  });
+}
+
+async function resendUnlandedRows(supId, token, btn) {
+  const box = btn?.parentElement?.querySelector(".unlanded-result");
+  if (btn) { btn.disabled = true; btn.textContent = "กำลังส่งซ้ำ…"; }
+  try {
+    const res = await fetchWithTimeout(
+      `${API_BASE_URL}/lakehouse/resend-unlanded`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sup_id: supId, prepare_token: token }),
+      },
+      1200000
+    );
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(_userFacingError(_formatApiErrorDetail(j), "ส่งซ้ำไม่สำเร็จ"));
+    const left = j.remaining_unlanded;
+    const msg = left === 0
+      ? `✅ ส่งซ้ำ ${Number(j.resent_rows || 0).toLocaleString("th-TH")} แถว — ลงครบทุกแถวแล้ว`
+      : `⚠ ส่งซ้ำ ${Number(j.resent_rows || 0).toLocaleString("th-TH")} แถว แต่ยังเหลือ ${left == null ? "?" : Number(left).toLocaleString("th-TH")} แถวที่ยังไม่ลง — แจ้ง dev`;
+    if (box) { box.innerHTML = escH(msg); box.style.color = left === 0 ? "var(--green)" : "var(--red)"; }
+    if (btn) btn.textContent = left === 0 ? "ส่งซ้ำแล้ว" : "ส่งซ้ำอีกครั้ง";
+    if (btn && left !== 0) btn.disabled = false;
+    refreshNotificationBell(true);
+  } catch (e) {
+    if (box) { box.textContent = "❌ " + _userFacingError(e); box.style.color = "var(--red)"; }
+    if (btn) { btn.disabled = false; btn.textContent = "ลองส่งซ้ำอีกครั้ง"; }
   }
 }
 

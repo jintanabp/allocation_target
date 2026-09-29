@@ -145,6 +145,13 @@ class LakehouseUploadRow(BaseModel):
     provincecode: str | None = None
 
 
+class ResendUnlandedRequest(BaseModel):
+    """ส่งซ้ำเฉพาะแถวที่ตกหล่นของไฟล์ที่ส่งไปแล้ว — แถวมาจากไฟล์ที่ server เก็บไว้เท่านั้น"""
+
+    sup_id: str
+    prepare_token: str = Field(min_length=8, max_length=64)
+
+
 class VerifySendBatchRequest(BaseModel):
     """ตรวจยอดรวมของไฟล์ที่เตรียมไว้ทั้งชุดก่อนกดส่งจริง"""
 

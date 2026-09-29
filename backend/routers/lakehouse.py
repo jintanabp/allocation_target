@@ -12,7 +12,7 @@ from ..deps import (
     require_admin_user,
     require_authenticated_user,
 )
-from ..schemas import LakehouseUploadRequest, VerifySendBatchRequest
+from ..schemas import LakehouseUploadRequest, ResendUnlandedRequest, VerifySendBatchRequest
 from ..services.lakehouse import (
     export_allocations_excel,
     upload_allocations_to_lakehouse,
@@ -21,6 +21,7 @@ from ..services.lakehouse import (
 from ..services.targetsun_import import (
     import_allocations_to_targetsun,
     import_prepared_targetsun,
+    resend_unlanded_rows,
     load_prepare_batch,
     mark_batch_verified,
     prepare_targetsun_import,
@@ -426,6 +427,55 @@ def get_send_environment(user: dict = Depends(require_authenticated_user)):
         # ไฟล์ตั้งค่าหาย/เสีย → ปลายทางกลับเป็นค่าตั้งต้นเงียบ ๆ — หน้าส่งต้องเตือน
         "using_default_settings": s.get("using_default_settings") == "1",
     }
+
+
+@router.post("/lakehouse/resend-unlanded")
+def resend_unlanded(
+    req: ResendUnlandedRequest,
+    user: dict = Depends(require_authenticated_user),
+):
+    """
+    ส่งซ้ำเฉพาะแถวที่ยังไม่ลง/ลงไม่ตรงใน Target Sun ของไฟล์ที่ส่งไปแล้ว (ผู้ใช้ขอ 29 ก.ย. 2026)
+
+    สิทธิ์เดียวกับการส่งปกติ · แถวและจำนวนมาจากไฟล์ที่ server เก็บไว้ ไม่รับจากหน้าเว็บ
+    """
+    ensure_supervisor_allowed(user, req.sup_id)
+    ensure_own_supervisor_write(user, req.sup_id)
+    ensure_targetsun_import_allowed(user)
+    ensure_demo_team_not_sent(req.sup_id)
+    try:
+        result = resend_unlanded_rows(req.sup_id, req.prepare_token)
+    except HTTPException as e:
+        log_from_user(
+            user, level="error", sup_id=req.sup_id, action="send_targetsun_resend",
+            message="ส่งซ้ำแถวที่ตกหล่นไม่สำเร็จ",
+            detail=str(e.detail)[:500],
+            context={"ok": False, "prepare_token": req.prepare_token[:8]},
+        )
+        raise
+    remaining = result.get("remaining_unlanded")
+    log_from_user(
+        user,
+        level="info" if remaining == 0 else "warn",
+        sup_id=req.sup_id,
+        action="send_targetsun_resend",
+        message=(
+            f"ส่งซ้ำแถวที่ตกหล่น {int(result.get('resent_rows') or 0):,} แถว"
+            + ("" if remaining == 0 else f" — ยังเหลือ {remaining if remaining is not None else '?'} แถวที่ยังไม่ลง")
+        ),
+        detail=f"งวด {result.get('target_year')}-{int(result.get('target_month') or 0):02d}",
+        target_month=result.get("target_month"),
+        target_year=result.get("target_year"),
+        context={
+            "ok": remaining == 0,
+            "resent_rows": result.get("resent_rows"),
+            "remaining_unlanded": remaining,
+            "remaining_sample": result.get("remaining_sample"),
+            "prepare_token": req.prepare_token[:8],
+            "send_status": result.get("send_status"),
+        },
+    )
+    return result
 
 
 @router.post("/lakehouse/verify-send-batch")

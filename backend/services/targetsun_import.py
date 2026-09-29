@@ -139,9 +139,15 @@ def _save_prepare_bundle(
     send_batch_id: str | None = None,
     full_send: bool = False,
     team_target_mismatches: list | None = None,
+    file_rows: list | None = None,
 ) -> None:
     _prepare_dir()
     (_prepare_dir() / f"{token}.xlsx").write_bytes(content)
+    if file_rows is not None:
+        # แถวของไฟล์แบบตรงตัว — ใช้เทียบว่าลงครบไหม และส่งซ้ำเฉพาะแถวที่ตกหล่น
+        (_prepare_dir() / f"{token}.rows.json").write_text(
+            json.dumps(file_rows, ensure_ascii=False), encoding="utf-8"
+        )
     shortfall = shortfall or []
     meta = {
         "filename": fname,
@@ -307,6 +313,72 @@ def _delete_prepare_bundle(token: str) -> None:
         return
     (_prepare_dir() / f"{tok}.json").unlink(missing_ok=True)
     (_prepare_dir() / f"{tok}.xlsx").unlink(missing_ok=True)
+    (_prepare_dir() / f"{tok}.rows.json").unlink(missing_ok=True)
+
+
+# ── ไฟล์ที่ส่งไปแล้ว — เก็บไว้ส่งซ้ำเฉพาะแถวที่ตกหล่น ─────────────────────────
+_SENT_DIR = Path("data/ts_sent")
+_SENT_TTL_SEC = 14 * 24 * 3600
+
+
+def _file_rows(df) -> list[dict]:
+    from .lakehouse import LAKEHOUSE_CSV_COLUMNS
+
+    return [
+        {c: ("" if v is None else str(v)) for c, v in zip(LAKEHOUSE_CSV_COLUMNS, row)}
+        for row in df[LAKEHOUSE_CSV_COLUMNS].itertuples(index=False)
+    ]
+
+
+def _file_qty_by_key(rows: list[dict]) -> dict[str, int]:
+    from .lakehouse import import_row_key_series
+
+    if not rows:
+        return {}
+    import pandas as pd
+
+    df = pd.DataFrame(rows)
+    keys = import_row_key_series(df)
+    qty = pd.to_numeric(df["QUANTITYCASE"], errors="coerce").fillna(0).astype(int)
+    out: dict[str, int] = {}
+    for k, q in zip(keys, qty):
+        out[k] = out.get(k, 0) + int(q)
+    return out
+
+
+def _keep_sent_record(token: str, meta: dict) -> None:
+    """ย้ายแถวของไฟล์ที่เพิ่งส่งไปเก็บใน data/ts_sent (14 วัน) — ห้ามทำให้การส่งพัง"""
+    try:
+        _SENT_DIR.mkdir(parents=True, exist_ok=True)
+        now = time.time()
+        for p in _SENT_DIR.glob("*.json"):
+            try:
+                if now - p.stat().st_mtime > _SENT_TTL_SEC:
+                    p.unlink(missing_ok=True)
+            except OSError:
+                pass
+        src = _prepare_dir() / f"{token}.rows.json"
+        if not src.is_file():
+            return
+        rows = json.loads(src.read_text(encoding="utf-8"))
+        rec = {k: meta.get(k) for k in ("sup_id", "target_month", "target_year", "upload_user_code", "send_batch_id")}
+        rec.update(token=token, sent_at=now, rows=rows)
+        atomic_write_text(str(_SENT_DIR / f"{token}.json"), json.dumps(rec, ensure_ascii=False))
+    except Exception:
+        logger.exception("เก็บไฟล์ที่ส่งไว้ส่งซ้ำไม่สำเร็จ (%s)", token[:8])
+
+
+def load_sent_record(token: str, sup_id: str) -> dict:
+    tok = (token or "").strip()
+    if not tok or "/" in tok or "\\" in tok or ".." in tok:
+        raise HTTPException(400, detail="prepare_token ไม่ถูกต้อง")
+    p = _SENT_DIR / f"{tok}.json"
+    if not p.is_file():
+        raise HTTPException(404, detail="ไม่พบไฟล์ที่ส่งไว้ (เก็บ 14 วัน) — ให้กดส่งทีมนี้ใหม่ตามปกติ")
+    rec = json.loads(p.read_text(encoding="utf-8"))
+    if str(rec.get("sup_id") or "").strip().upper() != str(sup_id or "").strip().upper():
+        raise HTTPException(403, detail="ไฟล์นี้ไม่ใช่ของทีมที่เลือก")
+    return rec
 
 
 def prepare_targetsun_import(req: LakehouseUploadRequest) -> dict:
@@ -363,6 +435,7 @@ def prepare_targetsun_import(req: LakehouseUploadRequest) -> dict:
         send_batch_id=getattr(req, "send_batch_id", None),
         full_send=bool(df.attrs.get("full_send")),
         team_target_mismatches=list(df.attrs.get("team_target_mismatches") or []),
+        file_rows=_file_rows(df),
     )
     logger.info(
         "TargetSun prepare: token=%s rows=%d build=%.2fs",
@@ -622,6 +695,7 @@ def _attach_readback(
     stale_rows_cleared_count: int = 0,
     before_row_snapshot: dict | None = None,
     file_row_keys: list | None = None,
+    file_qty_by_key: dict | None = None,
 ) -> dict:
     """
     ตรวจซ้ำหลังส่งว่ายอด "ลงจริง" ครบตามไฟล์ไหม แล้วแนบผลไปกับคำตอบ
@@ -661,8 +735,62 @@ def _attach_readback(
         emp_codes=list(emp_codes or []),
         before_snapshot=before_row_snapshot,
         file_keys=set(file_row_keys or []),
+        file_qty_by_key=file_qty_by_key,
     )
     return out
+
+
+def resend_unlanded_rows(sup_id: str, token: str) -> dict:
+    """
+    ส่งซ้ำเฉพาะแถวที่ยังไม่ลง/ลงไม่ตรงของไฟล์ที่ส่งไปแล้ว (ผู้ใช้ขอ 29 ก.ย. 2026)
+
+    Target Sun ทับแถวเดิมได้ (upsert) แต่ลบไม่ได้ — แถวที่ตกหล่นจึงแก้ด้วยการส่งแถวนั้นซ้ำ
+    แถวทั้งหมดมาจากไฟล์ที่ส่งไปแล้วซึ่งเก็บไว้ที่ server ไม่รับตัวเลขจากหน้าเว็บ
+    ยอดปลายทางจึงเข้าใกล้ไฟล์เดิมเสมอ ไม่มีทางไปทำให้เกินหรือขาดจากที่ตรวจผ่านไว้
+    """
+    import pandas as pd
+
+    from .lakehouse import _build_xlsx_bytes, import_row_key_series
+    from .targetsun_endpoints import targetsun_endpoints_summary
+
+    rec = load_sent_record(token, sup_id)
+    if str(targetsun_endpoints_summary().get("cross_env") or "") == "1":
+        raise HTTPException(409, detail="ระบบอ่านกับระบบที่ส่งเป็นคนละที่ — ตรวจว่าแถวไหนตกหล่นไม่ได้")
+    month, year = int(rec["target_month"]), int(rec["target_year"])
+    rows = rec.get("rows") or []
+    file_qty = _file_qty_by_key(rows)
+    emp_codes = sorted({str(r.get("SALESMANCODE") or "").strip() for r in rows} - {""})
+    team_key = _claim_team_send(sup_id, month, year)
+    try:
+        live = _live_target_snapshot(sup_id, month, year, emp_codes)
+        if live is None:
+            raise HTTPException(503, detail="อ่านข้อมูลจาก Target Sun ไม่ได้ตอนนี้ — ลองใหม่อีกครั้ง")
+        from .lakehouse import unlanded_rows
+
+        missing = {u["key"] for u in unlanded_rows(file_qty, live.get("qty_by_key") or {})}
+        if not missing:
+            return {"resent_rows": 0, "remaining_unlanded": 0, "message": "ทุกแถวลงครบแล้ว ไม่มีอะไรต้องส่งซ้ำ"}
+        df = pd.DataFrame(rows)
+        sub = df[import_row_key_series(df).isin(missing)].copy()
+        content = _build_xlsx_bytes(sub)
+        out = _post_targetsun_multipart(
+            content, f"resend_{sup_id}_{year}_{month:02d}.xlsx",
+            nrow=len(sub), zero_rows=int((pd.to_numeric(sub["QUANTITYCASE"], errors="coerce") == 0).sum()),
+            dropped_dims=0, not_in_ts=[],
+        )
+        after = _live_target_snapshot(sup_id, month, year, emp_codes)
+        remaining = (
+            unlanded_rows(file_qty, after.get("qty_by_key") or {}) if after is not None else None
+        )
+        out.update(
+            resent_rows=len(sub),
+            remaining_unlanded=None if remaining is None else len(remaining),
+            remaining_sample=(remaining or [])[:20],
+            target_month=month, target_year=year, prepare_token=token,
+        )
+        return out
+    finally:
+        _release_team_send(team_key)
 
 
 def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
@@ -695,6 +823,13 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
         bundle_emp_codes = meta.get("emp_codes") if isinstance(meta.get("emp_codes"), list) else []
         bundle_month = int(meta.get("target_month") or req.target_month)
         bundle_year = int(meta.get("target_year") or req.target_year)
+        try:
+            _rows_path = _prepare_dir() / f"{token}.rows.json"
+            file_qty = _file_qty_by_key(
+                json.loads(_rows_path.read_text(encoding="utf-8")) if _rows_path.is_file() else []
+            )
+        except Exception:
+            file_qty = {}
 
         # อ่านสด "ก่อนส่ง" ให้ใกล้เวลา POST จริงที่สุด (ลดโอกาสทีมอื่นแทรกส่งระหว่างรอ) —
         # ใช้ทั้งเทียบจำนวนแถวหลังส่งสำเร็จใน _attach_readback และตรวจซ้ำว่าเป้ายังไม่ขยับ
@@ -750,6 +885,7 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
         except BaseException:
             _delete_prepare_bundle(token)
             raise
+        _keep_sent_record(token, meta)
         _delete_prepare_bundle(token)
 
         out["prepare_token"] = token
@@ -771,6 +907,7 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
             stale_rows_cleared_count=int(meta.get("stale_rows_cleared_count") or 0),
             before_row_snapshot=before_row_snapshot,
             file_row_keys=meta.get("import_row_keys") if isinstance(meta.get("import_row_keys"), list) else [],
+            file_qty_by_key=file_qty,
         )
     finally:
         _release_team_send(team_key)

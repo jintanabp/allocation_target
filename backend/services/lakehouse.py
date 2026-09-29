@@ -1397,6 +1397,7 @@ def _live_target_snapshot(
             return None
         by_sku: dict[str, int] = {}
         keys: set[str] = set()
+        qty_by_key: dict[str, int] = {}
         for r in rows:
             if not isinstance(r, dict):
                 continue
@@ -1408,8 +1409,10 @@ def _live_target_snapshot(
             except (TypeError, ValueError):
                 qty = 0
             by_sku[sku] = by_sku.get(sku, 0) + qty
-            keys.add(_live_target_row_key(r))
-        return {"by_sku": by_sku, "row_count": len(rows), "keys": keys}
+            k = _live_target_row_key(r)
+            keys.add(k)
+            qty_by_key[k] = qty_by_key.get(k, 0) + qty
+        return {"by_sku": by_sku, "row_count": len(rows), "keys": keys, "qty_by_key": qty_by_key}
     except Exception as e:  # อ่านไม่ได้ต้องไม่ทำให้เส้นทางหลักพัง
         logger.warning("อ่านเป้าปัจจุบันจาก Target Sun ไม่ได้ (%s): %s", sup_id, e)
         return None
@@ -1678,6 +1681,20 @@ def verify_after_send(
         return {"checked": False, "reason": "error"}
 
 
+def unlanded_rows(file_qty_by_key: dict, live_qty_by_key: dict) -> list[dict]:
+    """แถวในไฟล์ที่ Target Sun ไม่มี หรือมีแต่จำนวนไม่ตรงกับที่ส่ง"""
+    out = []
+    for k, q in file_qty_by_key.items():
+        live = live_qty_by_key.get(k)
+        if live is None and int(q) == 0:
+            continue  # ส่ง 0 ไปที่คีย์ที่ไม่มีอยู่ = ไม่มีอะไรต้องล้าง ถือว่าลงแล้ว
+        if live is None or int(live) != int(q):
+            sku, emp, *_rest = k.split("|") + [""] * 7
+            out.append({"key": k, "sku": sku, "emp_id": emp, "sent": int(q),
+                        "in_targetsun": None if live is None else int(live)})
+    return out
+
+
 def verify_row_count_after_send(
     sup_id: str,
     month: int,
@@ -1686,6 +1703,7 @@ def verify_row_count_after_send(
     emp_codes: list[str],
     before_snapshot: dict | None,
     file_keys: set,
+    file_qty_by_key: dict | None = None,
 ) -> dict:
     """
     ตรวจ "จำนวนแถวจริง" ก่อน/หลังส่ง — จับแถวซ้ำคนละคลัง (11.3 / ปริศนา SL453) ที่
@@ -1719,9 +1737,14 @@ def verify_row_count_after_send(
         actual_new_rows = after_count - before_count
         unexpected_extra_rows = actual_new_rows - expected_new_rows
 
+        # แถวในไฟล์ที่ลงไม่ครบ/ไม่ตรง — ใช้ส่งซ้ำเฉพาะแถวนั้น (upsert ทับได้ ลบไม่ได้)
+        # ไม่พึ่ง errors[] ของ Target Sun เพราะคืนมาแค่ 50 แถวแรก
+        unlanded = unlanded_rows(file_qty_by_key or {}, after_snapshot.get("qty_by_key") or {})
         result = {
             "checked": True,
-            "ok": unexpected_extra_rows == 0,
+            "ok": unexpected_extra_rows == 0 and not unlanded,
+            "unlanded_count": len(unlanded),
+            "unlanded_sample": unlanded[:20],
             "before_count": before_count,
             "after_count": after_count,
             "actual_new_rows": actual_new_rows,
@@ -2424,6 +2447,79 @@ def _assert_send_matches_sup_targets(
     )
 
 
+#: ช่องที่ Target Sun ข้ามทั้งแถวถ้าว่าง ("Missing required fields: …") — ยึดจากพฤติกรรมจริง
+#: ไม่ใช่ตามสเปก: สเปกบอก PROVINCECODE บังคับ แต่ข้อมูลจริงว่างทุกแถว (117,560 แถว) และรับได้
+#: สเปกบอกรหัสพนักงาน 5 ตัว แต่ของจริง 4 ตัว (เช่น C442) — จึงไม่ตรวจความยาว
+_IMPORT_REQUIRED_COLUMNS = (
+    "PRODUCTCODE", "SALESTYPE", "DIVISIONCODE", "SALESMANCODE", "AREACODE",
+    "QUANTITYCASE", "EFFECTIVEDATE", "USERCODE",
+)
+_IMPORT_KEY_COLUMNS = (
+    "PRODUCTCODE", "SALESMANCODE", "SALESTYPE", "DIVISIONCODE", "AREACODE",
+    "PROVINCECODE", "WAREHOUSECODE",
+)
+
+
+def import_row_key_series(df: pd.DataFrame) -> pd.Series:
+    """คีย์เต็มของแต่ละแถวในไฟล์ส่ง — ลำดับเดียวกับ _live_target_row_key"""
+    parts = [df[c].astype(str).str.strip() if c == "PRODUCTCODE" else df[c].astype(str) for c in _IMPORT_KEY_COLUMNS]
+    out = parts[0]
+    for p in parts[1:]:
+        out = out + "|" + p
+    return out
+
+
+def assert_rows_importable(df: pd.DataFrame, sup_id: str = "") -> None:
+    """
+    ตรวจทุกแถวก่อนส่งด้วยกติกาที่ Target Sun ใช้ข้ามแถว — ผิดแถวเดียว = ไม่ส่งทั้งไฟล์
+
+    ผู้ใช้ขอ 29 ก.ย. 2026: Target Sun ข้ามแถวที่ผิดทีละแถวแต่ยังบันทึกแถวอื่น แล้วเราลบแถว
+    ในนั้นไม่ได้ ส่งไปครึ่ง ๆ กลาง ๆ จึงแก้ยากมาก · ตามปกติด่านนี้ไม่ควรเจออะไรเลย เพราะ
+    แถวที่ขาดเขต/พื้นที่ถูกตัดตั้งแต่ขั้นก่อนหน้า — นี่คือตาข่ายชั้นสุดท้าย
+    """
+    if df is None or df.empty:
+        return
+    problems: list[dict] = []
+    for i, r in enumerate(df[list(_IMPORT_REQUIRED_COLUMNS)].itertuples(index=False), start=2):
+        missing = [c for c, v in zip(_IMPORT_REQUIRED_COLUMNS, r) if str(v if v is not None else "").strip() in ("", "nan", "None")]
+        if missing:
+            problems.append({"row": i, "reason": "ขาดช่อง " + ", ".join(missing)})
+    qty = pd.to_numeric(df["QUANTITYCASE"], errors="coerce")
+    for i in df.index[(qty.isna()) | (qty < 0) | (qty != qty.round())]:
+        problems.append({"row": int(df.index.get_loc(i)) + 2, "reason": f"จำนวนหีบไม่ถูกต้อง ({df.at[i, 'QUANTITYCASE']})"})
+    keys = import_row_key_series(df)
+    dup = keys.duplicated(keep=False)
+    for pos in [int(p) for p, d in enumerate(dup.tolist()) if d][:50]:
+        problems.append({"row": pos + 2, "reason": "คีย์ซ้ำกับแถวอื่นในไฟล์ (Target Sun จะข้าม)"})
+    if not problems:
+        return
+    problems.sort(key=lambda p: p["row"])
+    sample = []
+    for p in problems[:20]:
+        row = df.iloc[p["row"] - 2]
+        sample.append({
+            **p,
+            "sku": str(row.get("PRODUCTCODE") or ""),
+            "emp_id": str(row.get("SALESMANCODE") or ""),
+            "warehouse_code": str(row.get("WAREHOUSECODE") or ""),
+        })
+    logger.error("ไฟล์ส่ง Target Sun มีแถวที่จะถูกข้าม %s: %d แถว %s", sup_id, len(problems), sample[:5])
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "send_rows_not_importable",
+            "message": (
+                f"ยังไม่ได้ส่ง — มี {len(problems):,} แถวที่ Target Sun จะไม่รับ "
+                "ถ้าส่งไปตอนนี้จะลงไม่ครบ ระบบจึงไม่ส่งทั้งไฟล์"
+            ),
+            "hint_th": "แจ้ง dev พร้อมรายการนี้ — มักเกิดจากข้อมูลเขต/พื้นที่ขายของพนักงานไม่ครบ",
+            "rows": sample,
+            "row_count": len(problems),
+            "sup_id": str(sup_id or "").strip().upper(),
+        },
+    )
+
+
 def _build_tga_upload_dataframe(
     req: LakehouseUploadRequest,
     *,
@@ -2876,21 +2972,10 @@ def _build_tga_upload_dataframe(
     # คีย์เต็มของทุกแถวที่กำลังจะส่ง (sku + คีย์ upsert 6 ตัว) — ใช้เทียบกับ "ก่อนส่ง"
     # ตอน verify_row_count_after_send หาว่ากี่แถวที่ Target Sun ยังไม่เคยมี (คีย์เดียว
     # กับ _live_target_row_key ทุกประการ ไม่งั้นสองฝั่ง drift แล้วฟ้องเท็จ)
-    final.attrs["import_row_keys"] = (
-        final["PRODUCTCODE"].astype(str).str.strip()
-        + "|"
-        + final["SALESMANCODE"].astype(str)
-        + "|"
-        + final["SALESTYPE"].astype(str)
-        + "|"
-        + final["DIVISIONCODE"].astype(str)
-        + "|"
-        + final["AREACODE"].astype(str)
-        + "|"
-        + final["PROVINCECODE"].astype(str)
-        + "|"
-        + final["WAREHOUSECODE"].astype(str)
-    ).tolist()
+    final.attrs["import_row_keys"] = import_row_key_series(final).tolist()
+    if enforce_targets:
+        # เส้นทางส่งจริง: ผิดแถวเดียว = ไม่ส่งทั้งไฟล์ (ผู้ใช้ขอ 29 ก.ย. 2026)
+        assert_rows_importable(final, req.sup_id)
     final.attrs["wh_pin_matched_groups"] = wh_pin_stats["matched_groups"]
     final.attrs["wh_pin_boxes_moved"] = wh_pin_stats["boxes_moved"]
     final.attrs["wh_pin_rows_zeroed"] = wh_pin_stats["rows_zeroed"]
