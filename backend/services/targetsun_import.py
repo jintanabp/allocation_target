@@ -136,7 +136,6 @@ def _save_prepare_bundle(
     new_rows_with_boxes_count: int = 0,
     stale_rows_cleared_count: int = 0,
     import_row_keys: list | None = None,
-    confirmed_stale_target: bool = False,
     send_batch_id: str | None = None,
     full_send: bool = False,
     team_target_mismatches: list | None = None,
@@ -174,10 +173,6 @@ def _save_prepare_bundle(
         "shortfall": shortfall,
         "shortfall_boxes": sum(int(s.get("missing_boxes") or 0) for s in shortfall),
         "upload_user_code": upload_user_code,
-        # ผู้ใช้ยืนยันแล้วตอน prepare ว่าเป้าเปลี่ยนก็ส่งตามแผนเดิม — ตอน import ด่านตรวจ
-        # เป้าซ้ำต้องรู้ด้วย (คำขอ import ที่มี token ไม่ได้พก confirm_stale_target มา)
-        # ไม่งั้นเคสที่ยืนยันแล้วจะโดนบล็อกซ้ำที่ด่านนี้ตลอด ส่งไม่ได้เลย
-        "confirmed_stale_target": bool(confirmed_stale_target),
         # ส่งรวมภาค — token ของชุดนี้ส่งได้ก็ต่อเมื่อยอดรวมทั้งชุดผ่านการตรวจแล้ว
         # (verify_send_batch → mark_batch_verified) ดู import_prepared_targetsun
         "send_batch_id": (str(send_batch_id).strip() or None) if send_batch_id else None,
@@ -311,12 +306,7 @@ def prepare_targetsun_import(req: LakehouseUploadRequest) -> dict:
 
     # อ่านของจริงมาเทียบว่าเป้ายังไม่ขยับ — ทำที่นี่ไม่ใช่ในตัวสร้างไฟล์
     # เพราะตัวสร้างไฟล์ต้องออฟไลน์ล้วน (ดาวน์โหลด Excel ห้ามยิงเน็ต)
-    assert_target_snapshot_is_fresh(
-        req.sup_id,
-        int(req.target_month),
-        int(req.target_year),
-        confirmed=bool(getattr(req, "confirm_stale_target", False)),
-    )
+    assert_target_snapshot_is_fresh(req.sup_id, int(req.target_month), int(req.target_year))
 
     t0 = time.perf_counter()
     content, fname, df, dropped_dims, not_in_ts, shortfall = prepare_lakehouse_xlsx(
@@ -359,7 +349,6 @@ def prepare_targetsun_import(req: LakehouseUploadRequest) -> dict:
         new_rows_with_boxes_count=int(df.attrs.get("new_rows_with_boxes_count") or 0),
         stale_rows_cleared_count=int(df.attrs.get("stale_rows_cleared_count") or 0),
         import_row_keys=list(df.attrs.get("import_row_keys") or []),
-        confirmed_stale_target=bool(getattr(req, "confirm_stale_target", False)),
         send_batch_id=getattr(req, "send_batch_id", None),
         full_send=bool(df.attrs.get("full_send")),
         team_target_mismatches=list(df.attrs.get("team_target_mismatches") or []),
@@ -687,16 +676,7 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
             fresh_kwargs["live_by_sku"] = (
                 before_row_snapshot["by_sku"] if before_row_snapshot else None
             )
-        assert_target_snapshot_is_fresh(
-            req.sup_id,
-            bundle_month,
-            bundle_year,
-            confirmed=bool(
-                getattr(req, "confirm_stale_target", False)
-                or meta.get("confirmed_stale_target")
-            ),
-            **fresh_kwargs,
-        )
+        assert_target_snapshot_is_fresh(req.sup_id, bundle_month, bundle_year, **fresh_kwargs)
 
         try:
             out = _post_targetsun_multipart(
@@ -759,12 +739,7 @@ def _import_allocations_one_shot(req: LakehouseUploadRequest) -> dict:
     t0 = time.perf_counter()
     logger.info("TargetSun import: start allocations_in=%d", len(req.allocations or []))
 
-    assert_target_snapshot_is_fresh(
-        req.sup_id,
-        int(req.target_month),
-        int(req.target_year),
-        confirmed=bool(getattr(req, "confirm_stale_target", False)),
-    )
+    assert_target_snapshot_is_fresh(req.sup_id, int(req.target_month), int(req.target_year))
 
     content, fname, df, dropped_dims, not_in_ts, shortfall = prepare_lakehouse_xlsx(
         req, drop_incomplete_rows=True, enforce_targets=True

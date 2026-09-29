@@ -4606,6 +4606,8 @@ function applyDataPayload(data) {
   S.histWindowMonths = 3;
   S.skus = data.skus;
   _bumpSkusVersion();
+  // โหลดเป้าชุดใหม่แล้ว — รายการ "เป้าเปลี่ยนหลังโหลด" ของรอบก่อนไม่ใช่ความจริงอีกต่อไป
+  _staleTargetChunks = [];
   S.employees = (data.employees || []).map(_enrichEmployeeAllocFlags);
   S.whExpanded = new Set();
   for (const e of S.employees) {
@@ -7384,6 +7386,12 @@ function syncStep3ReviewNotes() {
     const list = [...farSkus].slice(0, 12).join(", ");
     lines.push(`SKU ที่เบี่ยงจากประวัติมาก (⚠) — ขอให้รีเช็ค: ${list}${farSkus.size > 12 ? " …" : ""}`);
   }
+  if (_staleTargetChunks.length) {
+    const n = _staleTargetChunks.reduce((s, c) => s + (Number(c.detail?.drift_count) || 0), 0);
+    lines.push(
+      `เป้าใน Target Sun เปลี่ยนหลังโหลดข้อมูล ${n} สินค้า — ส่งไม่ได้จนกว่าจะโหลดขั้นที่ 1 ใหม่แล้วกระจายอีกครั้ง`
+    );
+  }
   const neg = _negGrowthOffenders();
   if (neg.length) {
     lines.push(`พนักงานที่ตั้งเป้าเติบโตติดลบ ${neg.length} คน — ตรวจเหตุผลที่บันทึกไว้`);
@@ -7395,7 +7403,12 @@ function syncStep3ReviewNotes() {
     return;
   }
   el.style.display = "block";
-  el.innerHTML = `<strong>📋 ขอให้รีเช็ค</strong><ul>${lines.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>`;
+  // เปิดรายการสินค้าที่เป้าเปลี่ยนซ้ำได้ — กดไปดูคอลัมน์หนึ่งแล้วกล่องปิด ต้องกลับมาดูตัวถัดไปได้
+  const staleBtn = _staleTargetChunks.length
+    ? `<button type="button" class="shortfall-jump" style="margin-top:4px;"`
+      + ` onclick="_showStaleTargetNotice()">ดูรายการสินค้าที่เป้าเปลี่ยน ▸</button>`
+    : "";
+  el.innerHTML = `<strong>📋 ขอให้รีเช็ค</strong><ul>${lines.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>${staleBtn}`;
 }
 
 /** แบนเนอร์ผลลัพธ์ — สรุป SKU หลัก/รอง */
@@ -9712,57 +9725,82 @@ function _confirmUnverifiableTargetBeforeSend(chunks) {
   });
 }
 
+/* รายการล่าสุดของสินค้าที่เป้าเปลี่ยน — ให้เปิดกล่องซ้ำได้จากแผง「ขอให้รีเช็ค」
+   ล้างเมื่อโหลดขั้นที่ 1 ใหม่ (เป้าชุดใหม่แล้ว) */
+let _staleTargetChunks = [];
+
 /**
  * เป้าใน Target Sun เปลี่ยนไปหลังจากผู้ใช้โหลดข้อมูลขั้นที่ 1 (409 send_target_stale)
  *
- * ไม่ใช่ความผิดพลาดของตัวเลข — ไฟล์ยังตรงกับเป้าชุดที่ผู้ใช้เห็นตอนกระจาย
- * แต่ถ้าเป้าต้นทางขยับแล้ว การส่งทับด้วยแผนเดิมอาจไม่ใช่สิ่งที่ต้องการ ให้เลือกเอง
+ * บล็อก ไม่มีปุ่มส่งตามแผนเดิม (ผู้ใช้ตัดสิน 29 ก.ย. 2026) — ส่งแผนเดิมทั้งที่เป้าเปลี่ยน
+ * ยอดใน Target Sun จะไม่เท่าเป้าล่าสุด ขัดกติกายอดหีบต้องเท่าเป้าเสมอ
+ *
+ * แสดงทุกสินค้าที่เปลี่ยน (เดิม → ตอนนี้) และปุ่มพาไปที่คอลัมน์นั้นในตาราง
+ * สินค้าที่เพิ่งมีเป้ายังไม่อยู่ในตาราง จึงบอกให้โหลดขั้นที่ 1 ใหม่แทนปุ่มพาไป
+ *
+ * @returns {Promise<void>} resolve เมื่อปิดกล่อง
  */
 function _confirmStaleTargetBeforeSend(chunks) {
+  _staleTargetChunks = Array.isArray(chunks) ? chunks : [];
+  try { syncStep3ReviewNotes(); } catch (e) { /* แผงยังไม่พร้อมก็ไม่เป็นไร */ }
+  return _showStaleTargetNotice();
+}
+
+function _staleDriftRowHtml(d) {
+  const sku = String(d.sku || "");
+  const info = (S.skus || []).find((x) => String(x.sku).trim() === sku) || {};
+  const pname = _skuDisplayName(info);
+  const diff = Number(d.diff) || 0;
+  const was = (Number(d.loaded_boxes) || 0).toLocaleString("th-TH");
+  const now = (Number(d.current_boxes) || 0).toLocaleString("th-TH");
+  const tag = d.new_sku
+    ? ` <strong style="color:var(--amber);">สินค้าใหม่</strong>`
+    : d.removed_sku ? ` <strong style="color:var(--red);">ถูกเอาเป้าออก</strong>` : "";
+  const action = d.new_sku
+    ? `<span class="shortfall-sku__nums" style="color:var(--text-3);">ยังไม่อยู่ในตาราง — โหลดขั้นที่ 1 ใหม่</span>`
+    : `<button type="button" class="shortfall-jump shortfall-jump--col" onclick="jumpToResultCell('${escH(sku)}','')">ไปที่คอลัมน์ ▸</button>`;
+  return `<div class="shortfall-sku">
+    <div class="shortfall-sku__head">
+      <div>
+        <code class="shortfall-sku__code">${escH(sku)}</code>
+        ${pname ? `<span class="shortfall-sku__name">${escH(pname)}</span>` : ""}${tag}
+        <div class="shortfall-sku__nums">เป้าตอนโหลด ${was} → ตอนนี้ <strong>${now}</strong> หีบ `
+    + `<strong class="${diff > 0 ? "rx-up" : "rx-down"}">(${diff > 0 ? "+" : ""}${diff.toLocaleString("th-TH")})</strong></div>
+      </div>
+      ${action}
+    </div>
+  </div>`;
+}
+
+function _showStaleTargetNotice() {
+  const chunks = _staleTargetChunks || [];
+  const multi = chunks.length > 1;
   const groups = chunks.map(({ supId, detail }) => {
     const items = Array.isArray(detail?.drifts) ? detail.drifts : [];
-    const rows = items.map((d) => {
-      const sku = String(d.sku || "");
-      const info = (S.skus || []).find((x) => String(x.sku).trim() === sku) || {};
-      const pname = _skuDisplayName(info);
-      const diff = Number(d.diff) || 0;
-      return `<div class="shortfall-sku">
-        <div class="shortfall-sku__head">
-          <div>
-            <code class="shortfall-sku__code">${escH(sku)}</code>
-            ${pname ? `<span class="shortfall-sku__name">${escH(pname)}</span>` : ""}
-            <div class="shortfall-sku__nums">ตอนโหลด ${(Number(d.loaded_boxes) || 0).toLocaleString("th-TH")}`
-        + ` → ตอนนี้ <strong>${(Number(d.current_boxes) || 0).toLocaleString("th-TH")}</strong> หีบ `
-        + `<strong class="${diff > 0 ? "rx-up" : "rx-down"}">(${diff > 0 ? "+" : ""}${diff.toLocaleString("th-TH")})</strong></div>
-          </div>
-          <button type="button" class="shortfall-jump shortfall-jump--col" onclick="jumpToResultCell('${escH(sku)}','')">ไปที่คอลัมน์ ▸</button>
-        </div>
-      </div>`;
-    }).join("");
-    return `<div style="margin-bottom:10px;"><strong>ทีม ${escH(supId)}</strong>${rows}</div>`;
+    const more = (Number(detail?.drift_count) || items.length) - items.length;
+    return `<div style="margin-bottom:10px;">`
+      + (multi ? `<strong>ทีม ${escH(supId)}</strong>` : "")
+      + items.map(_staleDriftRowHtml).join("")
+      + (more > 0 ? `<div class="shortfall-sku__nums">… อีก ${more.toLocaleString("th-TH")} สินค้า</div>` : "")
+      + `</div>`;
   }).join("");
-
   const skuTotal = chunks.reduce((n, c) => n + (Number(c.detail?.drift_count) || 0), 0);
 
   return new Promise((resolve) => {
-    let decided = false;
+    let done = false;
     _showInfoModal({
       title: "เป้าใน Target Sun เปลี่ยนไปแล้ว — ยังไม่ได้ส่ง",
       bodyHtml:
         `<p style="margin:0;text-align:left;line-height:1.7;">`
-        + `เป้าต้นทางขยับ <strong>${skuTotal.toLocaleString("th-TH")} SKU</strong> `
-        + `หลังจากคุณโหลดข้อมูลขั้นที่ 1</p>`
+        + `เป้าต้นทางเปลี่ยน <strong>${skuTotal.toLocaleString("th-TH")} สินค้า</strong> `
+        + `หลังจากคุณโหลดข้อมูลขั้นที่ 1 ผลกระจายที่ทำไว้จึงไม่ตรงเป้าล่าสุด</p>`
         + `<p style="margin:10px 0 0;text-align:left;line-height:1.7;color:var(--text-2);">`
-        + `ผลกระจายที่ทำไว้อิงเป้าชุดเดิม — ถ้าอยากกระจายตามเป้าใหม่ ให้`
-        + `<strong>โหลดขั้นที่ 1 ใหม่แล้วกระจายอีกครั้ง</strong><br>`
-        + `ถ้ายืนยัน ระบบจะส่งตามแผนที่กระจายไว้เดิม (ยอดยังตรงกับเป้าชุดที่คุณเห็น)</p>`
+        + `ให้<strong>โหลดขั้นที่ 1 ใหม่แล้วกระจายอีกครั้ง</strong> ก่อนส่ง · `
+        + `กด「ไปที่คอลัมน์」เพื่อดูสินค้าตัวนั้นในตาราง (เปิดรายการนี้ซ้ำได้จากแผง「ขอให้รีเช็ค」)</p>`
         + `<div class="shortfall-list">${groups}</div>`,
-      primaryLabel: "ยืนยันส่งตามแผนเดิม",
-      onPrimary: () => { decided = true; resolve(true); },
-      secondaryLabel: "กลับไปโหลดขั้นที่ 1 ใหม่",
-      // ปิด/Escape/คลิกนอกกล่อง = ไม่ส่ง — _showInfoModal เรียก onSecondary ให้ทุกทาง
-      // (เดิมเฝ้าด้วย MutationObserver บน body ซึ่งพลาดได้แล้ว Promise ค้างถาวร)
-      onSecondary: () => { if (!decided) { decided = true; resolve(false); } },
+      primaryLabel: null,
+      secondaryLabel: "ปิด",
+      onSecondary: () => { if (!done) { done = true; resolve(); } },
     });
   });
 }
@@ -10462,7 +10500,6 @@ async function _doLakehouseUploadInner() {
   let sentCount = 0;
   // ผู้ใช้ยืนยันครั้งเดียวแล้วใช้กับทุกทีมในชุดนี้ — ไม่ถามซ้ำราย SL
   let confirmedManualTopup = false;
-  let confirmedStale = false;
   // ทีมที่ยอดลงจริงไม่ตรงไฟล์ — รวมไว้แจ้งทีเดียวหลังส่งจบ
   const readbackIssues = [];
   // ผลตรวจ "จำนวนแถวจริง" ก่อน/หลังส่งของทุกทีมที่ตรวจได้ (ไม่ใช่แค่ทีมที่ผิดปกติ) —
@@ -10614,18 +10651,16 @@ async function _doLakehouseUploadInner() {
         jobs.forEach((j) => { if (!j.token) j.basePayload.confirm_manual_topup = true; });
         continue;
       }
-      if (pendingStale.length && !confirmedStale) {
+      if (pendingStale.length) {
+        // เป้าต้นทางเปลี่ยน = ไม่ส่ง ต้องโหลดขั้นที่ 1 ใหม่ (ไม่มีปุ่มส่งตามแผนเดิมแล้ว)
         popGlobalBusy();
-        const goOn = await _confirmStaleTargetBeforeSend(pendingStale);
+        await _confirmStaleTargetBeforeSend(pendingStale);
         pushGlobalBusy(UX.busySendStep1, UX.busySendTargetHint);
-        if (!goOn) return;
-        confirmedStale = true;
-        jobs.forEach((j) => { if (!j.token) j.basePayload.confirm_stale_target = true; });
-        continue;
+        return;
       }
 
       // ยืนยันไปแล้วแต่ยังติดอยู่ — อย่าวนต่อจนไม่รู้จบ
-      const stuck = (pendingShortfall[0] || pendingStale[0])?.detail;
+      const stuck = pendingShortfall[0]?.detail;
       throw new Error(_userFacingError(stuck?.message || "", "เตรียมไฟล์ไม่สำเร็จ"));
     }
     jobs = jobs.filter((j) => j.token && j.token !== "__legacy__");
@@ -20070,6 +20105,7 @@ async function exitViewAsMode() {
   S.employees = [];
   S.skus = [];
   _bumpSkusVersion();
+  _staleTargetChunks = [];
   S.allocations = [];
   S.totalTarget = 0;
   S._hasUnsaved = false;

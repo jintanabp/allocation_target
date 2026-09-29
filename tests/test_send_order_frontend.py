@@ -282,8 +282,7 @@ class TestSendOrder(unittest.TestCase):
 
     def test_every_gate_sets_its_own_confirm_flag(self):
         """ยืนยันด่านหนึ่งต้องไม่ปลดล็อกอีกด่านที่ผู้ใช้ไม่เคยเห็น"""
-        for flag in ("confirm_manual_topup", "confirm_stale_target"):
-            self.assertIn(flag, self.src, f"ต้องตั้ง {flag} แยกกัน")
+        self.assertIn("confirm_manual_topup", self.src)
 
     def test_box_total_gates_have_no_confirm_flag(self):
         """
@@ -291,9 +290,13 @@ class TestSendOrder(unittest.TestCase):
         """
         with open(APP_JS, encoding="utf-8") as fh:
             full = fh.read()
-        for flag in ("confirm_target_mismatch", "confirm_unverifiable_target"):
+        for flag in ("confirm_target_mismatch", "confirm_unverifiable_target", "confirm_stale_target"):
             self.assertNotIn(flag, full, f"{flag} ต้องไม่ถูกตั้งจากหน้าเว็บแล้ว")
-        for fn in ("_confirmServerMismatchBeforeSend", "_confirmUnverifiableTargetBeforeSend"):
+        for fn in (
+            "_confirmServerMismatchBeforeSend",
+            "_confirmUnverifiableTargetBeforeSend",
+            "_showStaleTargetNotice",
+        ):
             m = re.search(rf"function {fn}\((.*?)\n\}}\n", full.replace("\r\n", "\n"), re.S)
             self.assertIsNotNone(m, fn)
             self.assertIn("primaryLabel: null", m.group(1), f"{fn} ต้องไม่มีปุ่มส่งต่อ")

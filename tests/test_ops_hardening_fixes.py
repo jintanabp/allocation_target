@@ -123,7 +123,7 @@ class TestB9NoMutationObserverForModalClose(unittest.TestCase):
         for fn in (
             "_confirmServerMismatchBeforeSend",
             "_confirmUnverifiableTargetBeforeSend",
-            "_confirmStaleTargetBeforeSend",
+            "_showStaleTargetNotice",
         ):
             m = re.search(rf"function {fn}\((.*?)\n\}}\n", self.src, re.S)
             with self.subTest(fn=fn):

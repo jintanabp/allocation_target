@@ -109,20 +109,42 @@ class TestTargetFreshness(unittest.TestCase):
         d = ctx.exception.detail
         self.assertEqual(ctx.exception.status_code, 409)
         self.assertEqual(d["code"], "send_target_stale")
-        self.assertEqual(d["confirm_field"], "confirm_stale_target")
+        self.assertNotIn("confirm_field", d, "ไม่มีปุ่มส่งตามแผนเดิมแล้ว (29 ก.ย. 2026)")
         self.assertEqual(d["drift_boxes"], 2)
         self.assertEqual(
             d["drifts"][0],
-            {"sku": "X", "loaded_boxes": 10, "current_boxes": 12, "diff": 2},
+            {"sku": "X", "loaded_boxes": 10, "current_boxes": 12, "diff": 2,
+             "new_sku": False, "removed_sku": False},
         )
+
+    def test_every_changed_sku_is_listed_biggest_change_first(self):
+        """หน้าจอพาไปดูทีละสินค้าได้ — ต้องได้ครบทุกตัว ไม่ใช่แค่ 20 ตัวแรก"""
+        live = {"X": 11, "Y": 50}
+        with self.assertRaises(HTTPException) as ctx:
+            self._check(live)
+        d = ctx.exception.detail
+        self.assertEqual([x["sku"] for x in d["drifts"]], ["Y", "X"])
+        self.assertEqual(d["drift_count"], 2)
+
+    def test_removed_sku_is_flagged(self):
+        with self.assertRaises(HTTPException) as ctx:
+            self._check({"X": 10})
+        self.assertTrue(ctx.exception.detail["drifts"][0]["removed_sku"])
 
     def test_new_sku_appearing_upstream_counts_as_drift(self):
         with self.assertRaises(HTTPException) as ctx:
             self._check({"X": 10, "Y": 5, "Z": 7})
         self.assertEqual(ctx.exception.detail["drifts"][0]["sku"], "Z")
+        self.assertTrue(ctx.exception.detail["drifts"][0]["new_sku"])
 
-    def test_user_confirmation_allows(self):
-        self._check({"X": 12, "Y": 5}, confirmed=True)
+    def test_there_is_no_way_to_confirm_past_a_changed_target(self):
+        """ส่งแผนเดิมทั้งที่เป้าเปลี่ยน = ยอดไม่เท่าเป้าล่าสุด — ไม่มีทางยืนยันข้าม"""
+        import inspect
+
+        self.assertNotIn("confirmed", inspect.signature(lh.assert_target_snapshot_is_fresh).parameters)
+        from backend.schemas import LakehouseUploadRequest
+
+        self.assertNotIn("confirm_stale_target", LakehouseUploadRequest.model_fields)
 
     def test_unreadable_live_target_does_not_block(self):
         """อ่านของจริงไม่ได้ = เตือนไม่ได้ แต่การเทียบกับ snapshot ยังบังคับเต็มจากด่านอื่น"""

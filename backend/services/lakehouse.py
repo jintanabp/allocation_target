@@ -1474,15 +1474,15 @@ def assert_target_snapshot_is_fresh(
     year: int,
     *,
     emp_codes: list[str] | None = None,
-    confirmed: bool = False,
     live_by_sku: dict[str, int] | None = _UNSET,  # type: ignore[assignment]
 ) -> None:
     """
-    เตือนเมื่อเป้าใน Target Sun เปลี่ยนไปหลังจากผู้ใช้โหลดข้อมูลขั้นที่ 1
+    บล็อกเมื่อเป้าใน Target Sun เปลี่ยนไปหลังจากผู้ใช้โหลดข้อมูลขั้นที่ 1
 
-    หลักการเทียบยอดของระบบยึด "เป้าที่ดึงเข้ามาคำนวณรอบนั้น" เสมอ ไฟล์ที่ส่งจึงตรง
-    กับเป้าชุดที่ผู้ใช้เห็น — แต่ถ้าเป้าต้นทางเปลี่ยนไปแล้ว การส่งทับด้วยแผนเก่า
-    อาจไม่ใช่สิ่งที่ต้องการ ให้ผู้ใช้ตัดสินใจเอง (ยืนยันได้ ไม่บล็อกตาย)
+    ไม่มีทางยืนยันข้ามแล้ว (ผู้ใช้ตัดสิน 29 ก.ย. 2026): ส่งตามแผนเดิมทั้งที่เป้าต้นทาง
+    เปลี่ยน = ยอดใน Target Sun จะไม่เท่าเป้าล่าสุด ขัดกติกา "ยอดหีบต้องเท่าเป้าเสมอ"
+    ต้องโหลดขั้นที่ 1 ใหม่แล้วกระจายอีกครั้ง · รายการที่คืนไปบอกทุก SKU ที่เปลี่ยน
+    ให้หน้าจอพาไปดูทีละสินค้าได้
 
     ถ้าอ่านของจริงไม่ได้ → ไม่บล็อกด้วยเหตุนี้ เพราะการเทียบกับ snapshot
     ยังถูกบังคับเต็มที่จากด่านอื่นอยู่แล้ว
@@ -1496,8 +1496,6 @@ def assert_target_snapshot_is_fresh(
     ไม่ต้องยิง Target Sun ซ้ำสองรอบ — ไม่ระบุ (ค่าเริ่มต้น) จึงอ่านเองตามเดิม
     ระบุเป็น None ตรงๆ หมายถึง "อ่านมาแล้วแต่ไม่สำเร็จ" ก็จะไม่บล็อกเหมือนอ่านเองไม่ได้
     """
-    if confirmed:
-        return
     snapshot = _sup_target_boxes_by_sku(sup_id, month, year)
     if not snapshot:
         return
@@ -1515,10 +1513,21 @@ def assert_target_snapshot_is_fresh(
         now = int(live.get(sku, 0))
         if was != now:
             drifts.append(
-                {"sku": sku, "loaded_boxes": was, "current_boxes": now, "diff": now - was}
+                {
+                    "sku": sku,
+                    "loaded_boxes": was,
+                    "current_boxes": now,
+                    "diff": now - was,
+                    # สินค้าที่เพิ่งมีเป้า — ยังไม่อยู่ในตารางผลกระจาย หน้าจอพาไปดูไม่ได้
+                    "new_sku": sku not in snapshot,
+                    # สินค้าที่เป้าถูกเอาออก (เหลือ 0)
+                    "removed_sku": sku not in live,
+                }
             )
     if not drifts:
         return
+    # เปลี่ยนมากก่อน — ผู้ใช้ไล่ดูตัวใหญ่ก่อน
+    drifts.sort(key=lambda d: (-abs(int(d["diff"])), d["sku"]))
 
     diff_boxes = sum(int(d["diff"]) for d in drifts)
     logger.warning(
@@ -1538,13 +1547,13 @@ def assert_target_snapshot_is_fresh(
                 f"{len(drifts)} SKU (ต่างรวม {diff_boxes:+,} หีบ)"
             ),
             "hint_th": (
-                "ถ้าจะกระจายตามเป้าใหม่ ให้โหลดข้อมูลขั้นที่ 1 ใหม่แล้วกระจายอีกครั้ง — "
-                "หรือกดยืนยันเพื่อส่งตามแผนที่กระจายไว้เดิม"
+                "โหลดข้อมูลขั้นที่ 1 ใหม่ แล้วกระจายอีกครั้งก่อนส่ง — "
+                "ยอดที่ส่งต้องเท่าเป้าล่าสุดใน Target Sun"
             ),
-            "drifts": drifts[:20],
+            "drifts": drifts[:200],
             "drift_count": len(drifts),
             "drift_boxes": diff_boxes,
-            "confirm_field": "confirm_stale_target",
+            "sup_id": str(sup_id or "").strip().upper(),
         },
     )
 
