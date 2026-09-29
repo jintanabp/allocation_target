@@ -94,19 +94,67 @@ function qdViewAsEmail() {
   return (document.getElementById("qdViewAsEmail")?.value || "").trim().toLowerCase();
 }
 
-async function qdFetch(path, options = {}, timeoutMs = 15000) {
-  const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
-  const t = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
+/** ขอ token ใหม่จาก MSAL (ได้ของในแคชถ้ายังไม่หมดอายุ) — เดิมขอครั้งเดียวตอนเปิดหน้า
+ *  เปิดทิ้งไว้ราวชั่วโมงแล้วได้ 401 ทุกคำขอโดยไม่ลองใหม่ (ผลตรวจ §3.4) */
+async function qdRefreshToken(force = false) {
+  if (!qd.msalInstance) return;
+  const acc = qd.msalInstance.getActiveAccount() || qd.msalInstance.getAllAccounts()[0];
+  if (!acc) return;
   try {
-    const opts = { ...options, headers: { ...(options.headers || {}) } };
-    if (qd.token) opts.headers.Authorization = `Bearer ${qd.token}`;
-    const viewAs = qdViewAsEmail();
-    if (viewAs) opts.headers["X-View-As-Email"] = viewAs;
-    if (ctrl) opts.signal = ctrl.signal;
-    return await fetch(`${QD_API_BASE}${path}`, opts);
-  } finally {
-    if (t) clearTimeout(t);
+    const res = await qd.msalInstance.acquireTokenSilent({
+      account: acc,
+      scopes: ["https://graph.microsoft.com/User.Read"],
+      forceRefresh: !!force,
+    });
+    if (res?.accessToken) qd.token = res.accessToken;
+  } catch (e) {
+    console.warn("qdRefreshToken:", e);
   }
+}
+
+async function qdFetch(path, options = {}, timeoutMs = 15000) {
+  const once = async () => {
+    const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const t = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
+    try {
+      const opts = { ...options, headers: { ...(options.headers || {}) } };
+      if (qd.token) opts.headers.Authorization = `Bearer ${qd.token}`;
+      const viewAs = qdViewAsEmail();
+      if (viewAs) opts.headers["X-View-As-Email"] = viewAs;
+      if (ctrl) opts.signal = ctrl.signal;
+      return await fetch(`${QD_API_BASE}${path}`, opts);
+    } finally {
+      if (t) clearTimeout(t);
+    }
+  };
+  await qdRefreshToken(false);
+  let res = await once();
+  if (res.status === 401 && qd.msalInstance) {
+    await qdRefreshToken(true);
+    res = await once();
+  }
+  return res;
+}
+
+/** ข้อความ error จาก API — detail เป็นได้ทั้ง string, object, list (ผลตรวจ §3.8)
+ *  เดิม body.detail.message || body.detail → list กลายเป็น "[object Object]" */
+function qdErrorText(body, fallback) {
+  const d = body?.detail;
+  if (typeof d === "string" && d) return d;
+  if (Array.isArray(d)) {
+    const s = d.map((x) => (x && (x.msg || x.message)) || "").filter(Boolean).join(" — ");
+    if (s) return s;
+  }
+  if (d && typeof d === "object") {
+    const parts = [d.message, d.hint_th].filter((x) => typeof x === "string" && x);
+    if (parts.length) return parts.join(" — ");
+  }
+  return fallback;
+}
+
+/** หน่วยขายของทีมจาก payload ("S" เครดิต / "C" รถเงินสด) → ค่าที่ ?unit= รับ */
+function qdUnitParam(salesType) {
+  return { S: "credit", C: "van", credit: "credit", van: "van" }[String(salesType || "").trim()] || "";
 }
 
 function qdShowAuthNotice(msg) {
@@ -280,18 +328,29 @@ async function qdLoadScopeData(wantPeers) {
   const year = Number(document.getElementById("qdYearSelect").value);
   if (!supId) throw new Error("กรุณาเลือก Supervisor");
 
-  const path = wantPeers
+  const basePath = wantPeers
     ? `/data/employees/region-peers?sup_id=${encodeURIComponent(supId)}&target_month=${month}&target_year=${year}`
     : `/data/employees?sup_id=${encodeURIComponent(supId)}&target_month=${month}&target_year=${year}`;
-  const r = await qdFetch(path, {}, 20000);
-  if (!r.ok) {
-    const body = await r.json().catch(() => ({}));
-    throw new Error(body?.detail?.message || body?.detail || `โหลดข้อมูลไม่สำเร็จ (HTTP ${r.status})`);
-  }
-  const data = await r.json();
-  const warnings = Array.isArray(data.sku_warnings) ? data.sku_warnings : [];
+  const loadOnce = async (path) => {
+    const r = await qdFetch(path, {}, 20000);
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(qdErrorText(body, `โหลดข้อมูลไม่สำเร็จ (HTTP ${r.status})`));
+    }
+    return await r.json();
+  };
+  let data = await loadOnce(basePath);
+  let warnings = Array.isArray(data.sku_warnings) ? data.sku_warnings : [];
   if (wantPeers) {
-    const blocking = warnings.find((w) => w?.type === "aggregate_mixed_sales_unit");
+    let blocking = warnings.find((w) => w?.type === "aggregate_mixed_sales_unit");
+    // ภาคที่มีทั้งทีมเครดิตและรถเงินสด — เดิมไม่ส่ง unit จึงถูกบล็อกเสมอ (ผลตรวจ §3.8)
+    // ลองใหม่ด้วยหน่วยขายของทีมตัวเอง เหมือนที่หน้าหลักทำ
+    const unit = blocking ? qdUnitParam((data.sales_unit_by_sup || {})[supId.toUpperCase()]) : "";
+    if (blocking && unit) {
+      data = await loadOnce(`${basePath}&unit=${encodeURIComponent(unit)}`);
+      warnings = Array.isArray(data.sku_warnings) ? data.sku_warnings : [];
+      blocking = warnings.find((w) => w?.type === "aggregate_mixed_sales_unit");
+    }
     if (blocking) throw new Error(blocking.message || "กระจายรวมภาคไม่ได้ — หน่วยขายในภาคไม่ตรงกัน");
   }
   qd.supId = supId;
@@ -406,6 +465,10 @@ async function qdRunDistribute() {
     .map((e) => {
       const row = { emp_id: String(e.emp_id || "").trim(), yellow_target: 1 };
       if (e.wh_split && String(e.warehouse_code || "").trim()) row.warehouse_code = String(e.warehouse_code).trim();
+      // ทีมเจ้าของแถว — โหมดรวมภาค emp_id ซ้ำข้ามทีมได้ ด่าน「ไม่ต้องตั้งเป้า」ต้องรู้ว่าคนของทีมไหน
+      // (หน้าหลักส่งอยู่แล้วที่ _yellowTargetPayloadRow) ผลตรวจ §3.8
+      const sup = String(e.supervisor_code || "").trim().toUpperCase();
+      if (qd.peerSupIds.length > 1 && sup) row.supervisor_code = sup;
       return row;
     });
   if (!yellowTargets.length) {
@@ -441,7 +504,7 @@ async function qdRunDistribute() {
     );
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body?.detail?.message || body?.detail || `กระจายไม่สำเร็จ (HTTP ${r.status})`);
+      throw new Error(qdErrorText(body, `กระจายไม่สำเร็จ (HTTP ${r.status})`));
     }
     const json = await r.json();
     // กระจายใหม่ทุกครั้ง = เริ่มสะอาด ทิ้งการแก้มือ/undo ของรอบก่อนหน้าทั้งหมด
@@ -526,8 +589,22 @@ function qdSyncResultFrozenHeader() {
   }
 }
 
+/** คีย์แถวของตาราง — แบบเดียวกับ _allocKey ของหน้าหลัก (ผลตรวจ §3.1)
+ *  คนที่แยกหลายคลัง = "รหัส|คลัง" คนเดียวคลังเดียว = รหัส
+ *  เดิมใช้ emp_id เดี่ยว ๆ ทั้งที่ backend คืนหนึ่งแถวต่อคลัง → ช่องแสดงแค่คลังสุดท้าย
+ *  ยอดรวมต่ำกว่าจริง ท้ายตารางขึ้นไม่ตรงเป้าทั้งที่ engine กระจายตรง และแก้ช่องมีผลคลังเดียว
+ *  (แถวผลกระจายของคนคลังเดียวมี warehouse_code ว่าง แต่แถวพนักงานมีคลัง จึงต้องดู wh_split) */
+function qdSplitEmpIds() {
+  return new Set(qd.employees.filter((e) => e.wh_split).map((e) => String(e.emp_id).trim()));
+}
+function qdRowKey(empId, wh, splitEmps) {
+  const emp = String(empId || "").trim();
+  const w = String(wh || "").trim();
+  return splitEmps.has(emp) && w ? `${emp}|${w}` : emp;
+}
+
 /** เรียงลำดับแถวพนักงาน — เลียนแบบ _sortResultRowKeys ของ app.js (app.js:7579) แบบง่าย
- *  (ไม่มี rowKey ประกอบคลัง เพราะ qd ใช้ emp_id เดี่ยวๆ เป็นคีย์แถวอยู่แล้วตั้งแต่แรก) */
+ *  คีย์คือ qdRowKey (รหัส หรือ รหัส|คลัง) */
 function _qdSortResultRowKeys(empIds, empBySku, priceOf) {
   const mode = document.getElementById("qdRowSortSelect")?.value || "default";
   const isComposite = qd.peerSupIds.length > 1;
@@ -539,8 +616,9 @@ function _qdSortResultRowKeys(empIds, empBySku, priceOf) {
   const byCode = (x, y) => String(x).localeCompare(String(y), "en", { numeric: true, sensitivity: "base" });
 
   const stat = new Map();
+  const splitEmps = qdSplitEmpIds();
   for (const a of qd.allocations) {
-    const id = String(a.emp_id).trim();
+    const id = qdRowKey(a.emp_id, a.warehouse_code, splitEmps);
     let s = stat.get(id);
     if (!s) { s = { boxes: 0, value: 0 }; stat.set(id, s); }
     const b = Number(a.allocated_boxes) || 0;
@@ -581,14 +659,16 @@ function qdRenderResultTable() {
 
   const allocs = qd.allocations;
   const skuInfoBySku = new Map(qd.skus.map((s) => [String(s.sku).trim(), s]));
-  const empBySku = new Map(qd.employees.map((e) => [String(e.emp_id).trim(), e]));
+  const splitEmps = qdSplitEmpIds();
+  // คีย์ = qdRowKey — แถวพนักงานหนึ่งแถวต่อคลัง (ชื่อตัวแปรเดิมคง empBySku ไว้)
+  const empBySku = new Map(qd.employees.map((e) => [qdRowKey(e.emp_id, e.warehouse_code, splitEmps), e]));
   const priceOf = (sku) => Number(skuInfoBySku.get(String(sku).trim())?.price_per_box) || 0;
 
   const strategy = document.querySelector('#qdStrategyPills [name="qdStrategy"]:checked')?.value || "L3M";
   const hmRoll = strategy === "L6M" ? 6 : strategy === "LY" ? 1 : 3;
 
-  const byEmpSku = new Map(); // "empId::sku" -> alloc row
-  for (const a of allocs) byEmpSku.set(`${String(a.emp_id).trim()}::${String(a.sku).trim()}`, a);
+  const byEmpSku = new Map(); // "rowKey::sku" -> alloc row
+  for (const a of allocs) byEmpSku.set(`${qdRowKey(a.emp_id, a.warehouse_code, splitEmps)}::${String(a.sku).trim()}`, a);
 
   // ── คอลัมน์ SKU: สร้าง + เรียง + กรอง "เฉพาะที่ยังไม่ตรงเป้า" (เลียนแบบ app.js:6684-6733) ──
   const skuSortMode = document.getElementById("qdSkuSortSelect")?.value || "code";
@@ -622,7 +702,9 @@ function qdRenderResultTable() {
   const skus = skusObjArr.map((o) => o.sku);
 
   // ── แถวพนักงาน: เรียง (ผูกกับ toolbar) ─────────────────────
-  const empIds = _qdSortResultRowKeys([...new Set(allocs.map((a) => String(a.emp_id).trim()))], empBySku, priceOf);
+  const empIds = _qdSortResultRowKeys(
+    [...new Set(allocs.map((a) => qdRowKey(a.emp_id, a.warehouse_code, splitEmps)))], empBySku, priceOf
+  );
   const isComposite = qd.peerSupIds.length > 1;
   const supOf = (empId) => String(empBySku.get(empId)?.supervisor_code || "").trim().toUpperCase();
 
@@ -678,10 +760,12 @@ function qdRenderResultTable() {
   const rowsHtmlArr = [];
   let histRollValueAll = 0;
   let histLyValueAll = 0;
-  empIds.forEach((empId, idx) => {
-    const emp = empBySku.get(empId);
+  empIds.forEach((rowKey, idx) => {
+    const emp = empBySku.get(rowKey);
+    // rowKey อาจเป็น "รหัส|คลัง" — แสดง/ค้นหา/แก้ช่องต้องใช้รหัสพนักงานจริง
+    const empId = String(emp?.emp_id || String(rowKey).split("|")[0]).trim();
     const whDisplay = emp?.warehouse_code || "—";
-    const supCode = supOf(empId);
+    const supCode = supOf(rowKey);
     let grandBoxes = 0;
     let grandValue = 0;
     let histRollValue = 0;
@@ -696,7 +780,7 @@ function qdRenderResultTable() {
       <td class="result-sticky-left result-sticky-left--wh mono" style="color:var(--text-3);font-size:12px;">${qdEscapeHtml(whDisplay)}</td>`;
 
     skus.forEach((s, i) => {
-      const a = byEmpSku.get(`${empId}::${s}`);
+      const a = byEmpSku.get(`${rowKey}::${s}`);
       const b = Number(a?.allocated_boxes) || 0;
       const price = Number(skuInfoBySku.get(s)?.price_per_box) || 0;
       skuTotals[i] += b;
