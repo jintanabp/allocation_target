@@ -757,6 +757,44 @@ def _merge_partial_result(
     return merged
 
 
+def _reject_employee_in_two_teams(df_targets: pd.DataFrame) -> None:
+    """
+    กระจายรวมเป้าทั้งภาค: รหัสพนักงานเดียวกันอยู่ใต้สองทีม = หยุดพร้อมบอกชื่อ (ผลตรวจ §4.1-3)
+
+    เครื่องคำนวณใช้รหัสพนักงาน(+คลัง) เป็นตัวตน คนรหัสเดียวกันสองทีมจึงถูกรวมเป็นคนเดียว
+    ผลคือแถวซ้ำ ยอดเกินเป้าแล้วตีกลับ 409 แบบไม่มีคำอธิบาย หรือ LP นับเป็นสองเท่า
+    ข้อมูลจริงงวด 10/2026 ยังไม่เจอเคสนี้ (ที่ดูเหมือนซ้ำคือ snapshot ปนแถว ซึ่งแก้แล้ว)
+    จึงกันไว้พร้อมข้อความชัด ๆ แทนการรื้อตัวตนในเครื่องคำนวณ — ข้อมูลปกติไม่กระทบเลย
+    """
+    if df_targets is None or df_targets.empty or "supervisor_code" not in df_targets.columns:
+        return
+    d = df_targets.assign(
+        _e=df_targets["emp_id"].astype(str).str.strip(),
+        _s=df_targets["supervisor_code"].fillna("").astype(str).str.strip().str.upper(),
+    )
+    d = d[(d["_e"] != "") & (d["_s"] != "")]
+    teams = d.groupby("_e")["_s"].agg(lambda x: sorted(set(x)))
+    dup = teams[teams.map(len) > 1]
+    if dup.empty:
+        return
+    employees = [{"emp_id": e, "teams": t} for e, t in dup.items()][:20]
+    raise HTTPException(
+        status_code=400,
+        detail={
+            "code": "employee_in_two_teams",
+            "message": (
+                f"กระจายรวมทั้งภาคไม่ได้ — มีพนักงาน {len(dup)} คนที่รหัสเดียวกันอยู่ใต้สองทีม "
+                "ระบบแยกไม่ได้ว่าหีบของใครเป็นของทีมไหน"
+            ),
+            "hint_th": (
+                "ตรวจรายชื่อทีมของพนักงานเหล่านี้ (ย้ายให้อยู่ทีมเดียวที่หน้า「ย้ายพนักงาน」) "
+                "หรือกระจายแบบแยกรายทีมแทน"
+            ),
+            "employees": employees,
+        },
+    )
+
+
 def reject_mixed_sales_units(
     target_sup_ids: list[str], target_month: int, target_year: int
 ) -> None:
@@ -953,6 +991,8 @@ def run_optimization_service(
     df_all_targets["yellow_target"] = pd.to_numeric(
         df_all_targets["yellow_target"], errors="coerce"
     ).fillna(0.0)
+    if summed_target:
+        _reject_employee_in_two_teams(df_all_targets)
     # ตัดพนักงานที่ "ไม่ต้องตั้งเป้า" ออกก่อนทุกอย่าง — /optimize ไม่เคยกรองพนักงานเลย
     # เชื่อรายชื่อจากหน้าเว็บล้วน หน้าเว็บรุ่นเก่าที่ค้างในเบราว์เซอร์จึงส่งคนเหล่านี้มาได้
     # ต้องตัดก่อน _requested_alloc_keys ด้วย ไม่งั้นด่าน I8 จะเติมแถว 0 พาเขากลับเข้ามา
