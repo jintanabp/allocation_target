@@ -10153,16 +10153,45 @@ function _formatApiErrorDetail(j) {
  * ไม่ล็อกหน้า: เป้าอาจเปลี่ยนหรือเพิ่มวันถัดไป super ต้องกระจายใหม่/แก้แล้วส่งซ้ำได้เสมอ
  * (พอแก้ต่อ สถานะจะกลับเป็น "แบบร่าง" แต่ target_sun_sent_at ยังอยู่ = เคยส่งแล้ว)
  */
+/**
+ * แถวผลกระจาย + เป้าเงินของ "ทีมเดียว" จากตารางที่อาจเป็นรวมภาค
+ *
+ * ผลตรวจ 29 ก.ย. 2026 (export งวด 10/2026): 11 ทีมมี snapshot ซ้ำกับทีมอื่นเป๊ะ — ทุกตัวเป็น
+ * sent_targetsun บันทึกห่างกันไม่กี่วินาทีโดยคนเดียวกัน = ตอนประทับ "ส่งแล้ว" หลังส่งรวมภาค
+ * บันทึกโดยไม่ระบุแถว จึงเอา S.allocations ทั้งภาคไปเขียนทับ snapshot ของทุกทีม
+ */
+function _teamRowsAndYellow(sid, allocs = S.allocations) {
+  const sup = String(sid || "").trim().toUpperCase();
+  const rows = (allocs || []).filter((a) => _supervisorCodeForAllocRow(a) === sup);
+  const yellow = {};
+  const yellowLocked = {};
+  for (const e of S.employees || []) {
+    if (_supervisorCodeForAllocRow(e) !== sup) continue;
+    const k = _allocKey(e);
+    if (k in (S.yellow || {})) yellow[k] = S.yellow[k];
+    if (S.yellowLocked && k in S.yellowLocked) yellowLocked[k] = S.yellowLocked[k];
+  }
+  return { rows, yellow, yellowLocked };
+}
+
 function _markAllocationSentTargetSun(supId = null) {
   if (S.targetSunPreviewMode) return;
   const sid = String(supId || S.supId || "").trim().toUpperCase();
   if (!sid) return;
+  // รวมภาค: ประทับเฉพาะแถวของทีมนี้ ห้ามเอาแถวทั้งภาคไปทับ snapshot ของทีม
+  const multi = !!(S.compositeAllocView || S.aggregateMode);
+  const team = multi ? _teamRowsAndYellow(sid) : null;
+  if (multi && !team.rows.length) {
+    console.warn("[mark sent] ไม่พบแถวของทีม", sid, "— ไม่ประทับ เพื่อไม่ให้เขียนแถวของทีมอื่นทับ");
+    return;
+  }
   // ไม่ส่ง precondition: ข้อมูลเข้า Target Sun ไปแล้วจริง ๆ การประทับว่า "ส่งแล้ว" ต้องลงเสมอ
   // ไม่งั้นถ้า version ไม่ตรงจะเด้ง modal「มีคนบันทึกทับ」ทั้งที่ส่งสำเร็จไปแล้ว
   saveServerAllocationSnapshot("sent_targetsun", {
     supId: sid,
     silentSummary: true,
     ifMatchVersion: null,
+    ...(team ? { allocations: team.rows, yellow: team.yellow, yellow_locked: team.yellowLocked } : {}),
   })
     .then(() => {
       _invalidateAllocSnapshotCache(sid);
@@ -11880,9 +11909,13 @@ async function saveRegionalAllocationSnapshots(allocs, status = "optimized") {
         saved.push(supId);
         continue;
       }
+      // เป้าเงินเฉพาะของทีมนั้น — เดิมไม่ส่ง จึงได้ S.yellow ทั้งภาคติดไปทุกทีม
+      const team = _teamRowsAndYellow(supId, rows);
       await saveServerAllocationSnapshot(supStatus, {
         supId,
         allocations: rows,
+        yellow: team.yellow,
+        yellow_locked: team.yellowLocked,
         forceRegional: true,
         silentSummary: true,
       });

@@ -321,6 +321,47 @@ class AllocationSnapshotBody(BaseModel):
     no_precondition_reason: str | None = None
 
 
+def _refuse_other_teams_rows(user: dict, sid: str, body) -> None:
+    """
+    snapshot ของทีมต้องมีแต่พนักงานของทีมนั้น (ผลตรวจ 29 ก.ย. 2026)
+
+    export งวด 10/2026 พบ 11 ทีมที่ snapshot เป็นแถวของทั้งภาค — การประทับ "ส่งแล้ว" หลังส่ง
+    รวมภาคเขียนแถวทั้งภาคทับทุกทีม · หน้าเว็บแก้แล้ว ด่านนี้กันหน้าเว็บรุ่นเก่าที่ยังเปิดค้าง
+    นับเฉพาะคนที่รู้แน่ว่าอยู่ทีมอื่นเท่านั้น (รายชื่อทีม/แถวเป้า/การย้าย) คนที่อยู่หลายทีม
+    คนที่ถูกย้ายเข้ามา และคนที่ไม่มีข้อมูลทีมเลย ผ่านหมด
+    """
+    from ..services.lakehouse import employee_teams_in_period, norm_emp_code
+    from ..services.usage_log_store import log_from_user
+
+    emps = {norm_emp_code(a.get("emp_id")) for a in (body.allocations or []) if str(a.get("emp_id") or "").strip()}
+    if not emps:
+        return
+    teams = employee_teams_in_period(body.target_month, body.target_year, emps)
+    foreign = sorted(e for e in emps if teams.get(e) and sid not in teams[e])
+    if not foreign:
+        return
+    sample = [{"emp_id": e, "teams": sorted(teams[e])} for e in foreign[:20]]
+    log_from_user(
+        user, level="error", sup_id=sid, action="save_allocation",
+        message=f"ไม่บันทึก — มีพนักงานของทีมอื่น {len(foreign)} คนปนอยู่ในผลกระจายของ {sid}",
+        detail=f"งวด {body.target_year}-{body.target_month:02d} · สถานะ {body.status}",
+        target_month=body.target_month, target_year=body.target_year,
+        context={"ok": False, "explain": explain("snapshot_foreign_rows", {"sup_id": sid, "employees": sample})},
+    )
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "snapshot_foreign_rows",
+            "message": (
+                f"ไม่บันทึก — ผลกระจายของ {sid} มีพนักงานของทีมอื่น {len(foreign)} คนปนอยู่ "
+                "(ถ้าบันทึกจะทับผลของทีมนี้ด้วยแถวของทีมอื่น)"
+            ),
+            "hint_th": "กด Ctrl+F5 เพื่อโหลดหน้าเว็บรุ่นล่าสุด แล้วลองใหม่",
+            "employees": sample,
+        },
+    )
+
+
 @router.get("/data/allocations")
 def get_allocation_snapshot(
     user: dict = Depends(require_authenticated_user),
@@ -380,6 +421,7 @@ def put_allocation_snapshot(
                     "hint_th": "กด Ctrl+F5 แล้วโหลดทีมนี้ใหม่ ถ้าตั้งใจลบผลกระจาย ให้ใช้ปุ่มลบ",
                 },
             )
+    _refuse_other_teams_rows(user, sid, body)
     email = str(user.get("email") or user.get("view_as_email") or "").strip()
     payload = body.model_dump()
     expected_version = payload.pop("if_match_version", None)
