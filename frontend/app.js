@@ -11060,7 +11060,23 @@ function _excelScopeTag() {
   return own;
 }
 
+let _exportInFlight = false;
+
 async function doExport() {
+  // กดซ้ำระหว่างรอ = สร้างไฟล์สองรอบ (ผลตรวจ §3.7) — ปุ่มถูกปิดด้วย แต่กันอีกชั้นที่ธงนี้
+  if (_exportInFlight) {
+    toast("กำลังสร้างไฟล์อยู่ — รอสักครู่", "amber");
+    return;
+  }
+  _exportInFlight = true;
+  try {
+    return await _doExportInner();
+  } finally {
+    _exportInFlight = false;
+  }
+}
+
+async function _doExportInner() {
   const brand = document.querySelector('[name="exportBrand"]:checked')?.value || "ALL";
   closeExportModal();
 
@@ -11106,7 +11122,11 @@ async function doExport() {
       },
       120000
     );
-    if (!res.ok) throw new Error(_userFacingError(null, "สร้างไฟล์ไม่สำเร็จ"));
+    if (!res.ok) {
+      // แสดงเหตุผลจริงจาก server (เช่น "ไม่พบข้อมูลสำหรับแบรนด์ X") — เดิมเหลือแค่ข้อความกลาง ๆ
+      const j = await res.json().catch(() => ({}));
+      throw new Error(_userFacingError(_formatApiErrorDetail(j), "สร้างไฟล์ไม่สำเร็จ"));
+    }
 
     const dlRes = await fetchWithTimeout(
       // ส่งงวดไปด้วย — ต้องได้ไฟล์ของงวดที่เพิ่งสร้าง ไม่ใช่ของงวดที่อีกแท็บสร้างทับ
@@ -11115,7 +11135,10 @@ async function doExport() {
       {},
       60000
     );
-    if (!dlRes.ok) throw new Error(_userFacingError(null, "ดาวน์โหลดไฟล์ไม่สำเร็จ"));
+    if (!dlRes.ok) {
+      const j = await dlRes.json().catch(() => ({}));
+      throw new Error(_userFacingError(_formatApiErrorDetail(j), "ดาวน์โหลดไฟล์ไม่สำเร็จ"));
+    }
     const blob = await dlRes.blob();
 
     // ผลกระจายรวมทั้งภาคมีพนักงานของทุกทีมในขอบเขตอยู่ในไฟล์เดียว — ชื่อไฟล์ต้อง
@@ -17942,12 +17965,22 @@ async function _adminJsonFetch(path, { method = "GET", body = null, timeout = 20
   const res = await fetchWithTimeout(`${API_BASE_URL}${path}`, opts, timeout);
   if (!res.ok) {
     let d = "คำขอไม่สำเร็จ";
+    let j422 = null;
     try {
       const j = await res.json();
-      if (j.detail) d = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
+      j422 = j;
+      if (j.detail) d = _formatApiErrorDetail(j) || (typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail));
     } catch (_) { /* ignore */ }
+    // 422 ส่วนใหญ่คือ "ค่าที่กรอกไม่ผ่านการตรวจ" (เช่น push_multiple ต้อง 1–100) ต้องบอกตามจริง
+    // เดิมแทนทุก 422 ด้วย "เซิร์ฟเวอร์ยังไม่อัปเดต" ข้อความจริงจึงหาย (ผลตรวจ §3.5)
+    // เหลือกรณีเดียวที่แปลว่า server เก่า: ช่องที่หน้าเว็บส่งไป server ไม่รู้จัก (extra_forbidden)
     if (res.status === 422) {
-      d = "เซิร์ฟเวอร์ยังไม่อัปเดต — กรุณารีสตาร์ทแอปแล้วกด Ctrl+F5 โหลดหน้าใหม่";
+      const msg = _formatApiErrorDetail(j422) || "ข้อมูลที่ส่งไม่ถูกต้อง";
+      const unknownField = Array.isArray(j422?.detail)
+        && j422.detail.some((x) => String(x?.type || "") === "extra_forbidden");
+      d = unknownField
+        ? "เซิร์ฟเวอร์ยังไม่อัปเดต — กรุณารีสตาร์ทแอปแล้วกด Ctrl+F5 โหลดหน้าใหม่"
+        : `ข้อมูลไม่ถูกต้อง: ${msg}`;
     }
     throw new Error(d);
   }
