@@ -603,8 +603,13 @@ def _build_multi_strategy_base_map(
     locked_map: dict,
     cap_multiplier: float | None,
     even_skus: frozenset[str],
+    zero_pairs: set | frozenset | None = None,
 ) -> dict[tuple[str, str], int]:
-    """baseline ต่อ (emp, sku) ตามกลยุทธ์ของแต่ละ SKU — ใช้รั้ว greedy ปลายทาง."""
+    """baseline ต่อ (emp, sku) ตามกลยุทธ์ของแต่ละ SKU — ใช้รั้ว greedy ปลายทาง.
+
+    ต้องส่ง zero_pairs ของกติกาไม่เคยขายด้วย (I9) — ไม่งั้น baseline แบ่งหีบให้คนที่ถูกตัด
+    เป็น 0 ด้วย รั้วของคนที่เหลือจึงอ้างอิงตัวเลขต่ำกว่าผลจริงของแต่ละกลุ่ม
+    """
     effective_cap = cap_multiplier if cap_multiplier is not None else _CAP_MULTIPLIER
     combined: dict[tuple[str, str], int] = {}
     for strat in sorted(set(sku_strategy.values())):
@@ -629,6 +634,7 @@ def _build_multi_strategy_base_map(
             locked_map,
             effective_cap,
             even_skus=even_grp,
+            zero_pairs=zero_pairs,
         )
         combined.update(_baseline_map_from_df(df_base, df_emp_targets, df_sku_grp))
     return combined
@@ -679,6 +685,7 @@ def _post_merge_revenue_balance(
         locked_map=locked_map,
         cap_multiplier=cap_multiplier,
         even_skus=even_skus,
+        zero_pairs=zero_pairs,
     )
     if not base_map:
         return df_allocation
@@ -1436,6 +1443,13 @@ def run_optimization_service(
             else pd.DataFrame(columns=["emp_id", "sku", "allocated_boxes"])
         )
         if not df_allocation.empty and req.tiered_allocation and not req.history_only:
+            # SKU ที่กติกาไม่เคยขายสั่งให้แบ่งเท่า (no_seller/push_target) ต้องถูกกันไว้
+            # จากตัวเกลี่ยเงินหลังรวมผลเหมือนสินค้าใหม่ (ผลตรวจ 28 ก.ย. 2026 §4.1-2)
+            # เดิมใส่แค่สินค้าใหม่ ตัวเกลี่ยจึงย้ายหีบใน SKU พวกนี้จนไม่เท่ากันอีก
+            even_skus_global = even_skus_global | frozenset(
+                _norm_sku(k) for k, v in never_sold_summary_all.items()
+                if (v or {}).get("reason") in ("no_seller", "push_target")
+            )
             df_allocation = _post_merge_revenue_balance(
                 df_allocation,
                 df_emp_targets,
