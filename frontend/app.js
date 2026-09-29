@@ -10184,6 +10184,16 @@ function _handleTargetSunImportResponse(res, j, opts = {}) {
     return false;
   }
   const ts = j.targetsun || {};
+  // ปลายทางตอบโดยไม่บอกว่าสำเร็จหรือไม่ (ผลตรวจ §2.3) — เดิมนับเป็นสำเร็จ
+  // ถือว่า "ไม่รู้ผล": หยุดส่งทีมถัดไป และให้ตรวจยอดใน Target Sun ก่อนส่งซ้ำ
+  if (j.send_status === "unknown") {
+    opts.uncertain = true;
+    toast(
+      "⚠ Target Sun ตอบกลับแต่ไม่บอกว่ารับข้อมูลหรือไม่ — ตรวจยอดใน Target Sun ก่อนส่งซ้ำ",
+      "red"
+    );
+    return false;
+  }
   if (ts.success === false) {
     const why = ts.resultMsg || "import ไม่สำเร็จ";
     const errList = Array.isArray(ts.result?.errors) ? ts.result.errors : [];
@@ -10731,8 +10741,10 @@ async function _doLakehouseUploadInner() {
       }
       _clearTargetSunProgressTimer();
       setGlobalBusyProgress(95, "กำลังสรุปผล…", UX.busySendTargetHint);
-      if (!_handleTargetSunImportResponse(res, j, { supId: basePayload.sup_id })) {
-        failedSup = { supId: basePayload.sup_id };
+      const handleOpts = { supId: basePayload.sup_id };
+      if (!_handleTargetSunImportResponse(res, j, handleOpts)) {
+        // uncertain = ปลายทางไม่บอกผล ของอาจลงไปแล้ว ต้องตรวจก่อนส่งซ้ำ
+        failedSup = { supId: basePayload.sup_id, uncertain: !!handleOpts.uncertain };
         jobs.slice(i + 1).forEach((x) => notSentSupIds.push(x.supId));
         break;
       }

@@ -513,6 +513,10 @@ def _post_targetsun_multipart(
         )
 
     shortfall = shortfall or []
+    send_status = classify_targetsun_reply(body)
+    if not isinstance(body, dict):
+        # list/string/null — เดิมหลุดไป AttributeError ที่ถูก except: pass กลบ log หายทั้งแถว
+        body = {"success": None, "raw": body}
     out = {
         "upload_filename": fname,
         "rows_sent": nrow,
@@ -526,6 +530,8 @@ def _post_targetsun_multipart(
         "import_url": url,
         "http_status": int(r.status_code),
         "targetsun": body,
+        # ok | partial | failed | unknown — ใช้ตัวนี้ตัดสิน ห้ามดูแค่ success is not False
+        "send_status": send_status,
         "step": "import",
     }
 
@@ -554,8 +560,42 @@ def _post_targetsun_multipart(
         logger.warning(
             "TargetSun import declined: resultMsg=%s", body.get("resultMsg")
         )
+    if send_status == "unknown":
+        logger.error(
+            "TargetSun ตอบ HTTP %s แต่ไม่บอกว่าสำเร็จหรือไม่ — ถือว่าไม่รู้ผล: %s",
+            r.status_code, str(body)[:300],
+        )
 
     return out
+
+
+def classify_targetsun_reply(body) -> str:
+    """
+    ผลการส่งจากคำตอบของ Target Sun (ผลตรวจ 28 ก.ย. 2026 §2.3)
+
+      ok      success=true ไม่มี errors และไม่มีแถวถูกข้าม
+      partial success=true แต่มี errors[] หรือ skipped > 0
+      failed  success=false
+      unknown ไม่มีช่อง success / ไม่ใช่ object (เช่น proxy ตอบ 200 {"message": ...})
+
+    เดิมใช้ success is not False → คำตอบที่ไม่มีช่อง success ถูกนับว่าสำเร็จ
+    """
+    if not isinstance(body, dict):
+        return "unknown"
+    ok = body.get("success")
+    if ok is False:
+        return "failed"
+    if ok is not True:
+        return "unknown"
+    res = body.get("result") if isinstance(body.get("result"), dict) else {}
+    errors = res.get("errors")
+    try:
+        skipped = int(res.get("skipped") or 0)
+    except (TypeError, ValueError):
+        skipped = 0
+    if (isinstance(errors, list) and errors) or skipped > 0:
+        return "partial"
+    return "ok"
 
 
 def _attach_readback(
@@ -595,6 +635,7 @@ def _attach_readback(
     if isinstance(ts, dict) and ts.get("success") is False:
         out["readback"] = {"checked": False, "reason": "send_failed"}
         return out
+    # ไม่รู้ผล — ยังอ่านกลับ/นับแถวต่อ เพราะของอาจลงไปแล้วจริง ตัวเลขช่วยให้ตัดสินได้
     out["readback"] = verify_after_send(
         sup_id,
         int(month),

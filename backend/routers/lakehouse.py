@@ -77,9 +77,18 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
     """
     try:
         res = result if isinstance(result, dict) else {}
-        ts = res.get("targetsun") or {}
-        r = ts.get("result") or {}
-        ok = ts.get("success") is not False
+        ts = res.get("targetsun")
+        # ok/partial = ของลงไปแล้ว · failed/unknown = ไม่ใช่ความสำเร็จ (ผลตรวจ §2.3)
+        # เดิม success is not False — คำตอบที่ไม่มีช่อง success ถูกบันทึกว่าสำเร็จ
+        send_status = str(res.get("send_status") or "")
+        if not send_status:
+            from ..services.targetsun_import import classify_targetsun_reply
+
+            send_status = classify_targetsun_reply(ts)
+        ok = send_status in ("ok", "partial")
+        if not isinstance(ts, dict):
+            ts = {}
+        r = ts.get("result") if isinstance(ts.get("result"), dict) else {}
         # ยอดที่ "ลงจริง" ไม่ตรงไฟล์ = ส่งผ่านแต่ปลายทางกินไม่ครบ ต้องเห็นใน audit
         rb = res.get("readback") or {}
         rb_note = ""
@@ -149,7 +158,18 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
         # **ต้องมีคำว่า "สำเร็จ" อยู่ในข้อความของเคสที่ของลงปลายทางไปแล้วเสมอ**
         # เพราะบรรทัดเก่าที่ไม่มี context.ok ถูกตัดสินด้วยข้อความ (usage_summary:110-115)
         # ถ้าตัดคำนี้ทิ้ง การส่งที่สำเร็จจริงจะถูกนับเป็นล้มเหลวย้อนหลัง
-        if not ok:
+        if send_status == "partial":
+            n_err = len(r.get("errors") or []) if isinstance(r.get("errors"), list) else 0
+            caveats.insert(
+                0,
+                f"ปลายทางข้าม {int(r.get('skipped') or 0):,} แถว"
+                + (f" / แจ้งข้อผิดพลาด {n_err:,} แถว" if n_err else ""),
+            )
+            level = "warn" if level == "info" else level
+        if send_status == "unknown":
+            # ไม่ใช้คำว่า "สำเร็จ" — usage_summary ตัดสินแถวเก่าด้วยข้อความ
+            head = "ส่งเข้า Target Sun ไม่รู้ผล — ปลายทางไม่บอกว่ารับหรือไม่ ให้ตรวจยอดใน Target Sun ก่อนส่งซ้ำ"
+        elif not ok:
             head = "ส่งเข้า Target Sun ไม่สำเร็จ"
         else:
             head = "ส่งเข้า Target Sun สำเร็จ"
@@ -203,11 +223,26 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
                 # ระบุคนกดกับเจ้าของทีมแยกกัน (ส่งรวมภาค คนกดไม่ใช่เจ้าของทุก SL)
                 "sender_email": user.get("email") or user.get("view_as_email"),
                 "acting_admin_email": user.get("acting_admin_email"),
+                "send_status": send_status,
                 "ok": ok,
             },
         )
-    except Exception:  # log ต้องไม่ทำให้การส่งพัง
-        pass
+    except Exception:  # log ต้องไม่ทำให้การส่งพัง — แต่ห้ามหายเงียบ (ผลตรวจ §2.3)
+        logger.exception("บันทึกการส่ง Target Sun ไม่สำเร็จ (%s)", req.sup_id)
+        try:
+            log_from_user(
+                user,
+                level="error",
+                sup_id=req.sup_id,
+                action="send_targetsun",
+                message="ส่งเข้า Target Sun ไม่รู้ผล — บันทึกรายละเอียดไม่สำเร็จ",
+                detail=f"งวด {req.target_year}-{req.target_month:02d} · ดู log ของ server",
+                target_month=int(req.target_month),
+                target_year=int(req.target_year),
+                context={"ok": None, "log_error": True},
+            )
+        except Exception:
+            logger.exception("บันทึกการส่งแบบย่อก็ไม่สำเร็จ (%s)", req.sup_id)
 
 
 @router.post("/lakehouse/export-csv")
