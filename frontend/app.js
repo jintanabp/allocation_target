@@ -9785,6 +9785,18 @@ function _showStaleTargetNotice() {
       + `</div>`;
   }).join("");
   const skuTotal = chunks.reduce((n, c) => n + (Number(c.detail?.drift_count) || 0), 0);
+  const changedSkus = [...new Set(chunks.flatMap((c) =>
+    (Array.isArray(c.detail?.drifts) ? c.detail.drifts : []).map((d) => String(d.sku || "").trim())
+  ).filter(Boolean))];
+  const canQuickFix = !S.compositeAllocView && !S.aggregateMode && !_isAllocReadOnlyView() && changedSkus.length;
+  const quickFixHtml = canQuickFix
+    ? `<div style="margin:12px 0 0;text-align:left;">`
+      + `<button type="button" class="btn-realloc btn-realloc--partial" `
+      + `onclick="reloadThenReallocChanged(${_snapshotEsc(JSON.stringify(changedSkus))})">`
+      + `⚡ โหลดเป้าใหม่ แล้วกระจายเฉพาะ ${changedSkus.length} สินค้าที่เปลี่ยน</button>`
+      + `<div style="font-size:12px;color:var(--text-3);margin-top:4px;">สินค้าอื่นและตัวเลขที่แก้เองไม่ถูกแตะ — เสร็จแล้วกดส่งใหม่</div></div>`
+    : `<p style="margin:10px 0 0;text-align:left;font-size:12px;color:var(--text-3);">`
+      + `มุมมองรวมภาค: กด「โหลดข้อมูลใหม่ทั้งภาค」แล้วกระจายใหม่</p>`;
 
   return new Promise((resolve) => {
     let done = false;
@@ -9797,7 +9809,8 @@ function _showStaleTargetNotice() {
         + `<p style="margin:10px 0 0;text-align:left;line-height:1.7;color:var(--text-2);">`
         + `ให้<strong>โหลดขั้นที่ 1 ใหม่แล้วกระจายอีกครั้ง</strong> ก่อนส่ง · `
         + `กด「ไปที่คอลัมน์」เพื่อดูสินค้าตัวนั้นในตาราง (เปิดรายการนี้ซ้ำได้จากแผง「ขอให้รีเช็ค」)</p>`
-        + `<div class="shortfall-list">${groups}</div>`,
+        + `<div class="shortfall-list">${groups}</div>`
+        + quickFixHtml,
       primaryLabel: null,
       secondaryLabel: "ปิด",
       onSecondary: () => { if (!done) { done = true; resolve(); } },
@@ -13902,8 +13915,8 @@ function syncTargetDriftNotice() {
   const canRun = !S.compositeAllocView && !_isAllocReadOnlyView();
   const actions =
     (canRun && skus.length
-      ? `<button type="button" class="btn-realloc btn-realloc--partial" onclick="runReAllocationForSkus(${_snapshotEsc(JSON.stringify(skus))})">` +
-        `⚡ กระจายใหม่เฉพาะ ${skus.length} สินค้าที่เป้าเปลี่ยน</button>`
+      ? `<button type="button" class="btn-realloc btn-realloc--partial" onclick="reloadThenReallocChanged(${_snapshotEsc(JSON.stringify(skus))})">` +
+        `⚡ โหลดเป้าใหม่ แล้วกระจายเฉพาะ ${skus.length} สินค้าที่เป้าเปลี่ยน</button>`
       : "") +
     `<button type="button" class="btn-realloc btn-realloc--ghost" onclick="reloadDataThenReview()">🔄 โหลดข้อมูลใหม่ทั้งภาค</button>` +
     `<button type="button" class="btn-banner-close" onclick="dismissTargetDriftNotice()">ไว้ก่อน</button>`;
@@ -13919,6 +13932,34 @@ function syncTargetDriftNotice() {
     actionsHtml: actions,
   });
   el.style.display = "block";
+}
+
+/**
+ * เป้าต้นทางเปลี่ยน → โหลดเป้าใหม่ แล้วกระจายใหม่เฉพาะสินค้าที่เปลี่ยน (ผู้ใช้ขอ 29 ก.ย. 2026)
+ *
+ * ต้องโหลดก่อนเสมอ: /optimize อ่านเป้าจากแคชขั้นที่ 1 — เดิมปุ่ม ⚡ ในกล่องตรวจเป้าล่าสุด
+ * กระจายใหม่ด้วยเป้าชุดเดิม ตัวเลขจึงไม่ขยับ แล้วตอนส่งก็ถูกบล็อก "เป้าเปลี่ยน" ซ้ำอีก
+ * สินค้าอื่นในตารางและตัวเลขที่แก้เองไม่ถูกแตะ (runReAllocationForSkus)
+ */
+async function reloadThenReallocChanged(skus) {
+  const list = [...new Set((skus || []).map((x) => String(x).trim()).filter(Boolean))];
+  if (!list.length) return;
+  if (S.compositeAllocView || S.aggregateMode) {
+    toast("มุมมองรวมภาค: กด「โหลดข้อมูลใหม่ทั้งภาค」แล้วกระจายใหม่", "amber");
+    return;
+  }
+  document.getElementById("infoModal")?.remove();
+  try {
+    await refreshDashboardData(true);
+  } catch (e) {
+    toast("❌ " + _userFacingError(e, "โหลดเป้าใหม่ไม่สำเร็จ"), "red");
+    return;
+  }
+  S.targetDrift = null;
+  syncTargetDriftNotice();
+  await runReAllocationForSkus(list, {
+    restoreLabel: `⚡ กระจายเฉพาะสินค้าที่เป้าเปลี่ยน (${list.length} SKU)`,
+  });
 }
 
 /**
