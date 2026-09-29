@@ -419,8 +419,9 @@ def allocate_boxes(
             force_min_one,
             df_hist=df_hist,
         )
-        if base_map and strategy in _LP_STRATEGIES:
-            base_map = _baseline_map_from_df(df_out, df_emp_targets, df_sku)
+        # ห้ามเอาผลสุดท้ายไปทับ base_map (ผลตรวจ 28 ก.ย. 2026 §4.1-1) — เดิมทับตรงนี้
+        # ป้ายเทียบประวัติจึงเทียบผลกับตัวเอง ทุกช่องได้ "ok" ทุกครั้งที่มี SKU แบ่งเท่า
+        # (งวด 09/2026 เกิดครบทั้ง 55 ทีม) · SKU แบ่งเท่าไม่ติดป้ายอยู่แล้วใน _annotate_hist_deviation
 
     df_expanded = _expand_full_allocation_matrix(df_out, df_emp_targets, df_sku)
     if not base_map:
