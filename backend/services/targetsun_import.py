@@ -189,7 +189,14 @@ def _save_prepare_bundle(
     )
 
 
-def _load_prepare_bundle(token: str, sup_id: str) -> tuple[bytes, str, dict]:
+def _load_prepare_bundle(
+    token: str, sup_id: str, *, require_owner: bool = True
+) -> tuple[bytes, str, dict]:
+    """
+    require_owner=True (ทางส่งจริง) — sup_id ต้องระบุและตรงกับเจ้าของไฟล์เสมอ
+    เดิม sup_id ว่างแล้วข้ามการตรวจเจ้าของไปเลย (ผลตรวจ §2.9)
+    มีแค่ load_prepare_batch ที่อ่านหลายไฟล์พร้อมกันเท่านั้นที่ปิด (ผู้เรียกตรวจสิทธิ์รายทีมเอง)
+    """
     tok = (token or "").strip()
     if not tok or "/" in tok or "\\" in tok or ".." in tok:
         raise HTTPException(400, detail="prepare_token ไม่ถูกต้อง")
@@ -214,6 +221,10 @@ def _load_prepare_bundle(token: str, sup_id: str) -> tuple[bytes, str, dict]:
         )
     expected_sup = str(meta.get("sup_id") or "").strip().upper()
     got_sup = str(sup_id or "").strip().upper()
+    if require_owner and not got_sup:
+        raise HTTPException(400, detail="ต้องระบุรหัส Supervisor ของไฟล์ที่จะส่ง")
+    if require_owner and not expected_sup:
+        raise HTTPException(409, detail="ไฟล์ที่เตรียมไว้ไม่มีรหัสเจ้าของ — กรุณากดส่งใหม่อีกครั้ง")
     if expected_sup and got_sup and expected_sup != got_sup:
         raise HTTPException(403, detail="prepare_token ไม่ตรงกับ Supervisor ที่เลือก")
     try:
@@ -240,7 +251,7 @@ def load_prepare_batch(tokens: list[str]) -> list[dict]:
         if not t or t in seen:
             continue
         seen.add(t)
-        _, _, meta = _load_prepare_bundle(t, "")
+        _, _, meta = _load_prepare_bundle(t, "", require_owner=False)
         meta = dict(meta)
         meta["prepare_token"] = t
         metas.append(meta)
@@ -742,6 +753,9 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
         _delete_prepare_bundle(token)
 
         out["prepare_token"] = token
+        # งวดที่ส่งจริงคืองวดของไฟล์ที่เตรียมไว้ ไม่ใช่ค่าในคำขอ import — ให้ log ใช้ค่านี้ (§2.9)
+        out["target_month"] = bundle_month
+        out["target_year"] = bundle_year
         # รอบการส่งรวมภาค — router ใช้ส่งแจ้งเตือนถึงเจ้าของทุก SL ในรอบ
         out["send_batch_id"] = meta.get("send_batch_id") or None
         out["batch_sup_ids"] = list(meta.get("batch_sup_ids") or [])

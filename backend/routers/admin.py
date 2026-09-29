@@ -2260,15 +2260,34 @@ def admin_post_usage_log(
     body: UsageLogBody,
     user: dict = Depends(require_authenticated_user),
 ):
+    """
+    บันทึกจากหน้าเว็บ — ผู้ใช้ทุกคนยิงได้ จึงต้องไม่ให้ปลอมบันทึกของระบบ (ผลตรวจ §1.10)
+
+    เดิม: ส่ง action=send_targetsun พร้อม sup_id ของทีมไหนก็ได้ แล้วรายการปลอมไปโผล่ใน
+    /data/send-history ของทีมนั้น · ตอนนี้ action ขึ้นต้น client_ เสมอ และ sup_id
+    ต้องเป็นทีมที่ผู้ใช้มีสิทธิ์เห็น
+    """
+    from ..deps import ensure_supervisor_allowed
+
     email = str(user.get("email") or user.get("view_as_email") or "").strip()
+    sup = str(body.sup_id or "").strip().upper()
+    if sup:
+        ensure_supervisor_allowed(user, sup)
+    action = str(body.action or "").strip()[:60] or "event"
+    if not action.startswith("client_"):
+        action = "client_" + action
+    level = str(body.level or "error").strip().lower()
+    if level not in ("info", "warn", "error"):
+        level = "error"
     row = append_log(
-        level=body.level,
+        level=level,
         email=email,
         role="client",
-        sup_id=body.sup_id,
-        action=body.action,
-        message=body.message,
-        detail=body.detail,
+        sup_id=sup,
+        action=action,
+        message=str(body.message or "")[:500],
+        detail=str(body.detail or "")[:2000],
+        acting_admin_email=user.get("acting_admin_email"),
     )
     return row
 

@@ -496,8 +496,17 @@ def import_targetsun_from_allocations(
             },
         )
         raise
-    _log_targetsun_send(user, req, result)
-    _alert_row_count(user, req, result)
+    # log/แจ้งเตือนใช้งวดที่ส่งจริง (งวดของไฟล์ที่เตรียมไว้) ไม่ใช่ค่าในคำขอ (ผลตรวจ §2.9)
+    res = result if isinstance(result, dict) else {}
+    log_req = req
+    if res.get("target_month") and res.get("target_year") and (
+        int(res["target_month"]), int(res["target_year"])
+    ) != (int(req.target_month), int(req.target_year)):
+        log_req = req.model_copy(
+            update={"target_month": int(res["target_month"]), "target_year": int(res["target_year"])}
+        )
+    _log_targetsun_send(user, log_req, result)
+    _alert_row_count(user, log_req, result)
     return result
 
 
