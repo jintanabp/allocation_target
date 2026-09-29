@@ -28,6 +28,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from ..deps import (
+    ensure_not_demo_for_global_write,
     ensure_can_assign_role,
     ensure_can_edit_user_rows,
     ensure_row_in_admin_scope,
@@ -764,6 +765,7 @@ def create_sku_link(
     body: SkuLinkBody,
     admin: dict = Depends(require_admin_scoped),
 ) -> dict[str, Any]:
+    ensure_not_demo_for_global_write(admin)
     canon = normalize_sku(body.canonical_sku)
     if not canon:
         raise HTTPException(status_code=400, detail="canonical_sku ว่าง")
@@ -789,6 +791,7 @@ def update_sku_link(
     body: SkuLinkUpdateBody,
     admin: dict = Depends(require_admin_scoped),
 ) -> dict[str, Any]:
+    ensure_not_demo_for_global_write(admin)
     canon = normalize_sku(body.canonical_sku)
     if not canon:
         raise HTTPException(status_code=400, detail="canonical_sku ว่าง")
@@ -823,6 +826,7 @@ def remove_sku_link(
     body: SkuLinkDeleteBody,
     admin: dict = Depends(require_admin_scoped),
 ) -> dict[str, Any]:
+    ensure_not_demo_for_global_write(admin)
     canon = normalize_sku(body.canonical_sku)
     try:
         delete_link(read_links(), canon)
@@ -973,6 +977,7 @@ def create_sl_link(
     body: SlLinkBody,
     admin: dict = Depends(require_admin_scoped),
 ) -> dict[str, Any]:
+    ensure_not_demo_for_global_write(admin)
     old, new_sls = _sl_body_old_new(body)
     if not old:
         raise HTTPException(status_code=400, detail="รหัสเก่า (old_sl) ว่าง")
@@ -998,6 +1003,7 @@ def update_sl_link(
     body: SlLinkUpdateBody,
     admin: dict = Depends(require_admin_scoped),
 ) -> dict[str, Any]:
+    ensure_not_demo_for_global_write(admin)
     old, new_sls = _sl_body_old_new(body)
     if not old:
         raise HTTPException(status_code=400, detail="รหัสเก่า (old_sl) ว่าง")
@@ -1037,6 +1043,7 @@ def remove_sl_link(
     body: SlLinkDeleteBody,
     admin: dict = Depends(require_admin_scoped),
 ) -> dict[str, Any]:
+    ensure_not_demo_for_global_write(admin)
     old = normalize_sl(body.old_sl or body.canonical_sl)
     existing = find_sl_link(old, read_sl_links())
     if existing:
@@ -2671,6 +2678,7 @@ def admin_set_emp_assignment(
     ล้างแคช payload ของทั้งทีมต้นทางและปลายทางทุกงวดที่มีอยู่ — ถ้าไม่ล้าง
     ทีมที่ยังหยิบของเก่าจะเห็นพนักงานคนนี้พร้อมกับอีกทีม แล้วเป้าถูกนับสองรอบ
     """
+    ensure_not_demo_for_global_write(admin)
     emp = emp_assignment_store.norm_emp(body.emp_id)
     if not emp:
         raise HTTPException(400, detail="ต้องระบุรหัสพนักงาน")

@@ -15,7 +15,9 @@
 
 บัญชีทั้งสาม (อยู่ใน config/user_access.json):
   demosuper           — Supervisor เห็นแดชบอร์ดปกติ + เห็นทั้งสามทีมในโหมดรวมภาค
-  demoadmin           — แอดมินอย่างเดียว ไม่มีตำแหน่งงาน ไม่เห็นข้อมูลทีมใด
+  demoadmin           — แอดมินอย่างเดียว ไม่มีตำแหน่งงาน ดูแลได้เฉพาะทีมสาธิต
+                        (ขอบเขตถูกตรึงในโค้ดที่ access_control.admin_scope_for_email
+                        และแก้ SKU/SL links หรือย้ายพนักงานไม่ได้ — deps.ensure_not_demo_for_global_write)
   demosuperwithadmin  — Supervisor ที่มีสิทธิ์แอดมินซ้อน (หน้าแรกแบบ super + ปุ่มเข้าแอดมิน)
 """
 from __future__ import annotations

@@ -264,6 +264,22 @@ def require_role_manager(
     )
 
 
+def ensure_not_demo_for_global_write(actor: dict) -> None:
+    """
+    บัญชีสาธิตห้ามแก้ของที่มีผลทั้งบริษัท (SKU/SL links, ย้ายพนักงานข้ามทีม)
+
+    ของพวกนี้ไม่มีขอบเขตภาคให้กรอง — จำกัดขอบเขตของบัญชีสาธิตอย่างเดียวจึงกันไม่ได้
+    (ผลตรวจ 28 ก.ย. 2026 §1.2)
+    """
+    from .services.demo_data import is_demo_email
+
+    if is_demo_email(actor.get("email")):
+        raise HTTPException(
+            status_code=403,
+            detail="บัญชีสาธิตแก้ข้อมูลที่มีผลทั้งบริษัทไม่ได้ — ใช้ดูหน้าตาระบบเท่านั้น",
+        )
+
+
 def _is_dev_actor(actor: dict) -> bool:
     return bool(actor.get("auth_disabled") or actor.get("role") == ROLE_DEV)
 
