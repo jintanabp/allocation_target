@@ -11059,7 +11059,13 @@ async function doExport() {
         product_name_thai: a.product_name_thai || "",
       })),
       brand_filter: brand,
-      yellow_targets: Object.entries(S.yellow).map(([emp_id, v]) => ({ emp_id, yellow_target: v })),
+      // คีย์ของ S.yellow คือ _allocKey — คนที่แยกคลังเป็น "รหัส|คลัง" (เช่น C442|R408)
+      // server รวมเป้าเงินต่อรหัสพนักงาน ต้องตัด "|คลัง" ออกก่อน ไม่งั้นหาไม่เจอแล้ว
+      // เป้าเงินรายคนใน Excel เป็น 0 ทั้งที่ยอดรวมหัวตารางถูก (ผลตรวจ §3.2)
+      yellow_targets: Object.entries(S.yellow).map(([key, v]) => ({
+        emp_id: String(key).split("|")[0],
+        yellow_target: v,
+      })),
       // ทีมที่อยู่ในผลกระจายก้อนนี้ — โหมดรวมภาคมีพนักงานหลายทีมในไฟล์เดียว
       // ส่งไปให้หัวชีต Excel กำกับได้ว่าไฟล์นี้ครอบคลุมทีมไหนบ้าง
       scope_sup_ids: S.aggregateMode ? _allocScopeSupOrder() : [],
