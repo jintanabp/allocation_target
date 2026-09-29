@@ -69,5 +69,15 @@ class TestEngineEvenSkus(unittest.TestCase):
         self.assertEqual(got.get("E2"), 2, "เศษต้องตกคนเป้าเงินสูงสุดทั้งทาง LP ด้วย")
 
 
+class TestOnlyEvenSkusUseTheMoneyTarget(unittest.TestCase):
+    """ทางเลือก B (ผู้ใช้เลือก 29 ก.ย. 2026): จุดอื่นที่แจกเศษต้องคงกติกาเดิม (ประวัติ → รหัส)"""
+
+    def test_fewer_boxes_than_people_keeps_the_old_order(self):
+        # ไม่ใช่สินค้าใหม่ · เป้า 1 หีบ 3 คน ไม่มีประวัติ → รหัสน้อยสุดได้ (ไม่ใช่เป้าเงินสูงสุด)
+        df_emp, df_sku, df_hist = _case({"E1": 100.0, "E2": 900.0, "E3": 500.0}, 1)
+        out = eng.allocate_boxes(df_emp, df_sku, df_hist, strategy="EVEN", tiered_allocation=False)
+        self.assertEqual({k: v for k, v in _boxes(out).items() if v}, {"E1": 1})
+
+
 if __name__ == "__main__":
     unittest.main()

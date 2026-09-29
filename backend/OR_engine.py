@@ -1099,11 +1099,16 @@ def _proportional(
         }
 
         hist_sum = sum(hist_by_emp.values())
-        rank = _fair_rank(active_employees, hist_by_emp, yellow_by_emp)
+        # ลำดับทั่วไป (เป้าน้อยกว่าจำนวนคน / เศษทศนิยมเสมอกัน): ประวัติ → รหัส ตามเดิม
+        rank = _fair_rank(active_employees, hist_by_emp)
 
         # สินค้าใหม่: แบ่งเท่าโดยไม่ผ่าน cap (กันหีบเบี้ยวในโหมดหลัก/รอง)
+        # เศษตัดสินด้วยประวัติ → เป้าเงิน → รหัส (ผู้ใช้เลือก 29 ก.ย. 2026 ทางเลือก B —
+        # ใช้เป้าเงินเฉพาะ SKU ที่แบ่งเท่า จุดอื่นคงเดิม ผลเปลี่ยนน้อยกว่าใช้ทุกจุด)
         if sku_key in even_skus:
-            floored = _even_split_by_rank(total, active_employees, rank)
+            floored = _even_split_by_rank(
+                total, active_employees, _fair_rank(active_employees, hist_by_emp, yellow_by_emp)
+            )
         elif _spread_one_each(total_orig, len(employees)):
             # เป้าน้อยกว่าจำนวนคน → คนละไม่เกิน 1 หีบ ให้ทั่วถึงตามลำดับประวัติการขาย
             # (เทียบกับ "จำนวนคนทั้งทีม" ไม่ใช่คนที่เหลือหลังหักล็อก — นิยามเดียวกับที่
