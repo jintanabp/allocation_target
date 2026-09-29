@@ -29,13 +29,13 @@ from backend.generate_excel import GREEN_FILL, create_target_excel  # noqa: E402
 class TestYellowForMultiWarehouseEmployee(unittest.TestCase):
     def setUp(self):
         self._cwd = os.getcwd()
-        self._tmp = tempfile.mkdtemp(prefix="yellow_wh_")
-        os.makedirs(os.path.join(self._tmp, "data"), exist_ok=True)
-        os.chdir(self._tmp)
+        self._tmpdir = tempfile.mkdtemp(prefix="yellow_wh_")
+        os.makedirs(os.path.join(self._tmpdir, "data"), exist_ok=True)
+        os.chdir(self._tmpdir)
 
     def tearDown(self):
         os.chdir(self._cwd)
-        shutil.rmtree(self._tmp, ignore_errors=True)
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def _write(self):
         rows = []
