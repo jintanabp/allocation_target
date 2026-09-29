@@ -364,6 +364,10 @@ def put_allocation_snapshot(
     expected_version = payload.pop("if_match_version", None)
     payload["sup_id"] = sid
     payload["updated_by"] = email
+    # บันทึกระหว่าง "ดูแทน" — updated_by เป็นชื่อคนที่ถูกจำลอง ต้องจดคนกดจริงไว้ด้วย (§1.8)
+    acting = str(user.get("acting_admin_email") or "").strip()
+    if acting:
+        payload["updated_by_acting_admin"] = acting
 
     if expected_version is None and read_snapshot(sid, body.target_month, body.target_year):
         # แยกสามกรณีออกจากกัน — เดิมเหมาว่าเป็น "client เก่า" ทั้งหมด ซึ่งไม่จริง

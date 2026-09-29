@@ -16701,7 +16701,11 @@ async function adminLoadUsageLogs() {
       return `<tr>
         <td>${ts}</td>
         <td><span class="admin-log-level ${lvlClass}">${escapeHtml(lvl || "—")}</span></td>
-        <td>${escapeHtml(String(r.email || "—"))}</td>
+        <td>${escapeHtml(String(r.email || "—"))}${
+          r.acting_admin_email
+            ? `<div style="font-size:11px;color:var(--amber);">กดโดย ${escapeHtml(String(r.acting_admin_email))} (ดูแทน)</div>`
+            : ""
+        }</td>
         <td>${escapeHtml(String(r.sup_id || "—"))}</td>
         <td class="log-action" title="${escapeHtml(String(r.action || ""))}">${escapeHtml(String(r.action || "—"))}${period}</td>
         <td class="log-msg">${escapeHtml(String(r.message || "—"))}</td>
