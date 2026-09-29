@@ -48,6 +48,8 @@ def _warn_if_multi_worker() -> None:
 def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(app_: FastAPI):
+        # ล็อกอินต้องไม่ถูกปิดเองเงียบ ๆ เมื่อ config ไม่ครบ — ไม่ครบ = ไม่สตาร์ท (§1.4)
+        auth_entra.check_auth_config_at_startup()
         os.makedirs("data", exist_ok=True)
         # เติมแคชตั้งต้นก่อนอย่างอื่น — ถ้า Fabric ดึงไม่ได้และเครื่องนี้ยังไม่เคย
         # ดึงงวดนั้นสำเร็จ ราคาจะเป็น 0 ทั้งระบบแล้วทุกทีมเปิดงวดไม่ได้

@@ -297,14 +297,71 @@ def _aud_matches_client(aud: Any, client_id: str) -> bool:
     return False
 
 
+def auth_explicitly_disabled() -> bool:
+    return os.environ.get("AZURE_AUTH_DISABLED", "").strip().lower() in ("1", "true", "yes")
+
+
 def auth_enabled() -> bool:
-    if os.environ.get("AZURE_AUTH_DISABLED", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    ):
+    if auth_explicitly_disabled():
         return False
     return bool(_client_id() and _tenant_id())
+
+
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def _bind_host_from_argv(argv: list[str] | None = None) -> str | None:
+    """host ที่ uvicorn ถูกสั่งให้ฟัง (จาก command line) — ไม่รู้คืน None"""
+    import sys
+
+    args = list(sys.argv if argv is None else argv)
+    if not any("uvicorn" in str(a) for a in args):
+        return None  # ไม่ได้รันผ่าน uvicorn (เช่นเทสต์) — ไม่รู้ host
+    for i, a in enumerate(args):
+        if a == "--host" and i + 1 < len(args):
+            return str(args[i + 1]).strip()
+        if str(a).startswith("--host="):
+            return str(a).split("=", 1)[1].strip()
+    return "127.0.0.1"  # ค่าเริ่มต้นของ uvicorn
+
+
+def check_auth_config_at_startup(argv: list[str] | None = None) -> None:
+    """
+    ล็อกอินต้องไม่ถูกปิดเองโดยไม่มีใครตั้งใจ (ผลตรวจ 28 ก.ย. 2026 §1.4)
+
+    เดิม: ขาด AZURE_AUTH_CLIENT_ID หรือ tenant เมื่อไร auth_enabled() = False เงียบ ๆ
+    ทุกคนที่เข้า URL ได้กลายเป็น dev รวมสิทธิ์ส่ง Target Sun โดยไม่มี log เตือนเลย
+
+    ตอนนี้:
+      - config ไม่ครบ และไม่ได้ตั้ง AZURE_AUTH_DISABLED=1 → ไม่ยอมสตาร์ท
+      - ตั้ง AZURE_AUTH_DISABLED=1 → สตาร์ทได้เฉพาะเมื่อฟังแค่ localhost
+        (ใช้บนเครื่อง dev) และ log ระดับ ERROR ทุกครั้ง
+    server ที่ตั้ง Entra ครบอยู่แล้วไม่กระทบ — ไม่ต้องแก้ .env
+    """
+    if auth_explicitly_disabled():
+        host = _bind_host_from_argv(argv)
+        if host is not None and host not in _LOOPBACK_HOSTS:
+            raise RuntimeError(
+                f"AZURE_AUTH_DISABLED=1 แต่ server ฟังที่ {host} (ไม่ใช่ localhost) — "
+                "ไม่ยอมสตาร์ท เพราะทุกคนที่เข้า URL ได้จะได้สิทธิ์ dev "
+                "ปิดล็อกอินได้เฉพาะเครื่อง dev ที่รัน --host 127.0.0.1"
+            )
+        logger.error(
+            "ปิดการล็อกอินอยู่ (AZURE_AUTH_DISABLED=1) — ทุกคนที่เข้าได้คือ dev "
+            "ใช้ได้เฉพาะเครื่องพัฒนาเท่านั้น"
+        )
+        return
+    missing = [
+        name
+        for name, val in (("AZURE_AUTH_CLIENT_ID", _client_id()), ("AZURE_AUTH_TENANT_ID", _tenant_id()))
+        if not val
+    ]
+    if missing:
+        raise RuntimeError(
+            "ตั้งค่าการล็อกอินไม่ครบ — ขาด " + ", ".join(missing) + " ระบบไม่ยอมสตาร์ท "
+            "(ถ้าไม่เช็คตรงนี้ ระบบจะปิดล็อกอินเองแล้วทุกคนได้สิทธิ์ dev) "
+            "· เครื่องพัฒนาที่ตั้งใจปิดล็อกอิน ให้ตั้ง AZURE_AUTH_DISABLED=1 และรันแบบ --host 127.0.0.1"
+        )
 
 
 def spa_config_payload() -> dict[str, Any]:
