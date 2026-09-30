@@ -307,7 +307,7 @@ class TestPeerSupIdsWiring(unittest.TestCase):
         import inspect
 
         src = inspect.getsource(opt.run_optimization_service)
-        self.assertIn("hist_sup_ids = [sup_id]", src)
+        self.assertIn("hist_sup_ids = [str(sup_id).strip().upper()]", src)
         self.assertIn("peer_sup_ids", src)
 
 

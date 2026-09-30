@@ -672,13 +672,15 @@ def _hist_input_for_strategy(
     if strategy_u == "LY":
         if not df_hist_lysm.empty:
             return df_hist_lysm.copy(), 1
-        # LY ถอยได้แค่ 3M เท่านั้น (want_6m เป็นเท็จเสมอในสาขานี้) — เขียนให้ตรงความจริง
+        # LY ถอยไป 3M · ถ้า 3M ว่างด้วยจึงใช้ 6M — ต้องคืนจำนวนเดือนและป้ายตามข้อมูลที่ใช้จริง
+        # เดิมติดป้าย 3 เดือนทั้งที่เป็นข้อมูล 6 เดือน hist_avg (ยอด ÷ เดือน) จึงสูงเป็นสองเท่า (ผลตรวจ §4.3)
+        use6 = df_hist_3.empty and not df_hist_6.empty
         logger.warning(
-            "กลยุทธ์ LY: ไม่พบ cache เดือนเดียวกันปีที่แล้ว — ใช้ประวัติ 3M แทน "
-            "(แนะนำให้โหลดหน้า Dashboard ใหม่เพื่อสร้าง hist_lysm)"
+            "กลยุทธ์ LY: ไม่พบ cache เดือนเดียวกันปีที่แล้ว — ใช้ประวัติ %s แทน "
+            "(แนะนำให้โหลดหน้า Dashboard ใหม่เพื่อสร้าง hist_lysm)", "6M" if use6 else "3M",
         )
-        _note("LY→3M")
-        return (df_hist_3 if not df_hist_3.empty else df_hist_6), 3
+        _note("LY→6M" if use6 else "LY→3M")
+        return (df_hist_6, 6) if use6 else (df_hist_3, 3)
 
     if want_6m:
         if not df_hist_6.empty:
@@ -691,7 +693,10 @@ def _hist_input_for_strategy(
             return df_hist_3, 3
         return pd.DataFrame(columns=["emp_id", "sku", "hist_boxes"]), 6
 
-    return (df_hist_3 if not df_hist_3.empty else df_hist_6), 3
+    if df_hist_3.empty and not df_hist_6.empty:
+        _note("3M→6M")
+        return df_hist_6, 6
+    return df_hist_3, 3
 
 
 def _build_multi_strategy_base_map(
@@ -1151,7 +1156,9 @@ def run_optimization_service(
     strategy_u = req.strategy.upper()
     # กระจายรวมทั้งหน่วย: พนักงานมาจากหลายทีม ต้องอ่านประวัติจาก cache ของทุกทีมที่เกี่ยว
     # (ทีมเจ้าของเป้าอยู่ในลิสต์เสมอ และเรียงมาก่อนเพื่อให้ชนะตอนตัดคู่ซ้ำ)
-    hist_sup_ids = [sup_id] + [
+    # ตัวพิมพ์ใหญ่ทุกตัว (ผลตรวจ §4.3) — เดิมทีมหลักไม่แปลง ถ้า sup_id มาเป็นตัวเล็ก ทีมหลักกับ peer
+    # ที่เป็นรหัสเดียวกันจะหลุดการตัดซ้ำ และเทียบกับ supervisor_code (ตัวใหญ่) ไม่ตรง
+    hist_sup_ids = [str(sup_id).strip().upper()] + [
         s for s in (
             str(x).strip().upper() for x in (getattr(req, "peer_sup_ids", None) or [])
         )

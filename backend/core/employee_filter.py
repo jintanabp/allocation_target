@@ -5,9 +5,19 @@ from __future__ import annotations
 import pandas as pd
 
 
+def _truthy(v) -> bool:
+    """ค่า boolean จาก CSV — astype(bool) ตีสตริง "False" เป็น True (ผลตรวจ §4.3)"""
+    if isinstance(v, str):
+        return v.strip().lower() in ("true", "1", "yes", "y", "t")
+    try:
+        return bool(v) and not pd.isna(v)
+    except (TypeError, ValueError):
+        return bool(v)
+
+
 def is_allocation_eligible(has_tga_rows: bool, target_sun: float) -> bool:
     """พนักงานที่มีเป้า Target Sun งวดนี้ — เข้าขั้นกำหนดเป้าและกระจายหีบได้"""
-    return bool(has_tga_rows) and float(target_sun or 0) > 0
+    return _truthy(has_tga_rows) and float(target_sun or 0) > 0
 
 
 def is_van_employee_id(emp_id: str) -> bool:
@@ -40,7 +50,7 @@ def filter_employees_for_display(
     ids = df["emp_id"].astype(str).str.strip()
     ly_vals = ids.map(lambda e: float(ly.get(e, 0.0) or 0.0))
     target_sun = pd.to_numeric(df["target_sun"], errors="coerce").fillna(0.0)
-    has_target = df["has_tga_rows"].astype(bool) & (target_sun > 0)
+    has_target = df["has_tga_rows"].map(_truthy) & (target_sun > 0)
     has_ly = ly_vals > 0
     visible = has_target | has_ly
     hidden = int((~visible).sum())

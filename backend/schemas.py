@@ -38,7 +38,8 @@ class OptimizeRequest(BaseModel):
     force_min_one: bool = False
     new_products_even: bool = False
     locked_edits: list[LockedEditInput] = []
-    cap_multiplier: float | None = None  # Custom strategy override (1.5-5.0)
+    # Custom strategy override (ปกติ 1.5–5.0) — ≤ 0 เคยทำให้การกระจายไม่อิงประวัติเลย (ผลตรวจ §4.3)
+    cap_multiplier: float | None = Field(default=None, ge=1.0, le=10.0)
     """0–1 น้ำหนักยึด baseline ประวัติใน LP (default เน้นประวัติ; รั้ว ±20% เป็นตัวจำกัดหลัก)"""
     hist_balance: float = Field(default=0.85, ge=0.0, le=1.0)
     """ยอมให้มูลค่ารวมต่อคนคลาดเป้าเงินได้ไม่เกินกี่บาท (soft penalty ใน LP)"""

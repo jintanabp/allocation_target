@@ -176,6 +176,28 @@ def restore_baseline_to_target_files(sup_id: str, month: int, year: int) -> dict
             detail="เป้าตั้งต้นที่เก็บไว้ไม่มีรายการ SKU — กู้คืนไม่ได้",
         )
 
+    if not emps:
+        # เป้าหีบกับเป้าเงินต้องมาจากรอบเดียวกัน (ดู docstring) — เดิมเขียนแค่ target_boxes_ แล้วข้าม
+        # target_sun_ เงียบ ๆ ได้เป้าคนละรอบ (ผลตรวจ §4.3) · ไม่กู้ครึ่งเดียว
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=409,
+            detail="เป้าตั้งต้นที่เก็บไว้ไม่มีเป้าเงินรายคน — กู้คืนไม่ได้ (เป้าหีบกับเป้าเงินต้องมาจากรอบเดียวกัน)",
+        )
+
+    # ชื่อแบรนด์/สินค้าไม่ได้เก็บใน baseline — เอาจากไฟล์เป้าปัจจุบัน (ผลตรวจ §4.3: เดิมเขียนเป็นว่าง
+    # แท็บแบรนด์และชื่อสินค้าหายหลังกู้คืน)
+    from ..core.targets import _read_sku_csv
+
+    names: dict[str, dict] = {}
+    cur = _read_sku_csv(target_boxes_cache_path(sup_id, month, year))
+    if cur is not None and not cur.empty:
+        name_cols = [c for c in ("brand_name_thai", "brand_name_english", "section",
+                                 "product_name_thai", "product_name_english") if c in cur.columns]
+        for _, r in cur.iterrows():
+            names[str(r.get("sku") or "").strip()] = {c: str(r.get(c) or "") for c in name_cols}
+
     # คงคอลัมน์เดิมของไฟล์เป้าไว้ให้ครบ ตัวอ่านปลายทางคาดหวังคอลัมน์เหล่านี้
     df_sku = pd.DataFrame([
         {
@@ -189,6 +211,7 @@ def restore_baseline_to_target_files(sup_id: str, month: int, year: int) -> dict
             "section": "",
             "product_name_thai": "",
             "product_name_english": "",
+            **names.get(str(s["sku"]).strip(), {}),
         }
         for s in skus
     ])
@@ -198,8 +221,7 @@ def restore_baseline_to_target_files(sup_id: str, month: int, year: int) -> dict
     ])
 
     atomic_write_csv(target_boxes_cache_path(sup_id, month, year), df_sku, index=False)
-    if not df_sun.empty:
-        atomic_write_csv(target_sun_cache_path(sup_id, month, year), df_sun, index=False)
+    atomic_write_csv(target_sun_cache_path(sup_id, month, year), df_sun, index=False)
 
     total_boxes = int(df_sku["supervisor_target_boxes"].sum())
     logger.warning(
