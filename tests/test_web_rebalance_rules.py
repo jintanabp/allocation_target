@@ -53,7 +53,7 @@ class TestFrontendRebalanceRules(unittest.TestCase):
         body = _fn(self.src, "autoRebalance")
         self.assertIn("zeroKeys.has(_neverSoldZeroKeyOf(a))) return 0", body)
         self.assertIn("evenNeverSold.has(skuKey)", body)
-        self.assertIn("unedited.map(() => minFloor)", body)
+        self.assertIn("cells.map(() => minFloor)", body)
 
     def test_zero_key_matches_server_or_emp_id(self):
         body = _fn(self.src, "_neverSoldZeroKeyOf")
@@ -67,6 +67,31 @@ class TestFrontendRebalanceRules(unittest.TestCase):
         self.assertIn("neverSoldZeroKeys: [...(S.neverSoldZeroKeys || [])]", _fn(self.src, "saveDraft"))
         self.assertIn("body.never_sold_zero_keys = [...(S.neverSoldZeroKeys || [])]",
                       _fn(self.src, "saveServerAllocationSnapshot"))
+
+
+CRLF, LF = chr(13) + chr(10), chr(10)
+
+
+class TestRebalanceTeamFirst(unittest.TestCase):
+    """โหมดรวม: เกลี่ยในทีมเดียวกันก่อน (ผู้ใช้ขอ 30 ก.ย. 2026) — ลองบนหน้าเว็บแล้ว:
+    A1 (ทีม A) แก้ +4 → เดิมหักจาก B1 (ทีม B ประวัติน้อยกว่า) · ใหม่หักจาก A2 (ทีมเดียวกัน)"""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(REPO, "frontend", "app.js"), encoding="utf-8") as fh:
+            cls.body = _fn(fh.read().replace(CRLF, LF), "autoRebalance")
+
+    def test_team_target_is_what_engine_gave_the_team(self):
+        self.assertIn("allocs.every((a) => a.engine_boxes != null)", self.body)
+        self.assertIn("_supervisorCodeForAllocRow(a)", self.body)
+        self.assertIn("want - have", self.body)
+
+    def test_only_in_multi_team_views(self):
+        self.assertIn("const multiTeam = !!(S.compositeAllocView || S.aggregateMode);", self.body)
+
+    def test_spill_over_is_reported(self):
+        self.assertIn("crossTeam.push({ sku, boxes: Math.abs(rest) })", self.body)
+        self.assertIn("S.rebalanceCrossTeam = crossTeam;", self.body)
 
 
 class TestSnapshotKeepsRebalanceRules(unittest.TestCase):
