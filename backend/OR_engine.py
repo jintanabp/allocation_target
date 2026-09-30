@@ -250,6 +250,7 @@ def allocate_boxes(
     df_sold_12m: pd.DataFrame | None = None,
     push_multiple: float = 5.0,
     history_only: bool = False,
+    never_sold_known_emps: set | frozenset | None = None,
 ) -> pd.DataFrame:
     strategy = strategy.upper()
     valid = ("L3M", "L6M", "LY", "EVEN", "PUSH", "LP")
@@ -298,7 +299,8 @@ def allocate_boxes(
     # ถ้าเอากติกาไปใส่เฉพาะ LP รั้วจะอ้างอิง baseline คนละชุดกับคำตอบที่ต้องการ
     # แล้วโจทย์กลายเป็นแก้ไม่ได้ ตกกลับไป fallback ทั้งทีม
     never_sold_zero_pairs, never_sold_even, never_sold_summary = _never_sold_plan(
-        df_sold_12m, df_emp_targets, df_sku, locked_map, float(push_multiple or 5.0)
+        df_sold_12m, df_emp_targets, df_sku, locked_map, float(push_multiple or 5.0),
+        known_emps=never_sold_known_emps,
     )
     if never_sold_even:
         # SKU ที่ทีมไม่เคยขาย/ถูกดันเป้า ใช้กลไก "แบ่งเท่า" ตัวเดียวกับสินค้าใหม่
@@ -517,6 +519,7 @@ def _never_sold_plan(
     df_sku,
     locked_map: dict,
     push_multiple: float,
+    known_emps: set | frozenset | None = None,
 ) -> tuple[set, frozenset, dict]:
     """
     วางแผนกติกา "หน่วยไม่เคยขายสินค้านั้น = เป้า 0" — คืน (คู่ที่ต้องเป็น 0, SKU ที่ให้เฉลี่ย, สรุป)
@@ -535,6 +538,12 @@ def _never_sold_plan(
     เทียบกับเป้าตรง ๆ ไม่ได้ เพราะเป้าเป็นของเดือนเดียว
 
     ช่องที่ผู้ใช้ล็อกไว้ไม่ถูกแตะ (กฎ I2) — การล็อกคือเจตนาที่ชัดเจนกว่ากติกาอัตโนมัติ
+
+    `known_emps` — พนักงานที่ "รู้" ประวัติ 12 เดือนจริง (ทีมมีไฟล์ประวัติ) · None = รู้ทุกคน
+    **ไม่มีข้อมูล ≠ ไม่เคยขาย** (ผลตรวจ §4.1-4): รอบรวมภาค/หน่วยที่บางทีมไม่มีไฟล์ประวัติ
+    คนทีมนั้นเคยถูกนับว่าไม่เคยขายทุกสินค้าแล้วถูกตัดเป็น 0 ทั้งทีม · ตอนนี้คนที่ไม่รู้ไม่ถูกตัด
+    และถ้าข้อ 2/3 ต้องอาศัยว่า "ทั้งทีมไม่มีใครขาย" หรือ "ความจุของคนที่เคยขาย" ซึ่งคนที่ไม่รู้
+    อาจเปลี่ยนคำตอบได้ → ไม่ใช้กติกากับ SKU นั้นเลย (reason "hist_unknown")
     """
     if df_sold_12m is None or df_sold_12m.empty:
         return set(), frozenset(), {}
@@ -545,6 +554,10 @@ def _never_sold_plan(
     if not employees:
         return set(), frozenset(), {}
     emp_set = set(employees)
+    known = emp_set if known_emps is None else emp_set & {str(e).strip() for e in known_emps}
+    unknown = emp_set - known
+    if not known:
+        return set(), frozenset(), {}
     skus = _skus_with_target_boxes(df_sku)
     target_boxes = dict(zip(df_sku["sku"], df_sku["supervisor_target_boxes"]))
 
@@ -579,6 +592,14 @@ def _never_sold_plan(
             continue
 
         capacity = sum(monthly[(e, sku_key)] for e in sellers)
+        if unknown and (not sellers or (capacity > 0 and tgt > push_multiple * capacity)):
+            summary[sku_key] = {
+                "reason": "hist_unknown",
+                "sellers": len(sellers),
+                "team": len(employees),
+                "unknown": len(unknown),
+            }
+            continue
         if not sellers:
             even_skus.add(sku_key)
             summary[sku_key] = {"reason": "no_seller", "sellers": 0, "team": len(employees)}
@@ -597,7 +618,7 @@ def _never_sold_plan(
 
         blocked = [
             e for e in employees
-            if (e, sku_key) not in monthly and (e, sku_key) not in locked_map
+            if e in known and (e, sku_key) not in monthly and (e, sku_key) not in locked_map
         ]
         if not blocked:
             continue

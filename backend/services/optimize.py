@@ -542,6 +542,63 @@ def _fill_missing_peer_hist(
         )
 
 
+def _never_sold_known_emps(
+    df_hist_12_raw: pd.DataFrame,
+    df_all_targets: pd.DataFrame,
+    sup_id: str,
+    hist_sup_ids: list[str],
+    reverse_map: dict[str, tuple[str, str]],
+    target_month: int,
+    target_year: int,
+) -> tuple[set[str] | None, dict | None]:
+    """
+    พนักงาน (รหัสฝั่ง OR) ที่ "รู้" ประวัติ 12 เดือนจริง — ใช้กับกติกาไม่เคยขาย=เป้า 0 (§4.1-4)
+
+    ไฟล์ประวัติ 12 เดือนแยกตามทีม และเก็บเฉพาะคู่ที่ขายจริง — คนที่ไม่อยู่ในไฟล์จึงแปลว่า
+    "ไม่เคยขาย" ได้ก็ต่อเมื่อทีมของเขามีไฟล์นั้นจริง · เดิมรอบรวมภาคเช็คแค่ว่ารวมทุกทีมแล้วว่าง
+    ไหม ทีมที่ไฟล์ยังไม่มาจึงถูกตัดเป็น 0 ทั้งทีม
+
+    รู้ = ทีมของคน (supervisor_code ในคำขอ ไม่มี = ทีมเจ้าของเป้า) มีไฟล์ 12 เดือน
+          หรือมีชื่อในไฟล์ 12 เดือนของทีมไหนก็ได้ (เช่นคนที่ถูกย้ายทีม)
+    คืน (None, None) เมื่อรู้ครบทุกคน = พฤติกรรมเดิม
+    """
+    sid0 = str(sup_id or "").strip().upper()
+    have_file = {
+        str(s).strip().upper()
+        for s in hist_sup_ids
+        if os.path.exists(hist_cache_path(s, target_month, target_year, n_months=12))
+    }
+    team_of: dict[str, str] = {}
+    if df_all_targets is not None and not df_all_targets.empty and "emp_id" in df_all_targets.columns:
+        sup_col = (
+            df_all_targets["supervisor_code"]
+            if "supervisor_code" in df_all_targets.columns
+            else pd.Series([None] * len(df_all_targets), index=df_all_targets.index)
+        )
+        for e, s in zip(df_all_targets["emp_id"], sup_col):
+            e = str(e or "").strip()
+            if e:
+                team_of[e] = str(s or "").strip().upper() or sid0
+    seen = (
+        set(df_hist_12_raw["emp_id"].astype(str).str.strip())
+        if df_hist_12_raw is not None and not df_hist_12_raw.empty and "emp_id" in df_hist_12_raw.columns
+        else set()
+    )
+    unknown_real = {e for e, s in team_of.items() if s not in have_file and e not in seen}
+    if not unknown_real:
+        return None, None
+    known_or = {
+        or_id for or_id, (emp, _wh) in (reverse_map or {}).items()
+        if str(emp).strip() not in unknown_real
+    }
+    missing_sups = sorted({team_of[e] for e in unknown_real})
+    logger.warning(
+        "กติกาไม่เคยขาย=เป้า 0: ทีม %s ไม่มีประวัติ 12 เดือน — พนักงาน %d คนไม่ถูกตัด (ไม่มีข้อมูล ≠ ไม่เคยขาย)",
+        ", ".join(missing_sups), len(unknown_real),
+    )
+    return known_or, {"sups": missing_sups, "employees": len(unknown_real)}
+
+
 def _hist_input_for_strategy(
     strategy_u: str,
     df_hist_3: pd.DataFrame,
@@ -1187,6 +1244,8 @@ def run_optimization_service(
                 ", ".join(off_sups),
             )
     df_hist_12 = pd.DataFrame()
+    never_sold_known_emps: set | None = None
+    never_sold_hist_missing: dict | None = None
     if never_sold_on:
         if _gapfill_fabric is not None:
             _fill_missing_peer_hist(
@@ -1202,6 +1261,10 @@ def run_optimization_service(
         except Exception as e:
             logger.warning("hist 12-month cache read failed: %s", e)
             df_hist_12 = pd.DataFrame()
+        never_sold_known_emps, never_sold_hist_missing = _never_sold_known_emps(
+            df_hist_12, df_all_targets, sup_id, hist_sup_ids, reverse_map,
+            target_month, target_year,
+        )
         df_hist_12 = _maybe_split_hist(df_hist_12, reverse_map, value_shares)
         if df_hist_12.empty:
             never_sold_on = False
@@ -1431,6 +1494,7 @@ def run_optimization_service(
                 df_sold_12m=df_hist_12 if never_sold_on else None,
                 push_multiple=alloc_rules_store.push_multiple(),
                 history_only=bool(req.history_only),
+                never_sold_known_emps=never_sold_known_emps,
             )
             if df_alloc_grp.attrs.get("optimization_fallback"):
                 optimization_fallback = True
@@ -1486,6 +1550,7 @@ def run_optimization_service(
             df_sold_12m=df_hist_12 if never_sold_on else None,
             push_multiple=alloc_rules_store.push_multiple(),
             history_only=bool(req.history_only),
+            never_sold_known_emps=never_sold_known_emps,
         )
         optimization_fallback = bool(df_allocation.attrs.get("optimization_fallback"))
         never_sold_pairs_all |= set(df_allocation.attrs.get("never_sold_zero_pairs") or ())
@@ -1767,6 +1832,8 @@ def run_optimization_service(
         # ทำไมกติกาไม่ทำงานรอบนี้ (None = ทำงานปกติ) — ห้ามปิดเงียบ หน้าจอต้องบอกได้ว่า
         # เพราะทีมไหนถูกสั่งปิด ไม่งั้นซุปเห็นเลขไม่เหมือนรอบก่อนแล้วหาเหตุผลไม่เจอ
         "never_sold_off_reason": never_sold_off_reason,
+        # ทีมที่ไม่มีไฟล์ประวัติ 12 เดือน — คนทีมนั้นไม่ถูกกติกาตัด (§4.1-4) · None = รู้ครบทุกคน
+        "never_sold_hist_missing": never_sold_hist_missing,
         # ขนาดที่กติกาแตะรอบนี้ — เก็บไว้วัดผลย้อนหลังคู่กับสัดส่วนการแก้มือของงวดถัดไป
         "never_sold_impact": never_sold_impact,
     }
