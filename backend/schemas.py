@@ -195,6 +195,12 @@ class LakehouseUploadRequest(BaseModel):
     """
     confirm_manual_topup: bool = False
     """
+    ผู้ใช้เลือก「ใช้คลังตาม Target Sun」ในด่าน send_warehouse_conflict — คู่ที่คลังในไฟล์ไม่ตรง
+    แถวที่มีอยู่ใน Target Sun ตอนนี้ จะแตกหีบลงแถวที่มีอยู่จริงแทน (หีบของคู่เท่าเดิม ไม่ต้อง
+    กระจายใหม่) กันแถวซ้อนคนละคลังจนเป้าเบิ้ล
+    """
+    use_targetsun_warehouse: bool = False
+    """
     SKU ที่ต้องไม่ส่งสำหรับทีมนี้ แม้ทีมนี้จะส่งได้ครบ
 
     ใช้ตอนส่งรวมภาค: ถ้าทีมหนึ่งส่ง SKU นั้นไม่ได้ (ไม่มีแถวใน Target Sun) แต่ทีมอื่นส่งได้

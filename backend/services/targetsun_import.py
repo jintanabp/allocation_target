@@ -24,11 +24,13 @@ from ..schemas import LakehouseUploadRequest
 from .lakehouse import (
     _live_target_snapshot,
     assert_target_snapshot_is_fresh,
+    live_grain_for_pairs,
     norm_emp_code,
     prepare_lakehouse_xlsx,
     team_emp_codes_from_grain,
     verify_after_send,
     verify_row_count_after_send,
+    warehouse_conflicts,
 )
 from .targetsun_endpoints import targetsun_import_excel_url
 
@@ -381,6 +383,89 @@ def load_sent_record(token: str, sup_id: str) -> dict:
     return rec
 
 
+_WH_CONFLICT_LIST_MAX = 300
+
+
+def _warehouse_conflict_error(sup_id: str, conflicts: list[dict], *, resolvable: bool,
+                              during_send: bool = False) -> HTTPException:
+    n = len(conflicts)
+    if during_send:
+        msg = (f"Target Sun ของทีม {sup_id} เปลี่ยนระหว่างรอส่ง — {n} คู่พนักงาน×สินค้าจะมีเป้าเบิ้ล "
+               "จึงยังไม่ส่งทีมนี้")
+        hint = "กดส่งทีมนี้อีกครั้ง ระบบจะถามว่าจะใช้คลังตาม Target Sun ไหม (ไม่ต้องกระจายใหม่)"
+    elif resolvable:
+        msg = (f"ทีม {sup_id}: {n} คู่พนักงาน×สินค้ามีแถวใน Target Sun คนละคลังกับไฟล์ "
+               "ถ้าส่งไปเป้าจะเบิ้ล")
+        hint = "เลือก「ใช้คลังตาม Target Sun」— หีบเท่าเดิม ไม่ต้องกระจายใหม่"
+    else:
+        msg = (f"ทีม {sup_id}: ใช้คลังตาม Target Sun แล้วยังมี {n} คู่ที่คลังไม่ตรง จึงไม่ส่ง")
+        hint = "แจ้ง dev พร้อมรายการคู่นี้"
+    return HTTPException(
+        409,
+        detail={
+            "code": "send_warehouse_conflict",
+            "message": msg,
+            "hint_th": hint,
+            "sup_id": sup_id,
+            "resolvable": bool(resolvable and not during_send),
+            "confirm_field": "use_targetsun_warehouse" if resolvable and not during_send else None,
+            "conflict_count": n,
+            "conflicts": conflicts[:_WH_CONFLICT_LIST_MAX],
+        },
+    )
+
+
+def _live_warehouse_conflicts(sup_id: str, month: int, year: int, df) -> tuple[list[dict], dict | None]:
+    """ไฟล์ที่เตรียมไว้ × Target Sun ตอนนี้ — อ่านไม่ได้ = ไม่บล็อก (เหมือนด่านเป้าเปลี่ยน)
+    การนับแถวหลังส่งจะรายงาน「ตรวจไม่ได้」ให้เอง"""
+    codes = (
+        sorted({str(e).strip() for e in df["SALESMANCODE"] if str(e).strip()})
+        if "SALESMANCODE" in df.columns else []
+    )
+    snap = _live_target_snapshot(sup_id, month, year, codes) if codes else None
+    if snap is None:
+        if codes:
+            logger.warning("ตรวจคลังก่อนส่งไม่ได้ (%s) — อ่าน Target Sun ไม่ได้", sup_id)
+        return [], None
+    return warehouse_conflicts(snap.get("qty_by_key") or {}, _file_qty_by_key(_file_rows(df))), snap
+
+
+def _build_send_file(req: LakehouseUploadRequest):
+    """
+    สร้างไฟล์ของเส้นทางส่งจริง (ตรวจยอดตรงเป้า) + ด่านคลัง — ใช้ทั้ง prepare และทางส่งรวดเดียว
+
+    ด่านคลัง (ผู้ใช้ขอ 30 ก.ย. 2026): ว่างมาว่างไป มีรหัสไหนมาส่งรหัสนั้น — ถ้า Target Sun
+    ตอนนี้มีแถวของคู่นี้คนละคลังกับไฟล์ ส่งไปเป้าจะเบิ้ล ให้ผู้ใช้เลือกใช้คลังตาม Target Sun
+    ซึ่งแค่แตกหีบของคู่นั้นลงแถวที่มีจริง หีบเท่าเดิม ไม่ต้องโหลด/กระจายใหม่
+
+    คืน (content, fname, df, dropped_dims, not_in_ts, shortfall, จำนวนคู่ที่ใช้คลังตาม Target Sun)
+    """
+    def build(live_grain=None):
+        return prepare_lakehouse_xlsx(
+            req, drop_incomplete_rows=True, enforce_targets=True, live_grain=live_grain
+        )
+
+    content, fname, df, dropped_dims, not_in_ts, shortfall = build()
+    sid = str(req.sup_id or "").strip().upper()
+    conflicts, snap = _live_warehouse_conflicts(
+        sid, int(req.target_month), int(req.target_year), df
+    )
+    if not conflicts:
+        return content, fname, df, dropped_dims, not_in_ts, shortfall, 0
+    if not getattr(req, "use_targetsun_warehouse", False):
+        raise _warehouse_conflict_error(sid, conflicts, resolvable=True)
+    live_qty = snap.get("qty_by_key") or {}
+    pairs = {(c["sku"], c["emp_id"]) for c in conflicts}
+    content, fname, df, dropped_dims, not_in_ts, shortfall = build(
+        live_grain_for_pairs(live_qty, pairs)
+    )
+    still = warehouse_conflicts(live_qty, _file_qty_by_key(_file_rows(df)))
+    if still:
+        raise _warehouse_conflict_error(sid, still, resolvable=False)
+    logger.info("ใช้คลังตาม Target Sun %s: %d คู่", sid, len(pairs))
+    return content, fname, df, dropped_dims, not_in_ts, shortfall, len(pairs)
+
+
 def prepare_targetsun_import(req: LakehouseUploadRequest) -> dict:
     """ขั้นที่ 1: สร้าง Excel TGA และเก็บชั่วคราวบน server"""
     _cleanup_stale_prepare_files()
@@ -392,8 +477,8 @@ def prepare_targetsun_import(req: LakehouseUploadRequest) -> dict:
     assert_target_snapshot_is_fresh(req.sup_id, int(req.target_month), int(req.target_year))
 
     t0 = time.perf_counter()
-    content, fname, df, dropped_dims, not_in_ts, shortfall = prepare_lakehouse_xlsx(
-        req, drop_incomplete_rows=True, enforce_targets=True
+    content, fname, df, dropped_dims, not_in_ts, shortfall, warehouse_adjusted_pairs = (
+        _build_send_file(req)
     )
     nrow = int(len(df))
     zero_rows = int((df["QUANTITYCASE"] == 0).sum()) if "QUANTITYCASE" in df.columns else 0
@@ -457,6 +542,7 @@ def prepare_targetsun_import(req: LakehouseUploadRequest) -> dict:
         # ซึ่งนับเฉพาะส่วนที่ไม่มีเป้าใน TGA
         "excluded_boxes": sum(int(s.get("excluded_boxes") or 0) for s in shortfall),
         "excluded_skus": [str(s.get("sku") or "") for s in shortfall if s.get("excluded_whole_sku")],
+        "warehouse_adjusted_pairs": warehouse_adjusted_pairs,
         "step": "prepare",
     }
 
@@ -837,6 +923,14 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
         before_row_snapshot = _live_target_snapshot(
             req.sup_id, bundle_month, bundle_year, bundle_emp_codes
         )
+        # ด่านคลังซ้ำอีกครั้งด้วยค่าที่อ่านสดข้างบน — Target Sun อาจถูกแก้ระหว่าง prepare กับ
+        # ตอนนี้ (รอผู้ใช้ยืนยัน / รอส่งทีมก่อนหน้าในรอบรวมภาค) ส่งไปตอนนี้ = เป้าเบิ้ล
+        if before_row_snapshot is not None and file_qty:
+            _late = warehouse_conflicts(before_row_snapshot.get("qty_by_key") or {}, file_qty)
+            if _late:
+                raise _warehouse_conflict_error(
+                    str(req.sup_id or "").strip().upper(), _late, resolvable=True, during_send=True
+                )
 
         # เดิมด่านนี้เรียกแค่ตอน prepare — ระหว่างเตรียมครบทุกทีม/ถามยืนยัน/ตรวจยอดรวม
         # ทั้งชุด แล้วค่อยวน import ทีละทีม (แต่ละ POST ค้างได้ถึง
@@ -942,9 +1036,7 @@ def _import_allocations_one_shot(req: LakehouseUploadRequest) -> dict:
 
     assert_target_snapshot_is_fresh(req.sup_id, int(req.target_month), int(req.target_year))
 
-    content, fname, df, dropped_dims, not_in_ts, shortfall = prepare_lakehouse_xlsx(
-        req, drop_incomplete_rows=True, enforce_targets=True
-    )
+    content, fname, df, dropped_dims, not_in_ts, shortfall, _wh_adjusted = _build_send_file(req)
     t_build = time.perf_counter()
     nrow = int(len(df))
     zero_rows = int((df["QUANTITYCASE"] == 0).sum()) if "QUANTITYCASE" in df.columns else 0

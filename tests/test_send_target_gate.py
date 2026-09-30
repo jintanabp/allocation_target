@@ -360,11 +360,12 @@ class TestGateWiring(unittest.TestCase):
         )
 
     def test_send_paths_enforce(self):
-        src = inspect.getsource(ti)
-        self.assertEqual(
-            src.count("enforce_targets=True"), 2,
-            "เส้นทางส่ง (prepare_targetsun_import + import_allocations_to_targetsun) ต้องเปิดทั้งคู่",
-        )
+        # ทั้งสองเส้นทางส่งสร้างไฟล์ผ่าน _build_send_file ตัวเดียว (มีด่านคลังด้วย 30 ก.ย. 2026)
+        self.assertIn("enforce_targets=True", inspect.getsource(ti._build_send_file))
+        for fn in (ti.prepare_targetsun_import, ti._import_allocations_one_shot):
+            src = inspect.getsource(fn)
+            self.assertIn("_build_send_file(req)", src, fn.__name__)
+            self.assertNotIn("prepare_lakehouse_xlsx(", src, fn.__name__)
 
 
 if __name__ == "__main__":

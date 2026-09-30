@@ -49,14 +49,21 @@ def row_count_alert(row_count: dict | None) -> dict | None:
     if rc.get("checked"):
         if rc.get("ok") is False:
             extra = int(rc.get("unexpected_extra_rows") or 0)
-            return {
-                "status": "mismatch",
-                "text": (
-                    f"ก่อนส่ง {rc.get('before_count')} แถว · หลังส่ง {rc.get('after_count')} แถว · "
-                    f"คาดว่าจะเพิ่ม {rc.get('expected_new_rows')} แถว · "
-                    f"{'เกิน' if extra > 0 else 'ขาด'} {abs(extra)} แถว"
-                ),
-            }
+            parallel = int(rc.get("parallel_rows_count") or 0)
+            text = (
+                f"ก่อนส่ง {rc.get('before_count')} แถว · หลังส่ง {rc.get('after_count')} แถว · "
+                f"คาดว่าจะเพิ่ม {rc.get('expected_new_rows')} แถว · "
+                + (f"{'เกิน' if extra > 0 else 'ขาด'} {abs(extra)} แถว" if extra else "จำนวนแถวตรง")
+            )
+            if parallel:
+                ex = (rc.get("parallel_rows_sample") or [{}])[0]
+                text += (
+                    f" · แถวใหม่ซ้อนคู่เดิม {parallel} แถว (คลังไม่ตรงแถวเดิม เป้าอาจเบิ้ล)"
+                    + (f" เช่น {ex.get('emp_id')} × {ex.get('sku')} คลังเดิม "
+                       f"{'/'.join(w or 'ว่าง' for w in ex.get('old_warehouses') or [])} "
+                       f"→ ส่งไป {ex.get('new_warehouse') or 'ว่าง'}" if ex else "")
+                )
+            return {"status": "mismatch", "text": text}
         return None
     reason = str(rc.get("reason") or "")
     if reason == "send_failed":
