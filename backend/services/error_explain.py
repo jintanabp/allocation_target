@@ -113,6 +113,21 @@ CATALOG: dict[str, tuple[str, str, str]] = {
         "Target Sun ข้ามแถวนั้น หรือถูกแก้ทับหลังส่ง",
         "ให้ซุปกด「ส่งซ้ำเฉพาะแถวที่ตกหล่น」 (ส่งทับจากไฟล์เดิม ไม่สร้างแถวซ้ำ)",
     ),
+    "send_warehouse_conflict": (
+        "คลังในไฟล์ไม่ตรงกับแถวที่มีอยู่ใน Target Sun — ถ้าส่งไปเป้าจะเบิ้ล จึงยังไม่ส่ง",
+        "มีคนแก้/เพิ่มแถวใน Target Sun หลังโหลดขั้นที่ 1 หรือคลังในไฟล์ผิด",
+        "ให้ซุปกดส่งใหม่แล้วเลือก「ใช้คลังตาม Target Sun」(หีบเท่าเดิม ไม่ต้องกระจายใหม่) · ถ้าเลือกแล้วยังติด แจ้ง dev",
+    ),
+    "grain_missing": (
+        "ไม่พบข้อมูลคลังของเป้าปัจจุบัน จึงยังส่งไม่ได้",
+        "ไฟล์ข้อมูลจากขั้นที่ 1 ของทีมนี้หาย (เช่นหลัง deploy) หรือยังไม่เคยโหลดงวดนี้ — ถ้าส่งต่อต้องเดาคลังซึ่งทำให้เป้าเบิ้ลได้",
+        "ให้ซุปโหลดข้อมูลขั้นที่ 1 ใหม่ แล้วกดส่งอีกครั้ง",
+    ),
+    "parallel_rows": (
+        "มีแถวใหม่ซ้อนคู่พนักงาน×สินค้าที่มีแถวอยู่แล้วใน Target Sun (เป้าอาจเบิ้ล)",
+        "คลัง (หรือเขต/จังหวัด) ในไฟล์ไม่ตรงกับแถวเดิม Target Sun จึงสร้างแถวใหม่แทนการทับของเดิม",
+        "ดูคู่ในข้อมูลอ้างอิง แก้ใน Target Sun ให้เหลือเป้าก้อนเดียว แล้วแจ้ง dev ตรวจว่าคลังในไฟล์มาจากไหน",
+    ),
     "readback_mismatch": (
         "ยอดที่ลงจริงใน Target Sun ไม่ตรงกับไฟล์",
         "Target Sun ข้ามหรือปฏิเสธบางแถวโดยตอบว่าสำเร็จ",
@@ -207,11 +222,12 @@ _GENERIC = (
 _LIST_KEYS = (
     "mismatches", "diffs", "drifts", "rows", "employees", "sku_total_checks",
     "skus", "unreadable_sup_ids", "exclude_skus", "partial", "unlanded_sample", "shrinking",
+    "parallel_rows_sample", "conflicts",
 )
 _SCALAR_KEYS = (
     "sup_id", "sup_ids", "mismatch_count", "diff_count", "diff_boxes", "drift_count",
     "row_count", "missing_sku_count", "before_count", "after_count", "expected_new_rows",
-    "unexpected_extra_rows", "unlanded_count", "upstream_status", "import_url",
+    "unexpected_extra_rows", "unlanded_count", "parallel_rows_count", "conflict_count", "upstream_status", "import_url",
 )
 
 
@@ -219,7 +235,8 @@ def _compact(item: Any) -> Any:
     if isinstance(item, dict):
         keep = ("sku", "emp_id", "row", "reason", "sup_id", "sending_boxes", "expected_boxes",
                 "loaded_boxes", "current_boxes", "diff", "sent", "in_targetsun", "teams",
-                "allocated_sum", "warehouse_code", "boxes")
+                "allocated_sum", "warehouse_code", "boxes", "new_warehouse", "old_warehouses",
+                "old_boxes", "leftover_boxes")
         return {k: item[k] for k in keep if k in item}
     return item
 

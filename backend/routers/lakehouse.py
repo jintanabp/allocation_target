@@ -83,6 +83,8 @@ def _send_result_explain(send_status: str, ts: dict, rb: dict, rc: dict) -> dict
         }))
     if int(rc.get("unlanded_count") or 0) > 0:
         found.append(explain("unlanded_rows", rc))
+    elif int(rc.get("parallel_rows_count") or 0) > 0:
+        found.append(explain("parallel_rows", rc))
     elif rc.get("checked") and rc.get("ok") is False:
         found.append(explain("row_count_mismatch", rc))
     elif rc.get("checked") is False and send_status in ("ok", "partial"):
@@ -150,6 +152,9 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
             )
             level = "error"
             caveats.append("จำนวนแถวไม่ตรงที่คาด")
+            if int(rc.get("parallel_rows_count") or 0) > 0:
+                rc_note += f" · ⚠ แถวใหม่ซ้อนคู่เดิม {rc.get('parallel_rows_count')} แถว (คลังไม่ตรงแถวเดิม)"
+                caveats.append("แถวใหม่ซ้อนคู่เดิม")
         elif rc.get("checked") is False and ok:
             rc_note = f" · ตรวจจำนวนแถวหลังส่งไม่ได้ ({rc.get('reason') or '-'})"
         # แถวที่ "สร้างใหม่" เพราะปลายทางไม่เคยมีคู่นี้ (dims_inferred) — เสี่ยงคลัง
@@ -246,6 +251,8 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
                 "row_count_after": rc.get("after_count"),
                 "row_count_expected_new": rc.get("expected_new_rows"),
                 "row_count_unexpected_extra": rc.get("unexpected_extra_rows"),
+                "row_count_parallel": rc.get("parallel_rows_count"),
+                "row_count_parallel_sample": (rc.get("parallel_rows_sample") or [])[:10],
                 "new_rows_count": new_rows,
                 "new_rows_with_boxes_count": new_rows_boxes,
                 "stale_rows_cleared_count": stale_cleared,

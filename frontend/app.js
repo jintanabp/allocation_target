@@ -9743,6 +9743,62 @@ let _staleTargetChunks = [];
  *
  * @returns {Promise<void>} resolve เมื่อปิดกล่อง
  */
+/**
+ * ด่านคลังก่อนส่ง (409 send_warehouse_conflict) — Target Sun ตอนนี้มีแถวของคู่นี้คนละคลัง
+ * กับไฟล์ ส่งไปเป้าจะเบิ้ล · ให้เลือก「ใช้คลังตาม Target Sun」: หีบของทุกคู่เท่าเดิม
+ * (ไม่ต้องโหลดขั้นที่ 1 หรือกระจายใหม่ ค่าที่แก้มือไว้ไม่หาย) แค่แตกลงแถวที่มีอยู่จริง
+ * คืน true = ใช้คลังตาม Target Sun แล้วส่งต่อ
+ */
+function _confirmWarehouseConflictBeforeSend(chunks) {
+  const whTxt = (w) => (String(w || "").trim() ? escH(w) : "ว่าง");
+  const rowsTxt = (rows) => (rows || []).map((r) =>
+    `คลัง ${whTxt(r.warehouse)} ${(Number(r.boxes) || 0).toLocaleString("th-TH")} หีบ`).join(" + ");
+  const multi = chunks.length > 1;
+  const SHOW = 30;
+  const groups = chunks.map(({ supId, detail }) => {
+    const list = Array.isArray(detail?.conflicts) ? detail.conflicts : [];
+    const total = Number(detail?.conflict_count) || list.length;
+    const items = list.slice(0, SHOW).map((c) => {
+      const sku = String(c.sku || "");
+      const info = (S.skus || []).find((x) => String(x.sku).trim() === sku) || {};
+      const pname = _skuDisplayName(info);
+      const emp = (S.employees || []).find((e) => String(e.emp_id).trim() === String(c.emp_id).trim());
+      return `<div class="shortfall-sku"><div class="shortfall-sku__head"><div>`
+        + `<strong>${escH(c.emp_id)}</strong>${emp?.emp_name ? ` ${escH(emp.emp_name)}` : ""} · `
+        + `<code class="shortfall-sku__code">${escH(sku)}</code>`
+        + (pname ? ` <span class="shortfall-sku__name">${escH(pname)}</span>` : "")
+        + `<div class="shortfall-sku__nums">ใน Target Sun ตอนนี้: <strong>${rowsTxt(c.targetsun_rows)}</strong></div>`
+        + `<div class="shortfall-sku__nums">ไฟล์จะส่ง: ${rowsTxt(c.file_rows)}</div>`
+        + `</div></div></div>`;
+    }).join("");
+    const more = total - Math.min(list.length, SHOW);
+    return `<div style="margin-bottom:10px;">`
+      + (multi ? `<strong>ทีม ${escH(supId)} (${total.toLocaleString("th-TH")} คู่)</strong>` : "")
+      + items
+      + (more > 0 ? `<div class="shortfall-sku__nums">… อีก ${more.toLocaleString("th-TH")} คู่</div>` : "")
+      + `</div>`;
+  }).join("");
+  const n = chunks.reduce((s, c) => s + (Number(c.detail?.conflict_count) || 0), 0);
+  return new Promise((resolve) => {
+    let decided = false;
+    const done = (v) => { if (decided) return; decided = true; resolve(v); };
+    _showInfoModal({
+      title: "คลังในไฟล์ไม่ตรงกับ Target Sun",
+      bodyHtml:
+        `<p style="margin:0 0 8px;text-align:left;">พบ <strong>${n.toLocaleString("th-TH")} คู่</strong>พนักงาน×สินค้า `
+        + `ที่ Target Sun มีแถวอยู่แล้วคนละคลังกับไฟล์ — ถ้าส่งไปตามนี้ <strong style="color:var(--red);">เป้าจะเบิ้ล</strong> `
+        + `(แถวเดิมไม่ถูกทับ)</p>`
+        + `<p style="margin:0 0 10px;text-align:left;">กด「ใช้คลังตาม Target Sun」ระบบจะส่งหีบจำนวนเดิมของแต่ละคู่ `
+        + `ลงคลังที่มีอยู่ใน Target Sun แทน <strong>ไม่ต้องโหลดใหม่หรือกระจายใหม่</strong> ตัวเลขที่แก้เองไว้ไม่หาย</p>`
+        + groups,
+      primaryLabel: "ใช้คลังตาม Target Sun แล้วส่งต่อ",
+      onPrimary: () => done(true),
+      secondaryLabel: "ยังไม่ส่ง",
+      onSecondary: () => done(false),
+    });
+  });
+}
+
 function _confirmStaleTargetBeforeSend(chunks) {
   _staleTargetChunks = Array.isArray(chunks) ? chunks : [];
   try { syncStep3ReviewNotes(); } catch (e) { /* แผงยังไม่พร้อมก็ไม่เป็นไร */ }
@@ -9836,7 +9892,20 @@ function _rowCountIssueHtml({ supId, rc }) {
     + ` → หลัง <strong>${Number(rc.after_count).toLocaleString("th-TH")}</strong> แถว `
     + `(คาดแถวใหม่ ${Number(rc.expected_new_rows).toLocaleString("th-TH")}) `
     + `<strong class="${extra > 0 ? "rx-up" : "rx-down"}">ส่วนเกิน ${sign}${extra.toLocaleString("th-TH")}</strong>`
+    + _parallelRowsHtml(rc)
     + `</div></div></div></div>`;
+}
+
+/** แถวใหม่ที่ซ้อนคู่เดิมคนละคลัง — จำนวนแถวรวมอาจตรง แต่เป้าของคู่นั้นเบิ้ล */
+function _parallelRowsHtml(rc) {
+  const n = Number(rc.parallel_rows_count) || 0;
+  if (!n) return "";
+  const ex = (rc.parallel_rows_sample || []).slice(0, 5).map((p) =>
+    `<div>${escH(p.emp_id)} × <code>${escH(p.sku)}</code> คลังเดิม `
+    + `${escH((p.old_warehouses || []).map((w) => w || "ว่าง").join("/"))} → ส่งไป ${escH(p.new_warehouse || "ว่าง")}</div>`
+  ).join("");
+  return `<div><strong class="rx-up">แถวใหม่ซ้อนคู่เดิม ${n.toLocaleString("th-TH")} แถว</strong>`
+    + ` (คลังไม่ตรงแถวเดิม เป้าอาจเบิ้ล — ตรวจใน Target Sun)${ex}</div>`;
 }
 
 function _showReadbackMismatchModal(issues, rowCountIssues = [], rowCountTotal = null, extraNoteHtml = "") {
@@ -9878,7 +9947,9 @@ function _showReadbackMismatchModal(issues, rowCountIssues = [], rowCountTotal =
     : "";
   const rcIntroHtml = rowCountIssues.length
     ? `<p style="margin:${issues.length ? "10px" : "0"} 0 0;text-align:left;line-height:1.7;color:var(--red);">`
-      + `<strong>จำนวนแถวจริงเพิ่มขึ้นไม่ตรงกับที่คาด — อาจมีแถวซ้ำเกิดขึ้นใน Target Sun</strong></p>`
+      + `<strong>${rowCountIssues.some((r) => Number(r.rc?.parallel_rows_count) > 0)
+        ? "มีแถวใหม่ซ้อนคู่เดิมคนละคลัง หรือจำนวนแถวไม่ตรงที่คาด — อาจมีแถวซ้ำ/เป้าเบิ้ลใน Target Sun"
+        : "จำนวนแถวจริงเพิ่มขึ้นไม่ตรงกับที่คาด — อาจมีแถวซ้ำเกิดขึ้นใน Target Sun"}</strong></p>`
     : "";
   _showInfoModal({
     title,
@@ -10601,6 +10672,8 @@ async function _doLakehouseUploadInner() {
     const pendingMismatch = [];
     const pendingUnverifiable = [];
     const pendingStale = [];
+    const pendingWarehouse = [];
+    let confirmedTargetSunWarehouse = false;
 
     for (let i = 0; i < supIds.length; i++) {
       const supId = supIds[i];
@@ -10622,6 +10695,7 @@ async function _doLakehouseUploadInner() {
       pendingMismatch.length = 0;
       pendingUnverifiable.length = 0;
       pendingStale.length = 0;
+      pendingWarehouse.length = 0;
 
       for (let i = 0; i < todo.length; i++) {
         const job = todo[i];
@@ -10662,6 +10736,11 @@ async function _doLakehouseUploadInner() {
         }
         if (!prepRes.ok && prep?.detail?.code === "send_target_stale") {
           pendingStale.push({ supId: job.supId, detail: prep.detail });
+          continue;
+        }
+        // resolvable=false = ใช้คลังตาม Target Sun แล้วยังไม่ตรง → ตกไปเป็น error ข้างล่าง
+        if (!prepRes.ok && prep?.detail?.code === "send_warehouse_conflict" && prep.detail.resolvable) {
+          pendingWarehouse.push({ supId: job.supId, detail: prep.detail });
           continue;
         }
 
@@ -10724,6 +10803,19 @@ async function _doLakehouseUploadInner() {
         // ไม่ต้องเก็บ merged ไว้เอง — รอบถัดไปที่เตรียมสำเร็จ server จะคืน shortfall
         // ชุดเดียวกันกลับมาใน prep.shortfall แล้วเก็บลง shortfallBySup รายทีม
         jobs.forEach((j) => { if (!j.token) j.basePayload.confirm_manual_topup = true; });
+        continue;
+      }
+      if (pendingWarehouse.length) {
+        if (!confirmedTargetSunWarehouse) {
+          popGlobalBusy();
+          const useTs = await _confirmWarehouseConflictBeforeSend(pendingWarehouse);
+          pushGlobalBusy(UX.busySendStep1, UX.busySendTargetHint);
+          if (!useTs) return;
+          confirmedTargetSunWarehouse = true;
+        }
+        // ถามครั้งเดียวใช้ทุกทีมในรอบนี้ (รวมทีมที่ต้องเตรียมใหม่ทีหลัง เช่นหลังตัด SKU ระดับชุด)
+        // server ที่ได้ธงนี้แล้วยังไม่ตรงจะตอบ resolvable=false = ไม่วนซ้ำ
+        jobs.forEach((j) => { if (!j.token) j.basePayload.use_targetsun_warehouse = true; });
         continue;
       }
       if (pendingStale.length) {
@@ -11047,6 +11139,13 @@ async function doLakehouseValidateOnly() {
           lines.push(
             `${supId}: ⚠️ เป้าจะขาด ${(Number(d.shortfall_boxes) || 0).toLocaleString("th-TH")} หีบ `
             + `ใน ${(Number(d.shortfall_skus) || 0).toLocaleString("th-TH")} SKU`
+          );
+          continue;
+        }
+        if (prep?.detail?.code === "send_warehouse_conflict") {
+          lines.push(
+            `${supId}: ⚠️ ${(Number(prep.detail.conflict_count) || 0).toLocaleString("th-TH")} คู่คลังไม่ตรงกับ Target Sun `
+            + `— ตอนกดส่งจะถามให้ใช้คลังตาม Target Sun (ไม่ต้องกระจายใหม่)`
           );
           continue;
         }
@@ -16890,6 +16989,14 @@ async function adminLoadRowCountChecks() {
           : `<span class="admin-log-level admin-log-level--info">ปกติ</span>`;
       const extra = Number(r.unexpected_extra_rows);
       const extraTxt = Number.isFinite(extra) ? `${extra > 0 ? "+" : ""}${extra.toLocaleString("th-TH")}` : "—";
+      // บันทึกก่อน 30 ก.ย. 2026 ไม่มีช่องนี้ = "—" (ไม่ได้ตรวจ ไม่ใช่ 0)
+      const par = r.parallel_rows == null ? NaN : Number(r.parallel_rows);
+      const parTip = (r.parallel_rows_sample || []).slice(0, 5).map((p) =>
+        `${p.emp_id} × ${p.sku}: คลังเดิม ${(p.old_warehouses || []).map((w) => w || "ว่าง").join("/")} → ส่งไป ${p.new_warehouse || "ว่าง"}`
+      ).join("\n");
+      const parHtml = !Number.isFinite(par) ? "—"
+        : par > 0 ? `<strong class="rx-up" title="${escapeHtml(parTip)}">${par.toLocaleString("th-TH")}</strong>`
+          : "0";
       return `<tr${isIssue ? ' class="admin-row--issue"' : ""}>
         <td>${ts}</td>
         <td>${escapeHtml(String(r.sup_id || "—"))}</td>
@@ -16898,12 +17005,13 @@ async function adminLoadRowCountChecks() {
         <td>${Number.isFinite(Number(r.after_count)) ? Number(r.after_count).toLocaleString("th-TH") : "—"}</td>
         <td>${Number.isFinite(Number(r.expected_new_rows)) ? Number(r.expected_new_rows).toLocaleString("th-TH") : "—"}</td>
         <td>${escapeHtml(extraTxt)}</td>
+        <td>${parHtml}</td>
         <td>${statusHtml}</td>
       </tr>`;
     }).join("");
   } catch (e) {
     if (countEl) countEl.textContent = "";
-    tbody.innerHTML = `<tr><td colspan="8" class="admin-empty">${escapeHtml(e.message || String(e))}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="admin-empty">${escapeHtml(e.message || String(e))}</td></tr>`;
   }
 }
 

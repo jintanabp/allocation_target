@@ -746,28 +746,55 @@ def _expand_allocations_with_tga_grain(
 
     out: list[dict] = []
 
-    # แปลง DataFrame iterate — เก็บ warehouse จากคำขอเป็น hint
-    for _, arow in df_alloc.iterrows():
-        e = str(arow["emp_id"]).strip()
-        sku = str(arow["sku"]).strip()
-        boxes_val = pd.to_numeric(arow.get("allocated_boxes", 0), errors="coerce")
-        boxes = 0 if pd.isna(boxes_val) else int(round(float(boxes_val)))
+    def _grain_row(r, b: int) -> dict:
+        return {
+            "emp_id": e,
+            "sku": sku,
+            "allocated_boxes": int(b),
+            "salestype": _cell_str(r.get("salestype", "")),
+            "divisioncode": _cell_str(r.get("divisioncode", "")),
+            "areacode": _areacode_str(r.get("areacode", "")),
+            "provincecode": _cell_str(r.get("provincecode", "")),
+            "warehouse_code": _cell_str(r.get("warehouse_code", "")),
+        }
 
+    def _spread(rows: pd.DataFrame, boxes: int) -> None:
+        """แตกหีบลงแถว grain ตามสัดส่วนเป้าเดิม — แถวเป้า 0 ได้ 0 (ให้ครบ dim ตอนนำเข้า)
+        ถ้าทุกแถวเป็น 0 เกลี่ยเท่า ๆ กัน"""
+        pos = rows[rows["qty"] > 0]
+        if pos.empty:
+            for (_, r), b in zip(rows.iterrows(), _integer_split_by_weights([1.0] * len(rows), boxes)):
+                out.append(_grain_row(r, b))
+            return
+        for (_, r), b in zip(pos.iterrows(), _integer_split_by_weights(pos["qty"].astype(float).tolist(), boxes)):
+            out.append(_grain_row(r, b))
+        for _, r in rows[rows["qty"] <= 0].iterrows():
+            out.append(_grain_row(r, 0))
+
+    def _boxes(arow) -> int:
+        v = pd.to_numeric(arow.get("allocated_boxes", 0), errors="coerce")
+        return 0 if pd.isna(v) else int(round(float(v)))
+
+    has_wh = "warehouse_code" in df_alloc.columns
+    for (e, sku), grp in df_alloc.groupby(
+        [df_alloc["emp_id"].astype(str).str.strip(), df_alloc["sku"].astype(str).str.strip()],
+        sort=False,
+    ):
         sub = grain_lookup.get((e, sku), pd.DataFrame())
 
-        # ไม่พบใน cache → เก็บบรรทัดเดิมให้ชั้นถัดไปเติม dim จาก Fabric
-        # (หรือเติมจากแถวอื่นของพนักงานคนเดียวกัน เมื่อเปิด infer_missing_dims)
         if sub.empty:
-            inferred = emp_dims.get(e) if emp_dims else None
+            # ไม่พบใน cache → เก็บบรรทัดเดิมให้ชั้นถัดไปเติม dim จาก Fabric
+            # (หรือเติมจากแถวอื่นของพนักงานคนเดียวกัน เมื่อเปิด infer_missing_dims)
             # คู่ใหม่ที่ไม่เคยมีเป้าใน TGA เลยสักแถว — ไม่มีคลังจริงให้เชื่อ ผู้ใช้ตัดสินใจ
             # (22 ก.ย. 2026) ว่า "คู่ใหม่ควรได้คลังว่างไว้ก่อนดีกว่า" แทนที่จะเดาจากคลังของ
             # แถวอื่นของพนักงานคนเดียวกัน หรือจากประวัติขาย 2 ปี (wh_req เดิม) — ว่างไว้ชัดเจน
             # ดีกว่าเดาผิดแล้วชนคีย์ upsert (รวม WAREHOUSECODE) ภายหลังจนเป้าพองซ้อน
+            inferred = emp_dims.get(e) if emp_dims else None
             out.append(
                 {
                     "emp_id": e,
                     "sku": sku,
-                    "allocated_boxes": boxes,
+                    "allocated_boxes": sum(_boxes(a) for _, a in grp.iterrows()),
                     "salestype": inferred["salestype"] if inferred else "",
                     "divisioncode": inferred["divisioncode"] if inferred else "",
                     "areacode": inferred["areacode"] if inferred else "",
@@ -778,61 +805,34 @@ def _expand_allocations_with_tga_grain(
             )
             continue
 
-        sub_pos = sub[sub["qty"] > 0]
-        dims_only = sub[sub["qty"] <= 0]
+        # หน้าจอแยกคลัง (พนักงาน wh_split) ส่งคลังมาด้วย — หีบรายคลังที่ผู้ใช้กระจาย/แก้มือต้อง
+        # ลงคลังนั้นตรง ๆ (ผู้ใช้ขอ 30 ก.ย. 2026) เดิมไม่สนคลังในคำขอ แตกทุกแถวตามสัดส่วน grain
+        # ใหม่ จอ W1=8/W2=2 จึงถูกส่งเป็น 5/5 · ใช้เฉพาะคลังที่มีอยู่ในเป้าปัจจุบัน (grain) ของคู่นี้
+        # คลังที่ grain ไม่มี = ไม่เชื่อ (กันแถวซ้อน) ไปลงแถวที่ไม่มีใครระบุแทน
+        sub_wh = sub["warehouse_code"].map(_cell_str)
+        grain_whs = set(sub_wh)
+        req_wh = (
+            [_cell_str(w) for w in grp["warehouse_code"]] if has_wh else [""] * len(grp)
+        )
+        split_mode = any(w and w in grain_whs for w in req_wh)
+        if not split_mode:
+            _spread(sub, sum(_boxes(a) for _, a in grp.iterrows()))
+            continue
 
-        if not sub_pos.empty:
-            wvals = sub_pos["qty"].astype(float).tolist()
-            split = _integer_split_by_weights(wvals, boxes)
-            for (_, r), b in zip(sub_pos.iterrows(), split):
-                wh = _cell_str(r.get("warehouse_code", ""))
-                out.append(
-                    {
-                        "emp_id": e,
-                        "sku": sku,
-                        "allocated_boxes": int(b),
-                        "salestype": _cell_str(r.get("salestype", "")),
-                        "divisioncode": _cell_str(r.get("divisioncode", "")),
-                        "areacode": _areacode_str(r.get("areacode", "")),
-                        "provincecode": _cell_str(r.get("provincecode", "")),
-                        "warehouse_code": wh,
-                    }
-                )
-
-            # แถว TGA เดิมที่ qty = 0: เขียน QUANTITYCASE = 0 เพื่อให้ครบ dim ตอนนำเข้ากลับ
-            if not dims_only.empty:
-                for _, r in dims_only.iterrows():
-                    wh = _cell_str(r.get("warehouse_code", ""))
-                    out.append(
-                        {
-                            "emp_id": e,
-                            "sku": sku,
-                            "allocated_boxes": 0,
-                            "salestype": _cell_str(r.get("salestype", "")),
-                            "divisioncode": _cell_str(r.get("divisioncode", "")),
-                            "areacode": _areacode_str(r.get("areacode", "")),
-                            "provincecode": _cell_str(r.get("provincecode", "")),
-                            "warehouse_code": wh,
-                        }
-                    )
-        else:
-            # เฉพาะแถวเป้ารวมเป็น 0 ใน TGA → เกลี่ยหีบเท่า ๆ กันบนทุกความเป็นไปได้ของ dim
-            wvals = [1.0] * len(sub)
-            split = _integer_split_by_weights(wvals, boxes)
-            for (_, r), b in zip(sub.iterrows(), split):
-                wh = _cell_str(r.get("warehouse_code", ""))
-                out.append(
-                    {
-                        "emp_id": e,
-                        "sku": sku,
-                        "allocated_boxes": int(b),
-                        "salestype": _cell_str(r.get("salestype", "")),
-                        "divisioncode": _cell_str(r.get("divisioncode", "")),
-                        "areacode": _areacode_str(r.get("areacode", "")),
-                        "provincecode": _cell_str(r.get("provincecode", "")),
-                        "warehouse_code": wh,
-                    }
-                )
+        matched = {w for w in req_wh if w in grain_whs}
+        touched = pd.Series(False, index=sub.index)
+        for (_, arow), w in zip(grp.iterrows(), req_wh):
+            if w in grain_whs:
+                mask = sub_wh.eq(w)
+            else:
+                mask = ~sub_wh.isin(matched)
+                if not mask.any():
+                    mask = pd.Series(True, index=sub.index)
+            touched |= mask
+            _spread(sub[mask], _boxes(arow))
+        # แถวของคู่นี้ที่ไม่มีใครระบุ ส่ง 0 ทับ — ไม่งั้นค้างเลขเก่าใน Target Sun เป้าเบิ้ล
+        for _, r in sub[~touched].iterrows():
+            out.append(_grain_row(r, 0))
 
     return pd.DataFrame(out), True
 
@@ -1695,6 +1695,116 @@ def unlanded_rows(file_qty_by_key: dict, live_qty_by_key: dict) -> list[dict]:
     return out
 
 
+def parallel_rows_of_existing_pairs(
+    before_keys: set, file_keys: set, live_qty_by_key: dict | None = None
+) -> list[dict]:
+    """
+    แถวใหม่ในไฟล์ที่ "ซ้อน" คู่พนักงาน×สินค้าที่มีแถวอยู่แล้วใน Target Sun (ผู้ใช้ขอ 30 ก.ย. 2026)
+
+    คีย์ upsert รวม WAREHOUSECODE — ถ้าคู่เดิมมีแถวคลัง A (หรือคลังว่าง) แล้วไฟล์ส่งคลัง B
+    มา Target Sun จะสร้างแถวใหม่ ไม่ทับของเดิม คู่นั้นจึงมีเป้าสองก้อน (SL453/SL380)
+    ตัวนับ "ส่วนเกิน" มองไม่เห็นเพราะแถวใหม่นี้อยู่ใน "คาดแถวใหม่" ด้วย
+
+    นับเฉพาะเมื่อแถวเดิมของคู่นั้น **ไม่อยู่ในไฟล์** — ถ้าไฟล์ส่งแถวเดิมไปด้วย (เช่นกติกา
+    บังคับคลังส่ง 0 ทับคลังเก่า) ยอดคุมได้ ไม่ใช่เป้าเบิ้ล
+    """
+    before_keys = set(before_keys or set())
+    file_keys = set(file_keys or set())
+    old_by_pair: dict[tuple[str, str], list[str]] = {}
+    for k in before_keys - file_keys:
+        sku, emp = (k.split("|") + ["", ""])[:2]
+        old_by_pair.setdefault((sku, emp), []).append(k)
+    out = []
+    for k in sorted(file_keys - before_keys):
+        sku, emp = (k.split("|") + ["", ""])[:2]
+        olds = old_by_pair.get((sku, emp))
+        if not olds:
+            continue
+        out.append({
+            "key": k,
+            "sku": sku,
+            "emp_id": emp,
+            "new_warehouse": k.split("|")[-1],
+            "old_keys": sorted(olds),
+            "old_warehouses": sorted({o.split("|")[-1] for o in olds}),
+            "old_boxes": (
+                sum(int(live_qty_by_key.get(o) or 0) for o in olds)
+                if live_qty_by_key is not None else None
+            ),
+        })
+    return out
+
+
+def _pair_of_key(k: str) -> tuple[str, str]:
+    sku, emp = (str(k).split("|") + ["", ""])[:2]
+    return sku, emp
+
+
+def warehouse_conflicts(live_qty_by_key: dict, file_qty_by_key: dict) -> list[dict]:
+    """
+    ด่านก่อนส่ง: คู่พนักงาน×สินค้าที่ไฟล์จะทำให้ Target Sun มีเป้าเบิ้ล (ผู้ใช้ขอ 30 ก.ย. 2026)
+
+    คีย์ upsert รวมคลัง — แถวของคู่นี้ที่อยู่ใน Target Sun ตอนนี้แต่ **ไม่อยู่ในไฟล์** จะค้าง
+    อยู่อย่างนั้น ยอดของคู่นี้จึงเป็น "ไฟล์ + แถวค้าง" · ต้นเหตุปกติคือ grain ขั้นที่ 1 เก่ากว่า
+    Target Sun (มีคนแก้/เพิ่มแถวทีหลัง) หรือคลังในไฟล์ผิด
+
+    นับเป็นปัญหาเมื่อแถวค้างยังมีหีบ หรือไฟล์จะสร้างแถวใหม่ให้คู่นี้ (แถวซ้อน) — แถวค้างที่เป็น
+    0 และไฟล์ทับของเดิมครบไม่ทำให้อะไรเบิ้ล · คู่ใหม่ที่ Target Sun ไม่มีเลยไม่ใช่ปัญหา
+    """
+    live_by_pair: dict[tuple[str, str], dict[str, int]] = {}
+    for k, q in (live_qty_by_key or {}).items():
+        live_by_pair.setdefault(_pair_of_key(k), {})[k] = int(q or 0)
+    file_by_pair: dict[tuple[str, str], dict[str, int]] = {}
+    for k, q in (file_qty_by_key or {}).items():
+        file_by_pair.setdefault(_pair_of_key(k), {})[k] = int(q or 0)
+
+    out = []
+    for pair in sorted(set(file_by_pair) & set(live_by_pair)):
+        live, file = live_by_pair[pair], file_by_pair[pair]
+        leftover = set(live) - set(file)
+        if not leftover:
+            continue
+        leftover_boxes = sum(live[k] for k in leftover)
+        new_keys = set(file) - set(live)
+        if leftover_boxes <= 0 and not new_keys:
+            continue
+        sku, emp = pair
+        out.append({
+            "emp_id": emp,
+            "sku": sku,
+            "targetsun_rows": [
+                {"warehouse": k.split("|")[-1], "boxes": live[k]} for k in sorted(live)
+            ],
+            "file_rows": [
+                {"warehouse": k.split("|")[-1], "boxes": file[k]} for k in sorted(file)
+            ],
+            "leftover_boxes": leftover_boxes,
+        })
+    return out
+
+
+def live_grain_for_pairs(live_qty_by_key: dict, pairs: set) -> pd.DataFrame:
+    """
+    grain ของคู่ที่ระบุ สร้างจากแถวใน Target Sun ตอนนี้ — ใช้แทน grain ขั้นที่ 1 ของคู่นั้น
+    ตอนผู้ใช้เลือก「ใช้คลังตาม Target Sun」: หีบของคู่ไม่เปลี่ยน แค่แตกลงแถว (คลัง/เขต/จังหวัด)
+    ที่มีอยู่จริงตอนนี้ ไม่ต้องโหลดขั้นที่ 1 หรือกระจายใหม่ (ค่าที่แก้มือไว้ไม่หาย)
+    """
+    rows = []
+    for k, q in (live_qty_by_key or {}).items():
+        parts = (str(k).split("|") + [""] * 7)[:7]
+        sku, emp = parts[0], parts[1]
+        if (sku, emp) not in pairs:
+            continue
+        rows.append({
+            "emp_id": emp, "sku": sku, "qty": float(q or 0),
+            "salestype": parts[2], "divisioncode": parts[3], "areacode": parts[4],
+            "provincecode": parts[5], "warehouse_code": parts[6],
+        })
+    if not rows:
+        return pd.DataFrame()
+    return _normalize_grain_dtype(pd.DataFrame(rows))
+
+
 def verify_row_count_after_send(
     sup_id: str,
     month: int,
@@ -1740,11 +1850,16 @@ def verify_row_count_after_send(
         # แถวในไฟล์ที่ลงไม่ครบ/ไม่ตรง — ใช้ส่งซ้ำเฉพาะแถวนั้น (upsert ทับได้ ลบไม่ได้)
         # ไม่พึ่ง errors[] ของ Target Sun เพราะคืนมาแค่ 50 แถวแรก
         unlanded = unlanded_rows(file_qty_by_key or {}, after_snapshot.get("qty_by_key") or {})
+        parallel = parallel_rows_of_existing_pairs(
+            before_keys, file_keys, after_snapshot.get("qty_by_key") or {}
+        )
         result = {
             "checked": True,
-            "ok": unexpected_extra_rows == 0 and not unlanded,
+            "ok": unexpected_extra_rows == 0 and not unlanded and not parallel,
             "unlanded_count": len(unlanded),
             "unlanded_sample": unlanded[:20],
+            "parallel_rows_count": len(parallel),
+            "parallel_rows_sample": parallel[:20],
             "before_count": before_count,
             "after_count": after_count,
             "actual_new_rows": actual_new_rows,
@@ -1763,6 +1878,16 @@ def verify_row_count_after_send(
                 actual_new_rows,
                 expected_new_rows,
                 unexpected_extra_rows,
+            )
+        if parallel:
+            logger.error(
+                "แถวใหม่ซ้อนคู่เดิมใน Target Sun %s %s-%02d: %d แถว (คลังไม่ตรงแถวเดิม เป้าอาจเบิ้ล) "
+                "ตัวอย่าง %s",
+                str(sup_id or "").strip().upper(),
+                year,
+                month,
+                len(parallel),
+                [(p["emp_id"], p["sku"], p["old_warehouses"], p["new_warehouse"]) for p in parallel[:5]],
             )
         return result
     except Exception as e:
@@ -2525,6 +2650,7 @@ def _build_tga_upload_dataframe(
     *,
     drop_incomplete_rows: bool = False,
     enforce_targets: bool = False,
+    live_grain: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, int, list[dict], list[dict]]:
     """
     enforce_targets — ตรวจว่าผลรวมหีบต่อ SKU ตรงเป้าทีมหรือไม่ (409 ถ้าไม่ตรง)
@@ -2532,6 +2658,9 @@ def _build_tga_upload_dataframe(
     เปิดเฉพาะ "เส้นทางส่งจริง" เท่านั้น ห้ามเปิดกับการสร้างไฟล์เพื่อดาวน์โหลด
     เพราะผู้ใช้ต้องโหลด Excel มาตรวจได้แม้ตัวเลขยังไม่ตรง — ถ้าบล็อกตรงนั้นด้วย
     จะกลายเป็นว่ายิ่งมีปัญหายิ่งตรวจไม่ได้
+
+    live_grain — grain ของบางคู่ที่อ่านสดจาก Target Sun (live_grain_for_pairs) ใช้แทน grain
+    ขั้นที่ 1 ของคู่นั้นเท่านั้น ตัวสร้างไฟล์ยังออฟไลน์ ผู้เรียก (prepare) เป็นคนอ่านมาให้
     """
     t0 = time.perf_counter()
     rows_raw = [a.model_dump() for a in req.allocations]
@@ -2653,6 +2782,17 @@ def _build_tga_upload_dataframe(
                 _extra if grain_dg.empty
                 else pd.concat([grain_dg, _extra], ignore_index=True)
             )
+    if live_grain is not None and not live_grain.empty:
+        # ผู้ใช้เลือก「ใช้คลังตาม Target Sun」— แถวของคู่เหล่านี้ยึดของจริงตอนนี้ทั้งชุด
+        _live_pairs = set(zip(live_grain["emp_id"], live_grain["sku"]))
+        if not grain_dg.empty:
+            _keep = [
+                (e, s) not in _live_pairs
+                for e, s in zip(grain_dg["emp_id"], grain_dg["sku"].astype(str).str.strip())
+            ]
+            grain_dg = pd.concat([grain_dg[_keep], live_grain], ignore_index=True)
+        else:
+            grain_dg = live_grain.copy()
     grain_lookup = _grain_by_pair(grain_dg)
     t_grain = time.perf_counter()
 
@@ -2667,6 +2807,19 @@ def _build_tga_upload_dataframe(
         infer_missing_dims=bool(getattr(req, "allow_new_targetsun_rows", False)),
     )
     df = df_expand if grain_ok else df
+    if drop_incomplete_rows and not grain_ok:
+        # ไม่มี grain = ไม่รู้ว่าแต่ละแถวใน Target Sun ตอนนี้ใช้คลังอะไร (หรือว่าง) — ทางที่เหลือ
+        # คือเดาคลังรายคน (คลังจากแถวอื่นของคนเดียวกัน / MAX จาก tga_target_salesman_next)
+        # ซึ่งผิดกติกา "ว่างมาว่างไป มีรหัสไหนมาส่งรหัสนั้น" (ผู้ใช้ย้ำ 30 ก.ย. 2026) และคีย์
+        # upsert รวมคลัง เดาผิด = แถวใหม่ซ้อนแถวเดิม เป้าเบิ้ล (SL453/SL380) จึงไม่ส่ง
+        raise HTTPException(
+            409,
+            detail={
+                "code": "grain_missing",
+                "message": "ไม่พบข้อมูลคลังของเป้าปัจจุบันจากขั้นที่ 1 จึงยังส่งไม่ได้ (กันเป้าเบิ้ลจากคลังไม่ตรง)",
+                "hint_th": "โหลดข้อมูลขั้นที่ 1 ใหม่ แล้วกดส่งอีกครั้ง",
+            },
+        )
     df = _align_zero_allocations_to_tga_grain(
         df,
         req.sup_id,
@@ -3034,6 +3187,7 @@ def prepare_lakehouse_xlsx(
     *,
     drop_incomplete_rows: bool = False,
     enforce_targets: bool = False,
+    live_grain: pd.DataFrame | None = None,
 ) -> tuple[bytes, str, pd.DataFrame, int, list[dict], list[dict]]:
     """
     Excel รูปแบบ tga_target_salesman_next — ชีตเดียวชื่อ TGA (เหมือน alloc_*.xlsx)
@@ -3049,6 +3203,7 @@ def prepare_lakehouse_xlsx(
         req,
         drop_incomplete_rows=drop_incomplete_rows,
         enforce_targets=enforce_targets,
+        live_grain=live_grain,
     )
     t_df = time.perf_counter()
     content = _build_xlsx_bytes(df)

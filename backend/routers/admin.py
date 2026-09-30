@@ -2181,6 +2181,8 @@ def admin_targetsun_row_count_checks(
                 "after_count": ctx.get("row_count_after"),
                 "expected_new_rows": ctx.get("row_count_expected_new"),
                 "unexpected_extra_rows": ctx.get("row_count_unexpected_extra"),
+                "parallel_rows": ctx.get("row_count_parallel"),
+                "parallel_rows_sample": ctx.get("row_count_parallel_sample") or [],
             }
         )
 
