@@ -425,6 +425,7 @@ def allocate_boxes(
             locked_map,
             force_min_one,
             df_hist=df_hist,
+            zero_pairs=never_sold_zero_pairs,
         )
         # ห้ามเอาผลสุดท้ายไปทับ base_map (ผลตรวจ 28 ก.ย. 2026 §4.1-1) — เดิมทับตรงนี้
         # ป้ายเทียบประวัติจึงเทียบผลกับตัวเอง ทุกช่องได้ "ok" ทุกครั้งที่มี SKU แบ่งเท่า
@@ -808,13 +809,19 @@ def _enforce_even_skus_on_df(
     locked_map: dict | None,
     force_min_one: bool,
     df_hist: pd.DataFrame | None = None,
+    zero_pairs: set | None = None,
 ) -> pd.DataFrame:
     """
     บังคับ SKU สินค้าใหม่ให้แบ่งเท่าทุกคน (หลัง LP/greedy — กันโหมดหลัก/รองดึงไปปรับเงิน)
 
     เศษตกกับคนต้น _fair_rank (ขายสินค้านั้นมาก → เป้าเงินสูง → รหัส) ไม่ใช่คนต้นรายชื่อ (§4.1-9)
+
+    zero_pairs (I9, ผลตรวจ §4.1-8): สินค้าใหม่ที่มีคนเคยขายใน 12 เดือน — คนที่ไม่เคยขายได้ 0
+    แบ่งเท่าเฉพาะคนที่เหลือ เหมือนที่ _proportional/LP ทำไว้แล้ว · เดิมขั้นนี้แบ่งใหม่ให้ทุกคน
+    ทับผลนั้นทิ้ง · force_min_one ยังชนะ (คนไม่เคยขายได้ 1 หีบ เหมือน _proportional)
     """
     locked_map = locked_map or {}
+    zero_pairs = zero_pairs or set()
     if not even_skus:
         return df_out
     hist_lookup = _hist_lookup(df_hist)
@@ -880,17 +887,19 @@ def _enforce_even_skus_on_df(
         # เช่น 10 คน เป้า 10 ล็อก 3 คน คนละ 3 หีบ -> 9 + 7 = 16
         base_box = 1 if (force_min_one and total_target >= n_emps and avail >= free_n) else 0
         remaining = avail - base_box * free_n
+        # คนที่กติกาไม่เคยขายตัดทิ้งไม่ร่วมแบ่ง — ตัดจนไม่เหลือใครแปลว่าแผนผิด ปล่อยตามเดิม
+        share_emps = [e for e in free_emps if (e, sku_key) not in zero_pairs] or free_emps
         rank = _fair_rank(
-            free_emps, {e: hist_lookup.get((e, sku_key), 0.0) for e in free_emps}, yellow_by_emp
+            share_emps, {e: hist_lookup.get((e, sku_key), 0.0) for e in share_emps}, yellow_by_emp
         )
-        parts = _even_split_by_rank(remaining, free_emps, rank)
+        parts = _even_split_by_rank(remaining, share_emps, rank)
 
         for e, boxes in locked_by_emp.items():
             if boxes > 0:
                 rows.append({"emp_id": e, "sku": sku_key, "allocated_boxes": boxes})
 
         for e in free_emps:
-            boxes = base_box + parts[e]
+            boxes = base_box + parts.get(e, 0)
             if boxes > 0:
                 rows.append({"emp_id": e, "sku": sku_key, "allocated_boxes": boxes})
 
