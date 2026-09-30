@@ -4606,6 +4606,8 @@ function applyDataPayload(data) {
   S.histWindowMonths = 3;
   S.skus = data.skus;
   _bumpSkusVersion();
+  // โหลดเป้าชุดใหม่แล้ว — รายการ "เป้าเปลี่ยนหลังโหลด" ของรอบก่อนไม่ใช่ความจริงอีกต่อไป
+  _staleTargetChunks = [];
   S.employees = (data.employees || []).map(_enrichEmployeeAllocFlags);
   S.whExpanded = new Set();
   for (const e of S.employees) {
@@ -6514,6 +6516,9 @@ async function _doOptimize(lockedEdits = [], opts = {}) {
         const emps = grouped.get(supId) || [];
         const yellowTargets = emps.map((e) => _yellowTargetPayloadRow(e)).filter(Boolean);
         if (!yellowTargets.length) continue;
+        // กระจายเฉพาะบางสินค้า: ทีมที่ไม่มีสินค้าที่เลือกในเป้าเลย ข้ามไป ไม่ใช่ "กระจายไม่สำเร็จ"
+        const teamTargets = (S.targetBoxesBySup || {})[String(supId).toUpperCase()];
+        if (onlySkus.length && teamTargets && !onlySkus.some((k) => Number(teamTargets[k]) > 0)) continue;
         qs("#runSub").textContent =
           `กำลังกระจาย ${supId} (${i + 1}/${supOrder.length})…`;
         try {
@@ -7371,7 +7376,10 @@ function syncStep3ReviewNotes() {
   const residuals = Array.isArray(S.rebalanceResiduals) ? S.rebalanceResiduals : [];
   if (residuals.length) {
     const skuList = residuals.slice(0, 8).map((r) => `${r.sku} (เป้า ${r.target} ได้ ${r.actual})`).join(", ");
-    lines.push(`หลังเกลี่ยอัตโนมัติ ยังไม่ตรงเป้าหีบ: ${skuList}${residuals.length > 8 ? " …" : ""}`);
+    lines.push(
+      `หลังเกลี่ยอัตโนมัติ ยังไม่ตรงเป้าหีบ: ${skuList}${residuals.length > 8 ? " …" : ""}`
+      + " — ส่ง Target Sun ไม่ได้จนกว่ายอดจะตรงพอดี (ลดช่องที่แก้มือไว้ หรือกดคำนวณใหม่)"
+    );
   }
   const farSkus = new Set();
   for (const a of S.allocations || []) {
@@ -7380,6 +7388,12 @@ function syncStep3ReviewNotes() {
   if (farSkus.size) {
     const list = [...farSkus].slice(0, 12).join(", ");
     lines.push(`SKU ที่เบี่ยงจากประวัติมาก (⚠) — ขอให้รีเช็ค: ${list}${farSkus.size > 12 ? " …" : ""}`);
+  }
+  if (_staleTargetChunks.length) {
+    const n = _staleTargetChunks.reduce((s, c) => s + (Number(c.detail?.drift_count) || 0), 0);
+    lines.push(
+      `เป้าใน Target Sun เปลี่ยนหลังโหลดข้อมูล ${n} สินค้า — ส่งไม่ได้จนกว่าจะโหลดขั้นที่ 1 ใหม่แล้วกระจายอีกครั้ง`
+    );
   }
   const neg = _negGrowthOffenders();
   if (neg.length) {
@@ -7392,7 +7406,12 @@ function syncStep3ReviewNotes() {
     return;
   }
   el.style.display = "block";
-  el.innerHTML = `<strong>📋 ขอให้รีเช็ค</strong><ul>${lines.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>`;
+  // เปิดรายการสินค้าที่เป้าเปลี่ยนซ้ำได้ — กดไปดูคอลัมน์หนึ่งแล้วกล่องปิด ต้องกลับมาดูตัวถัดไปได้
+  const staleBtn = _staleTargetChunks.length
+    ? `<button type="button" class="shortfall-jump" style="margin-top:4px;"`
+      + ` onclick="_showStaleTargetNotice()">ดูรายการสินค้าที่เป้าเปลี่ยน ▸</button>`
+    : "";
+  el.innerHTML = `<strong>📋 ขอให้รีเช็ค</strong><ul>${lines.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>${staleBtn}`;
 }
 
 /** แบนเนอร์ผลลัพธ์ — สรุป SKU หลัก/รอง */
@@ -9247,10 +9266,12 @@ function _lakehouseBrandSkus(brand) {
 
 /**
  * @param {object} [opts]
- * @param {boolean} [opts.confirmTargetMismatch]
- *   ส่งเป็น true เฉพาะ "เส้นทางส่งจริงที่ผู้ใช้กดยืนยันแล้ว" เท่านั้น
- *   ห้ามอ่านจาก S.* เพราะค่าจะค้างข้ามการเรียก แล้วเส้นทางอื่น
- *   (ตรวจอย่างเดียว / ดาวน์โหลด Excel) จะพลอยข้ามการเช็คเป้าไปด้วย
+ * @param {string} [opts.sendBatchId]
+ *   รหัสรอบการส่งรวมหลายทีม — มีค่า = ยอดรายทีมต่างจากเป้าทีมได้ (I7)
+ *   แต่ยอดรวมทั้งชุดต่อ SKU ต้องตรงเป้ารวมพอดี (server ตรวจที่ verify-send-batch
+ *   และไม่ยอมส่ง token ของชุดที่ยังไม่ผ่าน) · ว่าง = ส่งทีมเดียว ต้องตรงเป้าทีมพอดี
+ *
+ *   ไม่มีทางยืนยันข้ามเรื่องยอดหีบแล้ว (29 ก.ย. 2026) — ห้ามขาดหรือเกินแม้แต่หีบเดียว
  */
 function _lakehouseExportPayload(supId = null, brand = null, opts = {}) {
   const sid = supId || S.supId;
@@ -9265,10 +9286,8 @@ function _lakehouseExportPayload(supId = null, brand = null, opts = {}) {
     brand_filter: brandFilter,
     sku_filter: skuFilter,
     allocations: _lakehouseAllocationsFromStep3(_lakehouseMatrixFilterSup(sid), brandFilter, skuFilter),
-    // ผู้ใช้ตรวจรายการที่ไม่ตรงเป้าทีมแล้วกดยืนยัน (ดู _confirmTargetMismatchBeforeSend)
-    // ถ้าไม่ได้ยืนยัน server จะตอบ 409 พร้อมรายการ SKU ที่ไม่ตรง
-    confirm_target_mismatch: !!opts.confirmTargetMismatch,
-    // คนละ flag โดยตั้งใจ — อันนี้แปลว่า "รับทราบว่าบางคู่ไม่มีใน Target Sun
+    send_batch_id: opts.sendBatchId || null,
+    // เรื่อง master data ไม่ใช่ยอดหีบ — "รับทราบว่าบางคู่ไม่มีใน Target Sun
     // และจะไปเพิ่มจำนวนเองที่นั่น" (ดู _confirmManualTopupBeforeSend)
     confirm_manual_topup: !!opts.confirmManualTopup,
     // ยอมให้สร้างแถวเป้าใหม่เสมอ — Target Sun รองรับ insert อยู่แล้ว
@@ -9664,11 +9683,10 @@ function _confirmServerMismatchBeforeSend(chunks) {
               + `แปลว่าเป้า TGA เปลี่ยนหลังจากคุณโหลดข้อมูลขั้นที่ 1 `
               + `กรณีนี้ควร<strong>โหลดขั้นที่ 1 ใหม่แล้วกระจายอีกครั้ง</strong> ไม่ควรกดส่งเลย</p>`
             : `<p style="margin:10px 0 0;text-align:left;line-height:1.7;color:var(--text-2);">`
-              + `ถ้าตั้งใจย้ายหีบข้ามทีมในโหมดรวมภาค กดส่งต่อได้ — แต่ถ้าไม่ได้ตั้งใจ `
-              + `แปลว่าเป้าเปลี่ยนหลังจากคุณโหลดข้อมูล ให้โหลดขั้นที่ 1 ใหม่ก่อน</p>`)
+              + `ยอดหีบต้องเท่าเป้าพอดี ระบบจึง<strong>ไม่ส่ง</strong> — ตรวจช่องที่แก้มือไว้ `
+              + `หรือถ้าเป้าเปลี่ยนหลังจากคุณโหลดข้อมูล ให้โหลดขั้นที่ 1 ใหม่แล้วกระจายอีกครั้ง</p>`)
         + `<div class="shortfall-list">${groups}</div>`,
-      primaryLabel: "ยืนยันส่งตามนี้",
-      onPrimary: () => { decided = true; resolve(true); },
+      primaryLabel: null,
       secondaryLabel: "กลับไปแก้ไข",
       // ปิด/Escape/คลิกนอกกล่อง = ไม่ส่ง — _showInfoModal เรียก onSecondary ให้ทุกทาง
       // (เดิมเฝ้าด้วย MutationObserver บน body ซึ่งพลาดได้แล้ว Promise ค้างถาวร)
@@ -9700,10 +9718,8 @@ function _confirmUnverifiableTargetBeforeSend(chunks) {
         + `<p style="margin:10px 0 0;text-align:left;line-height:1.7;">${list}</p>`
         + `<p style="margin:10px 0 0;text-align:left;line-height:1.7;color:var(--text-2);">`
         + `มักเกิดตอนเปิดผลกระจายที่บันทึกไว้นานแล้วมาส่ง — `
-        + `<strong>กลับไปโหลดข้อมูลขั้นที่ 1 ใหม่</strong> ระบบจะดึงเป้ามาเก็บอีกครั้ง แล้วค่อยส่ง<br>`
-        + `<strong style="color:var(--amber);">ถ้ายืนยันส่งเลย จะไม่มีอะไรตรวจทานยอดให้</strong></p>`,
-      primaryLabel: "ยืนยันส่งทั้งที่ตรวจไม่ได้",
-      onPrimary: () => { decided = true; resolve(true); },
+        + `<strong>กลับไปโหลดข้อมูลขั้นที่ 1 ใหม่</strong> ระบบจะดึงเป้ามาเก็บอีกครั้ง แล้วค่อยส่ง</p>`,
+      primaryLabel: null,
       secondaryLabel: "กลับไปโหลดขั้นที่ 1 ใหม่",
       // ปิด/Escape/คลิกนอกกล่อง = ไม่ส่ง — _showInfoModal เรียก onSecondary ให้ทุกทาง
       // (เดิมเฝ้าด้วย MutationObserver บน body ซึ่งพลาดได้แล้ว Promise ค้างถาวร)
@@ -9712,57 +9728,151 @@ function _confirmUnverifiableTargetBeforeSend(chunks) {
   });
 }
 
+/* รายการล่าสุดของสินค้าที่เป้าเปลี่ยน — ให้เปิดกล่องซ้ำได้จากแผง「ขอให้รีเช็ค」
+   ล้างเมื่อโหลดขั้นที่ 1 ใหม่ (เป้าชุดใหม่แล้ว) */
+let _staleTargetChunks = [];
+
 /**
  * เป้าใน Target Sun เปลี่ยนไปหลังจากผู้ใช้โหลดข้อมูลขั้นที่ 1 (409 send_target_stale)
  *
- * ไม่ใช่ความผิดพลาดของตัวเลข — ไฟล์ยังตรงกับเป้าชุดที่ผู้ใช้เห็นตอนกระจาย
- * แต่ถ้าเป้าต้นทางขยับแล้ว การส่งทับด้วยแผนเดิมอาจไม่ใช่สิ่งที่ต้องการ ให้เลือกเอง
+ * บล็อก ไม่มีปุ่มส่งตามแผนเดิม (ผู้ใช้ตัดสิน 29 ก.ย. 2026) — ส่งแผนเดิมทั้งที่เป้าเปลี่ยน
+ * ยอดใน Target Sun จะไม่เท่าเป้าล่าสุด ขัดกติกายอดหีบต้องเท่าเป้าเสมอ
+ *
+ * แสดงทุกสินค้าที่เปลี่ยน (เดิม → ตอนนี้) และปุ่มพาไปที่คอลัมน์นั้นในตาราง
+ * สินค้าที่เพิ่งมีเป้ายังไม่อยู่ในตาราง จึงบอกให้โหลดขั้นที่ 1 ใหม่แทนปุ่มพาไป
+ *
+ * @returns {Promise<void>} resolve เมื่อปิดกล่อง
  */
-function _confirmStaleTargetBeforeSend(chunks) {
+/**
+ * ด่านคลังก่อนส่ง (409 send_warehouse_conflict) — Target Sun ตอนนี้มีแถวของคู่นี้คนละคลัง
+ * กับไฟล์ ส่งไปเป้าจะเบิ้ล · ให้เลือก「ใช้คลังตาม Target Sun」: หีบของทุกคู่เท่าเดิม
+ * (ไม่ต้องโหลดขั้นที่ 1 หรือกระจายใหม่ ค่าที่แก้มือไว้ไม่หาย) แค่แตกลงแถวที่มีอยู่จริง
+ * คืน true = ใช้คลังตาม Target Sun แล้วส่งต่อ
+ */
+function _confirmWarehouseConflictBeforeSend(chunks) {
+  const whTxt = (w) => (String(w || "").trim() ? escH(w) : "ว่าง");
+  const rowsTxt = (rows) => (rows || []).map((r) =>
+    `คลัง ${whTxt(r.warehouse)} ${(Number(r.boxes) || 0).toLocaleString("th-TH")} หีบ`).join(" + ");
+  const multi = chunks.length > 1;
+  const SHOW = 30;
   const groups = chunks.map(({ supId, detail }) => {
-    const items = Array.isArray(detail?.drifts) ? detail.drifts : [];
-    const rows = items.map((d) => {
-      const sku = String(d.sku || "");
+    const list = Array.isArray(detail?.conflicts) ? detail.conflicts : [];
+    const total = Number(detail?.conflict_count) || list.length;
+    const items = list.slice(0, SHOW).map((c) => {
+      const sku = String(c.sku || "");
       const info = (S.skus || []).find((x) => String(x.sku).trim() === sku) || {};
       const pname = _skuDisplayName(info);
-      const diff = Number(d.diff) || 0;
-      return `<div class="shortfall-sku">
-        <div class="shortfall-sku__head">
-          <div>
-            <code class="shortfall-sku__code">${escH(sku)}</code>
-            ${pname ? `<span class="shortfall-sku__name">${escH(pname)}</span>` : ""}
-            <div class="shortfall-sku__nums">ตอนโหลด ${(Number(d.loaded_boxes) || 0).toLocaleString("th-TH")}`
-        + ` → ตอนนี้ <strong>${(Number(d.current_boxes) || 0).toLocaleString("th-TH")}</strong> หีบ `
-        + `<strong class="${diff > 0 ? "rx-up" : "rx-down"}">(${diff > 0 ? "+" : ""}${diff.toLocaleString("th-TH")})</strong></div>
-          </div>
-          <button type="button" class="shortfall-jump shortfall-jump--col" onclick="jumpToResultCell('${escH(sku)}','')">ไปที่คอลัมน์ ▸</button>
-        </div>
-      </div>`;
+      const emp = (S.employees || []).find((e) => String(e.emp_id).trim() === String(c.emp_id).trim());
+      return `<div class="shortfall-sku"><div class="shortfall-sku__head"><div>`
+        + `<strong>${escH(c.emp_id)}</strong>${emp?.emp_name ? ` ${escH(emp.emp_name)}` : ""} · `
+        + `<code class="shortfall-sku__code">${escH(sku)}</code>`
+        + (pname ? ` <span class="shortfall-sku__name">${escH(pname)}</span>` : "")
+        + `<div class="shortfall-sku__nums">ใน Target Sun ตอนนี้: <strong>${rowsTxt(c.targetsun_rows)}</strong></div>`
+        + `<div class="shortfall-sku__nums">ไฟล์จะส่ง: ${rowsTxt(c.file_rows)}</div>`
+        + `</div></div></div>`;
     }).join("");
-    return `<div style="margin-bottom:10px;"><strong>ทีม ${escH(supId)}</strong>${rows}</div>`;
+    const more = total - Math.min(list.length, SHOW);
+    return `<div style="margin-bottom:10px;">`
+      + (multi ? `<strong>ทีม ${escH(supId)} (${total.toLocaleString("th-TH")} คู่)</strong>` : "")
+      + items
+      + (more > 0 ? `<div class="shortfall-sku__nums">… อีก ${more.toLocaleString("th-TH")} คู่</div>` : "")
+      + `</div>`;
   }).join("");
-
-  const skuTotal = chunks.reduce((n, c) => n + (Number(c.detail?.drift_count) || 0), 0);
-
+  const n = chunks.reduce((s, c) => s + (Number(c.detail?.conflict_count) || 0), 0);
   return new Promise((resolve) => {
     let decided = false;
+    const done = (v) => { if (decided) return; decided = true; resolve(v); };
+    _showInfoModal({
+      title: "คลังในไฟล์ไม่ตรงกับ Target Sun",
+      bodyHtml:
+        `<p style="margin:0 0 8px;text-align:left;">พบ <strong>${n.toLocaleString("th-TH")} คู่</strong>พนักงาน×สินค้า `
+        + `ที่ Target Sun มีแถวอยู่แล้วคนละคลังกับไฟล์ — ถ้าส่งไปตามนี้ <strong style="color:var(--red);">เป้าจะเบิ้ล</strong> `
+        + `(แถวเดิมไม่ถูกทับ)</p>`
+        + `<p style="margin:0 0 10px;text-align:left;">กด「ใช้คลังตาม Target Sun」ระบบจะส่งหีบจำนวนเดิมของแต่ละคู่ `
+        + `ลงคลังที่มีอยู่ใน Target Sun แทน <strong>ไม่ต้องโหลดใหม่หรือกระจายใหม่</strong> ตัวเลขที่แก้เองไว้ไม่หาย</p>`
+        + groups,
+      primaryLabel: "ใช้คลังตาม Target Sun แล้วส่งต่อ",
+      onPrimary: () => done(true),
+      secondaryLabel: "ยังไม่ส่ง",
+      onSecondary: () => done(false),
+    });
+  });
+}
+
+function _confirmStaleTargetBeforeSend(chunks) {
+  _staleTargetChunks = Array.isArray(chunks) ? chunks : [];
+  try { syncStep3ReviewNotes(); } catch (e) { /* แผงยังไม่พร้อมก็ไม่เป็นไร */ }
+  return _showStaleTargetNotice();
+}
+
+function _staleDriftRowHtml(d) {
+  const sku = String(d.sku || "");
+  const info = (S.skus || []).find((x) => String(x.sku).trim() === sku) || {};
+  const pname = _skuDisplayName(info);
+  const diff = Number(d.diff) || 0;
+  const was = (Number(d.loaded_boxes) || 0).toLocaleString("th-TH");
+  const now = (Number(d.current_boxes) || 0).toLocaleString("th-TH");
+  const tag = d.new_sku
+    ? ` <strong style="color:var(--amber);">สินค้าใหม่</strong>`
+    : d.removed_sku ? ` <strong style="color:var(--red);">ถูกเอาเป้าออก</strong>` : "";
+  const action = d.new_sku
+    ? `<span class="shortfall-sku__nums" style="color:var(--text-3);">ยังไม่อยู่ในตาราง — โหลดขั้นที่ 1 ใหม่</span>`
+    : `<button type="button" class="shortfall-jump shortfall-jump--col" onclick="jumpToResultCell('${escH(sku)}','')">ไปที่คอลัมน์ ▸</button>`;
+  return `<div class="shortfall-sku">
+    <div class="shortfall-sku__head">
+      <div>
+        <code class="shortfall-sku__code">${escH(sku)}</code>
+        ${pname ? `<span class="shortfall-sku__name">${escH(pname)}</span>` : ""}${tag}
+        <div class="shortfall-sku__nums">เป้าตอนโหลด ${was} → ตอนนี้ <strong>${now}</strong> หีบ `
+    + `<strong class="${diff > 0 ? "rx-up" : "rx-down"}">(${diff > 0 ? "+" : ""}${diff.toLocaleString("th-TH")})</strong></div>
+      </div>
+      ${action}
+    </div>
+  </div>`;
+}
+
+function _showStaleTargetNotice() {
+  const chunks = _staleTargetChunks || [];
+  const multi = chunks.length > 1;
+  const groups = chunks.map(({ supId, detail }) => {
+    const items = Array.isArray(detail?.drifts) ? detail.drifts : [];
+    const more = (Number(detail?.drift_count) || items.length) - items.length;
+    return `<div style="margin-bottom:10px;">`
+      + (multi ? `<strong>ทีม ${escH(supId)}</strong>` : "")
+      + items.map(_staleDriftRowHtml).join("")
+      + (more > 0 ? `<div class="shortfall-sku__nums">… อีก ${more.toLocaleString("th-TH")} สินค้า</div>` : "")
+      + `</div>`;
+  }).join("");
+  const skuTotal = chunks.reduce((n, c) => n + (Number(c.detail?.drift_count) || 0), 0);
+  const changedSkus = [...new Set(chunks.flatMap((c) =>
+    (Array.isArray(c.detail?.drifts) ? c.detail.drifts : []).map((d) => String(d.sku || "").trim())
+  ).filter(Boolean))];
+  const canQuickFix = _canPartialRealloc() && changedSkus.length;
+  const quickFixHtml = canQuickFix
+    ? `<div style="margin:12px 0 0;text-align:left;">`
+      + `<button type="button" class="btn-realloc btn-realloc--partial" `
+      + `onclick="reloadThenReallocChanged(${_snapshotEsc(JSON.stringify(changedSkus))})">`
+      + `⚡ โหลดเป้าใหม่ แล้วกระจายเฉพาะ ${changedSkus.length} สินค้าที่เปลี่ยน</button>`
+      + `<div style="font-size:12px;color:var(--text-3);margin-top:4px;">สินค้าอื่นและตัวเลขที่แก้เองไม่ถูกแตะ — เสร็จแล้วกดส่งใหม่</div></div>`
+    : `<p style="margin:10px 0 0;text-align:left;font-size:12px;color:var(--text-3);">`
+      + `มุมมองนี้แก้ผลกระจายไม่ได้ — ให้ผู้ที่มีสิทธิ์แก้ของทีมนั้นโหลดเป้าใหม่แล้วกระจาย</p>`;
+
+  return new Promise((resolve) => {
+    let done = false;
     _showInfoModal({
       title: "เป้าใน Target Sun เปลี่ยนไปแล้ว — ยังไม่ได้ส่ง",
       bodyHtml:
         `<p style="margin:0;text-align:left;line-height:1.7;">`
-        + `เป้าต้นทางขยับ <strong>${skuTotal.toLocaleString("th-TH")} SKU</strong> `
-        + `หลังจากคุณโหลดข้อมูลขั้นที่ 1</p>`
+        + `เป้าต้นทางเปลี่ยน <strong>${skuTotal.toLocaleString("th-TH")} สินค้า</strong> `
+        + `หลังจากคุณโหลดข้อมูลขั้นที่ 1 ผลกระจายที่ทำไว้จึงไม่ตรงเป้าล่าสุด</p>`
         + `<p style="margin:10px 0 0;text-align:left;line-height:1.7;color:var(--text-2);">`
-        + `ผลกระจายที่ทำไว้อิงเป้าชุดเดิม — ถ้าอยากกระจายตามเป้าใหม่ ให้`
-        + `<strong>โหลดขั้นที่ 1 ใหม่แล้วกระจายอีกครั้ง</strong><br>`
-        + `ถ้ายืนยัน ระบบจะส่งตามแผนที่กระจายไว้เดิม (ยอดยังตรงกับเป้าชุดที่คุณเห็น)</p>`
-        + `<div class="shortfall-list">${groups}</div>`,
-      primaryLabel: "ยืนยันส่งตามแผนเดิม",
-      onPrimary: () => { decided = true; resolve(true); },
-      secondaryLabel: "กลับไปโหลดขั้นที่ 1 ใหม่",
-      // ปิด/Escape/คลิกนอกกล่อง = ไม่ส่ง — _showInfoModal เรียก onSecondary ให้ทุกทาง
-      // (เดิมเฝ้าด้วย MutationObserver บน body ซึ่งพลาดได้แล้ว Promise ค้างถาวร)
-      onSecondary: () => { if (!decided) { decided = true; resolve(false); } },
+        + `ให้<strong>โหลดขั้นที่ 1 ใหม่แล้วกระจายอีกครั้ง</strong> ก่อนส่ง · `
+        + `กด「ไปที่คอลัมน์」เพื่อดูสินค้าตัวนั้นในตาราง (เปิดรายการนี้ซ้ำได้จากแผง「ขอให้รีเช็ค」)</p>`
+        + `<div class="shortfall-list">${groups}</div>`
+        + quickFixHtml,
+      primaryLabel: null,
+      secondaryLabel: "ปิด",
+      onSecondary: () => { if (!done) { done = true; resolve(); } },
     });
   });
 }
@@ -9782,7 +9892,20 @@ function _rowCountIssueHtml({ supId, rc }) {
     + ` → หลัง <strong>${Number(rc.after_count).toLocaleString("th-TH")}</strong> แถว `
     + `(คาดแถวใหม่ ${Number(rc.expected_new_rows).toLocaleString("th-TH")}) `
     + `<strong class="${extra > 0 ? "rx-up" : "rx-down"}">ส่วนเกิน ${sign}${extra.toLocaleString("th-TH")}</strong>`
+    + _parallelRowsHtml(rc)
     + `</div></div></div></div>`;
+}
+
+/** แถวใหม่ที่ซ้อนคู่เดิมคนละคลัง — จำนวนแถวรวมอาจตรง แต่เป้าของคู่นั้นเบิ้ล */
+function _parallelRowsHtml(rc) {
+  const n = Number(rc.parallel_rows_count) || 0;
+  if (!n) return "";
+  const ex = (rc.parallel_rows_sample || []).slice(0, 5).map((p) =>
+    `<div>${escH(p.emp_id)} × <code>${escH(p.sku)}</code> คลังเดิม `
+    + `${escH((p.old_warehouses || []).map((w) => w || "ว่าง").join("/"))} → ส่งไป ${escH(p.new_warehouse || "ว่าง")}</div>`
+  ).join("");
+  return `<div><strong class="rx-up">แถวใหม่ซ้อนคู่เดิม ${n.toLocaleString("th-TH")} แถว</strong>`
+    + ` (คลังไม่ตรงแถวเดิม เป้าอาจเบิ้ล — ตรวจใน Target Sun)${ex}</div>`;
 }
 
 function _showReadbackMismatchModal(issues, rowCountIssues = [], rowCountTotal = null, extraNoteHtml = "") {
@@ -9824,7 +9947,9 @@ function _showReadbackMismatchModal(issues, rowCountIssues = [], rowCountTotal =
     : "";
   const rcIntroHtml = rowCountIssues.length
     ? `<p style="margin:${issues.length ? "10px" : "0"} 0 0;text-align:left;line-height:1.7;color:var(--red);">`
-      + `<strong>จำนวนแถวจริงเพิ่มขึ้นไม่ตรงกับที่คาด — อาจมีแถวซ้ำเกิดขึ้นใน Target Sun</strong></p>`
+      + `<strong>${rowCountIssues.some((r) => Number(r.rc?.parallel_rows_count) > 0)
+        ? "มีแถวใหม่ซ้อนคู่เดิมคนละคลัง หรือจำนวนแถวไม่ตรงที่คาด — อาจมีแถวซ้ำ/เป้าเบิ้ลใน Target Sun"
+        : "จำนวนแถวจริงเพิ่มขึ้นไม่ตรงกับที่คาด — อาจมีแถวซ้ำเกิดขึ้นใน Target Sun"}</strong></p>`
     : "";
   _showInfoModal({
     title,
@@ -9912,20 +10037,28 @@ async function _verifySendBatchBeforeImport(jobs) {
   );
   const body = await res.json().catch(() => ({}));
 
-  if (res.ok) {
-    // ตรวจไม่ได้ (เช่นอ่านเป้าบางทีมไม่ได้) ไม่ใช่ตรวจแล้วไม่ผ่าน — ด่านรายทีมถามไปแล้ว
-    if (body?.verified === false) {
-      console.warn("[targetsun] ตรวจยอดรวมทั้งชุดไม่ได้:", body?.reason, body);
-    }
-    return { ok: true };
-  }
+  // ผ่าน = server จดลงไฟล์ที่เตรียมไว้แล้วว่าชุดนี้ตรวจผ่าน (import ไม่ส่งชุดที่ไม่ผ่าน)
+  // ไม่มีทางข้ามขั้นนี้แล้ว — ทั้ง verified:false และ server ที่ไม่มี endpoint นี้ = ไม่ส่ง
+  if (res.ok && body?.verified === true) return { ok: true };
 
   const detail = body?.detail;
-  // server รุ่นเก่ายังไม่มี endpoint นี้ — ตัว 404 ของ FastAPI คือ "Not Found" ตรงตัว
-  // ส่วน 404 เชิงธุรกิจของเราเป็นข้อความไทย (ไฟล์เตรียมหมดอายุ) ต้องไม่เหมารวมกัน
-  if (res.status === 405 || (res.status === 404 && String(detail || "") === "Not Found")) {
-    console.warn("[targetsun] server ยังไม่มีด่านตรวจยอดรวมทั้งชุด — ข้ามขั้นนี้");
-    return { ok: true };
+  if (detail?.code === "send_batch_unverifiable") {
+    popGlobalBusy();
+    await new Promise((resolve) => {
+      let done = false;
+      _showInfoModal({
+        title: "ตรวจยอดรวมไม่ได้ — ยังไม่ได้ส่ง",
+        bodyHtml:
+          `<p style="margin:0;text-align:left;line-height:1.7;">${escH(detail.message || "")}</p>`
+          + `<p style="margin:10px 0 0;text-align:left;line-height:1.7;color:var(--text-2);">`
+          + `${escH(detail.hint_th || "")}</p>`,
+        primaryLabel: null,
+        secondaryLabel: "ปิด",
+        onSecondary: () => { if (!done) { done = true; resolve(); } },
+      });
+    });
+    pushGlobalBusy(UX.busySendStep1, UX.busySendTargetHint);
+    return { ok: false };
   }
   if (detail?.code === "send_batch_sku_partial") {
     return { ok: false, excludeSkus: Array.isArray(detail.exclude_skus) ? detail.exclude_skus : [] };
@@ -9993,6 +10126,14 @@ async function _loadSendEnvLabel() {
     el.style.fontWeight = "700";
     el.style.color = isProd ? "var(--red)" : "var(--text-2)";
     if (isProd) el.textContent += " — ระบบจริง";
+    // ไฟล์ตั้งค่าหาย/เสีย หรืออ่านกับส่งคนละระบบ — ผลตรวจหลังส่ง (ยอด/จำนวนแถว) ใช้ไม่ได้
+    const warns = [];
+    if (j.using_default_settings) warns.push("ระบบใช้ปลายทางค่าตั้งต้น (ไฟล์ตั้งค่าหาย) — แจ้ง dev ก่อนส่ง");
+    if (j.cross_env) warns.push(`อ่านเป้าจาก ${String(j.read_host_label || "?")} แต่ส่งไป ${label} — ตรวจยอดหลังส่งไม่ได้`);
+    if (warns.length) {
+      el.textContent += ` · ⚠ ${warns.join(" · ")}`;
+      el.style.color = "var(--amber)";
+    }
   } catch (e) {
     console.warn("[targetsun] อ่านปลายทางไม่ได้:", e);
     el.textContent = "ปลายทางที่จะส่ง: ตรวจสอบไม่ได้";
@@ -10086,16 +10227,45 @@ function _formatApiErrorDetail(j) {
  * ไม่ล็อกหน้า: เป้าอาจเปลี่ยนหรือเพิ่มวันถัดไป super ต้องกระจายใหม่/แก้แล้วส่งซ้ำได้เสมอ
  * (พอแก้ต่อ สถานะจะกลับเป็น "แบบร่าง" แต่ target_sun_sent_at ยังอยู่ = เคยส่งแล้ว)
  */
+/**
+ * แถวผลกระจาย + เป้าเงินของ "ทีมเดียว" จากตารางที่อาจเป็นรวมภาค
+ *
+ * ผลตรวจ 29 ก.ย. 2026 (export งวด 10/2026): 11 ทีมมี snapshot ซ้ำกับทีมอื่นเป๊ะ — ทุกตัวเป็น
+ * sent_targetsun บันทึกห่างกันไม่กี่วินาทีโดยคนเดียวกัน = ตอนประทับ "ส่งแล้ว" หลังส่งรวมภาค
+ * บันทึกโดยไม่ระบุแถว จึงเอา S.allocations ทั้งภาคไปเขียนทับ snapshot ของทุกทีม
+ */
+function _teamRowsAndYellow(sid, allocs = S.allocations) {
+  const sup = String(sid || "").trim().toUpperCase();
+  const rows = (allocs || []).filter((a) => _supervisorCodeForAllocRow(a) === sup);
+  const yellow = {};
+  const yellowLocked = {};
+  for (const e of S.employees || []) {
+    if (_supervisorCodeForAllocRow(e) !== sup) continue;
+    const k = _allocKey(e);
+    if (k in (S.yellow || {})) yellow[k] = S.yellow[k];
+    if (S.yellowLocked && k in S.yellowLocked) yellowLocked[k] = S.yellowLocked[k];
+  }
+  return { rows, yellow, yellowLocked };
+}
+
 function _markAllocationSentTargetSun(supId = null) {
   if (S.targetSunPreviewMode) return;
   const sid = String(supId || S.supId || "").trim().toUpperCase();
   if (!sid) return;
+  // รวมภาค: ประทับเฉพาะแถวของทีมนี้ ห้ามเอาแถวทั้งภาคไปทับ snapshot ของทีม
+  const multi = !!(S.compositeAllocView || S.aggregateMode);
+  const team = multi ? _teamRowsAndYellow(sid) : null;
+  if (multi && !team.rows.length) {
+    console.warn("[mark sent] ไม่พบแถวของทีม", sid, "— ไม่ประทับ เพื่อไม่ให้เขียนแถวของทีมอื่นทับ");
+    return;
+  }
   // ไม่ส่ง precondition: ข้อมูลเข้า Target Sun ไปแล้วจริง ๆ การประทับว่า "ส่งแล้ว" ต้องลงเสมอ
   // ไม่งั้นถ้า version ไม่ตรงจะเด้ง modal「มีคนบันทึกทับ」ทั้งที่ส่งสำเร็จไปแล้ว
   saveServerAllocationSnapshot("sent_targetsun", {
     supId: sid,
     silentSummary: true,
     ifMatchVersion: null,
+    ...(team ? { allocations: team.rows, yellow: team.yellow, yellow_locked: team.yellowLocked } : {}),
   })
     .then(() => {
       _invalidateAllocSnapshotCache(sid);
@@ -10109,6 +10279,15 @@ function _markAllocationSentTargetSun(supId = null) {
 }
 
 function _handleTargetSunImportResponse(res, j, opts = {}) {
+  if (!res.ok && res.status === 504) {
+    // server หมดเวลารอ Target Sun — ของอาจลงไปแล้ว ห้ามบอกว่าไม่สำเร็จ (ผลตรวจ §2.4)
+    opts.uncertain = true;
+    toast(
+      "⚠ หมดเวลารอคำตอบจาก Target Sun — ไม่รู้ว่าลงแล้วหรือยัง ตรวจยอดใน Target Sun ก่อนส่งซ้ำ",
+      "red"
+    );
+    return false;
+  }
   if (!res.ok) {
     if (res.status === 403) {
       S.canImportTargetSun = false;
@@ -10130,6 +10309,16 @@ function _handleTargetSunImportResponse(res, j, opts = {}) {
     return false;
   }
   const ts = j.targetsun || {};
+  // ปลายทางตอบโดยไม่บอกว่าสำเร็จหรือไม่ (ผลตรวจ §2.3) — เดิมนับเป็นสำเร็จ
+  // ถือว่า "ยังยืนยันผลไม่ได้": หยุดส่งทีมถัดไป และให้ตรวจยอดใน Target Sun ก่อนส่งซ้ำ
+  if (j.send_status === "unknown") {
+    opts.uncertain = true;
+    toast(
+      "⚠ Target Sun ตอบกลับแต่ไม่บอกว่ารับข้อมูลหรือไม่ — ตรวจยอดใน Target Sun ก่อนส่งซ้ำ",
+      "red"
+    );
+    return false;
+  }
   if (ts.success === false) {
     const why = ts.resultMsg || "import ไม่สำเร็จ";
     const errList = Array.isArray(ts.result?.errors) ? ts.result.errors : [];
@@ -10211,6 +10400,9 @@ function _targetSunPrepareUnsupported(status, body) {
 }
 
 async function _fetchTargetSunImport(body) {
+  // ต้องรอนานกว่างานฝั่ง server ที่แย่ที่สุด: อ่านก่อนส่ง 120s + POST 600s + อ่านหลังส่ง 2×120s
+  // = 960s (ค่าเริ่มต้น) · เดิมรอ 600s หน้าเว็บจึงเลิกรอก่อน ทั้งที่ server ส่งสำเร็จ
+  // แล้วหน้าจอขึ้น "ยังยืนยันผลไม่ได้" และไม่ประทับว่าส่งแล้ว (ผลตรวจ §2.4)
   const res = await fetchWithTimeout(
     `${API_BASE_URL}/lakehouse/import-targetsun`,
     {
@@ -10218,7 +10410,7 @@ async function _fetchTargetSunImport(body) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     },
-    600000
+    1200000
   );
   const j = await res.json().catch(() => ({}));
   return { res, j };
@@ -10288,24 +10480,57 @@ function _supTargetMismatches(supIds, brand) {
 }
 
 /**
- * เตือน + ให้ยืนยัน ถ้ายอดที่จะส่งไม่ตรงเป้าของทีม
+ * ยอดรวมหลายทีมต่อ SKU ไม่ตรงเป้ารวม — คืน [{supId:"รวม N ทีม", sku, got, target}]
  *
- * กรณีปกติของโหมดรวมภาค: ผู้ใช้ย้ายหีบข้ามทีมโดยตั้งใจ ยอดรายทีมจึงเลื่อน
- * ระบบไม่ห้าม แต่ต้องให้เห็นรายการก่อนว่าทีมไหน SKU ไหน ต่างเท่าไร
+ * ใช้ตอนส่งรวมภาค: รายทีมต่างจากเป้าตัวเองได้ (ย้ายหีบข้ามทีม I7)
+ * แต่ยอดรวมของทุกทีมต่อ SKU ต้องเท่าเป้ารวมพอดี
+ */
+function _batchTargetMismatches(supIds, brand) {
+  const got = {};
+  const target = {};
+  const skuFilter = _lakehouseFreshSkuFilter();
+  for (const sid of supIds || []) {
+    const rows = _lakehouseAllocationsFromStep3(_lakehouseMatrixFilterSup(sid), brand, skuFilter);
+    for (const a of rows) {
+      const sku = String(a.sku || "").trim();
+      if (sku) got[sku] = (got[sku] || 0) + (Number(a.allocated_boxes) || 0);
+    }
+    for (const [sku, t] of Object.entries(_supSkuTargetMap(sid))) {
+      target[sku] = (target[sku] || 0) + (Number(t) || 0);
+    }
+  }
+  const label = `รวม ${(supIds || []).length} ทีม`;
+  const out = [];
+  for (const [sku, total] of Object.entries(got)) {
+    // SKU ที่ไม่มีเป้า = เป้า 0 — มีหีบเมื่อไรคือหีบงอก
+    const tgt = target[sku] === undefined ? 0 : target[sku];
+    if (Number(total) !== Number(tgt)) out.push({ supId: label, sku, got: Number(total), target: Number(tgt) });
+  }
+  return out;
+}
+
+/**
+ * ยอดที่จะส่งไม่ตรงเป้า → บล็อก ไม่มีปุ่มยืนยันส่ง (29 ก.ย. 2026)
  *
- * คืน {proceed, confirmed} — ไม่เก็บลง S.* เพราะค่าจะค้างข้ามการเรียก
- * แล้วเส้นทางอื่น (ตรวจอย่างเดียว / ดาวน์โหลด Excel) จะพลอยข้ามการเช็คไปด้วย
+ * กติกา: ยอดหีบรวมหลังกระจายต้องเท่าเป้าที่เข้ามา ห้ามขาดหรือเกินแม้แต่หีบเดียว
+ *   - ส่งทีมเดียว: ยอดต่อ SKU ของทีมต้องตรงเป้าทีม
+ *   - ส่งหลายทีม (รวมภาค): ยอดรวมทุกทีมต่อ SKU ต้องตรงเป้ารวม รายทีมต่างได้
+ *
+ * ฝั่ง server ตรวจซ้ำอีกชั้นเสมอ ตรงนี้แค่บอกผู้ใช้ให้เร็ว ก่อนเริ่มเตรียมไฟล์
+ * คืน {proceed}
  */
 async function _confirmTargetMismatchBeforeSend(supIds, brand) {
   let issues = [];
   try {
-    issues = _supTargetMismatches(supIds, brand);
+    issues = (supIds || []).length > 1
+      ? _batchTargetMismatches(supIds, brand)
+      : _supTargetMismatches(supIds, brand);
   } catch (e) {
     console.warn("_supTargetMismatches:", e);
-    // ตรวจฝั่ง client ไม่ได้ก็อย่าไปขวาง — ฝั่ง server ยังมีประตูอีกชั้น
-    return { proceed: true, confirmed: false };
+    // ตรวจฝั่ง client ไม่ได้ก็ไปต่อ — server ตรวจยอดอีกชั้นและไม่มีทางกดข้าม
+    return { proceed: true };
   }
-  if (!issues.length) return { proceed: true, confirmed: false };
+  if (!issues.length) return { proceed: true };
 
   const bySup = new Map();
   for (const it of issues) {
@@ -10327,22 +10552,23 @@ async function _confirmTargetMismatchBeforeSend(supIds, brand) {
       + `<ul style="margin:4px 0 0 18px;padding:0;line-height:1.6;">${rows}${more}</ul></div>`;
   }).join("");
 
+  const multi = (supIds || []).length > 1;
   return new Promise((resolve) => {
+    let done = false;
     _showInfoModal({
-      title: "ยอดหีบไม่ตรงเป้าของทีม — ตรวจก่อนส่ง",
+      title: "ยอดหีบไม่ตรงเป้า — ยังไม่ได้ส่ง",
       bodyHtml:
         `<p style="margin:0 0 10px;line-height:1.55;">`
-        + `มี <strong>${issues.length} SKU</strong> ที่ยอดจะส่งไม่เท่ากับเป้าของทีมนั้น `
-        + `มักเกิดจากการ<strong>ย้ายหีบข้ามทีม</strong>ในโหมดรวมภาค`
+        + `มี <strong>${issues.length} SKU</strong> ที่ยอดจะส่งไม่เท่ากับเป้า`
+        + (multi ? `รวมของทุกทีม (ย้ายหีบข้ามทีมได้ แต่ยอดรวมต้องเท่าเดิม)` : `ของทีม`)
+        + ` — ระบบ<strong>ไม่ส่ง</strong>จนกว่ายอดจะตรงพอดี`
         + `</p>`
         + `<div style="max-height:240px;overflow-y:auto;font-size:13px;">${blocks}</div>`
         + `<p style="margin:10px 0 0;font-size:12px;color:var(--text-3);line-height:1.55;">`
-        + `กด「ยืนยันส่ง」ถ้าตั้งใจให้เป็นแบบนี้ · กด「ยกเลิก」แล้วกด「คำนวณใหม่」`
-        + `เพื่อให้ทุกทีมกลับไปตรงเป้าของตัวเอง</p>`,
-      primaryLabel: "ยืนยันส่ง",
-      secondaryLabel: "ยกเลิก",
-      onPrimary: () => resolve({ proceed: true, confirmed: true }),
-      onSecondary: () => resolve({ proceed: false, confirmed: false }),
+        + `ตรวจช่องที่แก้มือไว้ หรือกด「คำนวณใหม่」ให้ยอดกลับมาตรงเป้า แล้วส่งอีกครั้ง</p>`,
+      primaryLabel: null,
+      secondaryLabel: "กลับไปแก้ไข",
+      onSecondary: () => { if (!done) { done = true; resolve({ proceed: false }); } },
     });
   });
 }
@@ -10376,13 +10602,13 @@ async function _doLakehouseUploadInner() {
   if (S.targetSunPreviewMode) {
     if (!await _confirmPreviewSendToTargetSun()) return;
   } else if (!await _confirmIfServerSnapshotStale(S.supId, "ส่ง Target Sun")) return;
-  // ยอดต่อ SKU ของทีมไหนไม่ตรงเป้า (มักเกิดจากย้ายหีบข้ามทีมในโหมดรวมภาค)
-  // ต้องให้ตรวจและยืนยันก่อน — ไม่ส่งเงียบ ๆ
+  // ยอดไม่ตรงเป้า = ไม่ส่ง ไม่มีปุ่มยืนยันข้าม (ส่งทีมเดียวเทียบเป้าทีม · หลายทีมเทียบเป้ารวม)
   const mismatchDecision = await _confirmTargetMismatchBeforeSend(supIds, brand);
   if (!mismatchDecision.proceed) return;
-  // ไม่ใช่ const — ถ้า server จับได้ว่าไม่ตรงเป้าทั้งที่ฝั่งเบราว์เซอร์คิดว่าตรง
-  // (เป้าบน server เปลี่ยนหลังโหลดขั้นที่ 1) จะถามแล้วตั้งค่านี้ใหม่ระหว่างเตรียมไฟล์
-  let confirmedMismatch = mismatchDecision.confirmed;
+  // ส่งหลายทีม = หนึ่งรอบการส่ง — server ตรวจยอดรวมทั้งชุดและผูกทุกไฟล์กับรหัสนี้
+  const sendBatchId = supIds.length > 1
+    ? `b${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
+    : null;
   const hasRows = supIds.some((sid) =>
     _lakehouseAllocationsFromStep3(_lakehouseMatrixFilterSup(sid), brand).length > 0
   );
@@ -10420,8 +10646,6 @@ async function _doLakehouseUploadInner() {
   let sentCount = 0;
   // ผู้ใช้ยืนยันครั้งเดียวแล้วใช้กับทุกทีมในชุดนี้ — ไม่ถามซ้ำราย SL
   let confirmedManualTopup = false;
-  let confirmedUnverifiable = false;
-  let confirmedStale = false;
   // ทีมที่ยอดลงจริงไม่ตรงไฟล์ — รวมไว้แจ้งทีเดียวหลังส่งจบ
   const readbackIssues = [];
   // ผลตรวจ "จำนวนแถวจริง" ก่อน/หลังส่งของทุกทีมที่ตรวจได้ (ไม่ใช่แค่ทีมที่ผิดปกติ) —
@@ -10448,23 +10672,22 @@ async function _doLakehouseUploadInner() {
     const pendingMismatch = [];
     const pendingUnverifiable = [];
     const pendingStale = [];
+    const pendingWarehouse = [];
+    let confirmedTargetSunWarehouse = false;
 
     for (let i = 0; i < supIds.length; i++) {
       const supId = supIds[i];
-      // เส้นทางส่งจริงเท่านั้นที่แนบผลการยืนยันไปด้วย
-      const basePayload = _lakehouseExportPayload(supId, brand, {
-        confirmTargetMismatch: confirmedMismatch,
-      });
+      const basePayload = _lakehouseExportPayload(supId, brand, { sendBatchId });
       if (!basePayload.allocations?.length) continue;
       jobs.push({ supId, basePayload, token: null });
     }
 
-    /* วนเตรียมจนกว่าทุกทีมจะได้ token — ประตูฝั่ง server มี 3 ด่าน
-         1) ยอดไม่ตรงเป้าทีม  (409 send_target_mismatch)
-         2) SKU ที่ส่งไม่ครบจะถูกตัดทั้งตัว (409 send_target_shortfall)
-         3) ไม่มีไฟล์เป้าให้ตรวจเลย (409 send_target_unverifiable)
-       ทีมหนึ่งอาจติดด่าน 1 ก่อน พอยืนยันแล้วเตรียมใหม่ค่อยไปติดด่าน 2
-       จึงต้องวนซ้ำได้ ไม่ใช่ผ่านรอบเดียวจบ — แต่ถามผู้ใช้ด่านละครั้งเท่านั้น
+    /* วนเตรียมจนกว่าทุกทีมจะได้ token — ประตูฝั่ง server
+         1) ยอดไม่ตรงเป้าทีม  (409 send_target_mismatch)      → บล็อก ไม่มีปุ่มยืนยัน
+         2) SKU ที่ส่งไม่ครบจะถูกตัดทั้งตัว (409 send_target_shortfall) → ถามได้
+         3) ไม่มีไฟล์เป้าให้ตรวจเลย (409 send_target_unverifiable) → บล็อก ไม่มีปุ่มยืนยัน
+         4) เป้าต้นทางเปลี่ยนหลังโหลด (409 send_target_stale)   → ถามได้
+       ด่านที่ถามได้อาจโผล่ต่อกัน จึงต้องวนซ้ำได้ — แต่ถามผู้ใช้ด่านละครั้งเท่านั้น
        เพดานต้องมากกว่าจำนวนด่านอย่างน้อย 1 รอบ ไว้ให้รอบสุดท้ายได้เตรียมไฟล์จริง */
     for (let round = 0; round < 8; round++) {
       const todo = jobs.filter((j) => !j.token);
@@ -10472,6 +10695,7 @@ async function _doLakehouseUploadInner() {
       pendingMismatch.length = 0;
       pendingUnverifiable.length = 0;
       pendingStale.length = 0;
+      pendingWarehouse.length = 0;
 
       for (let i = 0; i < todo.length; i++) {
         const job = todo[i];
@@ -10514,6 +10738,11 @@ async function _doLakehouseUploadInner() {
           pendingStale.push({ supId: job.supId, detail: prep.detail });
           continue;
         }
+        // resolvable=false = ใช้คลังตาม Target Sun แล้วยังไม่ตรง → ตกไปเป็น error ข้างล่าง
+        if (!prepRes.ok && prep?.detail?.code === "send_warehouse_conflict" && prep.detail.resolvable) {
+          pendingWarehouse.push({ supId: job.supId, detail: prep.detail });
+          continue;
+        }
 
         if (!prepRes.ok) {
           const detail = prep.detail;
@@ -10546,16 +10775,21 @@ async function _doLakehouseUploadInner() {
         continue;
       }
 
-      /* ── ถามด่านละครั้ง ก่อนส่งทีมแรกเสมอ ─────────────────────────── */
-      if (pendingMismatch.length && !confirmedMismatch) {
+      /* ── ยอดไม่ตรงเป้า / ตรวจไม่ได้ = ไม่ส่ง ยังไม่ได้ส่งทีมไหนเลย ─────────── */
+      if (pendingMismatch.length) {
         popGlobalBusy();   // ไม่งั้น modal จะอยู่หลัง overlay
-        const goOn = await _confirmServerMismatchBeforeSend(pendingMismatch);
+        await _confirmServerMismatchBeforeSend(pendingMismatch);
         pushGlobalBusy(UX.busySendStep1, UX.busySendTargetHint);
-        if (!goOn) return;   // กลับไปแก้ไข — ยังไม่ได้ส่งทีมไหนเลย
-        confirmedMismatch = true;
-        jobs.forEach((j) => { if (!j.token) j.basePayload.confirm_target_mismatch = true; });
-        continue;
+        return;
       }
+      if (pendingUnverifiable.length) {
+        popGlobalBusy();
+        await _confirmUnverifiableTargetBeforeSend(pendingUnverifiable);
+        pushGlobalBusy(UX.busySendStep1, UX.busySendTargetHint);
+        return;
+      }
+
+      /* ── ถามด่านละครั้ง ก่อนส่งทีมแรกเสมอ ─────────────────────────── */
       if (pendingShortfall.length && !confirmedManualTopup) {
         const merged = _mergeShortfall(pendingShortfall.map((p) => p.detail.shortfall || []));
         popGlobalBusy();
@@ -10571,29 +10805,29 @@ async function _doLakehouseUploadInner() {
         jobs.forEach((j) => { if (!j.token) j.basePayload.confirm_manual_topup = true; });
         continue;
       }
-      if (pendingUnverifiable.length && !confirmedUnverifiable) {
-        popGlobalBusy();
-        const goOn = await _confirmUnverifiableTargetBeforeSend(pendingUnverifiable);
-        pushGlobalBusy(UX.busySendStep1, UX.busySendTargetHint);
-        if (!goOn) return;
-        confirmedUnverifiable = true;
-        jobs.forEach((j) => { if (!j.token) j.basePayload.confirm_unverifiable_target = true; });
+      if (pendingWarehouse.length) {
+        if (!confirmedTargetSunWarehouse) {
+          popGlobalBusy();
+          const useTs = await _confirmWarehouseConflictBeforeSend(pendingWarehouse);
+          pushGlobalBusy(UX.busySendStep1, UX.busySendTargetHint);
+          if (!useTs) return;
+          confirmedTargetSunWarehouse = true;
+        }
+        // ถามครั้งเดียวใช้ทุกทีมในรอบนี้ (รวมทีมที่ต้องเตรียมใหม่ทีหลัง เช่นหลังตัด SKU ระดับชุด)
+        // server ที่ได้ธงนี้แล้วยังไม่ตรงจะตอบ resolvable=false = ไม่วนซ้ำ
+        jobs.forEach((j) => { if (!j.token) j.basePayload.use_targetsun_warehouse = true; });
         continue;
       }
-      if (pendingStale.length && !confirmedStale) {
+      if (pendingStale.length) {
+        // เป้าต้นทางเปลี่ยน = ไม่ส่ง ต้องโหลดขั้นที่ 1 ใหม่ (ไม่มีปุ่มส่งตามแผนเดิมแล้ว)
         popGlobalBusy();
-        const goOn = await _confirmStaleTargetBeforeSend(pendingStale);
+        await _confirmStaleTargetBeforeSend(pendingStale);
         pushGlobalBusy(UX.busySendStep1, UX.busySendTargetHint);
-        if (!goOn) return;
-        confirmedStale = true;
-        jobs.forEach((j) => { if (!j.token) j.basePayload.confirm_stale_target = true; });
-        continue;
+        return;
       }
 
       // ยืนยันไปแล้วแต่ยังติดอยู่ — อย่าวนต่อจนไม่รู้จบ
-      const stuck = (
-        pendingMismatch[0] || pendingShortfall[0] || pendingUnverifiable[0] || pendingStale[0]
-      )?.detail;
+      const stuck = pendingShortfall[0]?.detail;
       throw new Error(_userFacingError(stuck?.message || "", "เตรียมไฟล์ไม่สำเร็จ"));
     }
     jobs = jobs.filter((j) => j.token && j.token !== "__legacy__");
@@ -10656,8 +10890,10 @@ async function _doLakehouseUploadInner() {
       }
       _clearTargetSunProgressTimer();
       setGlobalBusyProgress(95, "กำลังสรุปผล…", UX.busySendTargetHint);
-      if (!_handleTargetSunImportResponse(res, j, { supId: basePayload.sup_id })) {
-        failedSup = { supId: basePayload.sup_id };
+      const handleOpts = { supId: basePayload.sup_id };
+      if (!_handleTargetSunImportResponse(res, j, handleOpts)) {
+        // uncertain = ปลายทางไม่บอกผล ของอาจลงไปแล้ว ต้องตรวจก่อนส่งซ้ำ
+        failedSup = { supId: basePayload.sup_id, uncertain: !!handleOpts.uncertain };
         jobs.slice(i + 1).forEach((x) => notSentSupIds.push(x.supId));
         break;
       }
@@ -10666,7 +10902,9 @@ async function _doLakehouseUploadInner() {
         readbackIssues.push({ supId: basePayload.sup_id, readback: j.readback });
       }
       if (j?.readback?.row_count?.checked) {
-        rowCountResults.push({ supId: basePayload.sup_id, rc: j.readback.row_count });
+        rowCountResults.push({
+          supId: basePayload.sup_id, rc: j.readback.row_count, token: j.prepare_token || token,
+        });
       }
       sentSupIds.push(basePayload.sup_id);
       sentCount += 1;
@@ -10696,6 +10934,8 @@ async function _doLakehouseUploadInner() {
   if (sentCount > 0) {
     _savePendingTopup(pending);
     syncPendingTopupBanner();
+    // server อาจเพิ่งสร้างแจ้งเตือน (จำนวนแถวไม่ตรง/ตรวจไม่ได้) — ให้กระดิ่งขึ้นทันที
+    refreshNotificationBell(true);
   }
 
   // ส่งไม่ครบทุกทีม — บอกให้ชัดว่าอะไรเข้าไปแล้วบ้าง เพราะย้อนคืนไม่ได้
@@ -10724,6 +10964,13 @@ async function _doLakehouseUploadInner() {
       }), { before: 0, after: 0, expected: 0, unexpected: 0 })
     : null;
 
+  // แถวที่ลงไม่ครบ/ไม่ตรง — แก้ได้ทันทีด้วยการส่งซ้ำเฉพาะแถวนั้น จึงขึ้นก่อนกล่องอื่น
+  const unlanded = rowCountResults.filter((r) => Number(r.rc?.unlanded_count) > 0 && r.token);
+  if (unlanded.length) {
+    _showUnlandedRowsModal(unlanded);
+    return;
+  }
+
   // ยอดลงจริงไม่ตรงไฟล์ด่วนกว่า และเปิดได้ทีละกล่อง — ถ้ามีรายการที่ต้องไปเกลี่ยเองด้วย
   // ให้พ่วงเป็นบรรทัดเดียวในกล่องเดียวกัน จะได้ไม่หายไปเงียบ ๆ
   if (readbackIssues.length || rowCountIssues.length) {
@@ -10745,6 +10992,68 @@ async function _doLakehouseUploadInner() {
       { shortfall: pending, shortfall_boxes: pending.reduce((s, x) => s + x.missing_boxes, 0) },
       { alreadySent: true }
     );
+  }
+}
+
+/**
+ * แถวที่ส่งไปแล้วแต่ยังไม่ลง/ลงไม่ตรงใน Target Sun (ผู้ใช้ขอ 29 ก.ย. 2026)
+ *
+ * Target Sun ทับแถวเดิมได้แต่ลบไม่ได้ — ทางแก้คือส่งซ้ำเฉพาะแถวนั้น
+ * แถวและจำนวนมาจากไฟล์ที่ server เก็บไว้ ไม่ได้ส่งจากหน้านี้
+ */
+function _showUnlandedRowsModal(items) {
+  const blocks = items.map(({ supId, rc, token }) => {
+    const n = Number(rc.unlanded_count) || 0;
+    const sample = Array.isArray(rc.unlanded_sample) ? rc.unlanded_sample : [];
+    const lines = sample.slice(0, 8).map((u) =>
+      `<li><code>${escH(u.sku)}</code> · พนักงาน ${escH(u.emp_id)} — ส่ง <strong>${Number(u.sent).toLocaleString("th-TH")}</strong>`
+      + ` / ใน Target Sun ${u.in_targetsun == null ? "<strong>ไม่มีแถวนี้</strong>" : Number(u.in_targetsun).toLocaleString("th-TH")}</li>`
+    ).join("");
+    return `<div style="margin-bottom:12px;text-align:left;">
+      <strong>ทีม ${escH(supId)}</strong> — ${n.toLocaleString("th-TH")} แถวยังไม่ลงตามที่ส่ง
+      <ul style="margin:4px 0 6px 18px;padding:0;line-height:1.6;">${lines}${n > 8 ? `<li>… อีก ${(n - 8).toLocaleString("th-TH")} แถว</li>` : ""}</ul>
+      <button type="button" class="btn-run" onclick="resendUnlandedRows('${escH(supId)}','${escH(token)}', this)">
+        ส่งซ้ำเฉพาะแถวที่ตกหล่น (${n.toLocaleString("th-TH")} แถว)</button>
+      <div class="unlanded-result" style="margin-top:6px;font-size:12px;"></div>
+    </div>`;
+  }).join("");
+  _showInfoModal({
+    title: "บางแถวยังไม่ลงใน Target Sun",
+    bodyHtml:
+      `<p style="margin:0 0 10px;text-align:left;line-height:1.7;">ส่งไฟล์ไปแล้ว แต่ Target Sun ยังไม่มีบางแถว`
+      + ` หรือจำนวนไม่ตรงกับที่ส่ง — กดส่งซ้ำเฉพาะแถวเหล่านั้นได้ (ทับค่าเดิม ไม่สร้างแถวซ้ำ)</p>`
+      + blocks,
+    primaryLabel: null,
+    secondaryLabel: "ปิด",
+  });
+}
+
+async function resendUnlandedRows(supId, token, btn) {
+  const box = btn?.parentElement?.querySelector(".unlanded-result");
+  if (btn) { btn.disabled = true; btn.textContent = "กำลังส่งซ้ำ…"; }
+  try {
+    const res = await fetchWithTimeout(
+      `${API_BASE_URL}/lakehouse/resend-unlanded`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sup_id: supId, prepare_token: token }),
+      },
+      1200000
+    );
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(_userFacingError(_formatApiErrorDetail(j), "ส่งซ้ำไม่สำเร็จ"));
+    const left = j.remaining_unlanded;
+    const msg = left === 0
+      ? `✅ ส่งซ้ำ ${Number(j.resent_rows || 0).toLocaleString("th-TH")} แถว — ลงครบทุกแถวแล้ว`
+      : `⚠ ส่งซ้ำ ${Number(j.resent_rows || 0).toLocaleString("th-TH")} แถว แต่ยังเหลือ ${left == null ? "?" : Number(left).toLocaleString("th-TH")} แถวที่ยังไม่ลง — แจ้ง dev`;
+    if (box) { box.innerHTML = escH(msg); box.style.color = left === 0 ? "var(--green)" : "var(--red)"; }
+    if (btn) btn.textContent = left === 0 ? "ส่งซ้ำแล้ว" : "ส่งซ้ำอีกครั้ง";
+    if (btn && left !== 0) btn.disabled = false;
+    refreshNotificationBell(true);
+  } catch (e) {
+    if (box) { box.textContent = "❌ " + _userFacingError(e); box.style.color = "var(--red)"; }
+    if (btn) { btn.disabled = false; btn.textContent = "ลองส่งซ้ำอีกครั้ง"; }
   }
 }
 
@@ -10772,7 +11081,7 @@ function _showPartialSendSummaryModal({ sent, failed, notSent, pending, failedUn
         ${line("เข้า Target Sun แล้ว", sent, "ok",
                "ข้อมูลเข้าไปแล้วจริง ย้อนคืนไม่ได้ — ห้ามส่งทีมเหล่านี้ซ้ำ")}
         ${failedUncertain
-          ? line("ไม่รู้ผล — คำตอบมาไม่ถึง", [failed], "bad",
+          ? line("ยังยืนยันผลไม่ได้ — คำตอบมาไม่ถึง", [failed], "bad",
                  "เน็ตหลุดหรือรอนานเกินระหว่างส่ง ทีมนี้<strong>อาจเข้า Target Sun ไปแล้ว</strong> "
                  + "— ตรวจเป้าใน Target Sun ก่อน อย่าเพิ่งกดส่งซ้ำ")
           : line("ล้มที่ทีมนี้", [failed], "bad",
@@ -10830,6 +11139,13 @@ async function doLakehouseValidateOnly() {
           lines.push(
             `${supId}: ⚠️ เป้าจะขาด ${(Number(d.shortfall_boxes) || 0).toLocaleString("th-TH")} หีบ `
             + `ใน ${(Number(d.shortfall_skus) || 0).toLocaleString("th-TH")} SKU`
+          );
+          continue;
+        }
+        if (prep?.detail?.code === "send_warehouse_conflict") {
+          lines.push(
+            `${supId}: ⚠️ ${(Number(prep.detail.conflict_count) || 0).toLocaleString("th-TH")} คู่คลังไม่ตรงกับ Target Sun `
+            + `— ตอนกดส่งจะถามให้ใช้คลังตาม Target Sun (ไม่ต้องกระจายใหม่)`
           );
           continue;
         }
@@ -10959,7 +11275,23 @@ function _excelScopeTag() {
   return own;
 }
 
+let _exportInFlight = false;
+
 async function doExport() {
+  // กดซ้ำระหว่างรอ = สร้างไฟล์สองรอบ (ผลตรวจ §3.7) — ปุ่มถูกปิดด้วย แต่กันอีกชั้นที่ธงนี้
+  if (_exportInFlight) {
+    toast("กำลังสร้างไฟล์อยู่ — รอสักครู่", "amber");
+    return;
+  }
+  _exportInFlight = true;
+  try {
+    return await _doExportInner();
+  } finally {
+    _exportInFlight = false;
+  }
+}
+
+async function _doExportInner() {
   const brand = document.querySelector('[name="exportBrand"]:checked')?.value || "ALL";
   closeExportModal();
 
@@ -10982,7 +11314,13 @@ async function doExport() {
         product_name_thai: a.product_name_thai || "",
       })),
       brand_filter: brand,
-      yellow_targets: Object.entries(S.yellow).map(([emp_id, v]) => ({ emp_id, yellow_target: v })),
+      // คีย์ของ S.yellow คือ _allocKey — คนที่แยกคลังเป็น "รหัส|คลัง" (เช่น C442|R408)
+      // server รวมเป้าเงินต่อรหัสพนักงาน ต้องตัด "|คลัง" ออกก่อน ไม่งั้นหาไม่เจอแล้ว
+      // เป้าเงินรายคนใน Excel เป็น 0 ทั้งที่ยอดรวมหัวตารางถูก (ผลตรวจ §3.2)
+      yellow_targets: Object.entries(S.yellow).map(([key, v]) => ({
+        emp_id: String(key).split("|")[0],
+        yellow_target: v,
+      })),
       // ทีมที่อยู่ในผลกระจายก้อนนี้ — โหมดรวมภาคมีพนักงานหลายทีมในไฟล์เดียว
       // ส่งไปให้หัวชีต Excel กำกับได้ว่าไฟล์นี้ครอบคลุมทีมไหนบ้าง
       scope_sup_ids: S.aggregateMode ? _allocScopeSupOrder() : [],
@@ -10999,14 +11337,23 @@ async function doExport() {
       },
       120000
     );
-    if (!res.ok) throw new Error(_userFacingError(null, "สร้างไฟล์ไม่สำเร็จ"));
+    if (!res.ok) {
+      // แสดงเหตุผลจริงจาก server (เช่น "ไม่พบข้อมูลสำหรับแบรนด์ X") — เดิมเหลือแค่ข้อความกลาง ๆ
+      const j = await res.json().catch(() => ({}));
+      throw new Error(_userFacingError(_formatApiErrorDetail(j), "สร้างไฟล์ไม่สำเร็จ"));
+    }
 
     const dlRes = await fetchWithTimeout(
-      `${API_BASE_URL}/download/excel?sup_id=${S.supId}&t=${Date.now()}&brand=${encodeURIComponent(brand)}`,
+      // ส่งงวดไปด้วย — ต้องได้ไฟล์ของงวดที่เพิ่งสร้าง ไม่ใช่ของงวดที่อีกแท็บสร้างทับ
+      `${API_BASE_URL}/download/excel?sup_id=${S.supId}&t=${Date.now()}&brand=${encodeURIComponent(brand)}`
+        + `&target_month=${S.targetMonth}&target_year=${S.targetYear}`,
       {},
       60000
     );
-    if (!dlRes.ok) throw new Error(_userFacingError(null, "ดาวน์โหลดไฟล์ไม่สำเร็จ"));
+    if (!dlRes.ok) {
+      const j = await dlRes.json().catch(() => ({}));
+      throw new Error(_userFacingError(_formatApiErrorDetail(j), "ดาวน์โหลดไฟล์ไม่สำเร็จ"));
+    }
     const blob = await dlRes.blob();
 
     // ผลกระจายรวมทั้งภาคมีพนักงานของทุกทีมในขอบเขตอยู่ในไฟล์เดียว — ชื่อไฟล์ต้อง
@@ -11310,11 +11657,24 @@ const _draftPromptSuppressedForKeys = new Set();
 let _serverAllocSaveTimer = null;
 let _regionalAllocSaveTimer = null;
 
+/** ทีม+งวดที่กำลังทำงานอยู่ — ใช้จับว่าระหว่างรอ autosave ผู้ใช้สลับไปที่อื่นแล้วหรือยัง */
+function _allocSaveContextKey() {
+  return `${String(S.supId || "").trim().toUpperCase()}|${S.targetYear}-${S.targetMonth}`
+    + `|${S.compositeAllocView ? "composite" : "single"}`;
+}
+
 function queueRegionalAllocationSave(status = "draft") {
   if (!S.compositeAllocView || !_regionalAggregateWritable()) return;
   if (!S.allocations?.length && status === "draft") return;
   clearTimeout(_regionalAllocSaveTimer);
+  const ctxKey = _allocSaveContextKey();
   _regionalAllocSaveTimer = setTimeout(() => {
+    // สลับทีม/งวด/ออกจากมุมมองรวมภาคไปแล้ว — ห้ามเอาของบนจอตอนนี้ไปบันทึกทับ (ผลตรวจ §3.3)
+    // การบันทึกรวมภาคอิงสถานะบนจอหลายอย่าง (ขอบเขตทีม งวด) จึงข้ามไป ไม่เดาแทน
+    if (_allocSaveContextKey() !== ctxKey) {
+      console.warn("[autosave] ข้ามการบันทึกรวมภาค — สลับทีม/งวดไปแล้ว", ctxKey);
+      return;
+    }
     saveRegionalAllocationSnapshots(S.allocations, status)
       .then((saved) => {
         for (const supId of saved || []) {
@@ -11360,8 +11720,31 @@ function queueServerAllocationSave(status = "draft") {
   if (!_canWriteServerAllocation()) return;
   if (!S.allocations?.length && status === "draft") return;
   clearTimeout(_serverAllocSaveTimer);
+  // จับทีม/งวด/ข้อมูลไว้ตั้งแต่ตอนเข้าคิว (ผลตรวจ §3.3) — เดิมอ่าน S.* ตอนตัวจับเวลาทำงาน
+  // ถ้าผู้ใช้สลับทีมภายใน 800ms ของทีมเดิมจะถูกบันทึกลงชื่อทีมใหม่ ทับ snapshot ของเขา
+  const ctx = {
+    key: _allocSaveContextKey(),
+    supId: S.supId,
+    targetMonth: S.targetMonth,
+    targetYear: S.targetYear,
+    allocations: S.allocations,
+    yellow: S.yellow,
+    yellow_locked: S.yellowLocked,
+    strategy: _strategySummaryTh(_getSelectedStrategies()),
+  };
   _serverAllocSaveTimer = setTimeout(() => {
-    saveServerAllocationSnapshot(status).catch((e) => console.warn("saveServerAllocationSnapshot:", e));
+    // ยังอยู่ที่เดิม = ใช้ของล่าสุดบนจอ (พฤติกรรมเดิม) · ย้ายไปแล้ว = บันทึกของเดิมลงทีม/งวดเดิม
+    const opts = _allocSaveContextKey() === ctx.key ? {} : {
+      supId: ctx.supId,
+      targetMonth: ctx.targetMonth,
+      targetYear: ctx.targetYear,
+      allocations: ctx.allocations,
+      yellow: ctx.yellow,
+      yellow_locked: ctx.yellow_locked,
+      strategy: ctx.strategy,
+      silentSummary: true,
+    };
+    saveServerAllocationSnapshot(status, opts).catch((e) => console.warn("saveServerAllocationSnapshot:", e));
   }, 800);
 }
 
@@ -11475,13 +11858,13 @@ async function saveServerAllocationSnapshot(status = "draft", opts = {}) {
   const attempt = await _withSaveLock(async () => {
     const body = {
       sup_id: supId,
-      target_month: S.targetMonth,
-      target_year: S.targetYear,
+      target_month: opts.targetMonth || S.targetMonth,
+      target_year: opts.targetYear || S.targetYear,
       status,
       allocations: allocs,
       yellow: opts.yellow || S.yellow,
       yellow_locked: opts.yellow_locked || S.yellowLocked,
-      strategy: _strategySummaryTh(_getSelectedStrategies()),
+      strategy: opts.strategy != null ? opts.strategy : _strategySummaryTh(_getSelectedStrategies()),
     };
     // กระจายทั้งภาคคือการตั้งใจทับทุกทีม (ผู้ใช้ยืนยันใน modal「กระจายใหม่ทั้งภาค」แล้ว)
     // จึงไม่ส่ง precondition — ไม่งั้นจะเด้ง modal ถามทีละทีมกลางลูป
@@ -11509,7 +11892,17 @@ async function saveServerAllocationSnapshot(status = "draft", opts = {}) {
       30000
     );
     if (res.status === 409 || res.status === 428) {
-      return { conflict: res.status, j: await res.json().catch(() => ({})) };
+      const j = await res.json().catch(() => ({}));
+      // เฉพาะ "มีคนบันทึกทับ" จริงเท่านั้นที่ไปกล่องให้เลือกโหลดใหม่/เขียนทับ (ผลตรวจ §3.6)
+      // 428 = หน้าเว็บเก่า ต้อง Ctrl+F5 · empty_allocation_overwrite = server กันข้อมูลหาย
+      // เดิมทุกตัวไปกล่องเดียวกัน แล้วขึ้น "บันทึกโดย: ไม่ระบุ" ซึ่งชวนงง
+      if (res.status === 409 && (j?.detail?.code || "snapshot_conflict") === "snapshot_conflict") {
+        return { conflict: res.status, j };
+      }
+      const msg = _formatApiErrorDetail(j) || "บันทึกผลกระจายบน server ไม่สำเร็จ";
+      _logClientError("save_allocation", msg, `sup=${supId} http=${res.status}`);
+      toast("⚠ " + msg, "red");
+      throw new Error(msg);
     }
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
@@ -11618,9 +12011,13 @@ async function saveRegionalAllocationSnapshots(allocs, status = "optimized") {
         saved.push(supId);
         continue;
       }
+      // เป้าเงินเฉพาะของทีมนั้น — เดิมไม่ส่ง จึงได้ S.yellow ทั้งภาคติดไปทุกทีม
+      const team = _teamRowsAndYellow(supId, rows);
       await saveServerAllocationSnapshot(supStatus, {
         supId,
         allocations: rows,
+        yellow: team.yellow,
+        yellow_locked: team.yellowLocked,
         forceRegional: true,
         silentSummary: true,
       });
@@ -13650,11 +14047,11 @@ function syncTargetDriftNotice() {
     })
     .join(" · ");
   const skus = Array.isArray(d.changed_skus) ? d.changed_skus : [];
-  const canRun = !S.compositeAllocView && !_isAllocReadOnlyView();
+  const canRun = _canPartialRealloc();
   const actions =
     (canRun && skus.length
-      ? `<button type="button" class="btn-realloc btn-realloc--partial" onclick="runReAllocationForSkus(${_snapshotEsc(JSON.stringify(skus))})">` +
-        `⚡ กระจายใหม่เฉพาะ ${skus.length} สินค้าที่เป้าเปลี่ยน</button>`
+      ? `<button type="button" class="btn-realloc btn-realloc--partial" onclick="reloadThenReallocChanged(${_snapshotEsc(JSON.stringify(skus))})">` +
+        `⚡ โหลดเป้าใหม่ แล้วกระจายเฉพาะ ${skus.length} สินค้าที่เป้าเปลี่ยน</button>`
       : "") +
     `<button type="button" class="btn-realloc btn-realloc--ghost" onclick="reloadDataThenReview()">🔄 โหลดข้อมูลใหม่ทั้งภาค</button>` +
     `<button type="button" class="btn-banner-close" onclick="dismissTargetDriftNotice()">ไว้ก่อน</button>`;
@@ -13670,6 +14067,36 @@ function syncTargetDriftNotice() {
     actionsHtml: actions,
   });
   el.style.display = "block";
+}
+
+/**
+ * เป้าต้นทางเปลี่ยน → โหลดเป้าใหม่ แล้วกระจายใหม่เฉพาะสินค้าที่เปลี่ยน (ผู้ใช้ขอ 29 ก.ย. 2026)
+ *
+ * ต้องโหลดก่อนเสมอ: /optimize อ่านเป้าจากแคชขั้นที่ 1 — เดิมปุ่ม ⚡ ในกล่องตรวจเป้าล่าสุด
+ * กระจายใหม่ด้วยเป้าชุดเดิม ตัวเลขจึงไม่ขยับ แล้วตอนส่งก็ถูกบล็อก "เป้าเปลี่ยน" ซ้ำอีก
+ * สินค้าอื่นในตารางและตัวเลขที่แก้เองไม่ถูกแตะ (runReAllocationForSkus)
+ */
+async function reloadThenReallocChanged(skus) {
+  const list = [...new Set((skus || []).map((x) => String(x).trim()).filter(Boolean))];
+  if (!list.length) return;
+  if (!_canPartialRealloc()) {
+    toast("มุมมองนี้แก้ผลกระจายไม่ได้", "amber");
+    return;
+  }
+  document.getElementById("infoModal")?.remove();
+  try {
+    // รวมภาคโหลดผ่านตัวสลับมุมมองรวมภาค (ดึงสดทุกทีม) · ทีมเดียวโหลดขั้นที่ 1 ของทีม
+    if (S.aggregateMode) await refreshManagerDashboardData({ refresh: true });
+    else await refreshDashboardData(true);
+  } catch (e) {
+    toast("❌ " + _userFacingError(e, "โหลดเป้าใหม่ไม่สำเร็จ"), "red");
+    return;
+  }
+  S.targetDrift = null;
+  syncTargetDriftNotice();
+  await runReAllocationForSkus(list, {
+    restoreLabel: `⚡ กระจายเฉพาะสินค้าที่เป้าเปลี่ยน (${list.length} SKU)`,
+  });
 }
 
 /**
@@ -13726,7 +14153,7 @@ function _brandsFromSkus() {
  * ที่ขาดคือทางให้ผู้ใช้เลือกเท่านั้น
  */
 function openAllocPickModal() {
-  if (S.compositeAllocView || _isAllocReadOnlyView()) {
+  if (!_canPartialRealloc()) {
     toast("มุมมองนี้แก้ผลกระจายไม่ได้", "amber");
     return;
   }
@@ -13789,9 +14216,20 @@ function openAllocPickModal() {
   });
 }
 
+/**
+ * กระจายใหม่เฉพาะบางสินค้าได้ไหมในมุมมองนี้ (ผู้ใช้ขอ 29 ก.ย. 2026)
+ *
+ * เดิมปิดในมุมมองรวมภาคทั้งหมด ทั้งที่ /optimize รับ only_skus ได้ทั้งแบบรวมเป้าทั้งภาค
+ * และแบบรายทีม และการบันทึกแยกทีมก็รองรับอยู่แล้ว · มุมมองรวมภาคที่แก้ไม่ได้ยังปิดเหมือนเดิม
+ */
+function _canPartialRealloc() {
+  if (_isAllocReadOnlyView()) return false;
+  return !S.compositeAllocView || _regionalAggregateWritable();
+}
+
 /** ปุ่มสองตัวบนการ์ดคำนวณ — โชว์เมื่อมีรายการสินค้าแล้วและมุมมองนี้แก้ได้ */
 function syncAllocExtraButtons() {
-  const editable = !S.compositeAllocView && !_isAllocReadOnlyView();
+  const editable = _canPartialRealloc();
   const pick = document.getElementById("allocPickBtn");
   if (pick) {
     pick.style.display = editable && (S.skus || []).length ? "" : "none";
@@ -13821,8 +14259,21 @@ async function runReAllocationOnlyChanged() {
  * และ "เลือกแบรนด์/สินค้าเอง" (รายการมาจากที่ผู้ใช้ติ๊ก) — ตรรกะ merge ผลกลับเข้า
  * ตารางเป็นเรื่องเดียวกัน จึงต้องอยู่ที่เดียว ไม่งั้นแก้ที่หนึ่งลืมอีกที่
  */
+/**
+ * รวมผลกระจายบางสินค้ากลับเข้าตารางเดิม (แยกออกมาให้เทสต์ได้ — tests/js/partial_merge.test.js)
+ *
+ * SKU ที่กระจายรอบนี้ใช้แถวใหม่ · SKU อื่นคงเดิม · รวมภาค: ทีมที่ไม่อยู่ในผลรอบนี้คงแถวเดิม
+ */
+function _mergePartialAllocs(current, part, changedSet, multiTeam, teamOf) {
+  const teamsInPart = new Set((part || []).map((a) => teamOf(a)));
+  const keep = (current || []).filter((a) =>
+    !changedSet.has(String(a.sku || "").trim())
+    || (multiTeam && !teamsInPart.has(teamOf(a))));
+  return [...keep, ...(part || [])];
+}
+
 async function runReAllocationForSkus(skus, opts = {}) {
-  if (S.compositeAllocView || _isAllocReadOnlyView()) return;
+  if (!_canPartialRealloc()) return;
   const changed = [...new Set((skus || []).map((x) => String(x).trim()).filter(Boolean))];
   if (!changed.length) {
     toast("ยังไม่ได้เลือกสินค้าที่จะกระจาย", "amber");
@@ -13852,8 +14303,12 @@ async function runReAllocationForSkus(skus, opts = {}) {
   S.newProductSkus = [...new Set([...prevNewSkus, ...(S.newProductSkus || [])])];
 
   // merge: SKU ที่กระจายรอบนี้ใช้แถวใหม่ทั้งชุด · SKU อื่นคงเดิมทุกประการ (รวมสถานะล็อก)
-  const keep = (S.allocations || []).filter((a) => !changedSet.has(String(a.sku || "").trim()));
-  const merged = [...keep, ...part];
+  // รวมภาคแบบรายทีม: ทีมที่ไม่อยู่ในผลรอบนี้ (กระจายไม่สำเร็จ หรือไม่มีสินค้าที่เลือกในเป้าทีม)
+  // ต้องคงแถวเดิมของสินค้าเหล่านั้นไว้ — ไม่งั้นแถวของทีมนั้นหายไปทั้งที่ไม่ได้กระจายใหม่เลย
+  // ทีมที่กระจายได้คืนแถวครบทุกคนอยู่แล้ว (เติมหีบ 0 ให้คนที่ไม่ได้ — I8) จึงเทียบระดับทีมได้
+  const merged = _mergePartialAllocs(
+    S.allocations || [], part, changedSet, !!(S.compositeAllocView || S.aggregateMode), _supervisorCodeForAllocRow
+  );
   S.allocations = merged;
   S.recentReallocSkus = [...changedSet];
 
@@ -14908,7 +15363,89 @@ const ADMIN_SORT_GETTERS = {
   targetsun: (r) => (r.can_import_targetsun ? 1 : 0),
 };
 
+/* ── กล่องแจ้งเตือนในแอป ─────────────────────────────────────────────
+   เรื่องที่คนต้องรู้แม้ไม่ได้เป็นคนกด เช่นจำนวนแถวใน Target Sun หลังส่งไม่ตรงที่คาด
+   server ส่งถึงคนกดส่ง เจ้าของ SL dev และแอดมินในขอบเขต (backend/services/send_alerts.py)
+   กระดิ่งโผล่เฉพาะตอนมีเรื่องค้าง — ไม่มีเรื่องก็ซ่อน หน้าจอเดิมไม่เปลี่ยน */
+let _notifLastFetch = 0;
+let _notifItems = [];
+
+async function refreshNotificationBell(force = false) {
+  const btn = document.getElementById("notifBellBtn");
+  if (!btn) return;
+  const onLogin = document.getElementById("loginView")?.style.display !== "none";
+  if (onLogin) { btn.style.display = "none"; return; }
+  if (!force && Date.now() - _notifLastFetch < 60000) return;
+  _notifLastFetch = Date.now();
+  try {
+    const res = await fetchWithTimeout(`${API_BASE_URL}/data/notifications`, {}, 15000);
+    if (!res.ok) return;
+    const j = await res.json().catch(() => ({}));
+    _notifItems = Array.isArray(j.items) ? j.items : [];
+    const n = Number(j.unread) || 0;
+    btn.style.display = n > 0 ? "inline-flex" : "none";
+    const c = document.getElementById("notifBellCount");
+    if (c) c.textContent = n.toLocaleString("th-TH");
+  } catch (e) {
+    console.warn("[notifications]", e);
+  }
+}
+
+function _notifItemHtml(it) {
+  const when = it.created_at ? new Date(it.created_at).toLocaleString("th-TH") : "";
+  return `<div class="notif-item" data-notif-id="${escH(it.id)}">`
+    + `<div class="notif-item__title">⚠ ${escH(it.title || "")}</div>`
+    + `<div>${escH(it.message || "")}</div>`
+    + `<div class="notif-item__meta">${escH(when)}</div>`
+    + `<button type="button" class="btn-logout" style="margin-top:6px;"`
+    + ` onclick="ackNotification('${escH(it.id)}', this)">รับทราบ</button>`
+    + `</div>`;
+}
+
+function openNotificationsModal() {
+  const items = _notifItems || [];
+  _showInfoModal({
+    title: "การแจ้งเตือน",
+    bodyHtml: items.length
+      ? `<p style="margin:0 0 10px;text-align:left;">กด「รับทราบ」เมื่อตรวจแล้ว — `
+        + `ถ้าจำนวนแถวไม่ตรง ให้ตรวจเป้าของทีมนั้นใน Target Sun หรือแจ้ง IT</p>`
+        + `<div style="max-height:360px;overflow-y:auto;">${items.map(_notifItemHtml).join("")}</div>`
+      : `<p style="margin:0;">ไม่มีเรื่องค้าง</p>`,
+    primaryLabel: null,
+    secondaryLabel: "ปิด",
+  });
+}
+
+async function ackNotification(id, btnEl) {
+  if (btnEl) btnEl.disabled = true;
+  try {
+    const res = await fetchWithTimeout(
+      `${API_BASE_URL}/data/notifications/${encodeURIComponent(id)}/ack`,
+      { method: "POST" },
+      15000
+    );
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      toast(_userFacingError(_formatApiErrorDetail(j), "กดรับทราบไม่สำเร็จ"), "red");
+      if (btnEl) btnEl.disabled = false;
+      return;
+    }
+    const box = btnEl?.closest(".notif-item");
+    if (box) {
+      box.classList.add("notif-item--acked");
+      btnEl.textContent = "รับทราบแล้ว";
+    }
+    await refreshNotificationBell(true);
+  } catch (e) {
+    toast("กดรับทราบไม่สำเร็จ: " + _userFacingError(e), "red");
+    if (btnEl) btnEl.disabled = false;
+  }
+}
+
+setInterval(() => { refreshNotificationBell(false); }, 10 * 60 * 1000);
+
 function updateAdminNavVisibility() {
+  refreshNotificationBell(false);
   const topBtn = document.getElementById("adminNavBtn");
   const loginBtn = document.getElementById("adminNavLoginBtn");
   const onLogin = document.getElementById("loginView")?.style.display !== "none";
@@ -15414,13 +15951,20 @@ function adminRenderTargetEndpoints(data) {
       <div><strong>ส่งผลกระจาย (${sendLbl}):</strong> ${sendUrl}</div>`;
   }
   if (cross) {
-    if (data?.cross_env) {
-      cross.style.display = "block";
-      cross.innerHTML = "⚠ โหมดข้ามสภาพแวดล้อม: อ่านเป้าจาก Production แต่ส่งผลไป UAT — ตรวจงวด/effective date ให้ตรงกันก่อนทดสอบ และสลับ Send เป็น Prod เมื่อ go-live";
-    } else {
-      cross.style.display = "none";
-      cross.innerHTML = "";
+    const warns = [];
+    if (data?.using_default_settings) {
+      warns.push("⚠ ไม่พบไฟล์ตั้งค่า (config/app_runtime.json) หรือไฟล์เสีย — ระบบใช้ค่าตั้งต้น "
+        + "「ทดสอบ (อ่าน Prod · ส่ง UAT)」 เอง ไม่ใช่ค่าที่เลือกไว้ · กดเลือกปลายทางใหม่เพื่อบันทึกไฟล์");
     }
+    if (data?.manual_url_override) {
+      warns.push("⚠ มี URL ที่แก้ไว้ในไฟล์ตั้งค่าทับ preset — ปลายทางจริงคือ URL ข้างบน ไม่ใช่ชื่อ preset ที่เลือก");
+    }
+    if (data?.cross_env) {
+      warns.push("⚠ โหมดข้ามสภาพแวดล้อม: อ่านเป้าจาก Production แต่ส่งผลไป UAT — "
+        + "ผลตรวจยอด/จำนวนแถวหลังส่งจะขึ้น「ตรวจไม่ได้」 และสลับ Send เป็น Prod เมื่อ go-live");
+    }
+    cross.style.display = warns.length ? "block" : "none";
+    cross.innerHTML = warns.map((w) => `<div>${escapeHtml(w)}</div>`).join("");
   }
 }
 
@@ -16445,6 +16989,14 @@ async function adminLoadRowCountChecks() {
           : `<span class="admin-log-level admin-log-level--info">ปกติ</span>`;
       const extra = Number(r.unexpected_extra_rows);
       const extraTxt = Number.isFinite(extra) ? `${extra > 0 ? "+" : ""}${extra.toLocaleString("th-TH")}` : "—";
+      // บันทึกก่อน 30 ก.ย. 2026 ไม่มีช่องนี้ = "—" (ไม่ได้ตรวจ ไม่ใช่ 0)
+      const par = r.parallel_rows == null ? NaN : Number(r.parallel_rows);
+      const parTip = (r.parallel_rows_sample || []).slice(0, 5).map((p) =>
+        `${p.emp_id} × ${p.sku}: คลังเดิม ${(p.old_warehouses || []).map((w) => w || "ว่าง").join("/")} → ส่งไป ${p.new_warehouse || "ว่าง"}`
+      ).join("\n");
+      const parHtml = !Number.isFinite(par) ? "—"
+        : par > 0 ? `<strong class="rx-up" title="${escapeHtml(parTip)}">${par.toLocaleString("th-TH")}</strong>`
+          : "0";
       return `<tr${isIssue ? ' class="admin-row--issue"' : ""}>
         <td>${ts}</td>
         <td>${escapeHtml(String(r.sup_id || "—"))}</td>
@@ -16453,12 +17005,13 @@ async function adminLoadRowCountChecks() {
         <td>${Number.isFinite(Number(r.after_count)) ? Number(r.after_count).toLocaleString("th-TH") : "—"}</td>
         <td>${Number.isFinite(Number(r.expected_new_rows)) ? Number(r.expected_new_rows).toLocaleString("th-TH") : "—"}</td>
         <td>${escapeHtml(extraTxt)}</td>
+        <td>${parHtml}</td>
         <td>${statusHtml}</td>
       </tr>`;
     }).join("");
   } catch (e) {
     if (countEl) countEl.textContent = "";
-    tbody.innerHTML = `<tr><td colspan="8" class="admin-empty">${escapeHtml(e.message || String(e))}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="admin-empty">${escapeHtml(e.message || String(e))}</td></tr>`;
   }
 }
 
@@ -16529,10 +17082,19 @@ async function adminLoadUsageLogs() {
       return `<tr>
         <td>${ts}</td>
         <td><span class="admin-log-level ${lvlClass}">${escapeHtml(lvl || "—")}</span></td>
-        <td>${escapeHtml(String(r.email || "—"))}</td>
+        <td>${escapeHtml(String(r.email || "—"))}${
+          r.acting_admin_email
+            ? `<div style="font-size:11px;color:var(--amber);">กดโดย ${escapeHtml(String(r.acting_admin_email))} (ดูแทน)</div>`
+            : ""
+        }</td>
         <td>${escapeHtml(String(r.sup_id || "—"))}</td>
         <td class="log-action" title="${escapeHtml(String(r.action || ""))}">${escapeHtml(String(r.action || "—"))}${period}</td>
-        <td class="log-msg">${escapeHtml(String(r.message || "—"))}</td>
+        <td class="log-msg">${escapeHtml(String(r.message || "—"))}${
+          r.context?.explain && lvl !== "info"
+            ? `<div class="log-explain"><div><strong>สาเหตุ:</strong> ${escapeHtml(String(r.context.explain.cause || ""))}</div>`
+              + `<div><strong>วิธีแก้:</strong> ${escapeHtml(String(r.context.explain.fix || ""))}</div></div>`
+            : ""
+        }</td>
         <td class="admin-td-actions">${detailBtn}</td>
       </tr>`;
     }).join("");
@@ -16592,8 +17154,55 @@ function _adminExtErr(raw) {
   return { text: "ระบบปลายทางตอบกลับผิดพลาด — แจ้งผู้ดูแลระบบพร้อมรายละเอียดด้านล่าง", raw: s };
 }
 
+/** ข้อมูลอ้างอิงหนึ่งรายการเป็นบรรทัดเดียวที่คนอ่านเข้าใจ (สินค้า · พนักงาน · ตัวเลข) */
+function _explainRefLine(x) {
+  if (x == null || typeof x !== "object") return String(x);
+  const bits = [];
+  if (x.row != null) bits.push(`แถว ${x.row}`);
+  if (x.sup_id) bits.push(`ทีม ${x.sup_id}`);
+  if (x.sku) bits.push(`สินค้า ${x.sku}`);
+  if (x.emp_id) bits.push(`พนักงาน ${x.emp_id}`);
+  if (x.warehouse_code) bits.push(`คลัง ${x.warehouse_code}`);
+  if (x.sending_boxes != null) bits.push(`ส่ง ${x.sending_boxes} / เป้า ${x.expected_boxes}`);
+  if (x.loaded_boxes != null) bits.push(`เป้าตอนโหลด ${x.loaded_boxes} → ตอนนี้ ${x.current_boxes}`);
+  if (x.allocated_sum != null) bits.push(`กระจาย ${x.allocated_sum} / เป้า ${x.expected_boxes}`);
+  if (x.sent != null) bits.push(`ส่ง ${x.sent} / ใน Target Sun ${x.in_targetsun == null ? "ไม่มีแถว" : x.in_targetsun}`);
+  if (Array.isArray(x.teams)) bits.push(`อยู่ทีม ${x.teams.join(", ")}`);
+  if (x.reason) bits.push(String(x.reason));
+  return bits.join(" · ") || JSON.stringify(x);
+}
+
+/** คำอธิบายสำหรับแอดมิน (เกิดอะไร/น่าจะเกิดจาก/วิธีแก้/อ้างอิง) — ผู้ใช้ขอ 29 ก.ย. 2026 */
+function _explainLines(ex, more) {
+  if (!ex || typeof ex !== "object") return [];
+  const out = [
+    `เกิดอะไร: ${ex.title || "—"}`,
+    `น่าจะเกิดจาก: ${ex.cause || "—"}`,
+    `วิธีแก้: ${ex.fix || "—"}`,
+  ];
+  if (ex.server_message) out.push(`ข้อความจากระบบ: ${ex.server_message}`);
+  const refs = ex.refs && typeof ex.refs === "object" ? ex.refs : {};
+  const refLines = [];
+  for (const [k, v] of Object.entries(refs)) {
+    if (k.endsWith("_more")) continue;
+    if (Array.isArray(v)) {
+      for (const x of v) refLines.push(`  - ${_explainRefLine(x)}`);
+      if (refs[`${k}_more`]) refLines.push(`  … อีก ${refs[`${k}_more`]} รายการ`);
+    } else {
+      refLines.push(`  ${k}: ${Array.isArray(v) ? v.join(", ") : v}`);
+    }
+  }
+  if (refLines.length) out.push("ข้อมูลอ้างอิง:", ...refLines);
+  if (Array.isArray(more) && more.length) out.push(`ปัญหาอื่นในรอบเดียวกัน: ${more.join(" · ")}`);
+  out.push(`(รหัส: ${ex.code || "—"})`);
+  return out;
+}
+
 function _adminLogDetailText(r) {
   const lines = [];
+  const ctx0 = r.context && typeof r.context === "object" ? r.context : {};
+  const exLines = _explainLines(ctx0.explain, ctx0.explain_more);
+  if (exLines.length) lines.push(...exLines, "", "── รายละเอียดทางเทคนิค ──");
   if (r.detail) lines.push(String(r.detail));
   const meta = [];
   if (r.role) meta.push(`บทบาท: ${r.role}`);
@@ -16611,6 +17220,7 @@ function _adminLogDetailText(r) {
     lines.push("");
     lines.push("ค่าที่บันทึกไว้:");
     for (const [k, v] of Object.entries(r.context)) {
+      if (k === "explain" || k === "explain_more") continue;  // แสดงแบบอ่านง่ายด้านบนแล้ว
       lines.push(`  ${k}: ${Array.isArray(v) ? (v.length ? v.join(", ") : "—") : (v === null || v === undefined ? "—" : v)}`);
     }
   }
@@ -16621,7 +17231,7 @@ function adminShowUsageDetail(btn) {
   const detail = btn?.dataset?.detail || "";
   if (!detail) return;
   _showInfoModal({
-    title: "รายละเอียด (เทคนิค)",
+    title: "รายละเอียด",
     // dataset คืนค่าที่เบราว์เซอร์ decode กลับมาแล้ว = ข้อความดิบ ต้อง escape อีกรอบก่อนใส่ innerHTML
     // ไม่งั้น log ที่มี <class 'ValueError'> จะถูกตีความเป็นแท็กแล้วหายจากจอ
     bodyHtml: `<pre style="white-space:pre-wrap;font-size:12px;margin:0;">${escapeHtml(detail)}</pre>`,
@@ -17694,12 +18304,22 @@ async function _adminJsonFetch(path, { method = "GET", body = null, timeout = 20
   const res = await fetchWithTimeout(`${API_BASE_URL}${path}`, opts, timeout);
   if (!res.ok) {
     let d = "คำขอไม่สำเร็จ";
+    let j422 = null;
     try {
       const j = await res.json();
-      if (j.detail) d = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
+      j422 = j;
+      if (j.detail) d = _formatApiErrorDetail(j) || (typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail));
     } catch (_) { /* ignore */ }
+    // 422 ส่วนใหญ่คือ "ค่าที่กรอกไม่ผ่านการตรวจ" (เช่น push_multiple ต้อง 1–100) ต้องบอกตามจริง
+    // เดิมแทนทุก 422 ด้วย "เซิร์ฟเวอร์ยังไม่อัปเดต" ข้อความจริงจึงหาย (ผลตรวจ §3.5)
+    // เหลือกรณีเดียวที่แปลว่า server เก่า: ช่องที่หน้าเว็บส่งไป server ไม่รู้จัก (extra_forbidden)
     if (res.status === 422) {
-      d = "เซิร์ฟเวอร์ยังไม่อัปเดต — กรุณารีสตาร์ทแอปแล้วกด Ctrl+F5 โหลดหน้าใหม่";
+      const msg = _formatApiErrorDetail(j422) || "ข้อมูลที่ส่งไม่ถูกต้อง";
+      const unknownField = Array.isArray(j422?.detail)
+        && j422.detail.some((x) => String(x?.type || "") === "extra_forbidden");
+      d = unknownField
+        ? "เซิร์ฟเวอร์ยังไม่อัปเดต — กรุณารีสตาร์ทแอปแล้วกด Ctrl+F5 โหลดหน้าใหม่"
+        : `ข้อมูลไม่ถูกต้อง: ${msg}`;
     }
     throw new Error(d);
   }
@@ -19954,6 +20574,7 @@ async function exitViewAsMode() {
   S.employees = [];
   S.skus = [];
   _bumpSkusVersion();
+  _staleTargetChunks = [];
   S.allocations = [];
   S.totalTarget = 0;
   S._hasUnsaved = false;

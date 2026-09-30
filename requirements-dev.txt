@@ -1,2 +1,4 @@
 -r requirements.txt
 pytest>=7.4.0
+# fastapi.testclient (starlette TestClient) ต้องใช้ httpx
+httpx>=0.27

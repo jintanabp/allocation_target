@@ -45,9 +45,28 @@ def _warn_if_multi_worker() -> None:
         )
 
 
+def _warn_if_ssl_verification_off() -> None:
+    """
+    TARGETSUN_*_VERIFY_SSL=0 ปิดการยืนยันใบรับรอง — ใช้ได้เฉพาะเครือข่ายทดสอบ (ผลตรวจ §2.9)
+    log อย่างเดียว ไม่ fail startup (IT เป็นเจ้าของ .env บน server)
+    """
+    off = [
+        name
+        for name in ("TARGETSUN_IMPORT_VERIFY_SSL", "TARGETSUN_READ_VERIFY_SSL")
+        if (os.environ.get(name) or "1").strip().lower() in ("0", "false", "no", "off")
+    ]
+    if off:
+        logger.error(
+            "ปิดการยืนยันใบรับรอง HTTPS ของ Target Sun อยู่ (%s) — ใช้ได้เฉพาะเครือข่ายทดสอบ",
+            ", ".join(off),
+        )
+
+
 def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(app_: FastAPI):
+        # ล็อกอินต้องไม่ถูกปิดเองเงียบ ๆ เมื่อ config ไม่ครบ — ไม่ครบ = ไม่สตาร์ท (§1.4)
+        auth_entra.check_auth_config_at_startup()
         os.makedirs("data", exist_ok=True)
         # เติมแคชตั้งต้นก่อนอย่างอื่น — ถ้า Fabric ดึงไม่ได้และเครื่องนี้ยังไม่เคย
         # ดึงงวดนั้นสำเร็จ ราคาจะเป็น 0 ทั้งระบบแล้วทุกทีมเปิดงวดไม่ได้
@@ -59,6 +78,7 @@ def create_app() -> FastAPI:
         except Exception as e:
             logger.warning("เติมแคชตั้งต้นไม่สำเร็จ: %s", e)
         _warn_if_multi_worker()
+        _warn_if_ssl_verification_off()
         cleanup_old_caches(max_age_days=7)
         cleanup_export_artifacts_keep_latest_per_sup(keep_n=1)
         warm_managers_cache_at_startup()

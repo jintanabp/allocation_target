@@ -45,14 +45,48 @@ def _normalize_optional_url(raw: Any) -> str | None:
     return s if s else None
 
 
+_WARNED: set[str] = set()
+
+
+def _log_default_once(kind: str, msg: str, *args: Any) -> None:
+    """ถูกเรียกทุกคำขอ — log ERROR ครั้งเดียวต่อสภาพ ไม่ท่วม log"""
+    if kind in _WARNED:
+        return
+    _WARNED.add(kind)
+    logger.error(msg, *args)
+
+
+def settings_file_status() -> str:
+    """
+    "ok" | "missing" | "corrupt" — ไฟล์ตั้งค่าอยู่ในสภาพไหน
+
+    app_runtime.json ไม่อยู่ใน git แล้ว ไฟล์หาย/เสีย/ขึ้นเครื่องใหม่ = ระบบกลับไปใช้
+    ค่าตั้งต้น (preset "test": อ่าน Prod ส่ง UAT) โดยไม่มีใครรู้ (ผลตรวจ §2.2)
+    หน้าแอดมินและหน้าส่งใช้ค่านี้ขึ้นคำเตือน
+    """
+    path = settings_json_path()
+    if not os.path.isfile(path):
+        return "missing"
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return "corrupt"
+    return "ok" if isinstance(data, dict) else "corrupt"
+
+
 def read_settings_unlocked() -> dict[str, Any]:
     path = settings_json_path()
     if not os.path.isfile(path):
+        _log_default_once(
+            "missing", "ไม่พบไฟล์ตั้งค่า %s — ใช้ค่าตั้งต้น (ปลายทาง preset 'test': อ่าน Prod ส่ง UAT)", path
+        )
         return _default_settings()
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
         if not isinstance(data, dict):
+            _log_default_once("corrupt", "ไฟล์ตั้งค่า %s ผิดรูปแบบ — ใช้ค่าตั้งต้น (preset 'test')", path)
             return _default_settings()
         out = _default_settings()
         src = str(data.get("target_read_source") or "").strip().lower()
@@ -65,7 +99,7 @@ def read_settings_unlocked() -> dict[str, Any]:
         out["target_import_api_base"] = _normalize_optional_url(data.get("target_import_api_base"))
         return out
     except (json.JSONDecodeError, OSError) as e:
-        logger.warning("read app_runtime settings failed: %s", e)
+        _log_default_once("unreadable", "อ่านไฟล์ตั้งค่า app_runtime ไม่ได้ (%s) — ใช้ค่าตั้งต้น (preset 'test')", e)
         return _default_settings()
 
 

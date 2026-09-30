@@ -12,7 +12,7 @@ from ..deps import (
     require_admin_user,
     require_authenticated_user,
 )
-from ..schemas import LakehouseUploadRequest, VerifySendBatchRequest
+from ..schemas import LakehouseUploadRequest, ResendUnlandedRequest, VerifySendBatchRequest
 from ..services.lakehouse import (
     export_allocations_excel,
     upload_allocations_to_lakehouse,
@@ -21,9 +21,13 @@ from ..services.lakehouse import (
 from ..services.targetsun_import import (
     import_allocations_to_targetsun,
     import_prepared_targetsun,
+    resend_unlanded_rows,
     load_prepare_batch,
+    mark_batch_verified,
     prepare_targetsun_import,
 )
+from ..services.error_explain import explain, explain_http
+from ..services.send_alerts import notify_row_count_issue
 from ..services.usage_log_store import log_from_user
 
 logger = logging.getLogger("target_allocation.lakehouse_router")
@@ -63,6 +67,38 @@ def _excluded_sku_summary(res: dict) -> dict:
     }
 
 
+def _send_result_explain(send_status: str, ts: dict, rb: dict, rc: dict) -> dict:
+    """คำอธิบายของปัญหาหลังส่งที่สำคัญที่สุด (+ หัวข้อของปัญหาอื่น) — ว่าง = ปกติ"""
+    found: list[dict] = []
+    if send_status == "unknown":
+        found.append(explain("send_unconfirmed", {"message": str(ts.get("resultMsg") or "")}))
+    elif send_status == "failed":
+        found.append(explain("send_failed", message=str(ts.get("resultMsg") or "Target Sun ปฏิเสธคำขอ")))
+    elif send_status == "partial":
+        r = ts.get("result") if isinstance(ts.get("result"), dict) else {}
+        found.append(explain("send_partial", {
+            "rows": [{"row": e.get("rowNum"), "reason": e.get("message")} for e in (r.get("errors") or [])
+                     if isinstance(e, dict)],
+            "row_count": r.get("skipped"),
+        }))
+    if int(rc.get("unlanded_count") or 0) > 0:
+        found.append(explain("unlanded_rows", rc))
+    elif int(rc.get("parallel_rows_count") or 0) > 0:
+        found.append(explain("parallel_rows", rc))
+    elif rc.get("checked") and rc.get("ok") is False:
+        found.append(explain("row_count_mismatch", rc))
+    elif rc.get("checked") is False and send_status in ("ok", "partial"):
+        found.append(explain("row_count_unverified", {"message": str(rc.get("reason") or "")}))
+    if rb.get("checked") and rb.get("ok") is False:
+        found.append(explain("readback_mismatch", rb))
+    if not found:
+        return {}
+    out = {"explain": found[0]}
+    if len(found) > 1:
+        out["explain_more"] = [f["title"] for f in found[1:]]
+    return out
+
+
 def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) -> None:
     """
     บันทึกทุกครั้งที่กดส่ง Target Sun — สำเร็จหรือไม่ก็ตาม
@@ -75,9 +111,18 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
     """
     try:
         res = result if isinstance(result, dict) else {}
-        ts = res.get("targetsun") or {}
-        r = ts.get("result") or {}
-        ok = ts.get("success") is not False
+        ts = res.get("targetsun")
+        # ok/partial = ของลงไปแล้ว · failed/unknown = ไม่ใช่ความสำเร็จ (ผลตรวจ §2.3)
+        # เดิม success is not False — คำตอบที่ไม่มีช่อง success ถูกบันทึกว่าสำเร็จ
+        send_status = str(res.get("send_status") or "")
+        if not send_status:
+            from ..services.targetsun_import import classify_targetsun_reply
+
+            send_status = classify_targetsun_reply(ts)
+        ok = send_status in ("ok", "partial")
+        if not isinstance(ts, dict):
+            ts = {}
+        r = ts.get("result") if isinstance(ts.get("result"), dict) else {}
         # ยอดที่ "ลงจริง" ไม่ตรงไฟล์ = ส่งผ่านแต่ปลายทางกินไม่ครบ ต้องเห็นใน audit
         rb = res.get("readback") or {}
         rb_note = ""
@@ -107,6 +152,9 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
             )
             level = "error"
             caveats.append("จำนวนแถวไม่ตรงที่คาด")
+            if int(rc.get("parallel_rows_count") or 0) > 0:
+                rc_note += f" · ⚠ แถวใหม่ซ้อนคู่เดิม {rc.get('parallel_rows_count')} แถว (คลังไม่ตรงแถวเดิม)"
+                caveats.append("แถวใหม่ซ้อนคู่เดิม")
         elif rc.get("checked") is False and ok:
             rc_note = f" · ตรวจจำนวนแถวหลังส่งไม่ได้ ({rc.get('reason') or '-'})"
         # แถวที่ "สร้างใหม่" เพราะปลายทางไม่เคยมีคู่นี้ (dims_inferred) — เสี่ยงคลัง
@@ -147,7 +195,18 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
         # **ต้องมีคำว่า "สำเร็จ" อยู่ในข้อความของเคสที่ของลงปลายทางไปแล้วเสมอ**
         # เพราะบรรทัดเก่าที่ไม่มี context.ok ถูกตัดสินด้วยข้อความ (usage_summary:110-115)
         # ถ้าตัดคำนี้ทิ้ง การส่งที่สำเร็จจริงจะถูกนับเป็นล้มเหลวย้อนหลัง
-        if not ok:
+        if send_status == "partial":
+            n_err = len(r.get("errors") or []) if isinstance(r.get("errors"), list) else 0
+            caveats.insert(
+                0,
+                f"ปลายทางข้าม {int(r.get('skipped') or 0):,} แถว"
+                + (f" / แจ้งข้อผิดพลาด {n_err:,} แถว" if n_err else ""),
+            )
+            level = "warn" if level == "info" else level
+        if send_status == "unknown":
+            # ไม่ใช้คำว่า "สำเร็จ" — usage_summary ตัดสินแถวเก่าด้วยข้อความ
+            head = "ส่งเข้า Target Sun แล้ว แต่ยังยืนยันผลไม่ได้ — ปลายทางไม่บอกว่ารับหรือไม่ ให้ตรวจยอดใน Target Sun ก่อนส่งซ้ำ"
+        elif not ok:
             head = "ส่งเข้า Target Sun ไม่สำเร็จ"
         else:
             head = "ส่งเข้า Target Sun สำเร็จ"
@@ -192,14 +251,38 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
                 "row_count_after": rc.get("after_count"),
                 "row_count_expected_new": rc.get("expected_new_rows"),
                 "row_count_unexpected_extra": rc.get("unexpected_extra_rows"),
+                "row_count_parallel": rc.get("parallel_rows_count"),
+                "row_count_parallel_sample": (rc.get("parallel_rows_sample") or [])[:10],
                 "new_rows_count": new_rows,
                 "new_rows_with_boxes_count": new_rows_boxes,
                 "stale_rows_cleared_count": stale_cleared,
+                # รอบการส่งรวมภาค — เชื่อมแถวของทุกทีมที่ส่งพร้อมกันได้
+                "send_batch_id": res.get("send_batch_id"),
+                "batch_sup_ids": list(res.get("batch_sup_ids") or []),
+                # ระบุคนกดกับเจ้าของทีมแยกกัน (ส่งรวมภาค คนกดไม่ใช่เจ้าของทุก SL)
+                "sender_email": user.get("email") or user.get("view_as_email"),
+                "acting_admin_email": user.get("acting_admin_email"),
+                "send_status": send_status,
                 "ok": ok,
+                **_send_result_explain(send_status, ts, rb, rc),
             },
         )
-    except Exception:  # log ต้องไม่ทำให้การส่งพัง
-        pass
+    except Exception:  # log ต้องไม่ทำให้การส่งพัง — แต่ห้ามหายเงียบ (ผลตรวจ §2.3)
+        logger.exception("บันทึกการส่ง Target Sun ไม่สำเร็จ (%s)", req.sup_id)
+        try:
+            log_from_user(
+                user,
+                level="error",
+                sup_id=req.sup_id,
+                action="send_targetsun",
+                message="ส่งเข้า Target Sun แล้ว แต่ยังยืนยันผลไม่ได้ — บันทึกรายละเอียดไม่สำเร็จ",
+                detail=f"งวด {req.target_year}-{req.target_month:02d} · ดู log ของ server",
+                target_month=int(req.target_month),
+                target_year=int(req.target_year),
+                context={"ok": None, "log_error": True},
+            )
+        except Exception:
+            logger.exception("บันทึกการส่งแบบย่อก็ไม่สำเร็จ (%s)", req.sup_id)
 
 
 @router.post("/lakehouse/export-csv")
@@ -267,6 +350,8 @@ def _log_prepare_blocked(user: dict, req: LakehouseUploadRequest, e: HTTPExcepti
         "excluded_boxes": int(d.get("excluded_boxes") or 0),
         "shortfall_boxes": int(d.get("shortfall_boxes") or 0),
         "excluded_skus": [str(x) for x in (d.get("excluded_skus") or [])][:_MAX_LOGGED_EXCLUDED_SKUS],
+        # เกิดอะไร / น่าจะเกิดจาก / วิธีแก้ / ข้อมูลอ้างอิง — ให้แอดมินแก้ได้ทันที
+        "explain": explain_http(e),
     }
     msg = str(d.get("message") or "") or "เตรียมไฟล์ส่ง Target Sun ไม่ผ่าน"
     try:
@@ -285,6 +370,62 @@ def _log_prepare_blocked(user: dict, req: LakehouseUploadRequest, e: HTTPExcepti
         logger.exception("บันทึก prepare_targetsun_blocked ไม่สำเร็จ")
 
 
+def _enforce_send_identity(user: dict, req: LakehouseUploadRequest) -> None:
+    """
+    สองเรื่องที่เดิมเชื่อค่าจากหน้าเว็บตรง ๆ (ผลตรวจ 28 ก.ย. 2026 §1.3)
+
+    1. พนักงานทุกคนในคำขอต้องอยู่ในทีมที่ผู้ส่งมีสิทธิ์ — เดิมตรวจแค่ sup_id แล้วเติม
+       grain ข้ามทีมให้ทุก emp_id ในคำขอ ผู้มีสิทธิ์ส่งจึงใส่รหัสพนักงานทีมไหนก็ได้
+       ลงในคำขอของทีมตัวเองแล้วทับเป้าของเขาได้
+       คนที่ไม่มี grain ในทีมไหนเลยปล่อยผ่าน — แถวของเขาไม่มี dim ถูกตัดทิ้งอยู่แล้ว
+    2. รหัสผู้บันทึก (USERCODE) ต้องเป็นรหัสของผู้ส่งเอง หรือรหัสทีมที่ส่ง — ค่าอื่นแทนด้วยรหัสทีม
+    """
+    from ..services.lakehouse import employee_teams_in_period, norm_emp_code
+
+    unrestricted = user.get("auth_disabled") or user.get("allowed_supervisor_codes") is None
+    if not unrestricted:
+        emps = {norm_emp_code(a.emp_id) for a in (req.allocations or []) if str(a.emp_id or "").strip()}
+        teams = employee_teams_in_period(int(req.target_month), int(req.target_year), emps)
+
+        def _ok(sid: str) -> bool:
+            try:
+                ensure_supervisor_allowed(user, sid)
+                return True
+            except HTTPException:
+                return False
+
+        allowed_cache: dict[str, bool] = {}
+        bad = []
+        for emp in sorted(emps):
+            ts = teams.get(emp) or set()
+            if not ts:
+                continue
+            if not any(allowed_cache.setdefault(t, _ok(t)) for t in ts):
+                bad.append({"emp_id": emp, "teams": sorted(ts)})
+        if bad:
+            logger.warning("ส่ง Target Sun มีพนักงานนอกทีมที่มีสิทธิ์ %s: %s", req.sup_id, bad[:10])
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "send_employee_not_allowed",
+                    "message": (
+                        f"ยังไม่ได้ส่ง — มีพนักงาน {len(bad)} คนที่อยู่ในทีมที่บัญชีนี้ไม่มีสิทธิ์ส่ง"
+                    ),
+                    "employees": bad[:20],
+                },
+            )
+
+    code = str(req.upload_user_code or "").strip().upper()
+    if code and not (user.get("auth_disabled") or user.get("acc_admin_full_access")):
+        own = {
+            str(c).strip().upper()
+            for c in (user.get("userpls_supervisor_pick") or set()) | (user.get("userpls_manager_pick") or set())
+        }
+        if code not in own and code != str(req.sup_id or "").strip().upper():
+            logger.warning("รหัสผู้บันทึก %s ไม่ใช่ของผู้ส่ง — ใช้รหัสทีม %s แทน", code, req.sup_id)
+            req.upload_user_code = str(req.sup_id or "").strip().upper()
+
+
 @router.post("/lakehouse/prepare-targetsun")
 def prepare_targetsun_from_allocations(
     req: LakehouseUploadRequest,
@@ -295,6 +436,7 @@ def prepare_targetsun_from_allocations(
     ensure_own_supervisor_write(user, req.sup_id)
     ensure_targetsun_import_allowed(user)
     ensure_demo_team_not_sent(req.sup_id)
+    _enforce_send_identity(user, req)
     try:
         return prepare_targetsun_import(req)
     except HTTPException as e:
@@ -323,7 +465,61 @@ def get_send_environment(user: dict = Depends(require_authenticated_user)):
         "import_host_label": s.get("import_host_label"),
         "read_host_label": s.get("read_host_label"),
         "cross_env": s.get("cross_env") == "1",
+        # ไฟล์ตั้งค่าหาย/เสีย → ปลายทางกลับเป็นค่าตั้งต้นเงียบ ๆ — หน้าส่งต้องเตือน
+        "using_default_settings": s.get("using_default_settings") == "1",
     }
+
+
+@router.post("/lakehouse/resend-unlanded")
+def resend_unlanded(
+    req: ResendUnlandedRequest,
+    user: dict = Depends(require_authenticated_user),
+):
+    """
+    ส่งซ้ำเฉพาะแถวที่ยังไม่ลง/ลงไม่ตรงใน Target Sun ของไฟล์ที่ส่งไปแล้ว (ผู้ใช้ขอ 29 ก.ย. 2026)
+
+    สิทธิ์เดียวกับการส่งปกติ · แถวและจำนวนมาจากไฟล์ที่ server เก็บไว้ ไม่รับจากหน้าเว็บ
+    """
+    ensure_supervisor_allowed(user, req.sup_id)
+    ensure_own_supervisor_write(user, req.sup_id)
+    ensure_targetsun_import_allowed(user)
+    ensure_demo_team_not_sent(req.sup_id)
+    try:
+        result = resend_unlanded_rows(req.sup_id, req.prepare_token)
+    except HTTPException as e:
+        log_from_user(
+            user, level="error", sup_id=req.sup_id, action="send_targetsun_resend",
+            message="ส่งซ้ำแถวที่ตกหล่นไม่สำเร็จ",
+            detail=str(e.detail)[:500],
+            context={"ok": False, "prepare_token": req.prepare_token[:8], "explain": explain_http(e)},
+        )
+        raise
+    remaining = result.get("remaining_unlanded")
+    log_from_user(
+        user,
+        level="info" if remaining == 0 else "warn",
+        sup_id=req.sup_id,
+        action="send_targetsun_resend",
+        message=(
+            f"ส่งซ้ำแถวที่ตกหล่น {int(result.get('resent_rows') or 0):,} แถว"
+            + ("" if remaining == 0 else f" — ยังเหลือ {remaining if remaining is not None else '?'} แถวที่ยังไม่ลง")
+        ),
+        detail=f"งวด {result.get('target_year')}-{int(result.get('target_month') or 0):02d}",
+        target_month=result.get("target_month"),
+        target_year=result.get("target_year"),
+        context={
+            "ok": remaining == 0,
+            "resent_rows": result.get("resent_rows"),
+            "remaining_unlanded": remaining,
+            "remaining_sample": result.get("remaining_sample"),
+            "prepare_token": req.prepare_token[:8],
+            "send_status": result.get("send_status"),
+            **({"explain": explain("unlanded_rows", {
+                "unlanded_count": remaining, "unlanded_sample": result.get("remaining_sample")})}
+               if remaining else {}),
+        },
+    )
+    return result
 
 
 @router.post("/lakehouse/verify-send-batch")
@@ -344,7 +540,10 @@ def verify_send_batch_before_import(
         ensure_own_supervisor_write(user, sup_id)
         ensure_demo_team_not_sent(sup_id)
     ensure_targetsun_import_allowed(user)
-    return verify_send_batch(metas)
+    result = verify_send_batch(metas)
+    # จดผลลง bundle — import ไม่ยอมส่ง token ของชุดรวมภาคที่ยังไม่ผ่านด่านนี้
+    mark_batch_verified(metas)
+    return result
 
 
 @router.post("/lakehouse/import-targetsun")
@@ -361,23 +560,70 @@ def import_targetsun_from_allocations(
     ensure_own_supervisor_write(user, req.sup_id)
     ensure_targetsun_import_allowed(user)
     ensure_demo_team_not_sent(req.sup_id)
+    if not (req.prepare_token or "").strip():
+        _enforce_send_identity(user, req)   # ทางส่งรวดเดียว — ทาง token ตรวจไปแล้วตอน prepare
     try:
         if (req.prepare_token or "").strip():
             result = import_prepared_targetsun(req)
         else:
             result = import_allocations_to_targetsun(req)
     except Exception as e:
+        timed_out = isinstance(e, HTTPException) and e.status_code == 504
         log_from_user(
             user,
             level="error",
             sup_id=req.sup_id,
             action="send_targetsun",
-            message="ส่งเข้า Target Sun ไม่สำเร็จ",
+            # หมดเวลารอ = ปลายทางอาจบันทึกไปแล้ว ห้ามบอกว่า "ไม่สำเร็จ" (ผลตรวจ §2.4)
+            message=(
+                "ส่งเข้า Target Sun แล้ว แต่ยังยืนยันผลไม่ได้ — หมดเวลารอคำตอบ ให้ตรวจยอดใน Target Sun ก่อนส่งซ้ำ"
+                if timed_out
+                else "ส่งเข้า Target Sun ไม่สำเร็จ"
+            ),
             detail=f"งวด {req.target_year}-{req.target_month:02d} · {type(e).__name__}: {e}",
             target_month=int(req.target_month),
             target_year=int(req.target_year),
-            context={"ok": False, "error": type(e).__name__},
+            context={
+                "ok": False,
+                "error": type(e).__name__,
+                "send_status": "unknown" if timed_out else "failed",
+                "explain": (
+                    explain_http(e) if isinstance(e, HTTPException)
+                    else explain("exception", message=f"{type(e).__name__}: {e}")
+                ),
+            },
         )
         raise
-    _log_targetsun_send(user, req, result)
+    # log/แจ้งเตือนใช้งวดที่ส่งจริง (งวดของไฟล์ที่เตรียมไว้) ไม่ใช่ค่าในคำขอ (ผลตรวจ §2.9)
+    res = result if isinstance(result, dict) else {}
+    log_req = req
+    if res.get("target_month") and res.get("target_year") and (
+        int(res["target_month"]), int(res["target_year"])
+    ) != (int(req.target_month), int(req.target_year)):
+        log_req = req.model_copy(
+            update={"target_month": int(res["target_month"]), "target_year": int(res["target_year"])}
+        )
+    _log_targetsun_send(user, log_req, result)
+    _alert_row_count(user, log_req, result)
     return result
+
+
+def _alert_row_count(user: dict, req: LakehouseUploadRequest, result: Any) -> None:
+    """
+    นับแถวก่อน/หลังส่งไม่ตรง หรือตรวจไม่ได้ → แจ้งผู้ส่ง เจ้าของ SL dev และแอดมินในขอบเขต
+
+    ห้ามทำให้การส่งที่สำเร็จแล้วกลายเป็นล้มเหลว (notify_row_count_issue ไม่ raise)
+    """
+    res = result if isinstance(result, dict) else {}
+    rb = res.get("readback") or {}
+    if (res.get("targetsun") or {}).get("success") is False:
+        return
+    notify_row_count_issue(
+        user=user,
+        sup_id=req.sup_id,
+        target_month=int(req.target_month),
+        target_year=int(req.target_year),
+        row_count=rb.get("row_count") if isinstance(rb, dict) else None,
+        batch_id=res.get("send_batch_id"),
+        batch_sup_ids=res.get("batch_sup_ids") or [],
+    )

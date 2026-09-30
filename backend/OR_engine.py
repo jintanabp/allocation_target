@@ -33,6 +33,11 @@ _TIER_STRICT_BAND_PCT = 0.12
 _TIER_FLEX_ANCHOR_MULT = 0.35
 _TIER_STRICT_ANCHOR_MULT = 3.5
 _TIER_LP_HIST_BALANCE = 0.35
+# ยอมรับคำตอบ LP ที่ห่างจากดีที่สุดที่พิสูจน์ได้ไม่เกิน 0.1% (ผู้ใช้อนุมัติ 30 ก.ย. 2026)
+# เดิมไม่ตั้ง CBC ไล่พิสูจน์จนชนเพดานเวลา (60 วิ) เกือบทุกทีม แล้วคืนคำตอบที่เจอ ณ ตอนนั้น
+# ผลจึงต่างกันทุกครั้งที่กดตามภาระเครื่อง · วัดจาก export 10/2026: SL418 เหลือ ~7 วิ
+# ได้ผลเท่าให้เวลา 300 วิ (ห่างเป้าเงินรวม 2,881 บาท คนห่างสุด 660)
+_LP_GAP_REL = 0.001
 
 
 def _revenue_scale_factor(
@@ -417,9 +422,11 @@ def allocate_boxes(
             df_sku,
             locked_map,
             force_min_one,
+            df_hist=df_hist,
         )
-        if base_map and strategy in _LP_STRATEGIES:
-            base_map = _baseline_map_from_df(df_out, df_emp_targets, df_sku)
+        # ห้ามเอาผลสุดท้ายไปทับ base_map (ผลตรวจ 28 ก.ย. 2026 §4.1-1) — เดิมทับตรงนี้
+        # ป้ายเทียบประวัติจึงเทียบผลกับตัวเอง ทุกช่องได้ "ok" ทุกครั้งที่มี SKU แบ่งเท่า
+        # (งวด 09/2026 เกิดครบทั้ง 55 ทีม) · SKU แบ่งเท่าไม่ติดป้ายอยู่แล้วใน _annotate_hist_deviation
 
     df_expanded = _expand_full_allocation_matrix(df_out, df_emp_targets, df_sku)
     if not base_map:
@@ -630,9 +637,15 @@ def _never_sold_plan(
     return zero_pairs, frozenset(even_skus), summary
 
 
-def _fair_rank(employees, hist_by_emp: dict | None = None) -> dict:
+def _fair_rank(
+    employees, hist_by_emp: dict | None = None, tie_by_emp: dict | None = None
+) -> dict:
     """
-    ลำดับ "ใครควรได้เศษหีบก่อน" — คนที่ขายสินค้านั้นได้มากกว่ามาก่อน เท่ากันเรียงตามรหัส
+    ลำดับ "ใครควรได้เศษหีบก่อน" — คนที่ขายสินค้านั้นได้มากกว่ามาก่อน
+    เท่ากันให้คนที่เป้าเงินสูงกว่า (tie_by_emp) ก่อน แล้วค่อยเรียงตามรหัส
+
+    tie_by_emp (ผู้ใช้ตัดสิน 29 ก.ย. 2026): สินค้าใหม่/สินค้าที่ไม่มีใครเคยขาย ทุกคนเสมอกัน
+    ถ้าตัดสินด้วยรหัสอย่างเดียว คนรหัสน้อยได้เศษทุกงวด — ให้คนเป้าเงินสูงกว่าได้ก่อน
 
     เดิมเศษหีบตกที่คนแถวบนสุดของตารางเสมอ เพราะ `sorted()` ของ Python เป็น stable
     พอน้ำหนักเท่ากัน (ไม่มีใครมีประวัติ SKU นั้น หรือกลยุทธ์ EVEN) ลำดับที่เหลือจึงเป็น
@@ -640,11 +653,58 @@ def _fair_rank(employees, hist_by_emp: dict | None = None) -> dict:
     SL384 รายงานเรื่องนี้ และผลตรวจรอบ 0 นับได้ 3,820 คู่ (19.5% ของคู่สินค้า×ทีม)
     """
     hist_by_emp = hist_by_emp or {}
+    tie_by_emp = tie_by_emp or {}
     ordered = sorted(
         employees,
-        key=lambda e: (-float(hist_by_emp.get(e, 0.0) or 0.0), str(e)),
+        key=lambda e: (
+            -float(hist_by_emp.get(e, 0.0) or 0.0),
+            -float(tie_by_emp.get(e, 0.0) or 0.0),
+            str(e),
+        ),
     )
     return {e: i for i, e in enumerate(ordered)}
+
+
+def _hist_lookup(df_hist) -> dict[tuple[str, str], float]:
+    """
+    ประวัติหีบต่อ (emp, sku) เป็น dict ครั้งเดียว แทนการ scan ทั้งตารางต่อทุกคู่
+    ของเดิมสร้าง boolean mask 2 ชุด + .map(_norm_sku) ใหม่ทุกรอบในลูปซ้อน
+    ทีมจริง 638 SKU x 6 คน x 2,311 แถว = ~8.8 ล้าน row-ops ต่อการเรียกหนึ่งครั้ง
+    """
+    if df_hist is None or df_hist.empty or not {"emp_id", "sku", "hist_boxes"} <= set(df_hist.columns):
+        return {}
+    g = (
+        df_hist.assign(
+            _e=df_hist["emp_id"].astype(str).str.strip(),
+            _s=df_hist["sku"].map(_norm_sku),
+            _b=pd.to_numeric(df_hist["hist_boxes"], errors="coerce").fillna(0.0),
+        )
+        .groupby(["_e", "_s"], sort=False)["_b"]
+        .sum()
+    )
+    return {(e, s): float(v) for (e, s), v in g.items()}
+
+
+def _yellow_by_emp(df_emp_targets) -> dict:
+    """เป้าเงินรายคน — ใช้ตัดสินเศษหีบเมื่อประวัติเสมอกัน (_fair_rank)"""
+    if df_emp_targets is None or df_emp_targets.empty or "yellow_target" not in df_emp_targets.columns:
+        return {}
+    vals = pd.to_numeric(df_emp_targets["yellow_target"], errors="coerce").fillna(0.0)
+    return {str(e).strip(): float(v) for e, v in zip(df_emp_targets["emp_id"], vals)}
+
+
+def _even_split_by_rank(total: int, employees, rank: dict) -> dict:
+    """
+    แบ่งเท่าที่สุด (ต่างกันไม่เกิน 1) — เศษตกกับคนต้น _fair_rank ไม่ใช่คนต้นรายชื่อ
+
+    ผลตรวจ 28 ก.ย. 2026 §4.1-9: _distribute_even_integers ให้เศษกับช่องแรกของลิสต์เสมอ
+    ลิสต์คือลำดับในทะเบียน → คนเดิมได้เศษของ SKU ที่แบ่งเท่าทุกงวด (SL384/SL540)
+    ยอดรวมเท่าเดิมทุกหีบ เปลี่ยนแค่ว่าใครได้เศษ
+    """
+    emps = list(employees)
+    parts = _distribute_even_integers(total, len(emps))
+    ordered = sorted(emps, key=lambda e: rank.get(e, len(emps)))
+    return {e: parts[i] for i, e in enumerate(ordered)}
 
 
 def _spread_one_each(total_target, n_emps) -> bool:
@@ -659,6 +719,22 @@ def _spread_one_each(total_target, n_emps) -> bool:
         return 0 < int(total_target) < int(n_emps)
     except (TypeError, ValueError):
         return False
+
+
+def _eligible_emp_count(employees, sku, zero_pairs) -> int:
+    """
+    จำนวนคนที่มีสิทธิ์รับหีบของ SKU นี้ — ตัวหารของ _spread_one_each
+
+    ต้องหักคนที่กติกาไม่เคยขายตัดเป็น 0 ออก: ทีม 6 คน เป้า 3 หีบ มีคนเคยขายคนเดียว
+    ถ้านับ 6 คน เพดาน "คนละไม่เกิน 1" จะให้คนเคยขายได้ 1 หีบ อีก 2 หีบไม่มีที่ลง
+    ยอดขาดเป้า (I1) แล้ว LP แก้ไม่ได้ ถอยไป fallback ทั้งทีม
+    (พบตอนเทียบ §4.1-2 — ไฟล์ export งวด 10/2026 เกิด 30 จาก 38 ทีมเมื่อเปิดกติกา)
+    ไม่มีกติกา = นับทุกคนเท่าเดิม ผลจึงไม่เปลี่ยน
+    """
+    if not zero_pairs:
+        return len(employees)
+    sku_key = _norm_sku(sku)
+    return sum(1 for e in employees if (str(e).strip(), sku_key) not in zero_pairs)
 
 
 def _min_one_floor(force_min_one: bool, total_target, employees, locked_map, sku) -> int:
@@ -710,11 +786,18 @@ def _enforce_even_skus_on_df(
     df_sku: pd.DataFrame,
     locked_map: dict | None,
     force_min_one: bool,
+    df_hist: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """บังคับ SKU สินค้าใหม่ให้แบ่งเท่าทุกคน (หลัง LP/greedy — กันโหมดหลัก/รองดึงไปปรับเงิน)"""
+    """
+    บังคับ SKU สินค้าใหม่ให้แบ่งเท่าทุกคน (หลัง LP/greedy — กันโหมดหลัก/รองดึงไปปรับเงิน)
+
+    เศษตกกับคนต้น _fair_rank (ขายสินค้านั้นมาก → เป้าเงินสูง → รหัส) ไม่ใช่คนต้นรายชื่อ (§4.1-9)
+    """
     locked_map = locked_map or {}
     if not even_skus:
         return df_out
+    hist_lookup = _hist_lookup(df_hist)
+    yellow_by_emp = _yellow_by_emp(df_emp_targets)
 
     employees = [
         str(e).strip()
@@ -776,14 +859,17 @@ def _enforce_even_skus_on_df(
         # เช่น 10 คน เป้า 10 ล็อก 3 คน คนละ 3 หีบ -> 9 + 7 = 16
         base_box = 1 if (force_min_one and total_target >= n_emps and avail >= free_n) else 0
         remaining = avail - base_box * free_n
-        parts = _distribute_even_integers(remaining, free_n)
+        rank = _fair_rank(
+            free_emps, {e: hist_lookup.get((e, sku_key), 0.0) for e in free_emps}, yellow_by_emp
+        )
+        parts = _even_split_by_rank(remaining, free_emps, rank)
 
         for e, boxes in locked_by_emp.items():
             if boxes > 0:
                 rows.append({"emp_id": e, "sku": sku_key, "allocated_boxes": boxes})
 
-        for i, e in enumerate(free_emps):
-            boxes = base_box + parts[i]
+        for e in free_emps:
+            boxes = base_box + parts[e]
             if boxes > 0:
                 rows.append({"emp_id": e, "sku": sku_key, "allocated_boxes": boxes})
 
@@ -984,22 +1070,8 @@ def _proportional(
     zero_pairs = zero_pairs or frozenset()
     employees = df_emp_targets["emp_id"].tolist()
     target_boxes = dict(zip(df_sku["sku"], df_sku["supervisor_target_boxes"]))
-
-    # สรุปประวัติเป็น dict ครั้งเดียว แทนการ scan ทั้งตารางต่อทุกคู่ (emp, sku)
-    # ของเดิมสร้าง boolean mask 2 ชุด + .map(_norm_sku) ใหม่ทุกรอบในลูปซ้อน
-    # ทีมจริง 638 SKU x 6 คน x 2,311 แถว = ~8.8 ล้าน row-ops ต่อการเรียกหนึ่งครั้ง
-    hist_lookup: dict[tuple[str, str], float] = {}
-    if df_hist is not None and not df_hist.empty and {"emp_id", "sku", "hist_boxes"} <= set(df_hist.columns):
-        g = (
-            df_hist.assign(
-                _e=df_hist["emp_id"].astype(str).str.strip(),
-                _s=df_hist["sku"].map(_norm_sku),
-                _b=pd.to_numeric(df_hist["hist_boxes"], errors="coerce").fillna(0.0),
-            )
-            .groupby(["_e", "_s"], sort=False)["_b"]
-            .sum()
-        )
-        hist_lookup = {(e, s): float(v) for (e, s), v in g.items()}
+    hist_lookup = _hist_lookup(df_hist)
+    yellow_by_emp = _yellow_by_emp(df_emp_targets)
 
     results = []
 
@@ -1049,13 +1121,17 @@ def _proportional(
         }
 
         hist_sum = sum(hist_by_emp.values())
+        # ลำดับทั่วไป (เป้าน้อยกว่าจำนวนคน / เศษทศนิยมเสมอกัน): ประวัติ → รหัส ตามเดิม
         rank = _fair_rank(active_employees, hist_by_emp)
 
         # สินค้าใหม่: แบ่งเท่าโดยไม่ผ่าน cap (กันหีบเบี้ยวในโหมดหลัก/รอง)
+        # เศษตัดสินด้วยประวัติ → เป้าเงิน → รหัส (ผู้ใช้เลือก 29 ก.ย. 2026 ทางเลือก B —
+        # ใช้เป้าเงินเฉพาะ SKU ที่แบ่งเท่า จุดอื่นคงเดิม ผลเปลี่ยนน้อยกว่าใช้ทุกจุด)
         if sku_key in even_skus:
-            parts = _distribute_even_integers(total, len(active_employees))
-            floored = {e: parts[i] for i, e in enumerate(active_employees)}
-        elif _spread_one_each(total_orig, len(employees)):
+            floored = _even_split_by_rank(
+                total, active_employees, _fair_rank(active_employees, hist_by_emp, yellow_by_emp)
+            )
+        elif _spread_one_each(total_orig, _eligible_emp_count(employees, sku, zero_pairs)):
             # เป้าน้อยกว่าจำนวนคน → คนละไม่เกิน 1 หีบ ให้ทั่วถึงตามลำดับประวัติการขาย
             # (เทียบกับ "จำนวนคนทั้งทีม" ไม่ใช่คนที่เหลือหลังหักล็อก — นิยามเดียวกับที่
             #  ผลตรวจรอบ 0 นับ และไม่แกว่งตามว่าผู้ใช้ล็อกช่องไปแล้วกี่ช่อง)
@@ -1158,7 +1234,7 @@ def _greedy_revenue_balancer(
             floor_zero = _min_floor_boxes(sku)
             return (floor_zero, floor_zero)
         bounds = _cell_bounds_by_history(emp, sku)
-        if not _spread_one_each(target_boxes.get(sku, 0), n_emps):
+        if not _spread_one_each(target_boxes.get(sku, 0), _eligible_emp_count(emps, sku, zero_pairs)):
             return bounds
         # ตัวเกลี่ยเงินย้ายหีบทีละใบ ถ้าไม่กั้นตรงนี้มันจะยกหีบไปกองคืนที่คนเดียวได้
         # ทั้งที่ LP/ตัวกระจายตั้งใจแบ่งให้คนละใบ
@@ -1636,7 +1712,7 @@ def _lp_optimize(
         # เพื่อไม่ให้ชนกับรั้วประวัติ (เช่นคนที่ baseline 3 ถูกบังคับ >= 2 อยู่แล้ว)
         # ซึ่งจะทำให้โจทย์แก้ไม่ได้แล้วตกไป fallback ทั้งทีม
         for sku in skus:
-            if not _spread_one_each(target_boxes[sku], len(employees)):
+            if not _spread_one_each(target_boxes[sku], _eligible_emp_count(employees, sku, zero_pairs)):
                 continue
             if _norm_sku(sku) in even_skus:
                 continue
@@ -1689,7 +1765,7 @@ def _lp_optimize(
                 prob += x[(emp, sku)] - base == dpos[(emp, sku)] - dneg[(emp, sku)]
 
         try:
-            prob.solve(pulp.PULP_CBC_CMD(msg=False, timeLimit=time_limit))
+            prob.solve(pulp.PULP_CBC_CMD(msg=False, timeLimit=time_limit, gapRel=_LP_GAP_REL))
         except Exception as e:
             logger.warning("LP solver error: %s → fallback proportional %s", e, baseline_strategy)
             return _fallback_prop()

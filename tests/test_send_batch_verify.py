@@ -111,28 +111,63 @@ class TestVerifySendBatch(unittest.TestCase):
         self.assertTrue(res["verified"])
         self.assertEqual(res["excluded_skus"], ["Y"])
 
-    def test_single_team_is_left_to_the_per_team_gate(self):
-        """ทีมเดียวไม่มีการย้ายหีบข้ามทีม — ด่านรายทีมถามและผู้ใช้อาจยืนยันไว้แล้ว"""
-        res = lh.verify_send_batch([_meta("SLA", {"X": 3})])
+    def test_single_team_is_checked_against_its_own_target(self):
+        """
+        ทีมเดียวก็ตรวจ — เดิมข้ามเพราะผู้ใช้อาจกดยืนยันความต่างไว้แล้ว
+        ตอนนี้ไม่มีการยืนยันข้าม (29 ก.ย. 2026) ยอดต้องตรงเป้าทีมพอดี
+        """
+        res = lh.verify_send_batch([_meta("SLA", {"X": 10, "Y": 4})])
         self.assertTrue(res["verified"])
         self.assertEqual(res["scope"], "single_team")
+        with self.assertRaises(HTTPException) as ctx:
+            lh.verify_send_batch([_meta("SLA", {"X": 3})])
+        self.assertEqual(ctx.exception.detail["code"], "send_batch_total_mismatch")
 
-    def test_unreadable_targets_reports_instead_of_false_alarm(self):
-        res = lh.verify_send_batch([
-            _meta("SLA", {"X": 10}),
-            _meta("SLNOFILE", {"X": 20}),
-        ])
-        self.assertFalse(res["verified"])
-        self.assertEqual(res["reason"], "missing_targets")
-        self.assertEqual(res["unreadable_sup_ids"], ["SLNOFILE"])
+    def test_unreadable_targets_block(self):
+        """อ่านเป้าไม่ได้ = ตรวจไม่ได้ = ห้ามส่ง (เดิมตอบ 200 verified:false แล้วส่งต่อได้)"""
+        with self.assertRaises(HTTPException) as ctx:
+            lh.verify_send_batch([
+                _meta("SLA", {"X": 10}),
+                _meta("SLNOFILE", {"X": 20}),
+            ])
+        d = ctx.exception.detail
+        self.assertEqual(ctx.exception.status_code, 409)
+        self.assertEqual(d["code"], "send_batch_unverifiable")
+        self.assertEqual(d["unreadable_sup_ids"], ["SLNOFILE"])
 
-    def test_old_bundle_without_totals_is_reported_not_guessed(self):
-        res = lh.verify_send_batch([
-            _meta("SLA", {"X": 10}),
-            _meta("SLB", {}, with_totals=False),
-        ])
-        self.assertFalse(res["verified"])
-        self.assertEqual(res["reason"], "no_totals")
+    def test_old_bundle_without_totals_blocks(self):
+        with self.assertRaises(HTTPException) as ctx:
+            lh.verify_send_batch([
+                _meta("SLA", {"X": 10}),
+                _meta("SLB", {}, with_totals=False),
+            ])
+        self.assertEqual(ctx.exception.detail["code"], "send_batch_unverifiable")
+
+    def test_mixed_batch_ids_rejected(self):
+        a = _meta("SLA", {"X": 25, "Y": 4})
+        b = _meta("SLB", {"X": 5, "Y": 6})
+        a["send_batch_id"], b["send_batch_id"] = "run1", "run2"
+        with self.assertRaises(HTTPException) as ctx:
+            lh.verify_send_batch([a, b])
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_full_send_catches_target_sku_missing_from_every_file(self):
+        """ส่งทุกแบรนด์ทุกทีม แต่ SKU Y ไม่อยู่ในไฟล์ไหนเลย = หีบของ Y หายทั้งก้อน"""
+        a = _meta("SLA", {"X": 25})
+        b = _meta("SLB", {"X": 5})
+        a["full_send"] = b["full_send"] = True
+        with self.assertRaises(HTTPException) as ctx:
+            lh.verify_send_batch([a, b])
+        d = ctx.exception.detail
+        self.assertEqual(d["code"], "send_batch_total_mismatch")
+        self.assertEqual(
+            d["diffs"][0], {"sku": "Y", "sending_boxes": 0, "expected_boxes": 10, "diff": -10}
+        )
+
+    def test_brand_send_does_not_require_other_brand_skus(self):
+        """ส่งแยกแบรนด์ — SKU แบรนด์อื่นไม่อยู่ในไฟล์เป็นเรื่องปกติ"""
+        res = lh.verify_send_batch([_meta("SLA", {"X": 25}), _meta("SLB", {"X": 5})])
+        self.assertTrue(res["verified"])
 
     def test_mixed_periods_rejected(self):
         with self.assertRaises(HTTPException) as ctx:
@@ -142,12 +177,23 @@ class TestVerifySendBatch(unittest.TestCase):
             ])
         self.assertEqual(ctx.exception.status_code, 400)
 
-    def test_sku_without_a_target_is_ignored(self):
+    def test_sku_without_a_target_but_with_boxes_blocks(self):
+        """ไม่มีเป้า = เป้า 0 — มีหีบเมื่อไรคือหีบงอก (เดิมข้ามไป)"""
+        with self.assertRaises(HTTPException) as ctx:
+            lh.verify_send_batch([
+                _meta("SLA", {"X": 10, "ZZZ": 99}),
+                _meta("SLB", {"X": 20, "Y": 10}),
+            ])
+        d = ctx.exception.detail
+        self.assertEqual(
+            d["diffs"], [{"sku": "ZZZ", "sending_boxes": 99, "expected_boxes": 0, "diff": 99}]
+        )
+
+    def test_sku_without_a_target_with_zero_boxes_passes(self):
         res = lh.verify_send_batch([
-            _meta("SLA", {"X": 10, "ZZZ": 99}),
+            _meta("SLA", {"X": 10, "ZZZ": 0}),
             _meta("SLB", {"X": 20, "Y": 10}),
         ])
-        # Y รวม 10 เท่าเป้ารวม 10, X รวม 30 เท่าเป้ารวม 30, ZZZ ไม่มีเป้า → ข้าม
         self.assertTrue(res["verified"])
 
 

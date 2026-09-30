@@ -125,18 +125,28 @@ def latest_excel_path_for_sup(sup_id: str) -> str | None:
     return legacy if os.path.isfile(legacy) else None
 
 
-def excel_export_path(sup_id: str, brand: str) -> str:
+def _period_tag(month: int | None, year: int | None) -> str:
+    return f"{int(year):04d}_{int(month):02d}_" if month and year else ""
+
+
+def excel_export_path(
+    sup_id: str, brand: str, month: int | None = None, year: int | None = None
+) -> str:
     """
-    ไฟล์ Excel สำหรับ download/export ตามแบรนด์
+    ไฟล์ Excel สำหรับ download/export ตามแบรนด์ (+ งวด เมื่อรู้)
     - ใช้แยกไฟล์เพื่อกันความสับสน/แคช เมื่อ export หลายแบรนด์สลับกัน
+    - ผูกงวดด้วย (ผลตรวจ §2.7) — เดิมสองแท็บ/สองคน export คนละงวดของทีมเดียวกัน
+      ไฟล์ทับกัน แล้วอาจดาวน์โหลดได้ไฟล์ของอีกงวด
     """
     brand_safe = safe_id(brand) if brand and brand != "ALL" else "ALL"
-    return f"data/Target_{safe_id(sup_id)}_{brand_safe}.xlsx"
+    return f"data/Target_{safe_id(sup_id)}_{_period_tag(month, year)}{brand_safe}.xlsx"
 
 
-def export_result_path(sup_id: str, brand: str) -> str:
+def export_result_path(
+    sup_id: str, brand: str, month: int | None = None, year: int | None = None
+) -> str:
     brand_safe = safe_id(brand) if brand != "ALL" else "ALL"
-    return f"data/export_{safe_id(sup_id)}_{brand_safe}.csv"
+    return f"data/export_{safe_id(sup_id)}_{_period_tag(month, year)}{brand_safe}.csv"
 
 
 def allocation_snapshot_path(sup_id: str, month: int, year: int) -> str:

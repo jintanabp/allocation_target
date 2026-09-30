@@ -27,9 +27,41 @@ from ..services.manager_views import (
     filter_codes_by_unit,
     resolve_aggregate_supervisor_codes,
 )
+from ..services import notification_store
+from ..services.error_explain import explain
 from ..services.usage_log_store import read_logs
 
 router = APIRouter(tags=["data"])
+
+
+def _inbox_email(user: dict) -> str:
+    """เจ้าของกล่องแจ้งเตือน — โหมดดูแทนเห็นกล่องของคนที่ถูกจำลอง"""
+    return str(user.get("email") or user.get("view_as_email") or "").strip().lower()
+
+
+@router.get("/data/notifications")
+def get_notifications(
+    user: dict = Depends(require_authenticated_user),
+    include_acked: bool = Query(False),
+) -> dict[str, Any]:
+    """กล่องแจ้งเตือนของผู้ใช้ที่ล็อกอินอยู่ — ใหม่สุดก่อน (ไม่ต้องเป็นแอดมิน)"""
+    em = _inbox_email(user)
+    items = notification_store.list_for(em, include_acked=include_acked)
+    return {"items": items, "unread": notification_store.unread_count(em)}
+
+
+@router.post("/data/notifications/{item_id}/ack")
+def ack_notification(
+    item_id: str,
+    user: dict = Depends(require_authenticated_user),
+) -> dict[str, Any]:
+    """กดรับทราบ — เฉพาะผู้รับตัวจริง ห้ามกดแทนระหว่างดูแทน"""
+    if user.get("view_as_email"):
+        raise HTTPException(403, detail="กำลังดูแทนผู้ใช้อื่น — กดรับทราบแทนเขาไม่ได้")
+    em = _inbox_email(user)
+    if not notification_store.acknowledge(em, str(item_id or "").strip()):
+        raise HTTPException(404, detail="ไม่พบรายการแจ้งเตือนนี้")
+    return {"ok": True, "unread": notification_store.unread_count(em)}
 
 
 @router.get("/data/send-history")
@@ -289,6 +321,47 @@ class AllocationSnapshotBody(BaseModel):
     no_precondition_reason: str | None = None
 
 
+def _refuse_other_teams_rows(user: dict, sid: str, body) -> None:
+    """
+    snapshot ของทีมต้องมีแต่พนักงานของทีมนั้น (ผลตรวจ 29 ก.ย. 2026)
+
+    export งวด 10/2026 พบ 11 ทีมที่ snapshot เป็นแถวของทั้งภาค — การประทับ "ส่งแล้ว" หลังส่ง
+    รวมภาคเขียนแถวทั้งภาคทับทุกทีม · หน้าเว็บแก้แล้ว ด่านนี้กันหน้าเว็บรุ่นเก่าที่ยังเปิดค้าง
+    นับเฉพาะคนที่รู้แน่ว่าอยู่ทีมอื่นเท่านั้น (รายชื่อทีม/แถวเป้า/การย้าย) คนที่อยู่หลายทีม
+    คนที่ถูกย้ายเข้ามา และคนที่ไม่มีข้อมูลทีมเลย ผ่านหมด
+    """
+    from ..services.lakehouse import employee_teams_in_period, norm_emp_code
+    from ..services.usage_log_store import log_from_user
+
+    emps = {norm_emp_code(a.get("emp_id")) for a in (body.allocations or []) if str(a.get("emp_id") or "").strip()}
+    if not emps:
+        return
+    teams = employee_teams_in_period(body.target_month, body.target_year, emps)
+    foreign = sorted(e for e in emps if teams.get(e) and sid not in teams[e])
+    if not foreign:
+        return
+    sample = [{"emp_id": e, "teams": sorted(teams[e])} for e in foreign[:20]]
+    log_from_user(
+        user, level="error", sup_id=sid, action="save_allocation",
+        message=f"ไม่บันทึก — มีพนักงานของทีมอื่น {len(foreign)} คนปนอยู่ในผลกระจายของ {sid}",
+        detail=f"งวด {body.target_year}-{body.target_month:02d} · สถานะ {body.status}",
+        target_month=body.target_month, target_year=body.target_year,
+        context={"ok": False, "explain": explain("snapshot_foreign_rows", {"sup_id": sid, "employees": sample})},
+    )
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "snapshot_foreign_rows",
+            "message": (
+                f"ไม่บันทึก — ผลกระจายของ {sid} มีพนักงานของทีมอื่น {len(foreign)} คนปนอยู่ "
+                "(ถ้าบันทึกจะทับผลของทีมนี้ด้วยแถวของทีมอื่น)"
+            ),
+            "hint_th": "กด Ctrl+F5 เพื่อโหลดหน้าเว็บรุ่นล่าสุด แล้วลองใหม่",
+            "employees": sample,
+        },
+    )
+
+
 @router.get("/data/allocations")
 def get_allocation_snapshot(
     user: dict = Depends(require_authenticated_user),
@@ -328,11 +401,36 @@ def put_allocation_snapshot(
             target_year=body.target_year,
         )
         raise
+    if not body.allocations:
+        # ผลกระจายว่างทับของเดิมที่มีแถว = ข้อมูลหายทั้งทีม (ผลตรวจ §3.3) — การลบจริง
+        # มีปุ่มของมัน (DELETE) หน้าเว็บไม่เคยตั้งใจบันทึกรายการว่าง
+        prev = read_snapshot(sid, body.target_month, body.target_year)
+        if prev and prev.get("allocations"):
+            log_from_user(
+                user, level="error", sup_id=sid, action="save_allocation",
+                message="ไม่บันทึก — ผลกระจายว่างจะทับผลเดิมของทีม",
+                detail=f"งวด {body.target_year}-{body.target_month:02d} · ผลเดิม {len(prev['allocations'])} แถว",
+                target_month=body.target_month, target_year=body.target_year,
+                context={"ok": False, "explain": explain("empty_allocation_overwrite", {"sup_id": sid})},
+            )
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "empty_allocation_overwrite",
+                    "message": "ไม่บันทึก — ผลกระจายที่ส่งมาว่างเปล่า จะทับผลเดิมของทีมนี้ทั้งหมด",
+                    "hint_th": "กด Ctrl+F5 แล้วโหลดทีมนี้ใหม่ ถ้าตั้งใจลบผลกระจาย ให้ใช้ปุ่มลบ",
+                },
+            )
+    _refuse_other_teams_rows(user, sid, body)
     email = str(user.get("email") or user.get("view_as_email") or "").strip()
     payload = body.model_dump()
     expected_version = payload.pop("if_match_version", None)
     payload["sup_id"] = sid
     payload["updated_by"] = email
+    # บันทึกระหว่าง "ดูแทน" — updated_by เป็นชื่อคนที่ถูกจำลอง ต้องจดคนกดจริงไว้ด้วย (§1.8)
+    acting = str(user.get("acting_admin_email") or "").strip()
+    if acting:
+        payload["updated_by_acting_admin"] = acting
 
     if expected_version is None and read_snapshot(sid, body.target_month, body.target_year):
         # แยกสามกรณีออกจากกัน — เดิมเหมาว่าเป็น "client เก่า" ทั้งหมด ซึ่งไม่จริง
@@ -374,6 +472,11 @@ def put_allocation_snapshot(
             detail=f"version บนเซิร์ฟเวอร์={e.current.get('version')}",
             target_month=body.target_month,
             target_year=body.target_year,
+            context={"explain": explain("snapshot_conflict", {
+                "sup_id": sid,
+                "rows": [{"reason": f"บันทึกล่าสุดโดย {e.current.get('updated_by') or '-'} "
+                                    f"เมื่อ {e.current.get('updated_at') or '-'}"}],
+            })},
         )
         raise HTTPException(
             status_code=409,
@@ -387,6 +490,12 @@ def put_allocation_snapshot(
             },
         ) from e
     except SnapshotPreconditionRequired as e:
+        log_from_user(
+            user, level="warn", sup_id=sid, action="save_allocation",
+            message="บันทึกไม่ได้ — หน้าเว็บรุ่นเก่า (ไม่ส่ง version)",
+            target_month=body.target_month, target_year=body.target_year,
+            context={"explain": explain("precondition_required")},
+        )
         raise HTTPException(
             status_code=428,
             detail={
@@ -405,6 +514,7 @@ def put_allocation_snapshot(
             detail=str(e),
             target_month=body.target_month,
             target_year=body.target_year,
+            context={"ok": False, "explain": explain("save_invalid", message=str(e))},
         )
         raise HTTPException(status_code=400, detail=str(e)) from e
 

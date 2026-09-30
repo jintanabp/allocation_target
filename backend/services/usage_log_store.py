@@ -59,9 +59,13 @@ def append_log(
     target_month: int | None = None,
     target_year: int | None = None,
     context: dict[str, Any] | None = None,
+    acting_admin_email: str | None = None,
 ) -> dict[str, Any]:
     """
     เขียนหนึ่งบรรทัดลง usage_YYYY-MM-DD.jsonl
+
+    `acting_admin_email` = dev ที่ทำรายการนี้ระหว่าง "ดูแทน" ผู้ใช้อื่น — email ยังเป็นของ
+    คนที่ถูกจำลอง (มุมมองที่ใช้) แต่ต้องรู้ว่าใครกดจริง (ผลตรวจ 28 ก.ย. 2026 §1.8)
 
     `target_month`/`target_year` = **งวดเป้าที่เหตุการณ์นี้พูดถึง** ไม่ใช่วันที่เกิดเหตุ
     (เดิมไม่มีเลย เวลาเป้างวดหนึ่งเพี้ยนจึงตามรอยไม่ได้ว่าใครแตะงวดไหน)
@@ -80,6 +84,8 @@ def append_log(
         "detail": str(detail or "").strip(),
         "request_id": request_id or str(uuid.uuid4())[:12],
     }
+    if acting_admin_email and str(acting_admin_email).strip():
+        row["acting_admin_email"] = str(acting_admin_email).strip()
     if target_month is not None:
         row["target_month"] = int(target_month)
     if target_year is not None:
@@ -137,6 +143,7 @@ def log_from_user(
         target_month=target_month,
         target_year=target_year,
         context=context,
+        acting_admin_email=(user or {}).get("acting_admin_email"),
     )
 
 

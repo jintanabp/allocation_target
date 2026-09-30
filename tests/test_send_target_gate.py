@@ -5,7 +5,9 @@
   - เส้นทาง **ส่งจริง** เท่านั้นที่บล็อก (409)
   - เส้นทาง **ดาวน์โหลด Excel มาตรวจ** ต้องทำได้เสมอ แม้ตัวเลขยังไม่ตรง
     (ถ้าบล็อกตรงนั้นด้วย ยิ่งมีปัญหายิ่งตรวจไม่ได้ = กลับหัวกลับหาง)
-  - ผู้ใช้ยืนยันแล้ว (confirm_target_mismatch) ต้องผ่านได้
+  - **ไม่มีทางยืนยันข้าม** (29 ก.ย. 2026): ยอดหีบห้ามขาดหรือเกินแม้แต่หีบเดียว
+    เดิมมี confirm_target_mismatch / confirm_unverifiable_target / ALLOC_ALLOW_MISMATCH
+  - ส่งรวมภาค (defer_to_batch) ไม่บล็อกรายทีม แต่ยกให้ด่านยอดรวมทั้งภาคตัดสิน
 """
 
 from __future__ import annotations
@@ -67,9 +69,11 @@ class TestSendTargetGate(unittest.TestCase):
         self.assertEqual(d["mismatch_count"], 1)
         self.assertEqual(
             d["mismatches"][0],
-            {"sku": "A", "sending_boxes": 7, "expected_boxes": 10, "missing_from_payload": False},
+            {"sku": "A", "sending_boxes": 7, "expected_boxes": 10,
+             "missing_from_payload": False, "no_target": False},
             "ต้องบอกได้ว่า SKU ไหน ส่งเท่าไร เป้าเท่าไร และมีอยู่ใน payload ไหม",
         )
+        self.assertNotIn("confirm_field", d, "ต้องไม่มีปุ่มยืนยันข้ามแล้ว")
 
     def test_sku_with_target_but_no_rows_is_caught_when_sending_all_brands(self):
         """
@@ -92,7 +96,8 @@ class TestSendTargetGate(unittest.TestCase):
         self.assertEqual(d["missing_sku_count"], 1)
         self.assertEqual(
             d["mismatches"][0],
-            {"sku": "C", "sending_boxes": 0, "expected_boxes": 80, "missing_from_payload": True},
+            {"sku": "C", "sending_boxes": 0, "expected_boxes": 80,
+             "missing_from_payload": True, "no_target": False},
         )
 
     def test_missing_sku_check_is_off_when_sending_one_brand(self):
@@ -108,30 +113,48 @@ class TestSendTargetGate(unittest.TestCase):
         ]).to_csv("data/target_boxes_SLTEST_2026_08.csv", index=False)
         lh._assert_send_matches_sup_targets(df, "SLTEST", 8, 2026)   # default = ปิด
 
-    def test_missing_sku_is_confirmable(self):
-        """ไม่ใช่บล็อกตาย — ยืนยันผ่านได้ เผื่อมีเคสที่ payload ไม่ครบโดยตั้งใจ"""
-        df = self._df(10, 5)
-        pd.DataFrame([
-            {"sku": "A", "supervisor_target_boxes": 10, "price_per_box": 100.0},
-            {"sku": "C", "supervisor_target_boxes": 80, "price_per_box": 70.0},
-        ]).to_csv("data/target_boxes_SLTEST_2026_08.csv", index=False)
-        lh._assert_send_matches_sup_targets(
-            df, "SLTEST", 8, 2026, check_missing_skus=True, confirmed=True
-        )
 
     def test_send_path_enables_missing_sku_check_only_for_all_brands(self):
         src = inspect.getsource(lh._build_tga_upload_dataframe)
         self.assertIn("check_missing_skus=", src)
         self.assertIn('brand_filter or "ALL").upper() == "ALL"', src)
 
-    def test_user_confirmation_allows(self):
-        lh._assert_send_matches_sup_targets(self._df(7), "SLTEST", 8, 2026, confirmed=True)
+    def test_no_confirm_parameters_remain(self):
+        sig = inspect.signature(lh._assert_send_matches_sup_targets)
+        self.assertNotIn("confirmed", sig.parameters)
+        self.assertNotIn("unverifiable_confirmed", sig.parameters)
 
-    def test_env_escape_hatch_allows(self):
+    def test_env_escape_hatch_is_gone(self):
+        """ALLOC_ALLOW_MISMATCH ถูกถอดออก — ตั้งไว้บน server ก็ไม่มีผล"""
         os.environ["ALLOC_ALLOW_MISMATCH"] = "1"
-        lh._assert_send_matches_sup_targets(self._df(7), "SLTEST", 8, 2026)
+        with self.assertRaises(HTTPException):
+            lh._assert_send_matches_sup_targets(self._df(7), "SLTEST", 8, 2026)
 
-    def test_missing_target_file_blocks_with_confirmable_409(self):
+    def test_batch_send_defers_and_returns_differences(self):
+        """ส่งรวมภาค: รายทีมต่างได้ (I7) — คืนรายการไว้ให้ bundle จด ไม่บล็อก"""
+        out = lh._assert_send_matches_sup_targets(
+            self._df(7), "SLTEST", 8, 2026, defer_to_batch=True
+        )
+        self.assertEqual([p["sku"] for p in out], ["A"])
+
+    def test_batch_send_still_blocks_when_target_unreadable(self):
+        with self.assertRaises(HTTPException) as ctx:
+            lh._assert_send_matches_sup_targets(
+                self._df(7), "SLNOFILE", 8, 2026, defer_to_batch=True
+            )
+        self.assertEqual(ctx.exception.detail["code"], "send_target_unverifiable")
+
+    def test_fractional_boxes_block(self):
+        df = pd.DataFrame([
+            {"emp_id": "E1", "sku": "A", "allocated_boxes": 9.5},
+            {"emp_id": "E2", "sku": "A", "allocated_boxes": 0.5},
+            {"emp_id": "E1", "sku": "B", "allocated_boxes": 5.25},
+        ])
+        with self.assertRaises(HTTPException) as ctx:
+            lh._assert_send_matches_sup_targets(df, "SLTEST", 8, 2026)
+        self.assertEqual(ctx.exception.detail["code"], "send_boxes_not_integer")
+
+    def test_missing_target_file_blocks_without_confirm(self):
         """
         เปลี่ยนพฤติกรรมโดยตั้งใจ (เดิม: ไม่มีไฟล์เป้า = ปล่อยผ่านเงียบ ๆ)
 
@@ -143,20 +166,7 @@ class TestSendTargetGate(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 409)
         d = ctx.exception.detail
         self.assertEqual(d["code"], "send_target_unverifiable")
-        self.assertEqual(d["confirm_field"], "confirm_unverifiable_target")
-
-    def test_missing_target_file_is_confirmable(self):
-        lh._assert_send_matches_sup_targets(
-            self._df(7), "SLNOFILE", 8, 2026, unverifiable_confirmed=True
-        )
-
-    def test_unverifiable_is_not_unlocked_by_the_other_flags(self):
-        """สาม flag ต้องแยกกัน — ยืนยันเรื่องหนึ่งห้ามปลดล็อกอีกเรื่องที่ผู้ใช้ไม่เคยเห็น"""
-        with self.assertRaises(HTTPException) as ctx:
-            lh._assert_send_matches_sup_targets(
-                self._df(7), "SLNOFILE", 8, 2026, confirmed=True
-            )
-        self.assertEqual(ctx.exception.detail["code"], "send_target_unverifiable")
+        self.assertNotIn("confirm_field", d)
 
     def test_global_legacy_target_file_is_not_used_as_a_substitute(self):
         """
@@ -173,8 +183,16 @@ class TestSendTargetGate(unittest.TestCase):
             "ต้องไม่เอาไฟล์ global มาตรวจแทน แม้ตัวเลขจะบังเอิญตรงก็ตาม",
         )
 
-    def test_sku_without_target_is_ignored(self):
+    def test_sku_without_target_but_with_boxes_blocks(self):
+        """ไม่มีเป้า = เป้า 0 — มีหีบเมื่อไรคือหีบงอก (เดิมข้ามไป)"""
         df = pd.DataFrame([{"emp_id": "E1", "sku": "ZZZ", "allocated_boxes": 3}])
+        with self.assertRaises(HTTPException) as ctx:
+            lh._assert_send_matches_sup_targets(df, "SLTEST", 8, 2026)
+        p = ctx.exception.detail["mismatches"][0]
+        self.assertEqual((p["sku"], p["expected_boxes"], p["no_target"]), ("ZZZ", 0, True))
+
+    def test_sku_without_target_with_zero_boxes_passes(self):
+        df = pd.DataFrame([{"emp_id": "E1", "sku": "ZZZ", "allocated_boxes": 0}])
         lh._assert_send_matches_sup_targets(df, "SLTEST", 8, 2026)
 
 
@@ -279,33 +297,33 @@ class TestManualTopupConfirmIsSeparate(unittest.TestCase):
     ถ้าใช้ flag เดียวกัน ปัญหา master data จะถูกกดข้ามไปโดยไม่ได้อ่าน
     """
 
-    def test_schema_has_both_flags_defaulting_false(self):
+    def test_schema_keeps_topup_flag_but_drops_the_bypass_flags(self):
         from backend.schemas import LakehouseUploadRequest
 
         f = LakehouseUploadRequest.model_fields
         self.assertIn("confirm_manual_topup", f)
         self.assertIs(f["confirm_manual_topup"].default, False)
-        self.assertIs(f["confirm_target_mismatch"].default, False)
+        self.assertNotIn("confirm_target_mismatch", f)
+        self.assertNotIn("confirm_unverifiable_target", f)
+        self.assertIn("send_batch_id", f)
 
-    def test_unverifiable_flag_is_a_third_separate_flag(self):
-        """
-        "ตรวจแล้วไม่ตรงแต่ตั้งใจ" กับ "ตรวจไม่ได้เลย" เป็นความเสี่ยงคนละแบบ
-        ต้องกดยืนยันแยกกัน ไม่งั้นการกดเรื่องหนึ่งจะปลดอีกเรื่องที่ไม่เคยเห็น
-        """
+    def test_old_clients_sending_the_removed_flags_are_ignored(self):
+        """หน้าเว็บรุ่นเก่าที่ยังส่ง flag เดิมมา ต้องไม่ 422 และต้องไม่มีผลอะไร"""
         from backend.schemas import LakehouseUploadRequest
 
-        f = LakehouseUploadRequest.model_fields
-        self.assertIn("confirm_unverifiable_target", f)
-        self.assertIs(f["confirm_unverifiable_target"].default, False)
+        req = LakehouseUploadRequest(
+            sup_id="SLTEST", target_month=8, target_year=2026,
+            confirm_target_mismatch=True, confirm_unverifiable_target=True,
+        )
+        self.assertFalse(hasattr(req, "confirm_target_mismatch"))
 
-    def test_unverifiable_gate_does_not_accept_the_other_flags(self):
+    def test_unverifiable_gate_has_no_bypass(self):
         src = inspect.getsource(lh._assert_send_matches_sup_targets)
         gate = src.split("send_target_unverifiable")[0]
         gate = gate[gate.index("if targets is None"):]
         code = "\n".join(ln.split("#")[0] for ln in gate.splitlines())
-        self.assertIn("unverifiable_confirmed", code)
-        self.assertNotIn("confirm_target_mismatch", code)
-        self.assertNotIn("confirm_manual_topup", code)
+        self.assertNotIn("confirm", code)
+        self.assertNotIn("return", code)
 
     def test_mismatch_confirm_does_not_bypass_shortfall_gate(self):
         src = inspect.getsource(lh._build_tga_upload_dataframe)
@@ -342,11 +360,12 @@ class TestGateWiring(unittest.TestCase):
         )
 
     def test_send_paths_enforce(self):
-        src = inspect.getsource(ti)
-        self.assertEqual(
-            src.count("enforce_targets=True"), 2,
-            "เส้นทางส่ง (prepare_targetsun_import + import_allocations_to_targetsun) ต้องเปิดทั้งคู่",
-        )
+        # ทั้งสองเส้นทางส่งสร้างไฟล์ผ่าน _build_send_file ตัวเดียว (มีด่านคลังด้วย 30 ก.ย. 2026)
+        self.assertIn("enforce_targets=True", inspect.getsource(ti._build_send_file))
+        for fn in (ti.prepare_targetsun_import, ti._import_allocations_one_shot):
+            src = inspect.getsource(fn)
+            self.assertIn("_build_send_file(req)", src, fn.__name__)
+            self.assertNotIn("prepare_lakehouse_xlsx(", src, fn.__name__)
 
 
 if __name__ == "__main__":

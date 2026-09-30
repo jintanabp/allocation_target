@@ -94,24 +94,40 @@ def validate_allocation_vs_targets(df_alloc: pd.DataFrame, df_sku: pd.DataFrame)
     else:
         df_a = df_alloc.copy()
         df_a["sku"] = df_a["sku"].astype(str).str.strip()
+        df_a["allocated_boxes"] = pd.to_numeric(df_a["allocated_boxes"], errors="coerce").fillna(0)
         sums = df_a.groupby("sku", as_index=True)["allocated_boxes"].sum()
     out: list[dict] = []
+    target_skus: set[str] = set()
     for _, row in df_sku.iterrows():
         sku = str(row["sku"]).strip()
+        target_skus.add(sku)
         try:
             tgt = int(round(float(row.get("supervisor_target_boxes", 0) or 0)))
         except (TypeError, ValueError):
             tgt = 0
-        got = int(sums[sku]) if sku in sums.index else 0
+        # ไม่ตัดทศนิยมทิ้ง — เดิม int() ทำให้ 10.6 หีบกลายเป็น 10 แล้วผ่านเงียบ ๆ
+        got = float(sums[sku]) if sku in sums.index else 0.0
         if got != tgt:
             out.append(
                 {
                     "sku": sku,
                     "expected_boxes": tgt,
-                    "allocated_sum": got,
-                    "message": f"SKU {sku}: กระจายรวม {got} หีบ แต่เป้าหีบจากหัวหน้า {tgt} หีบ",
+                    "allocated_sum": got if got != int(got) else int(got),
+                    "message": f"SKU {sku}: กระจายรวม {got:g} หีบ แต่เป้าหีบจากหัวหน้า {tgt} หีบ",
                 }
             )
+    # SKU ที่ไม่มีเป้าแต่มีหีบในผล = หีบงอก — เดิมวนจาก df_sku อย่างเดียวจึงไม่เคยเห็น
+    for sku, got in sums.items():
+        if str(sku) in target_skus or float(got) == 0:
+            continue
+        out.append(
+            {
+                "sku": str(sku),
+                "expected_boxes": 0,
+                "allocated_sum": float(got) if float(got) != int(got) else int(got),
+                "message": f"SKU {sku}: ไม่มีเป้าหีบ แต่ผลกระจายมี {float(got):g} หีบ",
+            }
+        )
     return out
 
 

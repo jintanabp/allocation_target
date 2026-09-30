@@ -101,6 +101,10 @@ def _validate_body(body: dict[str, Any]) -> dict[str, Any]:
         "updated_by": str(body.get("updated_by") or "").strip(),
         "updated_at": _now_iso(),
     }
+    # dev ที่บันทึกระหว่าง "ดูแทน" — updated_by เป็นคนที่ถูกจำลอง (ผลตรวจ §1.8)
+    acting = str(body.get("updated_by_acting_admin") or "").strip()
+    if acting:
+        out["updated_by_acting_admin"] = acting
     sent_at = body.get("target_sun_sent_at")
     if sent_at:
         out["target_sun_sent_at"] = str(sent_at)

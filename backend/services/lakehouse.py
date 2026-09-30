@@ -428,6 +428,48 @@ def _drop_rows_of_reassigned_employees(
     return kept, dropped
 
 
+def employee_teams_in_period(month: int, year: int, emp_ids) -> dict[str, set[str]]:
+    """
+    พนักงานแต่ละคนอยู่ทีมไหนบ้างในงวดนี้ — จากไฟล์ grain ของทุกทีม + การย้ายทีม
+
+    ใช้ตรวจตอนส่ง Target Sun ว่าพนักงานทุกคนในคำขออยู่ในทีมที่ผู้ส่งมีสิทธิ์
+    (ผลตรวจ 28 ก.ย. 2026 §1.3) — ไฟล์ grain ชื่อ tga_lines_{SL}_{Y}_{MM}.csv
+    จึงบอกทีมได้จากชื่อไฟล์ · คนที่ถูกย้ายไปเกลี่ยที่ทีมอื่น (emp_assignments) นับทีมปลายทางด้วย
+    """
+    from . import emp_assignment_store
+
+    want = {norm_emp_code(e) for e in (emp_ids or []) if str(e).strip()}
+    out: dict[str, set[str]] = {e: set() for e in want}
+    if not want:
+        return out
+    suffix = f"_{int(year):04d}_{int(month):02d}.csv"
+    try:
+        names = os.listdir("data")
+    except OSError:
+        names = []
+    # tga_lines_ = แถวเป้าเดิมใน Target Sun · emp_cache_ = รายชื่อทีมจากขั้นที่ 1
+    # (คนที่เพิ่งย้ายซุปมาอาจมีแถวเป้าอยู่แค่ทีมเก่า แต่รายชื่ออยู่ทีมใหม่แล้ว)
+    for prefix in ("tga_lines_", "emp_cache_"):
+        for name in names:
+            if not (name.startswith(prefix) and name.endswith(suffix)):
+                continue
+            sup = name[len(prefix):-len(suffix)].strip().upper()
+            try:
+                dg = pd.read_csv(os.path.join("data", name), dtype=str, keep_default_na=False, usecols=["emp_id"])
+            except Exception:
+                continue
+            for e in {norm_emp_code(x) for x in dg["emp_id"]} & want:
+                out[e].add(sup)
+    try:
+        for r in emp_assignment_store.read_rows():
+            e = norm_emp_code(r.get("emp_id"))
+            if e in want and r.get("to_sup"):
+                out[e].add(str(r["to_sup"]).strip().upper())
+    except Exception as ex:
+        logger.warning("อ่านรายการย้ายทีมไม่ได้: %s", ex)
+    return out
+
+
 def _read_tga_grain_across_teams(
     month: int, year: int, emp_ids: set[str] | list[str]
 ) -> pd.DataFrame:
@@ -704,28 +746,55 @@ def _expand_allocations_with_tga_grain(
 
     out: list[dict] = []
 
-    # แปลง DataFrame iterate — เก็บ warehouse จากคำขอเป็น hint
-    for _, arow in df_alloc.iterrows():
-        e = str(arow["emp_id"]).strip()
-        sku = str(arow["sku"]).strip()
-        boxes_val = pd.to_numeric(arow.get("allocated_boxes", 0), errors="coerce")
-        boxes = 0 if pd.isna(boxes_val) else int(round(float(boxes_val)))
+    def _grain_row(r, b: int) -> dict:
+        return {
+            "emp_id": e,
+            "sku": sku,
+            "allocated_boxes": int(b),
+            "salestype": _cell_str(r.get("salestype", "")),
+            "divisioncode": _cell_str(r.get("divisioncode", "")),
+            "areacode": _areacode_str(r.get("areacode", "")),
+            "provincecode": _cell_str(r.get("provincecode", "")),
+            "warehouse_code": _cell_str(r.get("warehouse_code", "")),
+        }
 
+    def _spread(rows: pd.DataFrame, boxes: int) -> None:
+        """แตกหีบลงแถว grain ตามสัดส่วนเป้าเดิม — แถวเป้า 0 ได้ 0 (ให้ครบ dim ตอนนำเข้า)
+        ถ้าทุกแถวเป็น 0 เกลี่ยเท่า ๆ กัน"""
+        pos = rows[rows["qty"] > 0]
+        if pos.empty:
+            for (_, r), b in zip(rows.iterrows(), _integer_split_by_weights([1.0] * len(rows), boxes)):
+                out.append(_grain_row(r, b))
+            return
+        for (_, r), b in zip(pos.iterrows(), _integer_split_by_weights(pos["qty"].astype(float).tolist(), boxes)):
+            out.append(_grain_row(r, b))
+        for _, r in rows[rows["qty"] <= 0].iterrows():
+            out.append(_grain_row(r, 0))
+
+    def _boxes(arow) -> int:
+        v = pd.to_numeric(arow.get("allocated_boxes", 0), errors="coerce")
+        return 0 if pd.isna(v) else int(round(float(v)))
+
+    has_wh = "warehouse_code" in df_alloc.columns
+    for (e, sku), grp in df_alloc.groupby(
+        [df_alloc["emp_id"].astype(str).str.strip(), df_alloc["sku"].astype(str).str.strip()],
+        sort=False,
+    ):
         sub = grain_lookup.get((e, sku), pd.DataFrame())
 
-        # ไม่พบใน cache → เก็บบรรทัดเดิมให้ชั้นถัดไปเติม dim จาก Fabric
-        # (หรือเติมจากแถวอื่นของพนักงานคนเดียวกัน เมื่อเปิด infer_missing_dims)
         if sub.empty:
-            inferred = emp_dims.get(e) if emp_dims else None
+            # ไม่พบใน cache → เก็บบรรทัดเดิมให้ชั้นถัดไปเติม dim จาก Fabric
+            # (หรือเติมจากแถวอื่นของพนักงานคนเดียวกัน เมื่อเปิด infer_missing_dims)
             # คู่ใหม่ที่ไม่เคยมีเป้าใน TGA เลยสักแถว — ไม่มีคลังจริงให้เชื่อ ผู้ใช้ตัดสินใจ
             # (22 ก.ย. 2026) ว่า "คู่ใหม่ควรได้คลังว่างไว้ก่อนดีกว่า" แทนที่จะเดาจากคลังของ
             # แถวอื่นของพนักงานคนเดียวกัน หรือจากประวัติขาย 2 ปี (wh_req เดิม) — ว่างไว้ชัดเจน
             # ดีกว่าเดาผิดแล้วชนคีย์ upsert (รวม WAREHOUSECODE) ภายหลังจนเป้าพองซ้อน
+            inferred = emp_dims.get(e) if emp_dims else None
             out.append(
                 {
                     "emp_id": e,
                     "sku": sku,
-                    "allocated_boxes": boxes,
+                    "allocated_boxes": sum(_boxes(a) for _, a in grp.iterrows()),
                     "salestype": inferred["salestype"] if inferred else "",
                     "divisioncode": inferred["divisioncode"] if inferred else "",
                     "areacode": inferred["areacode"] if inferred else "",
@@ -736,61 +805,34 @@ def _expand_allocations_with_tga_grain(
             )
             continue
 
-        sub_pos = sub[sub["qty"] > 0]
-        dims_only = sub[sub["qty"] <= 0]
+        # หน้าจอแยกคลัง (พนักงาน wh_split) ส่งคลังมาด้วย — หีบรายคลังที่ผู้ใช้กระจาย/แก้มือต้อง
+        # ลงคลังนั้นตรง ๆ (ผู้ใช้ขอ 30 ก.ย. 2026) เดิมไม่สนคลังในคำขอ แตกทุกแถวตามสัดส่วน grain
+        # ใหม่ จอ W1=8/W2=2 จึงถูกส่งเป็น 5/5 · ใช้เฉพาะคลังที่มีอยู่ในเป้าปัจจุบัน (grain) ของคู่นี้
+        # คลังที่ grain ไม่มี = ไม่เชื่อ (กันแถวซ้อน) ไปลงแถวที่ไม่มีใครระบุแทน
+        sub_wh = sub["warehouse_code"].map(_cell_str)
+        grain_whs = set(sub_wh)
+        req_wh = (
+            [_cell_str(w) for w in grp["warehouse_code"]] if has_wh else [""] * len(grp)
+        )
+        split_mode = any(w and w in grain_whs for w in req_wh)
+        if not split_mode:
+            _spread(sub, sum(_boxes(a) for _, a in grp.iterrows()))
+            continue
 
-        if not sub_pos.empty:
-            wvals = sub_pos["qty"].astype(float).tolist()
-            split = _integer_split_by_weights(wvals, boxes)
-            for (_, r), b in zip(sub_pos.iterrows(), split):
-                wh = _cell_str(r.get("warehouse_code", ""))
-                out.append(
-                    {
-                        "emp_id": e,
-                        "sku": sku,
-                        "allocated_boxes": int(b),
-                        "salestype": _cell_str(r.get("salestype", "")),
-                        "divisioncode": _cell_str(r.get("divisioncode", "")),
-                        "areacode": _areacode_str(r.get("areacode", "")),
-                        "provincecode": _cell_str(r.get("provincecode", "")),
-                        "warehouse_code": wh,
-                    }
-                )
-
-            # แถว TGA เดิมที่ qty = 0: เขียน QUANTITYCASE = 0 เพื่อให้ครบ dim ตอนนำเข้ากลับ
-            if not dims_only.empty:
-                for _, r in dims_only.iterrows():
-                    wh = _cell_str(r.get("warehouse_code", ""))
-                    out.append(
-                        {
-                            "emp_id": e,
-                            "sku": sku,
-                            "allocated_boxes": 0,
-                            "salestype": _cell_str(r.get("salestype", "")),
-                            "divisioncode": _cell_str(r.get("divisioncode", "")),
-                            "areacode": _areacode_str(r.get("areacode", "")),
-                            "provincecode": _cell_str(r.get("provincecode", "")),
-                            "warehouse_code": wh,
-                        }
-                    )
-        else:
-            # เฉพาะแถวเป้ารวมเป็น 0 ใน TGA → เกลี่ยหีบเท่า ๆ กันบนทุกความเป็นไปได้ของ dim
-            wvals = [1.0] * len(sub)
-            split = _integer_split_by_weights(wvals, boxes)
-            for (_, r), b in zip(sub.iterrows(), split):
-                wh = _cell_str(r.get("warehouse_code", ""))
-                out.append(
-                    {
-                        "emp_id": e,
-                        "sku": sku,
-                        "allocated_boxes": int(b),
-                        "salestype": _cell_str(r.get("salestype", "")),
-                        "divisioncode": _cell_str(r.get("divisioncode", "")),
-                        "areacode": _areacode_str(r.get("areacode", "")),
-                        "provincecode": _cell_str(r.get("provincecode", "")),
-                        "warehouse_code": wh,
-                    }
-                )
+        matched = {w for w in req_wh if w in grain_whs}
+        touched = pd.Series(False, index=sub.index)
+        for (_, arow), w in zip(grp.iterrows(), req_wh):
+            if w in grain_whs:
+                mask = sub_wh.eq(w)
+            else:
+                mask = ~sub_wh.isin(matched)
+                if not mask.any():
+                    mask = pd.Series(True, index=sub.index)
+            touched |= mask
+            _spread(sub[mask], _boxes(arow))
+        # แถวของคู่นี้ที่ไม่มีใครระบุ ส่ง 0 ทับ — ไม่งั้นค้างเลขเก่าใน Target Sun เป้าเบิ้ล
+        for _, r in sub[~touched].iterrows():
+            out.append(_grain_row(r, 0))
 
     return pd.DataFrame(out), True
 
@@ -995,9 +1037,15 @@ def _clear_no_target_employees_in_tga(
     sup_id: str,
     *,
     dg: pd.DataFrame | None = None,
+    only_skus: set[str] | None = None,
 ) -> tuple[pd.DataFrame, list[str]]:
     """
     ล้างเป้าเดิมของคนใน「ไม่ต้องตั้งเป้า」ที่ยังค้างอยู่ใน Target Sun
+
+    only_skus — ส่งแยกแบรนด์/เฉพาะบางสินค้า: ล้างเฉพาะ SKU ในรอบส่งนี้เท่านั้น
+      เดิมล้างทุก SKU ของคนนั้นเสมอ ส่งแบรนด์เดียวแล้วไปเขียนแถว 0 ให้ SKU แบรนด์อื่น
+      ด่านยอดรวมทั้งชุดกับตัวตรวจหลังส่งจึงฟ้องผิดทั้งที่ข้อมูลถูก (ผลตรวจ §2.1)
+      None = ส่งเต็ม ล้างได้ทุก SKU
 
     คนกลุ่มนี้ถูกตัดออกตั้งแต่ตอนกระจาย (`_drop_no_target_employees`) จึงไม่มีแถวใน
     ผลกระจาย → ไม่มีอะไรถูกส่ง → **Target Sun ยังถือเป้าของงวดก่อนไว้เหมือนเดิม**
@@ -1033,6 +1081,8 @@ def _clear_no_target_employees_in_tga(
         emp = no_target_store.norm_emp(r.get("emp_id"))
         sku = str(r.get("sku") or "").strip()
         if not emp or not sku or emp not in blocked:
+            continue
+        if only_skus is not None and sku not in only_skus:
             continue
         if (emp, sku) in present:
             # มีแถวอยู่ในผลกระจายแล้ว (เช่นผู้ใช้ปลดออกจากรายชื่อกลางคัน) — อย่าไปทับ
@@ -1226,9 +1276,8 @@ def _shortfall_from_dropped_rows(
       1. ฟังก์ชันนั้นวนจาก df.groupby("sku") คือ "SKU ที่ยังเหลือ" — ถ้า SKU ถูกตัดทั้งตัว
          (สินค้าใหม่ที่ TGA ยังไม่ตั้งเป้าให้ใครในทีมเลย) มันหายไปจาก groupby แล้วผ่านเงียบ
          ตัวนี้ดูจาก "แถวที่ถูกตัด" จึงจับเคสนั้นได้
-      2. 409 ของฟังก์ชันนั้นแปลว่า "แก้มือไม่ตรงเป้า" (ข้ามได้ด้วย confirm_target_mismatch
-         ซึ่งในโหมดรวมภาคเป็นเรื่องปกติตาม I7) — ถ้าเอาปัญหา master data ไปรวม
-         จะถูกกดยืนยันข้ามไปโดยไม่ได้ตั้งใจ
+      2. 409 ของฟังก์ชันนั้นแปลว่า "ยอดไม่ตรงเป้า" (โหมดรวมภาคยกให้ด่านยอดรวมทั้งภาค
+         ตัดสินแทนตาม I7) — ปัญหา master data ต้องแยกเป็นอีกด่าน ไม่ปนกัน
 
     นับเฉพาะแถวที่ allocated_boxes > 0 — ตัดแถวหีบ 0 ไม่ทำให้เป้าขาด (ไม่มีอะไรให้ทับใน Oracle)
     """
@@ -1342,8 +1391,13 @@ def _live_target_snapshot(
         rows = result.get("rows")
         if not isinstance(rows, list):
             return None
+        if result.get("complete") is False:
+            # อ่านไม่ครบ = นับแถวไม่ได้ — ห้ามเอาตัวเลขที่ขาดไปเทียบก่อน/หลังส่ง
+            logger.warning("อ่านเป้าจาก Target Sun ได้ไม่ครบ (%s) — ถือว่าตรวจไม่ได้", sup_id)
+            return None
         by_sku: dict[str, int] = {}
         keys: set[str] = set()
+        qty_by_key: dict[str, int] = {}
         for r in rows:
             if not isinstance(r, dict):
                 continue
@@ -1355,8 +1409,10 @@ def _live_target_snapshot(
             except (TypeError, ValueError):
                 qty = 0
             by_sku[sku] = by_sku.get(sku, 0) + qty
-            keys.add(_live_target_row_key(r))
-        return {"by_sku": by_sku, "row_count": len(rows), "keys": keys}
+            k = _live_target_row_key(r)
+            keys.add(k)
+            qty_by_key[k] = qty_by_key.get(k, 0) + qty
+        return {"by_sku": by_sku, "row_count": len(rows), "keys": keys, "qty_by_key": qty_by_key}
     except Exception as e:  # อ่านไม่ได้ต้องไม่ทำให้เส้นทางหลักพัง
         logger.warning("อ่านเป้าปัจจุบันจาก Target Sun ไม่ได้ (%s): %s", sup_id, e)
         return None
@@ -1471,15 +1527,15 @@ def assert_target_snapshot_is_fresh(
     year: int,
     *,
     emp_codes: list[str] | None = None,
-    confirmed: bool = False,
     live_by_sku: dict[str, int] | None = _UNSET,  # type: ignore[assignment]
 ) -> None:
     """
-    เตือนเมื่อเป้าใน Target Sun เปลี่ยนไปหลังจากผู้ใช้โหลดข้อมูลขั้นที่ 1
+    บล็อกเมื่อเป้าใน Target Sun เปลี่ยนไปหลังจากผู้ใช้โหลดข้อมูลขั้นที่ 1
 
-    หลักการเทียบยอดของระบบยึด "เป้าที่ดึงเข้ามาคำนวณรอบนั้น" เสมอ ไฟล์ที่ส่งจึงตรง
-    กับเป้าชุดที่ผู้ใช้เห็น — แต่ถ้าเป้าต้นทางเปลี่ยนไปแล้ว การส่งทับด้วยแผนเก่า
-    อาจไม่ใช่สิ่งที่ต้องการ ให้ผู้ใช้ตัดสินใจเอง (ยืนยันได้ ไม่บล็อกตาย)
+    ไม่มีทางยืนยันข้ามแล้ว (ผู้ใช้ตัดสิน 29 ก.ย. 2026): ส่งตามแผนเดิมทั้งที่เป้าต้นทาง
+    เปลี่ยน = ยอดใน Target Sun จะไม่เท่าเป้าล่าสุด ขัดกติกา "ยอดหีบต้องเท่าเป้าเสมอ"
+    ต้องโหลดขั้นที่ 1 ใหม่แล้วกระจายอีกครั้ง · รายการที่คืนไปบอกทุก SKU ที่เปลี่ยน
+    ให้หน้าจอพาไปดูทีละสินค้าได้
 
     ถ้าอ่านของจริงไม่ได้ → ไม่บล็อกด้วยเหตุนี้ เพราะการเทียบกับ snapshot
     ยังถูกบังคับเต็มที่จากด่านอื่นอยู่แล้ว
@@ -1493,8 +1549,6 @@ def assert_target_snapshot_is_fresh(
     ไม่ต้องยิง Target Sun ซ้ำสองรอบ — ไม่ระบุ (ค่าเริ่มต้น) จึงอ่านเองตามเดิม
     ระบุเป็น None ตรงๆ หมายถึง "อ่านมาแล้วแต่ไม่สำเร็จ" ก็จะไม่บล็อกเหมือนอ่านเองไม่ได้
     """
-    if confirmed:
-        return
     snapshot = _sup_target_boxes_by_sku(sup_id, month, year)
     if not snapshot:
         return
@@ -1512,10 +1566,21 @@ def assert_target_snapshot_is_fresh(
         now = int(live.get(sku, 0))
         if was != now:
             drifts.append(
-                {"sku": sku, "loaded_boxes": was, "current_boxes": now, "diff": now - was}
+                {
+                    "sku": sku,
+                    "loaded_boxes": was,
+                    "current_boxes": now,
+                    "diff": now - was,
+                    # สินค้าที่เพิ่งมีเป้า — ยังไม่อยู่ในตารางผลกระจาย หน้าจอพาไปดูไม่ได้
+                    "new_sku": sku not in snapshot,
+                    # สินค้าที่เป้าถูกเอาออก (เหลือ 0)
+                    "removed_sku": sku not in live,
+                }
             )
     if not drifts:
         return
+    # เปลี่ยนมากก่อน — ผู้ใช้ไล่ดูตัวใหญ่ก่อน
+    drifts.sort(key=lambda d: (-abs(int(d["diff"])), d["sku"]))
 
     diff_boxes = sum(int(d["diff"]) for d in drifts)
     logger.warning(
@@ -1535,15 +1600,25 @@ def assert_target_snapshot_is_fresh(
                 f"{len(drifts)} SKU (ต่างรวม {diff_boxes:+,} หีบ)"
             ),
             "hint_th": (
-                "ถ้าจะกระจายตามเป้าใหม่ ให้โหลดข้อมูลขั้นที่ 1 ใหม่แล้วกระจายอีกครั้ง — "
-                "หรือกดยืนยันเพื่อส่งตามแผนที่กระจายไว้เดิม"
+                "โหลดข้อมูลขั้นที่ 1 ใหม่ แล้วกระจายอีกครั้งก่อนส่ง — "
+                "ยอดที่ส่งต้องเท่าเป้าล่าสุดใน Target Sun"
             ),
-            "drifts": drifts[:20],
+            "drifts": drifts[:200],
             "drift_count": len(drifts),
             "drift_boxes": diff_boxes,
-            "confirm_field": "confirm_stale_target",
+            "sup_id": str(sup_id or "").strip().upper(),
         },
     )
+
+
+def _reads_other_system_than_sends() -> bool:
+    """อ่านกับส่งคนละระบบ (เช่น preset test) — ผลตรวจหลังส่งใช้ไม่ได้"""
+    from .targetsun_endpoints import targetsun_endpoints_summary
+
+    try:
+        return str(targetsun_endpoints_summary().get("cross_env") or "") == "1"
+    except Exception:
+        return False
 
 
 def verify_after_send(
@@ -1563,6 +1638,9 @@ def verify_after_send(
     ห้าม raise เด็ดขาด — ของส่งไปแล้ว ถ้าตรวจไม่ได้ก็แค่บอกว่าตรวจไม่ได้
     ไม่ใช่ทำให้การส่งที่สำเร็จแล้วดูเหมือนล้มเหลว
     """
+    # อ่านกับส่งคนละระบบ = ยอด "ลงจริง" ที่อ่านได้มาจากระบบที่ไม่ได้ถูกเขียน (ผลตรวจ §2.2)
+    if _reads_other_system_than_sends():
+        return {"checked": False, "reason": "cross_env"}
     try:
         if not sent_by_sku:
             return {"checked": False, "reason": "no_rows"}
@@ -1603,6 +1681,130 @@ def verify_after_send(
         return {"checked": False, "reason": "error"}
 
 
+def unlanded_rows(file_qty_by_key: dict, live_qty_by_key: dict) -> list[dict]:
+    """แถวในไฟล์ที่ Target Sun ไม่มี หรือมีแต่จำนวนไม่ตรงกับที่ส่ง"""
+    out = []
+    for k, q in file_qty_by_key.items():
+        live = live_qty_by_key.get(k)
+        if live is None and int(q) == 0:
+            continue  # ส่ง 0 ไปที่คีย์ที่ไม่มีอยู่ = ไม่มีอะไรต้องล้าง ถือว่าลงแล้ว
+        if live is None or int(live) != int(q):
+            sku, emp, *_rest = k.split("|") + [""] * 7
+            out.append({"key": k, "sku": sku, "emp_id": emp, "sent": int(q),
+                        "in_targetsun": None if live is None else int(live)})
+    return out
+
+
+def parallel_rows_of_existing_pairs(
+    before_keys: set, file_keys: set, live_qty_by_key: dict | None = None
+) -> list[dict]:
+    """
+    แถวใหม่ในไฟล์ที่ "ซ้อน" คู่พนักงาน×สินค้าที่มีแถวอยู่แล้วใน Target Sun (ผู้ใช้ขอ 30 ก.ย. 2026)
+
+    คีย์ upsert รวม WAREHOUSECODE — ถ้าคู่เดิมมีแถวคลัง A (หรือคลังว่าง) แล้วไฟล์ส่งคลัง B
+    มา Target Sun จะสร้างแถวใหม่ ไม่ทับของเดิม คู่นั้นจึงมีเป้าสองก้อน (SL453/SL380)
+    ตัวนับ "ส่วนเกิน" มองไม่เห็นเพราะแถวใหม่นี้อยู่ใน "คาดแถวใหม่" ด้วย
+
+    นับเฉพาะเมื่อแถวเดิมของคู่นั้น **ไม่อยู่ในไฟล์** — ถ้าไฟล์ส่งแถวเดิมไปด้วย (เช่นกติกา
+    บังคับคลังส่ง 0 ทับคลังเก่า) ยอดคุมได้ ไม่ใช่เป้าเบิ้ล
+    """
+    before_keys = set(before_keys or set())
+    file_keys = set(file_keys or set())
+    old_by_pair: dict[tuple[str, str], list[str]] = {}
+    for k in before_keys - file_keys:
+        sku, emp = (k.split("|") + ["", ""])[:2]
+        old_by_pair.setdefault((sku, emp), []).append(k)
+    out = []
+    for k in sorted(file_keys - before_keys):
+        sku, emp = (k.split("|") + ["", ""])[:2]
+        olds = old_by_pair.get((sku, emp))
+        if not olds:
+            continue
+        out.append({
+            "key": k,
+            "sku": sku,
+            "emp_id": emp,
+            "new_warehouse": k.split("|")[-1],
+            "old_keys": sorted(olds),
+            "old_warehouses": sorted({o.split("|")[-1] for o in olds}),
+            "old_boxes": (
+                sum(int(live_qty_by_key.get(o) or 0) for o in olds)
+                if live_qty_by_key is not None else None
+            ),
+        })
+    return out
+
+
+def _pair_of_key(k: str) -> tuple[str, str]:
+    sku, emp = (str(k).split("|") + ["", ""])[:2]
+    return sku, emp
+
+
+def warehouse_conflicts(live_qty_by_key: dict, file_qty_by_key: dict) -> list[dict]:
+    """
+    ด่านก่อนส่ง: คู่พนักงาน×สินค้าที่ไฟล์จะทำให้ Target Sun มีเป้าเบิ้ล (ผู้ใช้ขอ 30 ก.ย. 2026)
+
+    คีย์ upsert รวมคลัง — แถวของคู่นี้ที่อยู่ใน Target Sun ตอนนี้แต่ **ไม่อยู่ในไฟล์** จะค้าง
+    อยู่อย่างนั้น ยอดของคู่นี้จึงเป็น "ไฟล์ + แถวค้าง" · ต้นเหตุปกติคือ grain ขั้นที่ 1 เก่ากว่า
+    Target Sun (มีคนแก้/เพิ่มแถวทีหลัง) หรือคลังในไฟล์ผิด
+
+    นับเป็นปัญหาเมื่อแถวค้างยังมีหีบ หรือไฟล์จะสร้างแถวใหม่ให้คู่นี้ (แถวซ้อน) — แถวค้างที่เป็น
+    0 และไฟล์ทับของเดิมครบไม่ทำให้อะไรเบิ้ล · คู่ใหม่ที่ Target Sun ไม่มีเลยไม่ใช่ปัญหา
+    """
+    live_by_pair: dict[tuple[str, str], dict[str, int]] = {}
+    for k, q in (live_qty_by_key or {}).items():
+        live_by_pair.setdefault(_pair_of_key(k), {})[k] = int(q or 0)
+    file_by_pair: dict[tuple[str, str], dict[str, int]] = {}
+    for k, q in (file_qty_by_key or {}).items():
+        file_by_pair.setdefault(_pair_of_key(k), {})[k] = int(q or 0)
+
+    out = []
+    for pair in sorted(set(file_by_pair) & set(live_by_pair)):
+        live, file = live_by_pair[pair], file_by_pair[pair]
+        leftover = set(live) - set(file)
+        if not leftover:
+            continue
+        leftover_boxes = sum(live[k] for k in leftover)
+        new_keys = set(file) - set(live)
+        if leftover_boxes <= 0 and not new_keys:
+            continue
+        sku, emp = pair
+        out.append({
+            "emp_id": emp,
+            "sku": sku,
+            "targetsun_rows": [
+                {"warehouse": k.split("|")[-1], "boxes": live[k]} for k in sorted(live)
+            ],
+            "file_rows": [
+                {"warehouse": k.split("|")[-1], "boxes": file[k]} for k in sorted(file)
+            ],
+            "leftover_boxes": leftover_boxes,
+        })
+    return out
+
+
+def live_grain_for_pairs(live_qty_by_key: dict, pairs: set) -> pd.DataFrame:
+    """
+    grain ของคู่ที่ระบุ สร้างจากแถวใน Target Sun ตอนนี้ — ใช้แทน grain ขั้นที่ 1 ของคู่นั้น
+    ตอนผู้ใช้เลือก「ใช้คลังตาม Target Sun」: หีบของคู่ไม่เปลี่ยน แค่แตกลงแถว (คลัง/เขต/จังหวัด)
+    ที่มีอยู่จริงตอนนี้ ไม่ต้องโหลดขั้นที่ 1 หรือกระจายใหม่ (ค่าที่แก้มือไว้ไม่หาย)
+    """
+    rows = []
+    for k, q in (live_qty_by_key or {}).items():
+        parts = (str(k).split("|") + [""] * 7)[:7]
+        sku, emp = parts[0], parts[1]
+        if (sku, emp) not in pairs:
+            continue
+        rows.append({
+            "emp_id": emp, "sku": sku, "qty": float(q or 0),
+            "salestype": parts[2], "divisioncode": parts[3], "areacode": parts[4],
+            "provincecode": parts[5], "warehouse_code": parts[6],
+        })
+    if not rows:
+        return pd.DataFrame()
+    return _normalize_grain_dtype(pd.DataFrame(rows))
+
+
 def verify_row_count_after_send(
     sup_id: str,
     month: int,
@@ -1611,6 +1813,7 @@ def verify_row_count_after_send(
     emp_codes: list[str],
     before_snapshot: dict | None,
     file_keys: set,
+    file_qty_by_key: dict | None = None,
 ) -> dict:
     """
     ตรวจ "จำนวนแถวจริง" ก่อน/หลังส่ง — จับแถวซ้ำคนละคลัง (11.3 / ปริศนา SL453) ที่
@@ -1625,6 +1828,12 @@ def verify_row_count_after_send(
     ล้วน ๆ ไม่ใช่ประตู
     """
     try:
+        # อ่านกับส่งคนละระบบ (เช่น preset test: อ่าน Prod ส่ง UAT) — ตัวเลขก่อน/หลัง
+        # มาจากระบบที่ไม่ได้ถูกเขียน ผลเทียบจึงไม่มีความหมาย ต้องรายงานว่าตรวจไม่ได้
+        from .targetsun_endpoints import targetsun_endpoints_summary
+
+        if str(targetsun_endpoints_summary().get("cross_env") or "") == "1":
+            return {"checked": False, "reason": "cross_env"}
         if before_snapshot is None:
             return {"checked": False, "reason": "before_unavailable"}
         after_snapshot = _live_target_snapshot(sup_id, month, year, emp_codes)
@@ -1638,9 +1847,19 @@ def verify_row_count_after_send(
         actual_new_rows = after_count - before_count
         unexpected_extra_rows = actual_new_rows - expected_new_rows
 
+        # แถวในไฟล์ที่ลงไม่ครบ/ไม่ตรง — ใช้ส่งซ้ำเฉพาะแถวนั้น (upsert ทับได้ ลบไม่ได้)
+        # ไม่พึ่ง errors[] ของ Target Sun เพราะคืนมาแค่ 50 แถวแรก
+        unlanded = unlanded_rows(file_qty_by_key or {}, after_snapshot.get("qty_by_key") or {})
+        parallel = parallel_rows_of_existing_pairs(
+            before_keys, file_keys, after_snapshot.get("qty_by_key") or {}
+        )
         result = {
             "checked": True,
-            "ok": unexpected_extra_rows == 0,
+            "ok": unexpected_extra_rows == 0 and not unlanded and not parallel,
+            "unlanded_count": len(unlanded),
+            "unlanded_sample": unlanded[:20],
+            "parallel_rows_count": len(parallel),
+            "parallel_rows_sample": parallel[:20],
             "before_count": before_count,
             "after_count": after_count,
             "actual_new_rows": actual_new_rows,
@@ -1659,6 +1878,16 @@ def verify_row_count_after_send(
                 actual_new_rows,
                 expected_new_rows,
                 unexpected_extra_rows,
+            )
+        if parallel:
+            logger.error(
+                "แถวใหม่ซ้อนคู่เดิมใน Target Sun %s %s-%02d: %d แถว (คลังไม่ตรงแถวเดิม เป้าอาจเบิ้ล) "
+                "ตัวอย่าง %s",
+                str(sup_id or "").strip().upper(),
+                year,
+                month,
+                len(parallel),
+                [(p["emp_id"], p["sku"], p["old_warehouses"], p["new_warehouse"]) for p in parallel[:5]],
             )
         return result
     except Exception as e:
@@ -1680,8 +1909,12 @@ def verify_send_batch(metas: list[dict]) -> dict:
          ทั้งภาคจะครึ่ง ๆ กลาง ๆ (บางทีมถูกทับด้วยเลขใหม่ บางทีมค้างเลขเก่า)
       2. ยอดรวมราย SKU ของทั้งชุด เท่าเป้ารวมของทุกทีมในชุด
 
-    เทียบเฉพาะ SKU ที่ชุดนี้กำลังส่งจริง — SKU ที่มีเป้าแต่ไม่ได้ส่งเลยเป็นเรื่องปกติ
-    ของการส่งแยกแบรนด์ และมีด่านรายทีม (check_missing_skus) ดูแลตอนส่งทุกแบรนด์อยู่แล้ว
+    เทียบ SKU ที่ชุดนี้กำลังส่ง — ถ้าทุกทีมส่งทุกแบรนด์ทุกสินค้า (full_send) เทียบ
+    SKU ที่มีเป้าแต่ไม่อยู่ในไฟล์ด้วย ส่วนการส่งแยกแบรนด์ SKU แบรนด์อื่นไม่อยู่ในไฟล์เป็นปกติ
+
+    ตรวจไม่ได้ (ไม่มียอดในไฟล์ / อ่านเป้าไม่ได้) = 409 ห้ามส่ง — ไม่มีการตอบ 200
+    แบบ verified:false ให้หน้าเว็บส่งต่ออีกแล้ว ผ่านแล้วผู้เรียกต้อง mark_batch_verified
+    ให้ทุก token ในชุด (import_prepared_targetsun ไม่ส่ง token ของชุดที่ยังไม่ผ่าน)
     """
     periods = {
         (int(m["target_year"]), int(m["target_month"]))
@@ -1741,15 +1974,30 @@ def verify_send_batch(metas: list[dict]) -> dict:
             },
         )
 
+    batch_ids = {str(m.get("send_batch_id") or "").strip() for m in metas}
+    if len(batch_ids) > 1:
+        # ไฟล์จากคนละรอบส่งปนกัน — ตรวจรวมกันไม่ได้ความหมาย
+        raise HTTPException(
+            400,
+            detail="ไฟล์ที่เตรียมไว้มาจากคนละรอบการส่ง — กรุณากดส่งใหม่อีกครั้ง",
+        )
+
     if missing_totals:
-        logger.warning("ตรวจยอดรวมทั้งชุดไม่ได้: ไฟล์ที่เตรียมไว้บางใบไม่มียอดต่อ SKU (%s)", sup_ids)
-        return {"verified": False, "reason": "no_totals", "sup_ids": sup_ids}
+        # ตรวจไม่ได้ = ห้ามส่ง (เดิมตอบ 200 verified:false แล้วหน้าเว็บส่งต่อ)
+        logger.error("ตรวจยอดรวมทั้งชุดไม่ได้: ไฟล์ที่เตรียมไว้บางใบไม่มียอดต่อ SKU (%s)", sup_ids)
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "send_batch_unverifiable",
+                "message": "ยังไม่ได้ส่ง — ไฟล์ที่เตรียมไว้บางทีมไม่มียอดต่อสินค้าให้ตรวจ",
+                "hint_th": "กดส่งใหม่อีกครั้งเพื่อให้ระบบเตรียมไฟล์ใหม่",
+                "sup_ids": sup_ids,
+            },
+        )
 
-    # ทีมเดียว = ไม่มีการย้ายหีบข้ามทีม ด่านรายทีมตรวจเรื่องเดียวกันไปแล้วและ
-    # ผู้ใช้อาจกดยืนยันความต่างไว้โดยตั้งใจ — ตรงนี้จึงไม่ไปตัดสินซ้ำ
-    if len(per_team) < 2:
-        return {"verified": True, "scope": "single_team", "sup_ids": sup_ids}
-
+    # ทีมเดียวก็ตรวจด้วยสูตรเดียวกัน — ยอดรวมของ "ทีมในชุด" เทียบเป้ารวมของทีมเหล่านั้น
+    # (ทีมเดียว = เทียบเป้าทีม) เดิมข้ามไปเพราะผู้ใช้อาจกดยืนยันความต่างไว้ ตอนนี้
+    # ไม่มีการยืนยันข้ามแล้ว ยอดต้องตรงเสมอ
     targets_total: dict[str, int] = {}
     unreadable: list[str] = []
     year, month = next(iter(periods)) if periods else (None, None)
@@ -1765,42 +2013,51 @@ def verify_send_batch(metas: list[dict]) -> dict:
             targets_total[str(k).strip()] = targets_total.get(str(k).strip(), 0) + int(v)
 
     if unreadable:
-        # ด่านรายทีมบล็อกเรื่องนี้ไปแล้ว (send_target_unverifiable) ถ้ามาถึงตรงนี้แปลว่า
-        # ผู้ใช้ยืนยันไปแล้วว่ายอมส่งทั้งที่ตรวจไม่ได้ — อย่าฟ้องซ้ำด้วยตัวเลขที่ไม่ครบ
-        logger.warning("ตรวจยอดรวมทั้งชุดไม่ได้: อ่านเป้าไม่ได้ %s", unreadable)
-        return {
-            "verified": False,
-            "reason": "missing_targets",
-            "sup_ids": sup_ids,
-            "unreadable_sup_ids": unreadable,
-        }
+        logger.error("ตรวจยอดรวมทั้งชุดไม่ได้: อ่านเป้าไม่ได้ %s", unreadable)
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "send_batch_unverifiable",
+                "message": (
+                    f"ยังไม่ได้ส่ง — อ่านเป้าของทีม {', '.join(unreadable)} ไม่ได้ "
+                    "จึงยืนยันไม่ได้ว่ายอดรวมตรงเป้า"
+                ),
+                "hint_th": "โหลดข้อมูลขั้นที่ 1 ใหม่เพื่อดึงเป้าเข้ามาเก็บอีกครั้ง แล้วค่อยส่ง",
+                "sup_ids": sup_ids,
+                "unreadable_sup_ids": unreadable,
+            },
+        )
+
+    # ส่งทุกแบรนด์ทุกสินค้าทุกทีม = ต้องครบทุก SKU ที่มีเป้า (SKU ที่ไม่อยู่ในไฟล์เลยคือหีบหาย)
+    full_send = bool(metas) and all(bool(m.get("full_send")) for m in metas)
+    keys = set(file_by_sku) | (set(targets_total) if full_send else set())
 
     diffs = []
-    for sku in sorted(set(file_by_sku)):
+    for sku in sorted(keys):
         if sku in excluded:
             continue
-        tgt = targets_total.get(sku)
-        if tgt is None:
-            continue  # ไม่มีเป้าในงวดนี้ — ด่านรายทีมดูแลอยู่
+        # ไม่มีเป้าในงวดนี้ = เป้า 0 — มีหีบเมื่อไรคือหีบงอก
+        tgt = int(targets_total.get(sku, 0))
         got = int(file_by_sku.get(sku, 0))
-        if got != int(tgt):
+        if got != tgt:
             diffs.append(
-                {"sku": sku, "sending_boxes": got, "expected_boxes": int(tgt), "diff": got - int(tgt)}
+                {"sku": sku, "sending_boxes": got, "expected_boxes": tgt, "diff": got - tgt}
             )
 
     if diffs:
         diff_boxes = sum(int(d["diff"]) for d in diffs)
         logger.error("ยอดรวมทั้งชุดไม่ตรงเป้ารวม %s: %s", sup_ids, diffs[:10])
+        scope = f"ทั้ง {len(per_team)} ทีม" if len(per_team) > 1 else f"ทีม {sup_ids[0]}"
         raise HTTPException(
             status_code=409,
             detail={
                 "code": "send_batch_total_mismatch",
                 "message": (
-                    f"ยังไม่ได้ส่ง — ยอดรวมของทั้ง {len(per_team)} ทีมไม่เท่าเป้ารวม "
+                    f"ยังไม่ได้ส่ง — ยอดรวมของ{scope}ไม่เท่าเป้ารวม "
                     f"{len(diffs)} SKU (ต่างรวม {diff_boxes:+,} หีบ)"
                 ),
                 "hint_th": (
-                    "ย้ายหีบข้ามทีมได้ แต่ยอดรวมของภาคต้องเท่าเดิม — "
+                    "ย้ายหีบข้ามทีมได้ แต่ยอดรวมต้องเท่าเดิมพอดี — "
                     "ส่วนต่างแปลว่าหีบหายหรืองอกจริง ให้กลับไปตรวจตารางผลกระจาย "
                     "หรือโหลดข้อมูลขั้นที่ 1 ใหม่แล้วกระจายอีกครั้ง"
                 ),
@@ -1813,9 +2070,9 @@ def verify_send_batch(metas: list[dict]) -> dict:
 
     return {
         "verified": True,
-        "scope": "batch",
+        "scope": "batch" if len(per_team) > 1 else "single_team",
         "sup_ids": sup_ids,
-        "skus_checked": len([s for s in file_by_sku if s not in excluded]),
+        "skus_checked": len([s for s in keys if s not in excluded]),
         "excluded_skus": sorted(excluded),
     }
 
@@ -1989,15 +2246,6 @@ def _enrich_emp_dimensions(
     df["areacode"] = df["areacode"].map(_areacode_str)
     df["warehouse_code"] = df["warehouse_code"].map(_cell_str)
     return df
-
-
-def _allow_send_mismatch() -> bool:
-    """ทางออกฉุกเฉิน — ใช้ตัวเดียวกับประตูใน /optimize เพื่อไม่ให้มีสวิตช์หลายตัว"""
-    return (os.environ.get("ALLOC_ALLOW_MISMATCH") or "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
 
 
 def _sup_target_boxes_by_sku(sup_id: str, month: int, year: int) -> dict[str, int] | None:
@@ -2189,44 +2437,42 @@ def _assert_send_matches_sup_targets(
     month: int,
     year: int,
     *,
-    confirmed: bool = False,
     check_missing_skus: bool = False,
-    unverifiable_confirmed: bool = False,
-) -> None:
+    defer_to_batch: bool = False,
+) -> list[dict]:
     """
     ประตูสุดท้ายก่อนส่งเข้า Target Sun — ผลรวมหีบต่อ SKU ของทีมนี้ต้องตรงเป้าของทีมนี้
 
+    กติกา (ผู้ใช้ยืนยัน 29 ก.ย. 2026): ยอดหีบรวมหลังกระจายต้องเท่าเป้าที่เข้ามา
+    **ห้ามขาดหรือเกินแม้แต่หีบเดียว** และไม่มีปุ่มยืนยันข้าม — เดิมมี
+    confirm_target_mismatch / confirm_unverifiable_target / ALLOC_ALLOW_MISMATCH
+    ให้กดข้ามได้ ตอนนี้ถอดออกทั้งหมด
+
     ทำไมต้องตรวจซ้ำทั้งที่ /optimize ตรวจแล้ว:
       ระหว่าง optimize -> ส่ง ยังมีอีกหลายก้าวที่ไม่มีใครตรวจเลย
-        - แก้มือในตาราง (โหมดรวมภาคย้ายหีบข้ามทีมได้ตามที่ออกแบบไว้)
-        - PUT /data/allocations บันทึก snapshot โดยไม่ตรวจผลรวม
+        - แก้มือในตาราง
+        - PUT /data/allocations บันทึกร่างโดยไม่ตรวจผลรวม (ตั้งใจ — ร่างยังไม่ตรงได้)
         - โหลด snapshot เก่ากลับมาส่ง ทั้งที่เป้า TGA เปลี่ยนไปแล้ว
-      ตัวเลขที่ถึง Target Sun จึงต่างจากเป้าของทีมได้ ทั้งที่ตอนกระจายถูกต้อง
+
+    defer_to_batch — ทีมนี้เป็นส่วนหนึ่งของการส่งรวมภาค (มี send_batch_id)
+      โหมดรวมภาคย้ายหีบข้ามทีมได้ตามกติกา I7 ยอดรายทีมจึงต่างจากเป้าทีมได้
+      สิ่งที่ต้องเท่าเดิมคือ **ยอดรวมทั้งภาคต่อ SKU** ซึ่ง verify_send_batch ตรวจ
+      และ import_prepared_targetsun ไม่ยอมส่ง token ที่ชุดยังไม่ผ่านการตรวจ
+      ตรงนี้จึงคืนรายการที่ต่างไว้เฉย ๆ ไม่บล็อก — แต่ "อ่านเป้าไม่ได้" ยังบล็อกเสมอ
+      เพราะด่านระดับชุดก็ต้องใช้เป้าของทุกทีม
 
     check_missing_skus — ตรวจ "SKU ที่มีเป้าแต่ไม่มีใน payload เลย" ด้วย
       เปิดเฉพาะตอนส่งทุกแบรนด์ เพราะตอนนั้น payload ต้องครอบคลุมทุก SKU ที่มีเป้า
-      ถ้าส่งแยกแบรนด์ payload มีแค่บาง SKU อยู่แล้ว เปิดไว้จะฟ้องผิดทั้งกระดาน
 
-      เคสที่จับได้: หน้าเว็บจำรายชื่อ SKU ไว้ตั้งแต่โหลดขั้นที่ 1 ถ้าหลังจากนั้น
-      มีการนำเข้าเป้า TGA ที่เพิ่ม SKU ใหม่ SKU นั้นจะไม่อยู่ใน payload เลย
-      การวนจาก payload อย่างเดียวจึงไม่มีทางเห็นมัน
+    คืนรายการที่ต่าง (ว่าง = ตรงทุก SKU) · ไม่ defer แล้วมีรายการ = 409
     """
     if df is None or df.empty:
-        return
+        return []
     sid = str(sup_id or "").strip().upper()
     targets = _sup_target_boxes_by_sku(sid, month, year)
     if targets is None:
-        # อ่านเป้าไม่ได้ = ตรวจไม่ได้ → ต้อง "บล็อกไว้ก่อน" ไม่ใช่ปล่อยผ่านเงียบ ๆ
-        #
-        # เดิมตรงนี้ return เฉย ๆ ผลคือประตูที่แข็งแรงที่สุดปิดตัวเองอัตโนมัติ
-        # ในสถานการณ์ที่มันควรทำงานที่สุด: ไฟล์เป้าถูกล้างตามอายุ cache แล้ว
-        # ผู้ใช้เปิด snapshot เก่ามาส่ง — ส่งอะไรก็ได้โดยไม่มีอะไรทัดทาน
+        # อ่านเป้าไม่ได้ = ตรวจไม่ได้ = ห้ามส่ง ไม่มีทางยืนยันข้าม
         # ทางแก้ที่ถูกคือโหลดขั้นที่ 1 ใหม่ให้ระบบดึงเป้ามาเก็บอีกรอบ
-        if unverifiable_confirmed:
-            logger.warning(
-                "ผู้ใช้ยืนยันส่งทั้งที่ไม่มีไฟล์เป้าให้ตรวจ %s %s-%02d", sid, year, month
-            )
-            return
         logger.error("ไม่มีไฟล์เป้าให้ตรวจก่อนส่ง %s %s-%02d — บล็อกไว้", sid, year, month)
         raise HTTPException(
             status_code=409,
@@ -2237,67 +2483,71 @@ def _assert_send_matches_sup_targets(
                     "จึงยืนยันไม่ได้ว่ายอดที่จะส่งตรงกับเป้า"
                 ),
                 "hint_th": (
-                    "กลับไปโหลดข้อมูลขั้นที่ 1 ใหม่เพื่อดึงเป้าเข้ามาเก็บอีกครั้ง "
-                    "แล้วค่อยส่ง — ถ้ายืนยันจะส่งทั้งที่ตรวจไม่ได้ ให้กดยืนยัน"
+                    "กลับไปโหลดข้อมูลขั้นที่ 1 ใหม่เพื่อดึงเป้าเข้ามาเก็บอีกครั้ง แล้วค่อยส่ง"
                 ),
-                "confirm_field": "confirm_unverifiable_target",
                 "sup_id": sid,
                 "target_month": int(month),
                 "target_year": int(year),
             },
         )
 
-    got = df.groupby("sku")["allocated_boxes"].sum().astype(int).to_dict()
-    got = {str(k).strip(): int(v) for k, v in got.items()}
+    boxes = pd.to_numeric(df["allocated_boxes"], errors="coerce").fillna(0)
+    got_raw = boxes.groupby(df["sku"].astype(str).str.strip()).sum().to_dict()
+    got: dict[str, int] = {}
+    for k, v in got_raw.items():
+        fv = float(v)
+        if fv != int(fv):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "send_boxes_not_integer",
+                    "message": f"จำนวนหีบของ SKU {k} ไม่ใช่จำนวนเต็ม ({fv}) — ระบบไม่ส่ง",
+                    "sup_id": sid,
+                },
+            )
+        got[str(k)] = int(fv)
 
-    # วนจาก "SKU ที่มีเป้า" ไม่ใช่ "SKU ที่ส่ง" เมื่อ payload ควรครบ —
-    # ไม่งั้น SKU ที่หายไปทั้งตัวจะไม่เคยถูกหยิบมาเทียบ
-    if check_missing_skus:
-        keys = sorted(set(targets) | set(got))
-    else:
-        keys = sorted(got)
+    # วนจาก "SKU ที่มีเป้า" ด้วยเมื่อ payload ควรครบ — ไม่งั้น SKU ที่หายไปทั้งตัว
+    # จะไม่เคยถูกหยิบมาเทียบ
+    keys = sorted(set(targets) | set(got)) if check_missing_skus else sorted(got)
 
     problems = []
     for sku in keys:
-        tgt = targets.get(sku)
-        if tgt is None:
-            continue  # SKU ไม่มีเป้าในงวดนี้ — ปล่อยให้เส้นทางเดิมจัดการ
+        # SKU ที่ไม่มีเป้าของทีมนี้ = เป้า 0 — มีหีบเมื่อไรคือหีบงอก
+        tgt = int(targets.get(sku, 0))
         total = got.get(sku, 0)
-        if total != int(tgt):
+        if total != tgt:
             problems.append(
                 {
                     "sku": sku,
                     "sending_boxes": int(total),
-                    "expected_boxes": int(tgt),
+                    "expected_boxes": tgt,
                     # ไม่มีแถวเลย ต่างจากส่งมาแต่จำนวนไม่ตรง — หน้าเว็บใช้แยกข้อความ
                     "missing_from_payload": sku not in got,
+                    "no_target": sku not in targets,
                 }
             )
 
     if not problems:
-        return
+        return []
+
+    if defer_to_batch:
+        logger.info(
+            "ส่งรวมภาค: ทีม %s ต่างจากเป้าทีม %d SKU — ให้ด่านยอดรวมทั้งภาคตัดสิน",
+            sid, len(problems),
+        )
+        return problems
 
     logger.error(
         "ส่ง Target Sun ไม่ตรงเป้าทีม %s %s-%02d: %s", sid, year, month, problems[:20]
     )
-    if confirmed:
-        # ผู้ใช้เห็นรายการแล้วและกดยืนยัน — เช่นย้ายหีบข้ามทีมในโหมดรวมภาคโดยตั้งใจ
-        logger.warning(
-            "ผู้ใช้ยืนยันส่งทั้งที่ไม่ตรงเป้าทีม %s (%d SKU ไม่ตรง)", sid, len(problems)
-        )
-        return
-    if _allow_send_mismatch():
-        logger.warning("ALLOC_ALLOW_MISMATCH เปิดอยู่ — ปล่อยให้ส่งทั้งที่ไม่ตรงเป้า")
-        return
-
     missing = [p for p in problems if p.get("missing_from_payload")]
     hint = (
-        "มักเกิดจากการแก้ตัวเลขข้ามทีมในโหมดรวมภาค หรือเป้า Target Sun "
-        "เปลี่ยนหลังจากกระจายไปแล้ว — กด「คำนวณใหม่」แล้วส่งอีกครั้ง"
+        "ยอดหีบต่อสินค้าต้องเท่าเป้าของทีมพอดี — ตรวจช่องที่แก้มือไว้ "
+        "หรือกด「คำนวณใหม่」แล้วส่งอีกครั้ง"
     )
     if missing:
         # SKU ที่ไม่มีในสิ่งที่ส่งเลย = หน้าเว็บยังไม่รู้จักมัน (เป้าเพิ่มมาหลังโหลดขั้นที่ 1)
-        # กด「คำนวณใหม่」เฉย ๆ ไม่พอ ต้องโหลดขั้นที่ 1 ใหม่ให้เห็น SKU ก่อน
         hint = (
             f"มี {len(missing)} SKU ที่มีเป้าแต่ไม่มีอยู่ในผลกระจายเลย — "
             "แปลว่าเป้า TGA เปลี่ยนหลังจากคุณโหลดข้อมูลขั้นที่ 1 "
@@ -2318,7 +2568,79 @@ def _assert_send_matches_sup_targets(
             "mismatch_count": len(problems),
             "missing_sku_count": len(missing),
             "sup_id": sid,
-            "confirm_field": "confirm_target_mismatch",
+        },
+    )
+
+
+#: ช่องที่ Target Sun ข้ามทั้งแถวถ้าว่าง ("Missing required fields: …") — ยึดจากพฤติกรรมจริง
+#: ไม่ใช่ตามสเปก: สเปกบอก PROVINCECODE บังคับ แต่ข้อมูลจริงว่างทุกแถว (117,560 แถว) และรับได้
+#: สเปกบอกรหัสพนักงาน 5 ตัว แต่ของจริง 4 ตัว (เช่น C442) — จึงไม่ตรวจความยาว
+_IMPORT_REQUIRED_COLUMNS = (
+    "PRODUCTCODE", "SALESTYPE", "DIVISIONCODE", "SALESMANCODE", "AREACODE",
+    "QUANTITYCASE", "EFFECTIVEDATE", "USERCODE",
+)
+_IMPORT_KEY_COLUMNS = (
+    "PRODUCTCODE", "SALESMANCODE", "SALESTYPE", "DIVISIONCODE", "AREACODE",
+    "PROVINCECODE", "WAREHOUSECODE",
+)
+
+
+def import_row_key_series(df: pd.DataFrame) -> pd.Series:
+    """คีย์เต็มของแต่ละแถวในไฟล์ส่ง — ลำดับเดียวกับ _live_target_row_key"""
+    parts = [df[c].astype(str).str.strip() if c == "PRODUCTCODE" else df[c].astype(str) for c in _IMPORT_KEY_COLUMNS]
+    out = parts[0]
+    for p in parts[1:]:
+        out = out + "|" + p
+    return out
+
+
+def assert_rows_importable(df: pd.DataFrame, sup_id: str = "") -> None:
+    """
+    ตรวจทุกแถวก่อนส่งด้วยกติกาที่ Target Sun ใช้ข้ามแถว — ผิดแถวเดียว = ไม่ส่งทั้งไฟล์
+
+    ผู้ใช้ขอ 29 ก.ย. 2026: Target Sun ข้ามแถวที่ผิดทีละแถวแต่ยังบันทึกแถวอื่น แล้วเราลบแถว
+    ในนั้นไม่ได้ ส่งไปครึ่ง ๆ กลาง ๆ จึงแก้ยากมาก · ตามปกติด่านนี้ไม่ควรเจออะไรเลย เพราะ
+    แถวที่ขาดเขต/พื้นที่ถูกตัดตั้งแต่ขั้นก่อนหน้า — นี่คือตาข่ายชั้นสุดท้าย
+    """
+    if df is None or df.empty:
+        return
+    problems: list[dict] = []
+    for i, r in enumerate(df[list(_IMPORT_REQUIRED_COLUMNS)].itertuples(index=False), start=2):
+        missing = [c for c, v in zip(_IMPORT_REQUIRED_COLUMNS, r) if str(v if v is not None else "").strip() in ("", "nan", "None")]
+        if missing:
+            problems.append({"row": i, "reason": "ขาดช่อง " + ", ".join(missing)})
+    qty = pd.to_numeric(df["QUANTITYCASE"], errors="coerce")
+    for i in df.index[(qty.isna()) | (qty < 0) | (qty != qty.round())]:
+        problems.append({"row": int(df.index.get_loc(i)) + 2, "reason": f"จำนวนหีบไม่ถูกต้อง ({df.at[i, 'QUANTITYCASE']})"})
+    keys = import_row_key_series(df)
+    dup = keys.duplicated(keep=False)
+    for pos in [int(p) for p, d in enumerate(dup.tolist()) if d][:50]:
+        problems.append({"row": pos + 2, "reason": "คีย์ซ้ำกับแถวอื่นในไฟล์ (Target Sun จะข้าม)"})
+    if not problems:
+        return
+    problems.sort(key=lambda p: p["row"])
+    sample = []
+    for p in problems[:20]:
+        row = df.iloc[p["row"] - 2]
+        sample.append({
+            **p,
+            "sku": str(row.get("PRODUCTCODE") or ""),
+            "emp_id": str(row.get("SALESMANCODE") or ""),
+            "warehouse_code": str(row.get("WAREHOUSECODE") or ""),
+        })
+    logger.error("ไฟล์ส่ง Target Sun มีแถวที่จะถูกข้าม %s: %d แถว %s", sup_id, len(problems), sample[:5])
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "send_rows_not_importable",
+            "message": (
+                f"ยังไม่ได้ส่ง — มี {len(problems):,} แถวที่ Target Sun จะไม่รับ "
+                "ถ้าส่งไปตอนนี้จะลงไม่ครบ ระบบจึงไม่ส่งทั้งไฟล์"
+            ),
+            "hint_th": "แจ้ง dev พร้อมรายการนี้ — มักเกิดจากข้อมูลเขต/พื้นที่ขายของพนักงานไม่ครบ",
+            "rows": sample,
+            "row_count": len(problems),
+            "sup_id": str(sup_id or "").strip().upper(),
         },
     )
 
@@ -2328,6 +2650,7 @@ def _build_tga_upload_dataframe(
     *,
     drop_incomplete_rows: bool = False,
     enforce_targets: bool = False,
+    live_grain: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, int, list[dict], list[dict]]:
     """
     enforce_targets — ตรวจว่าผลรวมหีบต่อ SKU ตรงเป้าทีมหรือไม่ (409 ถ้าไม่ตรง)
@@ -2335,6 +2658,9 @@ def _build_tga_upload_dataframe(
     เปิดเฉพาะ "เส้นทางส่งจริง" เท่านั้น ห้ามเปิดกับการสร้างไฟล์เพื่อดาวน์โหลด
     เพราะผู้ใช้ต้องโหลด Excel มาตรวจได้แม้ตัวเลขยังไม่ตรง — ถ้าบล็อกตรงนั้นด้วย
     จะกลายเป็นว่ายิ่งมีปัญหายิ่งตรวจไม่ได้
+
+    live_grain — grain ของบางคู่ที่อ่านสดจาก Target Sun (live_grain_for_pairs) ใช้แทน grain
+    ขั้นที่ 1 ของคู่นั้นเท่านั้น ตัวสร้างไฟล์ยังออฟไลน์ ผู้เรียก (prepare) เป็นคนอ่านมาให้
     """
     t0 = time.perf_counter()
     rows_raw = [a.model_dump() for a in req.allocations]
@@ -2416,16 +2742,17 @@ def _build_tga_upload_dataframe(
 
     df = _normalize_allocation_payload(df)
     payload_by_sku = _boxes_by_sku(df)
+    team_target_mismatches: list[dict] = []
     if enforce_targets:
-        _assert_send_matches_sup_targets(
+        team_target_mismatches = _assert_send_matches_sup_targets(
             df,
             req.sup_id,
             int(req.target_month),
             int(req.target_year),
-            confirmed=bool(getattr(req, "confirm_target_mismatch", False)),
             # ส่งทุกแบรนด์ครบทุกสินค้าเท่านั้นที่ payload ควรครอบคลุมทุก SKU ที่มีเป้า
             check_missing_skus=(brand_filter or "ALL").upper() == "ALL" and not sku_filter,
-            unverifiable_confirmed=bool(getattr(req, "confirm_unverifiable_target", False)),
+            # ส่งรวมภาค: ยอดรายทีมต่างได้ (I7) — ด่านยอดรวมทั้งภาคตัดสินแทน
+            defer_to_batch=bool(str(getattr(req, "send_batch_id", "") or "").strip()),
         )
     zero_pairs_full = _zero_sum_emp_sku_pairs(df)
 
@@ -2455,6 +2782,17 @@ def _build_tga_upload_dataframe(
                 _extra if grain_dg.empty
                 else pd.concat([grain_dg, _extra], ignore_index=True)
             )
+    if live_grain is not None and not live_grain.empty:
+        # ผู้ใช้เลือก「ใช้คลังตาม Target Sun」— แถวของคู่เหล่านี้ยึดของจริงตอนนี้ทั้งชุด
+        _live_pairs = set(zip(live_grain["emp_id"], live_grain["sku"]))
+        if not grain_dg.empty:
+            _keep = [
+                (e, s) not in _live_pairs
+                for e, s in zip(grain_dg["emp_id"], grain_dg["sku"].astype(str).str.strip())
+            ]
+            grain_dg = pd.concat([grain_dg[_keep], live_grain], ignore_index=True)
+        else:
+            grain_dg = live_grain.copy()
     grain_lookup = _grain_by_pair(grain_dg)
     t_grain = time.perf_counter()
 
@@ -2469,6 +2807,19 @@ def _build_tga_upload_dataframe(
         infer_missing_dims=bool(getattr(req, "allow_new_targetsun_rows", False)),
     )
     df = df_expand if grain_ok else df
+    if drop_incomplete_rows and not grain_ok:
+        # ไม่มี grain = ไม่รู้ว่าแต่ละแถวใน Target Sun ตอนนี้ใช้คลังอะไร (หรือว่าง) — ทางที่เหลือ
+        # คือเดาคลังรายคน (คลังจากแถวอื่นของคนเดียวกัน / MAX จาก tga_target_salesman_next)
+        # ซึ่งผิดกติกา "ว่างมาว่างไป มีรหัสไหนมาส่งรหัสนั้น" (ผู้ใช้ย้ำ 30 ก.ย. 2026) และคีย์
+        # upsert รวมคลัง เดาผิด = แถวใหม่ซ้อนแถวเดิม เป้าเบิ้ล (SL453/SL380) จึงไม่ส่ง
+        raise HTTPException(
+            409,
+            detail={
+                "code": "grain_missing",
+                "message": "ไม่พบข้อมูลคลังของเป้าปัจจุบันจากขั้นที่ 1 จึงยังส่งไม่ได้ (กันเป้าเบิ้ลจากคลังไม่ตรง)",
+                "hint_th": "โหลดข้อมูลขั้นที่ 1 ใหม่ แล้วกดส่งอีกครั้ง",
+            },
+        )
     df = _align_zero_allocations_to_tga_grain(
         df,
         req.sup_id,
@@ -2489,13 +2840,17 @@ def _build_tga_upload_dataframe(
     # เฉพาะเส้นทางส่งจริง — ไฟล์ Excel ที่ผู้ใช้โหลดไปดูไม่ต้องมีแถวล้างค่าปนมาให้งง
     stale_rows_cleared = 0
     if drop_incomplete_rows:
-        df, _no_target_cleared = _clear_no_target_employees_in_tga(
-            df, req.sup_id, dg=grain_dg
-        )
         # ล้างแถวที่หลุดจากรอบนี้ (ค8) ต้องเป็นการส่งแบบเต็ม — brand_filter=="ALL" และ
         # ไม่มี sku_filter — ไม่งั้นจะเข้าใจผิดว่า "ตั้งใจไม่เลือกส่ง" คือ "หมดเป้าแล้ว"
         # แล้วไปล้างเป้าที่ยังถูกต้องของ SKU/แบรนด์อื่นที่ไม่ได้อยู่ในรอบส่งนี้
         _full_send = (brand_filter or "ALL").upper() == "ALL" and not sku_filter
+        # คนไม่ต้องตั้งเป้า: ส่งไม่เต็ม = ล้างเฉพาะ SKU ในรอบนี้ (df ถูกกรองแบรนด์/สินค้าแล้ว)
+        df, _no_target_cleared = _clear_no_target_employees_in_tga(
+            df,
+            req.sup_id,
+            dg=grain_dg,
+            only_skus=None if _full_send else set(df["sku"].astype(str).str.strip()),
+        )
         df, stale_rows_cleared = _clear_stale_employee_sku_rows_in_tga(
             df, req.sup_id, dg=grain_dg, full_send=_full_send
         )
@@ -2770,25 +3125,18 @@ def _build_tga_upload_dataframe(
     # คีย์เต็มของทุกแถวที่กำลังจะส่ง (sku + คีย์ upsert 6 ตัว) — ใช้เทียบกับ "ก่อนส่ง"
     # ตอน verify_row_count_after_send หาว่ากี่แถวที่ Target Sun ยังไม่เคยมี (คีย์เดียว
     # กับ _live_target_row_key ทุกประการ ไม่งั้นสองฝั่ง drift แล้วฟ้องเท็จ)
-    final.attrs["import_row_keys"] = (
-        final["PRODUCTCODE"].astype(str).str.strip()
-        + "|"
-        + final["SALESMANCODE"].astype(str)
-        + "|"
-        + final["SALESTYPE"].astype(str)
-        + "|"
-        + final["DIVISIONCODE"].astype(str)
-        + "|"
-        + final["AREACODE"].astype(str)
-        + "|"
-        + final["PROVINCECODE"].astype(str)
-        + "|"
-        + final["WAREHOUSECODE"].astype(str)
-    ).tolist()
+    final.attrs["import_row_keys"] = import_row_key_series(final).tolist()
+    if enforce_targets:
+        # เส้นทางส่งจริง: ผิดแถวเดียว = ไม่ส่งทั้งไฟล์ (ผู้ใช้ขอ 29 ก.ย. 2026)
+        assert_rows_importable(final, req.sup_id)
     final.attrs["wh_pin_matched_groups"] = wh_pin_stats["matched_groups"]
     final.attrs["wh_pin_boxes_moved"] = wh_pin_stats["boxes_moved"]
     final.attrs["wh_pin_rows_zeroed"] = wh_pin_stats["rows_zeroed"]
     final.attrs["wh_pin_new_warehouse_legs"] = wh_pin_stats["new_warehouse_legs"]
+    # ส่งรวมภาค: ยอดรายทีมที่ต่างจากเป้าทีม (ไม่บล็อกที่ด่านนี้) — ให้ bundle จดไว้
+    final.attrs["team_target_mismatches"] = team_target_mismatches
+    # ส่งทุกแบรนด์ทุกสินค้า = ด่านยอดรวมทั้งภาคต้องตรวจ SKU ที่มีเป้าแต่ไม่อยู่ในไฟล์ด้วย
+    final.attrs["full_send"] = (brand_filter or "ALL").upper() == "ALL" and not sku_filter
     return final, dropped_dims, not_in_ts, shortfall
 
 
@@ -2839,6 +3187,7 @@ def prepare_lakehouse_xlsx(
     *,
     drop_incomplete_rows: bool = False,
     enforce_targets: bool = False,
+    live_grain: pd.DataFrame | None = None,
 ) -> tuple[bytes, str, pd.DataFrame, int, list[dict], list[dict]]:
     """
     Excel รูปแบบ tga_target_salesman_next — ชีตเดียวชื่อ TGA (เหมือน alloc_*.xlsx)
@@ -2854,6 +3203,7 @@ def prepare_lakehouse_xlsx(
         req,
         drop_incomplete_rows=drop_incomplete_rows,
         enforce_targets=enforce_targets,
+        live_grain=live_grain,
     )
     t_df = time.perf_counter()
     content = _build_xlsx_bytes(df)

@@ -12,7 +12,9 @@ from urllib.parse import urlparse
 TARGETSUN_PROD_BASE = "https://spcws.sahapat.com/spc/targetsun"
 TARGETSUN_UAT_BASE = "https://spcuatws.sahapat.com/spc/targetsun"
 
-# Default: UAT ทั้งคู่ (อ่านเป้า + ส่งผล)
+# ค่าของ preset "code" (ตามค่าในโค้ด) = UAT ทั้งคู่
+# ⚠ ไม่ใช่ค่าตั้งต้นของระบบ — ค่าตั้งต้นจริงคือ preset "test" (อ่าน Prod ส่ง UAT)
+#   ดู app_runtime_settings._default_settings (ใช้เมื่อไม่มี config/app_runtime.json)
 TARGETSUN_READ_API_BASE = TARGETSUN_UAT_BASE
 TARGETSUN_IMPORT_API_BASE = TARGETSUN_UAT_BASE
 
@@ -78,8 +80,12 @@ def targetsun_import_excel_url() -> str:
 
 
 def targetsun_endpoints_summary() -> dict[str, str]:
+    from .app_runtime_settings import get_target_endpoint_config, settings_file_status
+
     read_b, import_b = resolve_endpoint_bases()
     cross = _host_label(read_b) != _host_label(import_b) and read_b != import_b
+    cfg = get_target_endpoint_config()
+    status = settings_file_status()
     return {
         "read_base": read_b,
         "import_base": import_b,
@@ -87,6 +93,11 @@ def targetsun_endpoints_summary() -> dict[str, str]:
         "read_host_label": _host_label(read_b),
         "import_host_label": _host_label(import_b),
         "cross_env": "1" if cross else "0",
+        # ไฟล์ตั้งค่าหาย/เสีย → ใช้ค่าตั้งต้น (preset test) โดยที่แอดมินไม่ได้เลือก
+        "settings_file_status": status,
+        "using_default_settings": "1" if status != "ok" else "0",
+        # URL ที่แก้มือใน JSON ทับ preset — หน้าแอดมินจะแสดงชื่อ preset ไม่ตรงความจริง
+        "manual_url_override": "1" if (cfg.get("read_base") or cfg.get("import_base")) else "0",
     }
 
 

@@ -16,7 +16,13 @@ from .access_hierarchy import (
     compute_visible_supervisors_for_row,
     parse_hierarchy_metadata,
 )
-from .demo_data import DEMO_SUP_IDS, any_demo_supervisor
+from .demo_data import (
+    DEMO_DIVISION,
+    DEMO_REGION,
+    DEMO_SUP_IDS,
+    any_demo_supervisor,
+    is_demo_email,
+)
 from .manager_views import build_manager_view_options, build_manager_views_map
 from .sl_link_store import (
     expand_sl_codes,
@@ -243,6 +249,22 @@ def admin_scope_for_email(email: str | None) -> dict[str, Any]:
     rows = read_rows()
     breadth = admin_scope_breadth_for_email(ne)
     out["breadth"] = breadth
+
+    if is_demo_email(ne):
+        # บัญชีสาธิตดูแลได้เฉพาะทีมสาธิต ไม่ว่าแถวในไฟล์จะตั้งขอบเขตไว้เท่าไร
+        # เดิม demoadmin เป็น admin ขอบเขต all → ดู/แก้/ลบผู้ใช้จริงได้ทั้ง 96 คน
+        # (ผลตรวจ 28 ก.ย. 2026 §1.2) · ตรึงในโค้ดแทนการแก้ config/user_access.json
+        # เพราะไฟล์นั้นถูกแก้สดบน server — แก้ใน repo แล้ว git pull จะชนกัน
+        out["breadth"] = ADMIN_SCOPE_DIVISION_REGION
+        out["regions"] = {DEMO_REGION}
+        out["divisions"] = {DEMO_DIVISION}
+        out["sl_codes"] = {
+            str(r.get("userpl") or "").strip().upper()
+            for r in rows
+            if str(r.get("acc_region") or "").strip() == DEMO_REGION
+            and str(r.get("userpl") or "").strip()
+        } | set(DEMO_SUP_IDS)
+        return out
 
     own = [r for r in rows if normalized_email(r.get("email")) == ne]
     regions = {str(r.get("acc_region") or "").strip() for r in own}

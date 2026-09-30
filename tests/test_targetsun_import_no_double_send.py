@@ -263,29 +263,24 @@ class ImportRechecksFreshnessTest(unittest.TestCase):
         # ปล่อยล็อกด้วย ไม่งั้น token ค้างแม้จะ block ไปแล้ว
         self.assertNotIn(token, tsi._import_in_flight_tokens)
 
-    def test_confirm_stale_target_from_prepare_still_carries_through(self):
-        """ผู้ใช้ยืนยันความต่างไปแล้วตอน prepare (confirm_stale_target=True) — import ต้องไม่ถามซ้ำ"""
+    def test_old_client_claiming_confirmation_is_still_blocked(self):
+        """หน้าเว็บรุ่นเก่าส่ง confirm_stale_target=True มา — ต้องไม่มีผล (29 ก.ย. 2026)"""
         self._write_step1_snapshot(
             [{"sku": "X", "supervisor_target_boxes": 10, "price_per_box": 1.0}]
         )
         token = "TOK-DRIFT-CONFIRMED"
         self._make_bundle(token)
-
-        def fake_post(*args, **kwargs):
-            resp = MagicMock()
-            resp.status_code = 200
-            resp.json.return_value = {"success": True, "resultMsg": "ok", "result": {}}
-            return resp
-
         with patch.object(tsr, "is_enabled", return_value=True), \
              patch.object(tsr, "get_target_read_source", return_value="targetsun"), \
              patch.object(
                  tsr, "fetch_target_rows",
                  return_value={"rows": [{"PRODUCTCODE": "X", "QUANTITYCASE": 12}]},
              ), \
-             patch("backend.services.targetsun_import.requests.post", side_effect=fake_post):
-            out = tsi.import_prepared_targetsun(self._req(token, confirm_stale_target=True))
-        self.assertEqual(out["targetsun"]["success"], True)
+             patch("backend.services.targetsun_import.requests.post") as post_spy:
+            with self.assertRaises(Exception) as ctx:
+                tsi.import_prepared_targetsun(self._req(token, confirm_stale_target=True))
+            post_spy.assert_not_called()
+        self.assertEqual(ctx.exception.detail["code"], "send_target_stale")
 
     def test_unchanged_target_does_not_block(self):
         self._write_step1_snapshot(
@@ -409,38 +404,12 @@ class ImportRechecksFreshnessTest(unittest.TestCase):
             post_spy.assert_not_called()
         self.assertEqual(ctx.exception.detail["code"], "send_target_stale")
 
-    def test_confirmation_given_at_prepare_is_remembered_in_the_bundle(self):
-        """
-        คำขอ import ที่มี token (frontend) ไม่ได้พก confirm_stale_target มา — ผู้ใช้ที่
-        กดยืนยันไปแล้วตอน prepare ต้องไม่โดนบล็อกซ้ำที่ด่านนี้ (ไม่งั้นส่งไม่ได้เลย)
-        """
-        self._write_step1_snapshot(
-            [{"sku": "X", "supervisor_target_boxes": 10, "price_per_box": 1.0}]
-        )
-        token = "TOK-CONFIRMED-IN-BUNDLE"
-        tsi._save_prepare_bundle(
-            token, content=b"x", fname="t.xlsx", sup_id=self.SUP, nrow=1, zero_rows=0,
-            dropped_dims=0, not_in_ts=[], upload_user_code="TESTER",
-            target_month=self.MONTH, target_year=self.YEAR, emp_codes=["E1"],
-            confirmed_stale_target=True,
-        )
-        with patch.object(tsr, "is_enabled", return_value=True), \
-             patch.object(tsr, "get_target_read_source", return_value="targetsun"), \
-             patch.object(
-                 tsr, "fetch_target_rows",
-                 return_value={"rows": [{"PRODUCTCODE": "X", "QUANTITYCASE": 12}]},
-             ), \
-             patch("backend.services.targetsun_import.requests.post", side_effect=self._ok_post):
-            out = tsi.import_prepared_targetsun(self._req(token))  # ไม่มี confirm ในคำขอ
-        self.assertEqual(out["targetsun"]["success"], True)
-
-    def test_prepare_records_the_confirmation_into_the_bundle(self):
-        """prepare_targetsun_import ต้องส่ง confirm_stale_target ของคำขอลง bundle"""
+    def test_bundle_no_longer_carries_a_stale_confirmation(self):
+        """เดิม bundle จด confirmed_stale_target ไว้ให้ import ข้ามด่าน — ถอดออกแล้ว"""
         import inspect
 
-        src = inspect.getsource(tsi.prepare_targetsun_import)
-        self.assertIn("confirmed_stale_target=", src)
-
+        self.assertNotIn("confirmed_stale_target", inspect.getsource(tsi))
+        self.assertNotIn("confirm_stale_target", inspect.getsource(tsi))
 
 if __name__ == "__main__":
     unittest.main()

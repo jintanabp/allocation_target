@@ -28,7 +28,9 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from ..deps import (
+    ensure_not_demo_for_global_write,
     ensure_can_assign_role,
+    ensure_can_edit_user_rows,
     ensure_row_in_admin_scope,
     ensure_sup_in_admin_scope,
     require_admin_or_marketing_team,
@@ -325,6 +327,7 @@ def create_user_access(
     # ตรวจซ้ำ + เขียน ใต้ล็อกเดียว (mutate_rows) — เดิม read_rows() แล้ว write_rows()
     # แยกกัน แอดมินอีกคนบันทึกคั่นกลางแล้วการแก้ของเขาหายเงียบ ๆ
     def _add(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        ensure_can_edit_user_rows(admin, em, rows)
         if any(r["email"] == em and r["userpl"] == upl for r in rows):
             raise HTTPException(status_code=409, detail="มีแถวนี้อยู่แล้ว")
         return rows + [new_row]
@@ -360,6 +363,7 @@ def update_user_access(
         if not existing:
             raise HTTPException(status_code=404, detail="ไม่พบแถว")
         ensure_row_in_admin_scope(admin, existing)
+        ensure_can_edit_user_rows(admin, em, rows, new_email=new_em)
 
         if "@" not in new_em or not new_upl:
             raise HTTPException(status_code=400, detail="อีเมลหรือ USERPL ใหม่ไม่ถูกต้อง")
@@ -417,6 +421,7 @@ def remove_user_access(
         if not existing:
             raise HTTPException(status_code=404, detail="ไม่พบแถว")
         ensure_row_in_admin_scope(admin, existing)
+        ensure_can_edit_user_rows(admin, em, rows)
         captured["existing"] = existing
         return [r for r in rows if not (r["email"] == em and r["userpl"] == upl)]
 
@@ -447,6 +452,7 @@ def set_targetsun_for_email(
             raise HTTPException(status_code=404, detail="ไม่พบอีเมลนี้")
         for r in mine:
             ensure_row_in_admin_scope(admin, r)
+        ensure_can_edit_user_rows(admin, em, rows)
         for r in mine:
             r["can_import_targetsun"] = bool(body.enabled)
         target_rows.extend(mine)
@@ -520,6 +526,10 @@ def set_user_role(
     result: dict[str, Any] = {}
 
     def _set_role(current_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        # ตรวจ role ปัจจุบันของคนที่ถูกแก้กับแถวล่าสุด (§1.6) — ข้างนอกตรวจได้แค่ role ปลายทาง
+        ensure_can_assign_role(
+            admin, role, em, target_admin_scope=scope, current_rows=current_rows
+        )
         # หัวหน้าแอดมินแตะได้เฉพาะคนในขอบเขตตัวเอง — ทั้งตอนมอบและตอนถอด
         if not (admin.get("auth_disabled") or admin.get("role") == ROLE_DEV):
             target_rows = [r for r in current_rows if normalized_email(r.get("email")) == em]
@@ -755,6 +765,7 @@ def create_sku_link(
     body: SkuLinkBody,
     admin: dict = Depends(require_admin_scoped),
 ) -> dict[str, Any]:
+    ensure_not_demo_for_global_write(admin)
     canon = normalize_sku(body.canonical_sku)
     if not canon:
         raise HTTPException(status_code=400, detail="canonical_sku ว่าง")
@@ -780,6 +791,7 @@ def update_sku_link(
     body: SkuLinkUpdateBody,
     admin: dict = Depends(require_admin_scoped),
 ) -> dict[str, Any]:
+    ensure_not_demo_for_global_write(admin)
     canon = normalize_sku(body.canonical_sku)
     if not canon:
         raise HTTPException(status_code=400, detail="canonical_sku ว่าง")
@@ -814,6 +826,7 @@ def remove_sku_link(
     body: SkuLinkDeleteBody,
     admin: dict = Depends(require_admin_scoped),
 ) -> dict[str, Any]:
+    ensure_not_demo_for_global_write(admin)
     canon = normalize_sku(body.canonical_sku)
     try:
         delete_link(read_links(), canon)
@@ -964,6 +977,7 @@ def create_sl_link(
     body: SlLinkBody,
     admin: dict = Depends(require_admin_scoped),
 ) -> dict[str, Any]:
+    ensure_not_demo_for_global_write(admin)
     old, new_sls = _sl_body_old_new(body)
     if not old:
         raise HTTPException(status_code=400, detail="รหัสเก่า (old_sl) ว่าง")
@@ -989,6 +1003,7 @@ def update_sl_link(
     body: SlLinkUpdateBody,
     admin: dict = Depends(require_admin_scoped),
 ) -> dict[str, Any]:
+    ensure_not_demo_for_global_write(admin)
     old, new_sls = _sl_body_old_new(body)
     if not old:
         raise HTTPException(status_code=400, detail="รหัสเก่า (old_sl) ว่าง")
@@ -1028,6 +1043,7 @@ def remove_sl_link(
     body: SlLinkDeleteBody,
     admin: dict = Depends(require_admin_scoped),
 ) -> dict[str, Any]:
+    ensure_not_demo_for_global_write(admin)
     old = normalize_sl(body.old_sl or body.canonical_sl)
     existing = find_sl_link(old, read_sl_links())
     if existing:
@@ -2165,6 +2181,8 @@ def admin_targetsun_row_count_checks(
                 "after_count": ctx.get("row_count_after"),
                 "expected_new_rows": ctx.get("row_count_expected_new"),
                 "unexpected_extra_rows": ctx.get("row_count_unexpected_extra"),
+                "parallel_rows": ctx.get("row_count_parallel"),
+                "parallel_rows_sample": ctx.get("row_count_parallel_sample") or [],
             }
         )
 
@@ -2244,15 +2262,34 @@ def admin_post_usage_log(
     body: UsageLogBody,
     user: dict = Depends(require_authenticated_user),
 ):
+    """
+    บันทึกจากหน้าเว็บ — ผู้ใช้ทุกคนยิงได้ จึงต้องไม่ให้ปลอมบันทึกของระบบ (ผลตรวจ §1.10)
+
+    เดิม: ส่ง action=send_targetsun พร้อม sup_id ของทีมไหนก็ได้ แล้วรายการปลอมไปโผล่ใน
+    /data/send-history ของทีมนั้น · ตอนนี้ action ขึ้นต้น client_ เสมอ และ sup_id
+    ต้องเป็นทีมที่ผู้ใช้มีสิทธิ์เห็น
+    """
+    from ..deps import ensure_supervisor_allowed
+
     email = str(user.get("email") or user.get("view_as_email") or "").strip()
+    sup = str(body.sup_id or "").strip().upper()
+    if sup:
+        ensure_supervisor_allowed(user, sup)
+    action = str(body.action or "").strip()[:60] or "event"
+    if not action.startswith("client_"):
+        action = "client_" + action
+    level = str(body.level or "error").strip().lower()
+    if level not in ("info", "warn", "error"):
+        level = "error"
     row = append_log(
-        level=body.level,
+        level=level,
         email=email,
         role="client",
-        sup_id=body.sup_id,
-        action=body.action,
-        message=body.message,
-        detail=body.detail,
+        sup_id=sup,
+        action=action,
+        message=str(body.message or "")[:500],
+        detail=str(body.detail or "")[:2000],
+        acting_admin_email=user.get("acting_admin_email"),
     )
     return row
 
@@ -2662,6 +2699,7 @@ def admin_set_emp_assignment(
     ล้างแคช payload ของทั้งทีมต้นทางและปลายทางทุกงวดที่มีอยู่ — ถ้าไม่ล้าง
     ทีมที่ยังหยิบของเก่าจะเห็นพนักงานคนนี้พร้อมกับอีกทีม แล้วเป้าถูกนับสองรอบ
     """
+    ensure_not_demo_for_global_write(admin)
     emp = emp_assignment_store.norm_emp(body.emp_id)
     if not emp:
         raise HTTPException(400, detail="ต้องระบุรหัสพนักงาน")
@@ -2896,6 +2934,9 @@ def admin_target_endpoints_payload() -> dict:
         "read_host_label": summary["read_host_label"],
         "import_host_label": summary["import_host_label"],
         "cross_env": summary["cross_env"] == "1",
+        "settings_file_status": summary.get("settings_file_status"),
+        "using_default_settings": summary.get("using_default_settings") == "1",
+        "manual_url_override": summary.get("manual_url_override") == "1",
     }
 
 

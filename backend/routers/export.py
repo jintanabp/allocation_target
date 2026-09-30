@@ -27,6 +27,10 @@ def download_excel(
     user: dict = Depends(require_authenticated_user),
     sup_id: str = Query(..., min_length=1),
     brand: str = Query("ALL"),
+    target_month: int | None = Query(None, ge=1, le=12),
+    target_year: int | None = Query(None, ge=2020, le=2100),
 ):
     ensure_supervisor_allowed(user, sup_id)
-    return download_excel_response(sup_id=sup_id, brand=brand)
+    return download_excel_response(
+        sup_id=sup_id, brand=brand, target_month=target_month, target_year=target_year
+    )

@@ -38,6 +38,19 @@
         <div class="topbar-period" id="topbarPeriodContainer" style="display:none;">
           <span id="topbarPeriodText">—</span>
         </div>
+        <!-- กล่องแจ้งเตือน — โผล่เฉพาะตอนมีเรื่องที่ยังไม่ได้กดรับทราบ (เช่นจำนวนแถวใน
+             Target Sun หลังส่งไม่ตรงที่คาด) ไม่มีเรื่องก็ซ่อน หน้าจอเดิมไม่เปลี่ยน -->
+        <button type="button" class="admin-bell topbar-bell" id="notifBellBtn"
+          onclick="openNotificationsModal()" style="display:none;"
+          title="การแจ้งเตือนที่ยังไม่ได้กดรับทราบ">
+          <svg class="admin-bell__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+            <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+          </svg>
+          <span class="admin-bell__label">แจ้งเตือน</span>
+          <span class="admin-bell__count" id="notifBellCount">0</span>
+        </button>
         <!-- ไอคอนสองอันอยู่ในปุ่มเดียว สลับการแสดงผลด้วย CSS ตาม data-theme
              (ไม่ต้องให้ JS มายุ่งกับเนื้อในปุ่ม) -->
         <button id="themeToggleBtn" class="btn-theme-toggle" type="button"
@@ -859,7 +872,7 @@
                 style="color:var(--text-2); border-color:var(--border-md); background:var(--bg-main);"
                 title="ยังไม่มีช่องที่แก้มือไว้"
                 onclick="revertAllResultCells()" disabled>↺ คืนค่าที่ระบบคำนวณ</button>
-              <button class="btn-dl" onclick="showExportModal()">↓ ดาวน์โหลด Excel</button>
+              <button class="btn-dl" id="dlBtn" onclick="showExportModal()">↓ ดาวน์โหลด Excel</button>
               <button type="button" class="btn-dl btn-dl--disabled" id="lakehouseOpenBtn"
                 aria-disabled="true" disabled
                 title="ส่งผลการกระจายหีบเข้า Target Sun"
@@ -1575,7 +1588,7 @@
             </div>
           </div>
           <div class="admin-help-strip admin-help-strip--compact">
-            <p>เทียบจำนวนแถวจริงใน Target Sun ก่อน/หลังกดส่งแต่ละครั้ง — ถ้า「ส่วนเกิน」ไม่ใช่ 0 แปลว่าจำนวนแถวที่เพิ่มขึ้นจริงไม่ตรงกับที่คาด (แถวซ้ำ หรือ insert หายเงียบๆ) ควรตรวจใน Target Sun ก่อนส่งงวดถัดไป</p>
+            <p>เทียบจำนวนแถวจริงใน Target Sun ก่อน/หลังกดส่งแต่ละครั้ง — ถ้า「ส่วนเกิน」ไม่ใช่ 0 แปลว่าจำนวนแถวที่เพิ่มขึ้นจริงไม่ตรงกับที่คาด (แถวซ้ำ หรือ insert หายเงียบๆ) ควรตรวจใน Target Sun ก่อนส่งงวดถัดไป · 「ซ้อนคู่เดิม」คือแถวใหม่ของคู่พนักงาน×สินค้าที่มีแถวอยู่แล้วแต่คลังไม่ตรง (เป้าอาจเบิ้ล) ต้องเป็น 0 เสมอ ชี้ที่ตัวเลขเพื่อดูตัวอย่าง</p>
           </div>
           <div id="adminRowCountChecksBody" class="admin-table-wrap admin-table-wrap--panel">
             <table class="admin-table admin-table--zebra admin-table--log">
@@ -1587,9 +1600,10 @@
                 <th>หลัง</th>
                 <th>คาดแถวใหม่</th>
                 <th>ส่วนเกิน</th>
+                <th>ซ้อนคู่เดิม</th>
                 <th>สถานะ</th>
               </tr></thead>
-              <tbody id="adminRowCountChecksTable"><tr><td colspan="8" class="admin-empty">กำลังโหลด…</td></tr></tbody>
+              <tbody id="adminRowCountChecksTable"><tr><td colspan="9" class="admin-empty">กำลังโหลด…</td></tr></tbody>
             </table>
           </div>
         </section>

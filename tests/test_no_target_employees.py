@@ -484,7 +484,7 @@ class TestClearStaleTargetSunRows(_TmpStore):
         """ไฟล์ Excel ที่ผู้ใช้โหลดไปตรวจ ไม่ควรมีแถวล้างค่าปนมา"""
         src = inspect.getsource(self.lh._build_tga_upload_dataframe)
         i = src.index("_clear_no_target_employees_in_tga(")
-        head = src[max(0, i - 260):i]
+        head = src[max(0, i - 900):i]
         self.assertIn("if drop_incomplete_rows:", head)
 
 
