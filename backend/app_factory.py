@@ -21,6 +21,7 @@ from .routers import optimize as optimize_router
 from .services.access_control import parse_allocation_admin_emails
 from .services.fabric_cache import seed_cache_from_repo
 from .services.managers import warm_managers_cache_at_startup
+from .services.nightly_check import start_scheduler as start_nightly_scheduler
 
 logger = logging.getLogger("target_allocation")
 
@@ -84,6 +85,8 @@ def create_app() -> FastAPI:
         cleanup_old_caches(max_age_days=7)
         cleanup_export_artifacts_keep_latest_per_sup(keep_n=1)
         warm_managers_cache_at_startup()
+        # ตรวจ Target Sun รายคืน (F3) — thread ตื่นทุก 5 นาที ทำงานเฉพาะเมื่อแอดมินเปิดไว้ (ค่าตั้งต้นปิด)
+        start_nightly_scheduler()
         yield
 
     app = FastAPI(title="Target Allocation API", version="3.0", lifespan=lifespan)

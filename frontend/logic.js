@@ -193,8 +193,63 @@
     return "";
   }
 
+  /* ── ตรวจ Target Sun รายคืน (เฟส F3) ─────────────────────────────── */
+
+  // เหตุผลที่ตัวตรวจข้ามหรืออ่านไม่ได้ — backend ส่งมาเป็นรหัส คนอ่านต้องได้ภาษาคน
+  const NIGHTLY_REASON_TH = {
+    table_not_ready: "ยังไม่ถึงวันที่ 15 ตารางยังว่าง",
+    empty_table: "ตารางว่าง",
+    cross_env: "อ่านกับส่งคนละระบบ",
+    read_source_not_targetsun: "แหล่งอ่านเป้าไม่ใช่ Target Sun",
+    disabled: "ปิดอยู่",
+    busy: "มีอีกรอบกำลังรัน",
+    bad_response: "Target Sun ตอบกลับผิดรูปแบบ",
+    incomplete_read: "อ่านได้ไม่ครบ",
+  };
+
+  /** รหัสเหตุผล → ข้อความไทย · "error: ..." คงรายละเอียดไว้ให้ dev อ่านต่อ */
+  function nightlyReasonText(reason) {
+    const r = String(reason ?? "").trim();
+    if (!r) return "";
+    if (NIGHTLY_REASON_TH[r]) return NIGHTLY_REASON_TH[r];
+    if (r.startsWith("error:")) return `อ่านไม่สำเร็จ — ${r.slice(6).trim()}`;
+    return r;
+  }
+
+  /** ผลรอบล่าสุด (last_result) → ประโยคเดียว */
+  function nightlyResultText(result) {
+    if (!result || typeof result !== "object") return "ยังไม่เคยรัน";
+    if (result.skipped) return `ข้าม: ${nightlyReasonText(result.skipped)}`;
+    if (result.error) return `ล้ม: ${result.error}`;
+    const parts = [`ตรวจ ${Number(result.teams || 0)} ทีม×งวด`];
+    if (Number(result.errors || 0)) parts.push(`อ่านไม่ได้ ${Number(result.errors)}`);
+    return parts.join(" · ");
+  }
+
+  // ลำดับเดียวกับ _live_target_row_key ฝั่ง backend (sku + คีย์ upsert 6 ตัว)
+  const TARGET_ROW_KEY_PARTS = ["sku", "emp", "salestype", "division", "area", "province", "warehouse"];
+
+  /** "sku|emp|salestype|division|area|province|warehouse" → object แยกคอลัมน์ */
+  function splitTargetRowKey(key) {
+    const parts = String(key ?? "").split("|");
+    const out = {};
+    TARGET_ROW_KEY_PARTS.forEach((name, i) => { out[name] = parts[i] ?? ""; });
+    return out;
+  }
+
+  /** คีย์ state.teams "SL123|2026-10" → { sup, month, year } (ผิดรูป = null) */
+  function parseNightlyTeamTag(tag) {
+    const m = /^(.+)\|(\d{4})-(\d{1,2})$/.exec(String(tag ?? "").trim());
+    if (!m) return null;
+    return { sup: m[1], year: Number(m[2]), month: Number(m[3]) };
+  }
+
   const AppLogic = {
     allocRulePushMultipleError,
+    nightlyReasonText,
+    nightlyResultText,
+    splitTargetRowKey,
+    parseNightlyTeamTag,
     normalizeNumericText,
     parseBoxCount,
     parseMoney,

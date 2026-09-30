@@ -106,6 +106,24 @@ CAPABILITIES: dict[str, dict[str, Any]] = {
         "tab": "warehousePinRules",
         "allowed_roles": ("head_admin",),
     },
+    "edit_report": {
+        "label": "รายงานการแก้มือ",
+        "desc": (
+            "ดูว่าแต่ละทีมแก้เลขที่ระบบกระจายให้มากแค่ไหน (อ่านอย่างเดียว) — "
+            "เห็นเฉพาะทีมในขอบเขตของตัวเอง"
+        ),
+        "tab": "editReport",
+        "allowed_roles": ("head_admin", "admin"),
+    },
+    "nightly_check": {
+        "label": "ตรวจ Target Sun รายคืน",
+        "desc": (
+            "เปิด/ปิดตัวตรวจว่ามีใครแก้เป้าใน Target Sun หลังส่ง — อ่าน Target Sun จริงของทุกทีม "
+            "จึงล็อกไว้ให้ dev เท่านั้น"
+        ),
+        "tab": "nightlyCheck",
+        "allowed_roles": (),
+    },
     "data_source": {
         "label": "แหล่งข้อมูล",
         "desc": (

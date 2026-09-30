@@ -1726,6 +1726,34 @@ def admin_export_all_allocations(
     )
 
 
+@router.get("/allocations/edit-report")
+def admin_allocations_edit_report(
+    admin: dict = Depends(require_capability("edit_report")),
+    target_month: int = Query(..., ge=1, le=12),
+    target_year: int = Query(..., ge=2020, le=2100),
+):
+    """รายงานการแก้มือ (เฟส F1) — ซุปแก้เลขที่ระบบให้มากแค่ไหน ต่อทีม
+
+    ขอบเขตเดียวกับ export-all (_scoped_allocation_items): dev เห็นทุกทีม ผู้ดูแลเห็นเฉพาะทีมในขอบเขต
+    อ่านอย่างเดียว — ไม่เขียนไฟล์ ไม่แตะ Target Sun (ผลตรวจรายคืนอ่านจากไฟล์สถานะที่มีอยู่แล้ว)
+    """
+    from ..services import edit_report, nightly_check
+
+    items = _scoped_allocation_items(admin, target_month, target_year)
+    snaps: dict[str, dict] = {}
+    for it in items:
+        sid = str(it.get("sup_id") or "").strip().upper()
+        if sid and sid not in snaps:
+            snap = read_snapshot(sid, target_month, target_year)
+            if snap:
+                snaps[sid] = snap
+    return edit_report.build_report(
+        items, snaps, target_month, target_year,
+        nightly_state=nightly_check.read_state(),
+        nightly_enabled=nightly_check.read_settings().get("enabled", False),
+    )
+
+
 @router.get("/allocations/export-xlsx")
 def admin_export_allocations_xlsx(
     admin: dict = Depends(require_admin_scoped),
@@ -3250,3 +3278,71 @@ def admin_warehouse_pin_rule_combos(
             status_code=502,
             detail="ดึงข้อมูลคลังจาก Fabric ไม่สำเร็จ — กด「โหลดใหม่」อีกครั้ง",
         ) from e
+
+
+# ── ตรวจ Target Sun รายคืน (เฟส F3) — dev เท่านั้น ─────────────────────────
+# อ่านอย่างเดียว ค่าตั้งต้นปิด ค่าตั้งอยู่ใน data/ (ไม่ใช่ config/ ไม่ใช่ .env) — ดู services/nightly_check.py
+
+
+def _require_dev(admin: dict) -> None:
+    if admin.get("role") != ROLE_DEV and not admin.get("auth_disabled"):
+        raise HTTPException(status_code=403, detail="เฉพาะ dev — ตัวตรวจรายคืนอ่าน Target Sun ของทุกทีม")
+
+
+class NightlyCheckBody(BaseModel):
+    enabled: bool | None = None
+    hour: int | None = Field(default=None, ge=0, le=23)
+    keep_months: int | None = Field(default=None, ge=1, le=24)
+
+
+@router.get("/nightly-check")
+def get_nightly_check(admin: dict = Depends(require_admin_scoped)) -> dict[str, Any]:
+    from ..services import nightly_check, sent_ledger
+
+    _require_dev(admin)
+    return {
+        "settings": nightly_check.read_settings(),
+        "state": nightly_check.read_state(),
+        "ledgers": [{k: v for k, v in x.items() if k != "path"} for x in sent_ledger.list_ledgers()],
+    }
+
+
+@router.put("/nightly-check")
+def put_nightly_check(body: NightlyCheckBody, admin: dict = Depends(require_admin_scoped)) -> dict[str, Any]:
+    from ..services import nightly_check
+
+    _require_dev(admin)
+    email = str(admin.get("email") or "").strip()
+    saved = nightly_check.write_settings(enabled=body.enabled, hour=body.hour,
+                                         keep_months=body.keep_months, updated_by=email)
+    _audit_admin(admin, "admin_nightly_check_settings",
+                 f"ตั้งค่าตรวจ Target Sun รายคืน: {'เปิด' if saved['enabled'] else 'ปิด'} เวลา {saved['hour']:02d}:00",
+                 level="warn")
+    return {"ok": True, "settings": saved}
+
+
+@router.post("/nightly-check/run")
+def run_nightly_check_now(admin: dict = Depends(require_admin_scoped)) -> dict[str, Any]:
+    """รันเดี๋ยวนี้ในพื้นหลัง (ทั้งที่ปิดตัวตั้งเวลาไว้) — อ่าน Target Sun จริงของทุกทีมที่มี ledger"""
+    import threading
+
+    from ..services import nightly_check
+
+    _require_dev(admin)
+    threading.Thread(target=lambda: nightly_check.run_once(force=True), name="nightly-check-now",
+                     daemon=True).start()
+    _audit_admin(admin, "admin_nightly_check_run", "สั่งตรวจ Target Sun รายคืนเดี๋ยวนี้", level="warn")
+    return {"ok": True, "started": True}
+
+
+@router.get("/nightly-check/team")
+def get_nightly_check_team(
+    sup_id: str = Query(..., min_length=1),
+    target_month: int = Query(..., ge=1, le=12),
+    target_year: int = Query(..., ge=2020, le=2100),
+    admin: dict = Depends(require_admin_scoped),
+) -> dict[str, Any]:
+    from ..services import nightly_check
+
+    _require_dev(admin)
+    return {"diff": nightly_check.latest_diff(sup_id, target_month, target_year)}

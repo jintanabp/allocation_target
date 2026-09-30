@@ -16,7 +16,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=2026091101" />
+  <link rel="stylesheet" href="style.css?v=2026093001" />
 </head>
 
 <body>
@@ -1052,12 +1052,14 @@
         <div class="admin-nav-group">
           <div class="admin-nav-group__label">ข้อมูล</div>
           <button type="button" class="admin-nav-item" role="tab" data-tab="data" aria-selected="false" onclick="adminSwitchTab('data')">แหล่งข้อมูล</button>
+          <button type="button" class="admin-nav-item" role="tab" data-tab="nightlyCheck" aria-selected="false" onclick="adminSwitchTab('nightlyCheck')" title="ตรวจรายคืนว่ามีใครแก้เป้าใน Target Sun หลังส่ง (เฉพาะ dev)">ตรวจ Target Sun รายคืน</button>
         </div>
         <div class="admin-nav-group">
           <div class="admin-nav-group__label">ผลการดำเนินงาน</div>
           <button type="button" class="admin-nav-item" role="tab" data-tab="allocations" aria-selected="false" onclick="adminSwitchTab('allocations')">ผลการกระจาย</button>
           <button type="button" class="admin-nav-item" role="tab" data-tab="usageLogs" aria-selected="false" onclick="adminSwitchTab('usageLogs')">บันทึกการใช้งาน</button>
           <button type="button" class="admin-nav-item" role="tab" data-tab="usageSummary" aria-selected="false" onclick="adminSwitchTab('usageSummary')">สรุปการใช้งาน</button>
+          <button type="button" class="admin-nav-item" role="tab" data-tab="editReport" aria-selected="false" onclick="adminSwitchTab('editReport')" title="แต่ละทีมแก้เลขที่ระบบกระจายให้มากแค่ไหน (ดูอย่างเดียว)">รายงานการแก้มือ</button>
         </div>
         <div class="admin-nav-group">
           <div class="admin-nav-group__label">ทีม</div>
@@ -1878,6 +1880,108 @@
         </section>
       </div>
 
+      <div id="adminPanelEditReport" class="admin-panel" data-panel="editReport" style="display:none;">
+        <section class="admin-card admin-card--panel">
+          <div class="admin-card-header">
+            <div>
+              <h2 class="admin-card__title">รายงานการแก้มือ</h2>
+              <p class="admin-card__hint">แต่ละทีมแก้เลขที่ระบบกระจายให้มากแค่ไหน — ดูอย่างเดียว ไม่เปลี่ยนข้อมูล</p>
+            </div>
+            <div class="admin-period-bar">
+              <label class="admin-period-bar__field">เดือน
+                <select id="adminEditRepMonth" class="admin-select admin-select--sm"></select>
+              </label>
+              <label class="admin-period-bar__field">ปี
+                <input type="number" id="adminEditRepYear" class="field-input field-input--sm admin-period-input" min="2020" max="2100" />
+              </label>
+              <button type="button" class="admin-btn-refresh admin-btn-refresh--sm" onclick="adminLoadEditReport()" title="โหลดใหม่จากผลที่บันทึกไว้ล่าสุด">
+                <span class="admin-btn-refresh__icon" aria-hidden="true">↻</span>
+                <span>โหลดใหม่</span>
+              </button>
+              <span id="adminEditRepMeta" class="admin-period-bar__meta" aria-live="polite"></span>
+            </div>
+          </div>
+          <div class="admin-help-strip admin-help-strip--compact">
+            <p><strong>อ่านตัวเลขยังไง:</strong> เทียบ <strong>เลขที่ระบบกระจายให้</strong> กับ <strong>เลขที่ซุปบันทึกไว้</strong> ทีละช่อง (พนักงาน × สินค้า) · ไม่นับแถวที่มาจากเป้าเดิมใน Target Sun</p>
+            <p><strong>ช่องที่แก้ %</strong> = ช่องที่เลขไม่ตรงกับระบบ ÷ ช่องทั้งหมด · <strong>หีบที่ย้าย</strong> = หีบที่ถูกย้ายจากช่องหนึ่งไปอีกช่อง (ลดตรงนี้ เพิ่มตรงนั้น นับครั้งเดียว)</p>
+            <p id="adminEditRepTsHelp"><strong>แก้ใน Target Sun หลังส่ง</strong> จะขึ้นเมื่อ dev เปิดตัวตรวจรายคืนแล้วเท่านั้น</p>
+          </div>
+          <div id="adminEditRepSummary" aria-live="polite"></div>
+          <div class="admin-table-wrap">
+            <table class="admin-table admin-table--zebra">
+              <thead id="adminEditRepHead"></thead>
+              <tbody id="adminEditRepTable"><tr><td class="admin-empty">กำลังโหลด…</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <div id="adminPanelNightlyCheck" class="admin-panel" data-panel="nightlyCheck" style="display:none;">
+        <section class="admin-card admin-card--panel">
+          <div class="admin-card-header">
+            <div>
+              <h2 class="admin-card__title">ตรวจ Target Sun รายคืน</h2>
+              <p class="admin-card__hint">เทียบเป้าใน Target Sun กับที่ระบบส่งไปจริง เพื่อดูว่ามีใครไปแก้ต่อหลังส่ง — อ่านอย่างเดียว ไม่เขียน Target Sun</p>
+            </div>
+            <div class="admin-period-bar">
+              <button type="button" class="admin-btn-refresh admin-btn-refresh--sm" onclick="adminLoadNightlyCheck()" title="โหลดค่าและผลล่าสุดจากเซิร์ฟเวอร์">
+                <span class="admin-btn-refresh__icon" aria-hidden="true">↻</span>
+                <span>โหลดใหม่</span>
+              </button>
+              <span id="adminNightlyMeta" class="admin-period-bar__meta" aria-live="polite"></span>
+            </div>
+          </div>
+
+          <div id="adminNightlyStatus" aria-live="polite"></div>
+
+          <div class="alloc-rules-grid">
+            <div class="alloc-rules-block">
+              <label class="alloc-rules-switch">
+                <input type="checkbox" id="adminNightlyEnabled" />
+                <span><strong>เปิดตรวจอัตโนมัติทุกคืน</strong></span>
+              </label>
+              <p class="alloc-rules-note">ค่าตั้งต้น <strong>ปิด</strong> · เปิดแล้วระบบจะอ่าน Target Sun ของทุกทีมที่เคยส่ง วันละครั้งตามเวลาที่ตั้ง</p>
+            </div>
+            <div class="alloc-rules-block">
+              <label class="alloc-rules-field">เวลาที่ตรวจ (ชั่วโมง 0–23)
+                <input type="number" id="adminNightlyHour" class="field-input field-input--sm" min="0" max="23" step="1" />
+              </label>
+              <label class="alloc-rules-field">เก็บประวัติกี่เดือน (1–24)
+                <input type="number" id="adminNightlyKeep" class="field-input field-input--sm" min="1" max="24" step="1" />
+              </label>
+            </div>
+          </div>
+
+          <div class="alloc-rules-actions">
+            <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminSaveNightlyCheck()" title="บันทึกค่าตั้งการตรวจรายคืน">บันทึก</button>
+            <button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminRunNightlyCheckNow()" title="ตรวจเดี๋ยวนี้หนึ่งรอบ (อ่าน Target Sun จริง)">รันเดี๋ยวนี้</button>
+            <span id="adminNightlyMsg" class="admin-period-bar__meta" aria-live="polite"></span>
+          </div>
+
+          <div class="alloc-rules-block">
+            <h3 class="alloc-rules-subtitle">ผลล่าสุดต่อทีม × งวด <span class="alloc-rules-note">(กดที่แถวเพื่อดูรายการที่ไม่ตรง)</span></h3>
+            <div class="admin-table-wrap">
+              <table class="admin-table admin-table--zebra">
+                <thead><tr>
+                  <th>ทีม</th>
+                  <th>งวด</th>
+                  <th>สถานะ</th>
+                  <th class="usage-num">หีบเปลี่ยน</th>
+                  <th class="usage-num">หายไป</th>
+                  <th class="usage-num">เพิ่มเอง</th>
+                  <th class="usage-num">หีบต่างรวม</th>
+                  <th>วันที่ตรวจ</th>
+                  <th>หมายเหตุ</th>
+                </tr></thead>
+                <tbody id="adminNightlyTable"><tr><td colspan="9" class="admin-empty">กำลังโหลด…</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div id="adminNightlyDetail" class="alloc-rules-block" style="display:none;"></div>
+        </section>
+      </div>
+
       <div id="adminPanelUsageSummary" class="admin-panel" data-panel="usageSummary" style="display:none;">
         <section class="admin-card admin-card--panel">
           <div class="admin-card-header">
@@ -2011,8 +2115,8 @@
   <script src="vendor/msal-browser.min.js"></script>
   <!-- ตรรกะล้วน (ตัวแปลงเลข/คณิตการเกลี่ย) — ต้องมาก่อน app.js
        ไฟล์นี้มีเทสจริงด้วย node --test tests/logic.test.js -->
-  <script src="logic.js?v=2026090410"></script>
-  <script src="app.js?v=2026091101"></script>
+  <script src="logic.js?v=2026093001"></script>
+  <script src="app.js?v=2026093001"></script>
 </body>
 
 </html>

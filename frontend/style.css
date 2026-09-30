@@ -2485,6 +2485,21 @@ tr.admin-team-row--notarget td { background: var(--surface-muted); }
   border: 1px solid var(--red-brd);
   color: var(--red);
 }
+/* เดิม --warn ถูกใช้แต่ไม่เคยมีสี · --ok ใช้บอก "เปิดอยู่" ของตัวตรวจรายคืน */
+.admin-alert--warn {
+  background: var(--amber-bg);
+  border: 1px solid var(--amber-brd);
+  color: var(--amber);
+}
+.admin-alert--ok {
+  background: var(--green-bg);
+  border: 1px solid var(--green-brd);
+  color: var(--green);
+}
+/* แถวที่กดดูรายละเอียดได้ (ตารางตรวจรายคืน) */
+.admin-table tr.admin-row-click { cursor: pointer; }
+.admin-table tr.admin-row-click:hover td { background: var(--surface-2); }
+.admin-table tr.admin-row-click.is-picked td { background: var(--amber-bg); }
 .admin-loading {
   font-size: 13px;
   color: var(--text-3);
