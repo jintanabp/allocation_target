@@ -32,6 +32,7 @@ from .lakehouse import (
     verify_row_count_after_send,
     warehouse_conflicts,
 )
+from . import sent_ledger
 from .targetsun_endpoints import targetsun_import_excel_url
 
 logger = logging.getLogger("target_allocation")
@@ -348,8 +349,9 @@ def _file_qty_by_key(rows: list[dict]) -> dict[str, int]:
     return out
 
 
-def _keep_sent_record(token: str, meta: dict) -> None:
-    """ย้ายแถวของไฟล์ที่เพิ่งส่งไปเก็บใน data/ts_sent (14 วัน) — ห้ามทำให้การส่งพัง"""
+def _keep_sent_record(token: str, meta: dict, send_status: str = "") -> None:
+    """ย้ายแถวของไฟล์ที่เพิ่งส่งไปเก็บใน data/ts_sent (14 วัน) + บันทึก sent ledger ถาวร (F2)
+    — ห้ามทำให้การส่งพัง"""
     try:
         _SENT_DIR.mkdir(parents=True, exist_ok=True)
         now = time.time()
@@ -363,6 +365,12 @@ def _keep_sent_record(token: str, meta: dict) -> None:
         if not src.is_file():
             return
         rows = json.loads(src.read_text(encoding="utf-8"))
+        # F2: สิ่งที่ส่งจริงแบบถาวร ต่อทีม × งวด (ts_sent ข้างล่างลบเองใน 14 วัน)
+        sent_ledger.record_send(
+            str(meta.get("sup_id") or ""), int(meta.get("target_month") or 0), int(meta.get("target_year") or 0),
+            rows, token=token, user=str(meta.get("upload_user_code") or ""),
+            send_status=send_status, send_batch_id=meta.get("send_batch_id"),
+        )
         rec = {k: meta.get(k) for k in ("sup_id", "target_month", "target_year", "upload_user_code", "send_batch_id")}
         rec.update(token=token, sent_at=now, rows=rows)
         atomic_write_text(str(_SENT_DIR / f"{token}.json"), json.dumps(rec, ensure_ascii=False))
@@ -979,7 +987,7 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
         except BaseException:
             _delete_prepare_bundle(token)
             raise
-        _keep_sent_record(token, meta)
+        _keep_sent_record(token, meta, str(out.get("send_status") or ""))
         _delete_prepare_bundle(token)
 
         out["prepare_token"] = token
@@ -1067,6 +1075,11 @@ def _import_allocations_one_shot(req: LakehouseUploadRequest) -> dict:
         not_in_ts=not_in_ts,
         import_url=url,
         shortfall=shortfall,
+    )
+    # F2: ทางส่งรวดเดียว (หน้าเว็บรุ่นเก่า) ก็ต้องลง sent ledger เหมือนทาง prepare
+    sent_ledger.record_send(
+        req.sup_id, int(req.target_month), int(req.target_year), _file_rows(df),
+        user=str(req.upload_user_code or ""), send_status=str(out.get("send_status") or ""),
     )
     logger.info(
         "TargetSun import timing: build_xlsx=%.2fs post_upstream=%.2fs total=%.2fs rows=%d",
