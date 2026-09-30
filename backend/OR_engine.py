@@ -33,6 +33,11 @@ _TIER_STRICT_BAND_PCT = 0.12
 _TIER_FLEX_ANCHOR_MULT = 0.35
 _TIER_STRICT_ANCHOR_MULT = 3.5
 _TIER_LP_HIST_BALANCE = 0.35
+# ยอมรับคำตอบ LP ที่ห่างจากดีที่สุดที่พิสูจน์ได้ไม่เกิน 0.1% (ผู้ใช้อนุมัติ 30 ก.ย. 2026)
+# เดิมไม่ตั้ง CBC ไล่พิสูจน์จนชนเพดานเวลา (60 วิ) เกือบทุกทีม แล้วคืนคำตอบที่เจอ ณ ตอนนั้น
+# ผลจึงต่างกันทุกครั้งที่กดตามภาระเครื่อง · วัดจาก export 10/2026: SL418 เหลือ ~7 วิ
+# ได้ผลเท่าให้เวลา 300 วิ (ห่างเป้าเงินรวม 2,881 บาท คนห่างสุด 660)
+_LP_GAP_REL = 0.001
 
 
 def _revenue_scale_factor(
@@ -1760,7 +1765,7 @@ def _lp_optimize(
                 prob += x[(emp, sku)] - base == dpos[(emp, sku)] - dneg[(emp, sku)]
 
         try:
-            prob.solve(pulp.PULP_CBC_CMD(msg=False, timeLimit=time_limit))
+            prob.solve(pulp.PULP_CBC_CMD(msg=False, timeLimit=time_limit, gapRel=_LP_GAP_REL))
         except Exception as e:
             logger.warning("LP solver error: %s → fallback proportional %s", e, baseline_strategy)
             return _fallback_prop()
