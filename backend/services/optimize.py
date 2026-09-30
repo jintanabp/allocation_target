@@ -40,7 +40,7 @@ from ..core.paths import (
     target_boxes_union_cache_path,
     tga_grain_cache_path,
 )
-from ..core.atomic_io import atomic_write_csv
+from ..core.atomic_io import _path_lock, atomic_write_csv, read_locked
 from ..core.targets import (
     _read_sku_csv,
     load_summed_target_boxes,
@@ -423,7 +423,8 @@ def _maybe_split_hist(
 def _read_hist_cache(path: str, emp_list: list[str]) -> pd.DataFrame:
     if not os.path.exists(path):
         return pd.DataFrame(columns=["emp_id", "sku", "hist_boxes"])
-    df = pd.read_csv(path, dtype={"sku": str, "emp_id": str})
+    with read_locked(path):
+        df = pd.read_csv(path, dtype={"sku": str, "emp_id": str})
     df = df[df["emp_id"].isin(emp_list)]
     return collapse_hist_to_canonical(df)
 
@@ -508,6 +509,15 @@ def _fill_missing_peer_hist(
         if not team_emps:
             continue
         cache_path = hist_cache_path(sid, target_month, target_year, n_months=n_months)
+        # ไม่มีไฟล์ = ขั้นที่ 1 ของทีมนั้นยังไม่ได้ดึงประวัติช่วงนี้ ไม่ใช่ "ช่องว่าง" (§4.1-5)
+        # เดิมสร้างไฟล์ใหม่ที่มีแค่ SKU นอกเป้าของทีม ไฟล์จึงค้างแบบไม่ครบถาวร: SKU ของทีมเอง
+        # ดูเหมือนไม่เคยขาย และกติกาไม่เคยขายจะนับทีมนี้ว่า "มีข้อมูล" (ดู _never_sold_known_emps)
+        if not os.path.exists(cache_path):
+            logger.info(
+                "เติมประวัติ peer: ทีม %s ยังไม่มีไฟล์ประวัติ %dM — ข้าม (ไม่สร้างไฟล์ครึ่ง ๆ กลาง ๆ)",
+                sid, n_months,
+            )
+            continue
         existing = _read_hist_cache(cache_path, team_emps)
         already_have = set(existing["sku"]) if not existing.empty else set()
         missing = (all_skus - own_skus) - already_have
@@ -528,13 +538,16 @@ def _fill_missing_peer_hist(
         if df_gap is None or df_gap.empty:
             continue
         df_gap = collapse_hist_to_canonical(df_gap, sku_links)
-        combined = (
-            pd.concat([existing, df_gap], ignore_index=True) if not existing.empty else df_gap
-        )
-        combined = combined.drop_duplicates(subset=["emp_id", "sku"], keep="last")
+        # อ่าน-ต่อ-เขียนใต้ล็อกของไฟล์นั้น และอ่าน "ทั้งไฟล์" (§4.1-5) — เดิมต่อจากชุดที่กรองเหลือ
+        # เฉพาะพนักงานที่มีเป้าแล้วเขียนทับ ประวัติของคนอื่นในไฟล์หายไป และเขียนตรง ๆ
+        # (ไม่ atomic) คนที่อ่านพร้อมกันเจอไฟล์ครึ่งใบได้ · ยิง Fabric ข้างนอกล็อกเพราะช้า
         try:
-            combined.to_csv(cache_path, index=False)
-        except OSError as e:
+            with _path_lock(cache_path):
+                full = pd.read_csv(cache_path, dtype={"sku": str, "emp_id": str})
+                combined = pd.concat([full, df_gap], ignore_index=True)
+                combined = combined.drop_duplicates(subset=["emp_id", "sku"], keep="last")
+                atomic_write_csv(cache_path, combined, index=False)
+        except (OSError, ValueError, pd.errors.ParserError) as e:
             logger.warning("เขียน hist cache เติม peer ของ %s ไม่สำเร็จ: %s", sid, e)
         logger.info(
             "เติมประวัติ peer: ทีม %s ช่วง %dM — เจอ %d แถวจาก %d SKU ที่เคยเป็นช่องว่าง",
