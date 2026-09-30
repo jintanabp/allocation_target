@@ -68,13 +68,14 @@ class TestNoSilentFallback(unittest.TestCase):
             _call("LY", h3=_hist(10), h6=_empty(), ly=_empty(), fallbacks=notes)
         self.assertEqual(notes, ["LY→3M"])
 
-    def test_last_year_never_claims_six_months(self):
+    def test_last_year_label_matches_the_data_used(self):
         """
-        โค้ดเดิมมีสาขา want_6m ซ่อนอยู่ในบล็อก LY ซึ่งเป็นเท็จเสมอ (LY ไม่ใช่ L6M)
-        อ่านแล้วชวนเข้าใจว่า LY ถอยไป 6M ได้ ทั้งที่ทำไม่ได้
+        ผลตรวจ §4.3: LY ไม่มีทั้ง LY และ 3M แล้วได้ข้อมูล 6M มา — เดิมติดป้าย 3 เดือน
+        hist_avg (ยอด ÷ เดือน) จึงสูงเป็นสองเท่า · ป้ายและจำนวนเดือนต้องตามข้อมูลจริง
         """
-        _, months = _call("LY", h3=_empty(), h6=_hist(20), ly=_empty())
-        self.assertEqual(months, 3)
+        notes: list[str] = []
+        _, months = _call("LY", h3=_empty(), h6=_hist(20), ly=_empty(), fallbacks=notes)
+        self.assertEqual((months, notes), (6, ["LY→6M"]))
 
     def test_six_month_with_no_history_at_all_keeps_its_window(self):
         df, months = _call("L6M", h3=_empty(), h6=_empty(), ly=_empty())
