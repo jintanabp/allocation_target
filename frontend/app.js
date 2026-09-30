@@ -3018,6 +3018,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 
   _installDriftRecheckOnReturn();
+  _installEditRoundFlushOnHide();
 
   _pollServerStatus();
 
@@ -14268,12 +14269,16 @@ async function checkTargetSunDrift(opts = {}) {
  * ต้นทุนเท่ากับเปิดหน้าใหม่ 1 ครั้ง ไม่ใช่ทุกนาที — ยิงเฉพาะตอน "กลับมาดู" จริง ๆ
  * และเว้นระยะอย่างน้อย DRIFT_RECHECK_AFTER_MS กันคนสลับแท็บไปมาแล้วยิงรัว
  */
+/** ปิดแท็บ/สลับแอป — ส่งยอดการกระทำของรอบนี้ก่อนหาย (F4) · แยกจากตัวตรวจเป้าเปลี่ยนโดยตั้งใจ */
+function _installEditRoundFlushOnHide() {
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) _tallyFlush("page_hidden");
+  });
+}
+
 function _installDriftRecheckOnReturn() {
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) {
-      _tallyFlush("page_hidden");   // ปิดแท็บ/สลับแอป — ส่งยอดรอบนี้ก่อนหาย (F4)
-      return;
-    }
+    if (document.hidden) return;
     if (Date.now() - _lastDriftCheckAt < DRIFT_RECHECK_AFTER_MS) return;
     if (!_driftScopeSupIds().length) return;   // ยังไม่ได้เลือกทีม / ยังไม่ได้โหลดข้อมูล
     checkTargetSunDrift({ silent: true }).catch((e) =>

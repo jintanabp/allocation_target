@@ -34,7 +34,8 @@ class TestEditRoundWiring(unittest.TestCase):
     def test_flushes_at_round_boundaries(self):
         self.assertIn('_tallyFlush("recalc");', _fn(self.src, "_stampEngineRun"))
         self.assertIn('_tallyFlush("sent");', _fn(self.src, "_markAllocationSentTargetSun"))
-        self.assertIn('_tallyFlush("page_hidden");', _fn(self.src, "_installDriftRecheckOnReturn"))
+        self.assertIn('_tallyFlush("page_hidden");', _fn(self.src, "_installEditRoundFlushOnHide"))
+        self.assertIn("_installEditRoundFlushOnHide();", self.src, "ต้องถูกติดตั้งจริงตอนเปิดหน้า")
 
     def test_one_line_per_round_and_silent_when_idle(self):
         body = _fn(self.src, "_tallyFlush")
