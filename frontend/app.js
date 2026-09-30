@@ -966,6 +966,8 @@ let S = {
   // หน่วยขายที่เลือกดูอยู่ ("" = ทุกหน่วย ซึ่งกระจายรวมกันไม่ได้)
   managerViewUnit: "",
   rebalanceResiduals: [],
+  /** SKU ที่ปุ่มปรับยอดย้ายหีบข้ามทีม (ทีมที่แก้รับส่วนต่างเองไม่ไหว) — [{sku, boxes}] */
+  rebalanceCrossTeam: [],
   /** ส่งเข้า Target Sun ได้หรือไม่ (จาก GET /managers → can_import_targetsun) */
   canImportTargetSun: true,
   /** ดึงเป้าจาก Target Sun Read API — ค่าเริ่มต้นเปิด */
@@ -7461,6 +7463,14 @@ function syncStep3ReviewNotes() {
       + " — ส่ง Target Sun ไม่ได้จนกว่ายอดจะตรงพอดี (ลดช่องที่แก้มือไว้ หรือกดคำนวณใหม่)"
     );
   }
+  const cross = Array.isArray(S.rebalanceCrossTeam) ? S.rebalanceCrossTeam : [];
+  if (cross.length) {
+    const list = cross.slice(0, 8).map((c) => `${c.sku} (${c.boxes} หีบ)`).join(", ");
+    lines.push(
+      `ปรับยอดอัตโนมัติย้ายหีบข้ามทีม เพราะทีมที่แก้รับส่วนต่างเองไม่ไหว: ${list}${cross.length > 8 ? " …" : ""}`
+      + " — ตรวจยอดของทีมอื่นในสินค้าเหล่านี้"
+    );
+  }
   const farSkus = new Set();
   for (const a of S.allocations || []) {
     if (a.hist_dev_status === "far" && a.sku) farSkus.add(String(a.sku));
@@ -8496,6 +8506,8 @@ function autoRebalance(silent = false, opts = {}) {
   let changed = false;
   const residuals = [];
   const unknownSkus = [];
+  // SKU ที่ทีมรับส่วนต่างเองไม่ไหว หีบจึงย้ายข้ามทีม (โหมดรวม) — บอกในแผงรีเช็ค
+  const crossTeam = [];
 
   skus.forEach(sku => {
     const targetInfo = skuInfoByCode.get(sku);
@@ -8547,26 +8559,52 @@ function autoRebalance(silent = false, opts = {}) {
         S.newProductSkus.has(skuKey))
       || evenNeverSold.has(skuKey);
     const zeroKeys = S.neverSoldZeroKeys instanceof Set ? S.neverSoldZeroKeys : new Set();
-    const weights = unedited.map((a) => {
-      if (zeroKeys.has(_neverSoldZeroKeyOf(a))) return 0;
-      return evenSku ? 1 : Math.max(Number(a.hist_avg) || 0, 0) + 0.1;
-    });
     const minFloor = S.lastForceMinOne && target >= allocs.length ? 1 : 0;
-    if (delta > 0) {
-      // เติมส่วนที่ขาด: แจกเพิ่มให้ unedited ตามสัดส่วน hist (largest remainder)
-      const add = AppLogic.spreadIncrease(delta, weights);
-      unedited.forEach((a, i) => { a.allocated_boxes = (Number(a.allocated_boxes) || 0) + add[i]; });
-      changed = true;
-    } else {
-      // ลดส่วนที่เกิน: ดึงออกจาก unedited โดยไม่ให้ติดลบ
-      // (คนที่มีหีบเยอะก่อน ประวัติน้อยก่อน — กันดึงจากคนขายเยอะจนผิดธรรมชาติ)
+    // เกลี่ย d หีบลงช่องที่ยังไม่ได้แก้ในชุด cells — คืนจำนวนหีบที่ย้ายได้จริง
+    const spreadOver = (cells, d) => {
+      if (!cells.length || !d) return 0;
+      const weights = cells.map((a) => {
+        if (zeroKeys.has(_neverSoldZeroKeyOf(a))) return 0;
+        return evenSku ? 1 : Math.max(Number(a.hist_avg) || 0, 0) + 0.1;
+      });
+      if (d > 0) {
+        // เติมส่วนที่ขาด: ตามสัดส่วน hist (largest remainder)
+        const add = AppLogic.spreadIncrease(d, weights);
+        cells.forEach((a, i) => { a.allocated_boxes = (Number(a.allocated_boxes) || 0) + add[i]; });
+        return d;
+      }
+      // ลดส่วนที่เกิน: คนที่มีหีบเยอะก่อน ประวัติน้อยก่อน ไม่ติดลบ ไม่ต่ำกว่าขั้นต่ำ
       // ดึงไม่ครบก็ปล่อยไป แล้วรายงานเป็น residual ข้างล่าง — ห้ามแตะช่องที่ล็อกไว้
-      const boxes = unedited.map((a) => Number(a.allocated_boxes) || 0);
-      const take = AppLogic.spreadDecrease(
-        Math.abs(delta), boxes, weights, unedited.map(() => minFloor)
-      );
-      unedited.forEach((a, i) => { a.allocated_boxes = boxes[i] - take[i]; });
+      const boxes = cells.map((a) => Number(a.allocated_boxes) || 0);
+      const take = AppLogic.spreadDecrease(Math.abs(d), boxes, weights, cells.map(() => minFloor));
+      cells.forEach((a, i) => { a.allocated_boxes = boxes[i] - take[i]; });
+      return take.reduce((x, y) => x + y, 0);
+    };
+
+    // โหมดรวมทีม/รวมภาค: เกลี่ยในทีมเดียวกันก่อน (ผู้ใช้ขอ 30 ก.ย. 2026) — แก้ช่องของทีม A
+    // ให้ยอดของทีม A กลับไปเท่ากับที่ระบบกระจายไว้ (ผลรวม engine_boxes ของทีม) ด้วยคนในทีม A
+    // เอง เดิมเกลี่ยทั้งภาคตามประวัติ ยอดของทีม B/C ที่ไม่ได้แตะจึงขยับเงียบ ๆ
+    // ทีมรับไม่ไหว (หรือไม่รู้ยอดที่ระบบให้) → ส่วนที่เหลือเกลี่ยทั้งภาคแบบเดิม แล้วบอกผู้ใช้
+    const multiTeam = !!(S.compositeAllocView || S.aggregateMode);
+    const teamFirst = multiTeam && allocs.every((a) => a.engine_boxes != null);
+    if (teamFirst) {
+      const byTeam = new Map();
+      for (const a of allocs) {
+        const t = _supervisorCodeForAllocRow(a) || "";
+        if (!byTeam.has(t)) byTeam.set(t, []);
+        byTeam.get(t).push(a);
+      }
+      for (const rows of byTeam.values()) {
+        const want = rows.reduce((x, a) => x + (Number(a.engine_boxes) || 0), 0);
+        const have = rows.reduce((x, a) => x + (Number(a.allocated_boxes) || 0), 0);
+        if (want !== have && spreadOver(rows.filter((a) => !a.is_edited), want - have)) changed = true;
+      }
+    }
+    const sumNow = allocs.reduce((x, a) => x + (Number(a.allocated_boxes) || 0), 0);
+    const rest = Math.round(target - sumNow);
+    if (rest && spreadOver(unedited, rest)) {
       changed = true;
+      if (teamFirst) crossTeam.push({ sku, boxes: Math.abs(rest) });
     }
     // allocs เป็น reference เดียวกับ S.allocations (mutate in place) — sum ใหม่จากชุดเดิมได้เลย
     const afterSum = allocs.reduce((s, a) => s + (Number(a.allocated_boxes) || 0), 0);
@@ -8608,7 +8646,8 @@ function autoRebalance(silent = false, opts = {}) {
   // (แก้เลข · คืนค่ารายช่อง · คืนค่าทั้งตาราง · คำนวณใหม่คงค่าที่แก้ · คำนวณใหม่เฉพาะ SKU)
   // ทิ้งค่าทิ้งหมด บรรทัด "ยังไม่ตรงเป้าหีบ" จึงค้างที่ภาพตอนกดคำนวณครั้งแรกตลอด
   S.rebalanceResiduals = residuals;
-  return { changed, residuals };
+  S.rebalanceCrossTeam = crossTeam;
+  return { changed, residuals, crossTeam };
 }
 
 /* ══════════════════════════════════════════════
