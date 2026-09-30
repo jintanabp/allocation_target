@@ -39,7 +39,7 @@ allocation_target/
 │   ├── routers/            # แยก endpoints (auth, managers, data, optimize, export, lakehouse, admin, health, debug …)
 │   ├── services/           # business logic (employees, optimize, export, lakehouse, access_control, sl_link_store, sku_link_store …)
 │   ├── core/               # helpers shared (paths/constants/cache checks/targets loader)
-│   ├── load_env.py         # โหลด config/.env แล้ว .env ที่ราก (ราก override ได้)
+│   ├── load_env.py         # โหลด config/.env แล้ว .env ที่ราก (config/.env ชนะ · รากเติมเฉพาะค่าที่ขาด)
 │   ├── auth_entra.py       # ตรวจโทเคน Microsoft (สิทธิ์จาก user_access.json + access_control)
 │   ├── OR_engine.py        # กระจายหีบ (L3M / L6M / EVEN / PUSH / LP)
 │   ├── generate_excel.py   # สร้างไฟล์ Excel สรุปผล

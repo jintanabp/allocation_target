@@ -17,6 +17,8 @@ import atexit
 import json
 import logging
 import threading
+import hashlib
+from typing import Any
 
 # โหลด .env เมื่อ import โมดูลโดยตรง (เช่นเทส) — main.py ก็โหลดก่อน import อยู่แล้ว
 from .load_env import load_project_dotenv
@@ -29,6 +31,53 @@ _log = logging.getLogger("target_allocation")
 
 # กันหลาย thread เขียน data/token_cache.bin ทับกัน (เฉพาะโหมดล็อกอินผู้ใช้)
 _TOKEN_CACHE_LOCK = threading.Lock()
+
+# MSAL app ใช้ร่วมกันทั้งโปรเซส (ผลตรวจ §5.1-7) — เดิมสร้างใหม่ทุก FabricDAXConnector() ซึ่ง
+# ถูกสร้างทุกคำขอ token ที่ MSAL เก็บไว้ในตัว app จึงไม่เคยถูกใช้ซ้ำ ต้องขอใหม่ทุกครั้ง และ
+# atexit.register สะสมเพิ่มหนึ่งตัวต่อหนึ่ง connector · คีย์รวม hash ของ secret ให้เปลี่ยน
+# secret แล้วได้ app ใหม่ (ไม่เก็บ secret ดิบไว้ในคีย์)
+_MSAL_APPS: dict[tuple, Any] = {}
+_MSAL_APPS_LOCK = threading.Lock()
+_USER_TOKEN_CACHES: dict[str, "msal.SerializableTokenCache"] = {}
+
+
+def _shared_cca(client_id: str, secret: str, authority: str) -> tuple["msal.ConfidentialClientApplication", bool]:
+    """คืน (app, สร้างใหม่ไหม)"""
+    key = ("cca", client_id, authority, hashlib.sha256(secret.encode("utf-8")).hexdigest())
+    with _MSAL_APPS_LOCK:
+        app = _MSAL_APPS.get(key)
+        if app is not None:
+            return app, False
+        app = msal.ConfidentialClientApplication(client_id, client_credential=secret, authority=authority)
+        _MSAL_APPS[key] = app
+        return app, True
+
+
+def _save_user_cache(cache_file: str) -> None:
+    with _TOKEN_CACHE_LOCK:
+        cache = _USER_TOKEN_CACHES.get(cache_file)
+        if cache is not None and cache.has_state_changed:
+            atomic_write_text(cache_file, cache.serialize())
+
+
+def _shared_pca(client_id: str, authority: str, cache_file: str) -> tuple["msal.PublicClientApplication", "msal.SerializableTokenCache", bool]:
+    """โหมดล็อกอินผู้ใช้ (dev) — token cache ใบเดียวต่อไฟล์ + atexit ครั้งเดียว"""
+    key = ("pca", client_id, authority, cache_file)
+    with _MSAL_APPS_LOCK:
+        app = _MSAL_APPS.get(key)
+        if app is not None:
+            return app, _USER_TOKEN_CACHES[cache_file], False
+        cache = _USER_TOKEN_CACHES.get(cache_file)
+        if cache is None:
+            cache = msal.SerializableTokenCache()
+            if os.path.exists(cache_file):
+                with open(cache_file, "r") as f:
+                    cache.deserialize(f.read())
+            _USER_TOKEN_CACHES[cache_file] = cache
+            atexit.register(_save_user_cache, cache_file)
+        app = msal.PublicClientApplication(client_id, authority=authority, token_cache=cache)
+        _MSAL_APPS[key] = app
+        return app, cache, True
 
 
 class FabricDAXConnector:
@@ -53,11 +102,9 @@ class FabricDAXConnector:
         self._use_service_principal = bool(secret)
 
         if self._use_service_principal:
-            self._cca = msal.ConfidentialClientApplication(
-                self.client_id,
-                client_credential=secret,
-                authority=self.authority,
-            )
+            self._cca, created = _shared_cca(self.client_id, secret, self.authority)
+            if not created:
+                return
             print(
                 "📡 Fabric auth: Service Principal (FABRIC_CLIENT_SECRET) — "
                 "ไม่เปิดเบราว์เซอร์ล็อกอิน"
@@ -74,17 +121,9 @@ class FabricDAXConnector:
                     f"(FABRIC_CLIENT_ID={cid}; แนะนำใส่ FABRIC_WORKSPACE_ID)"
                 )
         else:
-            self.cache = msal.SerializableTokenCache()
-            if os.path.exists(self.cache_file):
-                with open(self.cache_file, "r") as f:
-                    self.cache.deserialize(f.read())
-            atexit.register(self._save_cache)
-            self._pca = msal.PublicClientApplication(
-                self.client_id,
-                authority=self.authority,
-                token_cache=self.cache,
-            )
-            print("📡 Fabric auth: ล็อกอินผู้ใช้ (interactive / token cache)")
+            self._pca, self.cache, created = _shared_pca(self.client_id, self.authority, self.cache_file)
+            if created:
+                print("📡 Fabric auth: ล็อกอินผู้ใช้ (interactive / token cache)")
 
     # ──────────────────────────────────────────────
     # Auth / cache
@@ -95,9 +134,7 @@ class FabricDAXConnector:
         # โหมดล็อกอินผู้ใช้ (dev) เท่านั้น — โหลดรวมภาคยิงขนานกันแล้ว
         # หลาย connector จึงเขียน token_cache.bin พร้อมกันได้ ต้องกันไฟล์ฉีก
         # (โหมด Service Principal บน production ไม่เข้าเส้นทางนี้เลย)
-        with _TOKEN_CACHE_LOCK:
-            if self.cache.has_state_changed:
-                atomic_write_text(self.cache_file, self.cache.serialize())
+        _save_user_cache(self.cache_file)
 
     def _get_access_token(self) -> str:
         if self._cca is not None:
