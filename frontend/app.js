@@ -1269,6 +1269,8 @@ function _allocRowsFromLiveData(data, supId) {
         hist_avg: 0,
         hist_ly_same_month: 0,
         hist_prev_month: 0,
+        // แถวนี้คือเป้าที่มีอยู่แล้วใน Target Sun ไม่ใช่ผลของตัวกระจาย — ฝั่งวิเคราะห์ต้องแยกได้
+        row_source: "targetsun",
         baseline_boxes: Number(r.baseline_boxes ?? boxes) || boxes,
         hist_dev_pct: null,
         hist_dev_status: "",
@@ -6127,7 +6129,7 @@ async function runOptimization() {
     // และ is_edited อย่างเดียวใช้แทนไม่ได้ เพราะติดธงตั้งแต่คลิกล็อกช่องเฉย ๆ
     //
     // ไม่เปลี่ยนตัวเลขที่ผู้ใช้เห็น ไม่เปลี่ยนสิ่งที่ส่งเข้า Target Sun — เพิ่มฟิลด์อย่างเดียว
-    for (const a of allocs) a.engine_boxes = Number(a.allocated_boxes) || 0;
+    // (จดใน _stampEngineRun ตอน _doOptimize จบแล้ว — ใช้ร่วมทุกปุ่มกระจาย)
 
     let displayAllocs = _filterAllocationsEligibleOnly(allocs);
     if (!displayAllocs.length) {
@@ -6401,6 +6403,36 @@ function _mergeLockedEditsIntoAllocs(allocs, lockedEdits) {
   return allocs;
 }
 
+/**
+ * จดสิ่งที่ตัวกระจายให้ ณ ตอนกระจาย (30 ก.ย. 2026) — ใช้ตอบว่า "ซุปต้องแก้ที่ระบบให้มามากแค่ไหน"
+ *
+ * - engine_boxes: เลขที่ระบบให้ · ช่องที่ล็อกไว้ ระบบไม่ได้เลือกเลขเอง (ใช้เลขที่ผู้ใช้ล็อก)
+ *   จึงคงค่าที่ระบบเคยให้ไว้ก่อนหน้า ไม่งั้นการแก้มือของช่องนั้นจะหายไปจากการนับ
+ * - row_source: "engine" แยกจากแถวที่มาจากเป้าเดิมใน Target Sun ("targetsun")
+ * - เป้าเงินที่ระบบเห็นตอนกระจาย (engineYellow) — เป้าเงินบนจออาจถูกแก้ทีหลัง
+ * เดิมจดเฉพาะปุ่มกระจายปกติ ปุ่ม「กระจายใหม่ คงค่าที่แก้」/「เฉพาะสินค้าที่เลือก」ไม่จดเลย
+ */
+function _stampEngineRun(allocs) {
+  const k = (a) => `${_supervisorCodeForAllocRow(a)}|${String(a.emp_id || "").trim()}|`
+    + `${String(a.warehouse_code || "").trim()}|${String(a.sku || "").trim()}`;
+  const prev = new Map();
+  for (const a of S.allocations || []) {
+    const eng = a.engine_boxes != null ? a.engine_boxes : a._engine_boxes;
+    if (eng != null) prev.set(k(a), Number(eng) || 0);
+  }
+  for (const a of allocs || []) {
+    a.row_source = "engine";
+    a.engine_boxes = a.is_edited && prev.has(k(a)) ? prev.get(k(a)) : Number(a.allocated_boxes) || 0;
+  }
+  S.engineYellow = { ...(S.yellow || {}) };
+  S.engineYellowCtx = _engineYellowCtx();
+  S.engineRunAt = new Date().toISOString();
+}
+
+function _engineYellowCtx(supId = S.supId, month = S.targetMonth, year = S.targetYear) {
+  return `${String(supId || "").trim().toUpperCase()}|${month}|${year}`;
+}
+
 async function _doOptimize(lockedEdits = [], opts = {}) {
   // opts.onlySkus: กระจายเฉพาะ SKU ในลิสต์ (ปุ่ม "กระจายเฉพาะสินค้าที่เป้าเพิ่ม")
   const onlySkus = Array.isArray(opts.onlySkus)
@@ -6572,6 +6604,7 @@ async function _doOptimize(lockedEdits = [], opts = {}) {
       allocs = _mergeLockedEditsIntoAllocs(allocs, lockedEdits);
     }
 
+    _stampEngineRun(allocs);
     qs(`#${steps[steps.length - 1]}`).className = "prog-row done";
     btn.disabled = false;
     btn.textContent = "คำนวณใหม่";
@@ -11866,6 +11899,13 @@ async function saveServerAllocationSnapshot(status = "draft", opts = {}) {
       yellow_locked: opts.yellow_locked || S.yellowLocked,
       strategy: opts.strategy != null ? opts.strategy : _strategySummaryTh(_getSelectedStrategies()),
     };
+    // เป้าเงินที่ตัวกระจายเห็นตอนกระจาย — ส่งเฉพาะตอนหน้าจอ/งวดยังเป็นชุดที่กระจาย
+    // (ไม่ส่ง = server คงค่าเดิมไว้) · โหมดรวมภาค/รวมทีมส่งชุดเดียวกันทุกทีม server ตัด
+    // ของพนักงานทีมอื่นออกเอง และไม่เขียนทับด้วยชุดว่าง
+    if (S.engineYellow && S.engineYellowCtx === _engineYellowCtx(S.supId, body.target_month, body.target_year)) {
+      body.engine_yellow = S.engineYellow;
+      body.engine_run_at = S.engineRunAt || null;
+    }
     // กระจายทั้งภาคคือการตั้งใจทับทุกทีม (ผู้ใช้ยืนยันใน modal「กระจายใหม่ทั้งภาค」แล้ว)
     // จึงไม่ส่ง precondition — ไม่งั้นจะเด้ง modal ถามทีละทีมกลางลูป
     const ifMatch = opts.forceRegional
@@ -12200,6 +12240,8 @@ function _allocRowsFromLiveTargetsPreview(data) {
         hist_avg: 0,
         hist_ly_same_month: 0,
         hist_prev_month: 0,
+        // แถวนี้คือเป้าที่มีอยู่แล้วใน Target Sun ไม่ใช่ผลของตัวกระจาย — ฝั่งวิเคราะห์ต้องแยกได้
+        row_source: "targetsun",
         baseline_boxes: Number(r.baseline_boxes ?? boxes) || boxes,
         hist_dev_pct: null,
         hist_dev_status: "",
@@ -12716,6 +12758,11 @@ async function _applyServerAllocationSnapshot(supId, opts = {}) {
   }
   if (snap.yellow_locked && typeof snap.yellow_locked === "object" && !opts.readOnly) {
     S.yellowLocked = { ...snap.yellow_locked };
+  }
+  if (!opts.readOnly) {
+    S.engineYellow = snap.engine_yellow && typeof snap.engine_yellow === "object" ? { ...snap.engine_yellow } : null;
+    S.engineYellowCtx = S.engineYellow ? _engineYellowCtx() : null;
+    S.engineRunAt = snap.engine_run_at || null;
   }
   S.activeBrand = "ALL";
   buildBrandTabs(S.allocations);
