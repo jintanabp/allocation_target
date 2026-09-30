@@ -430,7 +430,8 @@ class TestTheRosterCacheKeepsTheRealStructure(unittest.TestCase):
         self.assertLess(i, j, "ต้องเก็บรายชื่อดิบไว้ก่อนย้าย")
 
     def test_the_cache_is_written_from_the_raw_roster(self):
-        i = self.src.index("emp_cache_path(sup_id, target_month, target_year), index=False")
+        # เขียนผ่าน atomic_write_csv แล้ว (ผลตรวจ §5.1-3) — df เป็นอาร์กิวเมนต์ที่สอง
+        i = self.src.index("emp_cache_path(sup_id, target_month, target_year), _raw_to_cache, index=False")
         before = self.src[i - 400: i]
         self.assertIn("df_emp_raw", before)
         self.assertNotIn("df_emp_fabric.to_csv(", self.src)

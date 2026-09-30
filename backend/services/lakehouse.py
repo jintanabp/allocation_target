@@ -455,7 +455,11 @@ def employee_teams_in_period(month: int, year: int, emp_ids) -> dict[str, set[st
                 continue
             sup = name[len(prefix):-len(suffix)].strip().upper()
             try:
-                dg = pd.read_csv(os.path.join("data", name), dtype=str, keep_default_na=False, usecols=["emp_id"])
+                # ผลตรวจ §5.1-3: emp_cache_ ถูกเขียนแบบ atomic ใต้ lock ต่อ path แล้ว
+                # reader ต้องจับ lock เดียวกัน ไม่งั้นบน Windows ตัวเขียนพัง PermissionError
+                _p = os.path.join("data", name)
+                with read_locked(_p):
+                    dg = pd.read_csv(_p, dtype=str, keep_default_na=False, usecols=["emp_id"])
             except Exception:
                 continue
             for e in {norm_emp_code(x) for x in dg["emp_id"]} & want:

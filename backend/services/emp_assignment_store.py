@@ -24,11 +24,13 @@ import threading
 from datetime import datetime, timezone
 from typing import Any
 
-from ..core.atomic_io import atomic_write_json
+from ..core.atomic_io import atomic_write_json, read_locked
 
 logger = logging.getLogger("target_allocation")
 
-_STORE_LOCK = threading.Lock()
+# RLock: set_assignment ถือ lock ตลอด read → แก้ → write แล้ว write_rows จับซ้ำ
+# ใน thread เดิม (ผลตรวจ §5.1-4)
+_STORE_LOCK = threading.RLock()
 
 
 def _repo_root() -> str:
@@ -82,7 +84,9 @@ def read_rows() -> list[dict[str, Any]]:
     if not os.path.isfile(path):
         return []
     try:
-        with open(path, encoding="utf-8") as f:
+        # ผลตรวจ §5.1-4: อ่านใต้ lock ต่อ path เดียวกับ atomic_write_json — บน Windows
+        # reader ที่ถือ handle ค้างทำให้ตัวเขียน replace ไม่ได้ (PermissionError)
+        with read_locked(path), open(path, encoding="utf-8") as f:
             doc = json.load(f)
     except (OSError, json.JSONDecodeError) as e:
         logger.error("อ่าน emp_assignments ไม่ได้ %s: %s — ถือว่าไม่มีการย้าย", path, e)
@@ -109,7 +113,9 @@ def write_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out = sorted(cleaned.values(), key=lambda r: r["emp_id"])
     path = emp_assignments_json_path()
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    atomic_write_json(path, {"assignments": out}, ensure_ascii=False)
+    # ถือ lock ของ store ด้วย ให้คนเรียก write_rows ตรง ๆ ไม่แทรกกลาง set_assignment
+    with _STORE_LOCK:
+        atomic_write_json(path, {"assignments": out}, ensure_ascii=False)
     logger.info("บันทึกการย้ายพนักงาน %d รายการ → %s", len(out), path)
     return out
 
