@@ -94,6 +94,31 @@ class TestRebalanceTeamFirst(unittest.TestCase):
         self.assertIn("S.rebalanceCrossTeam = crossTeam;", self.body)
 
 
+class TestRebalanceMoneyAwareMix(unittest.TestCase):
+    """ปุ่มปรับยอดแบบผสม (30 ก.ย. 2026): เติมเฉพาะคนที่มีประวัติขาย โดยให้คนเงินขาดเป้ามากสุดก่อน ·
+    หักจากคนเงินเกินเป้ามากสุด · แบ่งเท่า/ไม่มีคนเคยขาย/ไม่มีเป้าเงิน = วิธีเดิม
+    ลองบนหน้าเว็บแล้ว: E4 ลดสินค้า B 6 หีบ → E1 ที่เงินขาด 6,000 ได้ครบ 6 หีบ (วิธีเดิมแบ่งตามประวัติ)"""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(REPO, "frontend", "app.js"), encoding="utf-8") as fh:
+            cls.body = _fn(fh.read().replace(CRLF, LF), "autoRebalance")
+
+    def test_increase_only_to_sellers_by_money(self):
+        self.assertIn("(Number(a.hist_avg) || 0) > 0", self.body)
+        self.assertIn("AppLogic.moneyFirstIncrease(", self.body)
+
+    def test_decrease_by_money_with_floor(self):
+        self.assertIn("AppLogic.moneyFirstDecrease(", self.body)
+        self.assertIn("floor: minFloor", self.body)
+
+    def test_falls_back_for_even_or_no_money(self):
+        self.assertIn("const moneyOk = !evenSku && price > 0 && cells.some((a) => yellowOf(a) > 0);", self.body)
+
+    def test_money_updates_as_boxes_move(self):
+        self.assertIn("valueByKey.set(k, (valueByKey.get(k) || 0) + n * price);", self.body)
+
+
 class TestSnapshotKeepsRebalanceRules(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
