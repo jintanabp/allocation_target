@@ -48,13 +48,18 @@
    *
    * ต้องคืนผลรวมเท่ากับ delta เป๊ะ ๆ เสมอ (กฎ I1) การปัดลงอย่างเดียวจะทำให้
    * เหลือเศษค้างทุกครั้ง แล้วยอดต่อ SKU ไม่มีวันตรงเป้า
+   *
+   * น้ำหนัก 0 = ห้ามได้เพิ่ม (เช่นคู่ที่กติกาไม่เคยขายตัดทิ้ง) · ถ้าทุกช่องเป็น 0 แจกเท่า ๆ กัน
+   * (ยอดตรงเป้าชนะ) · น้ำหนักที่ไม่ใช่ตัวเลขหรือติดลบ = 0 — เดิม NaN ทำให้ผลเป็น NaN ทั้งชุด
    */
   function spreadIncrease(delta, weights) {
     const n = weights.length;
     const add = new Array(n).fill(0);
     if (n === 0 || delta <= 0) return add;
-    const wSum = weights.reduce((a, v) => a + v, 0) || n;
-    const raw = weights.map((w) => delta * (w / wSum));
+    let w = weights.map((v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : 0));
+    if (!w.some((v) => v > 0)) w = new Array(n).fill(1);
+    const wSum = w.reduce((a, v) => a + v, 0);
+    const raw = w.map((x) => delta * (x / wSum));
     for (let i = 0; i < n; i++) add[i] = Math.floor(raw[i]);
     const rem = delta - add.reduce((s, v) => s + v, 0);
     const order = raw
@@ -70,8 +75,11 @@
    *
    * ห้ามทำให้ใครติดลบ ถ้าดึงได้ไม่ครบก็คืนเท่าที่ดึงได้ (ผู้เรียกจะรายงานเป็น
    * residual) — เดิมถ้าปล่อยติดลบ ยอดรวมจะดู "ตรงเป้า" ทั้งที่มีคนได้เป้าติดลบ
+   *
+   * floors (ไม่บังคับ) = ขั้นต่ำต่อช่อง เช่น 1 เมื่อติ๊ก「ทุกคนอย่างน้อย 1 หีบ」— ดึงไม่ต่ำกว่านี้
+   * (ผลตรวจ §4.1-7: เดิมดึงจนเหลือ 0 ได้ ขัดกับที่ backend บังคับไว้)
    */
-  function spreadDecrease(need, boxes, weights) {
+  function spreadDecrease(need, boxes, weights, floors = null) {
     const n = boxes.length;
     const take = new Array(n).fill(0);
     let left = Math.max(0, Math.round(need));
@@ -82,7 +90,8 @@
       .map((o) => o.i);
     for (const i of order) {
       if (left <= 0) break;
-      const have = Math.max(0, Number(boxes[i]) || 0);
+      const floor = Math.max(0, Number(floors?.[i]) || 0);
+      const have = Math.max(0, (Number(boxes[i]) || 0) - floor);
       if (have <= 0) continue;
       const t = Math.min(have, left);
       take[i] = t;

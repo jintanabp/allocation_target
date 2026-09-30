@@ -957,6 +957,10 @@ let S = {
   neverSoldSummary: {},
   /** ทำไมกติกา「ไม่เคยขาย = เป้า 0」ไม่ทำงานรอบล่าสุด — [{supId, reason, sups}] · [] = ทำงานปกติ */
   neverSoldOffReasons: [],
+  /** คู่ที่กติกา「ไม่เคยขาย」ตัดเป็น 0 รอบล่าสุด — Set ของ "allocKey|sku" (ปุ่มปรับยอดห้ามเติมให้) */
+  neverSoldZeroKeys: new Set(),
+  /** ติ๊ก「ทุกคนอย่างน้อย 1 หีบ」ตอนกระจายรอบล่าสุด — ปุ่มปรับยอดดึงไม่ต่ำกว่า 1 */
+  lastForceMinOne: false,
   // ผลตรวจ "เป้าใน Target Sun เปลี่ยนหลังโหลดข้อมูล" — null = ยังไม่เคยตรวจรอบนี้
   targetDrift: null,
   // หน่วยขายที่เลือกดูอยู่ ("" = ทุกหน่วย ซึ่งกระจายรวมกันไม่ได้)
@@ -6262,6 +6266,7 @@ function _applyOptimizeMetaFromJson(json) {
     json.never_sold_summary && typeof json.never_sold_summary === "object"
       ? json.never_sold_summary
       : {};
+  S.neverSoldZeroKeys = _neverSoldZeroKeySet([json]);
   S.neverSoldOffReasons = json.never_sold_off_reason
     ? [{ supId: String(S.supId || ""), ...json.never_sold_off_reason }]
     : [];
@@ -6346,6 +6351,7 @@ function _applyOptimizeMetaFromSups(metaBySup) {
   S.newProductsEvenMode = evenMode;
   S.newProductSkus = newSkus;
   S.neverSoldSummary = neverSold;
+  S.neverSoldZeroKeys = _neverSoldZeroKeySet(entries.map(([, j]) => j));
   // กติกาทำงาน แต่บางทีมไม่มีประวัติ 12 เดือน — คนทีมนั้นไม่ถูกตัด (§4.1-4)
   for (const [supId, json] of entries) {
     if (json?.never_sold_hist_missing) {
@@ -6436,7 +6442,28 @@ function _stampEngineRun(allocs) {
   }
   S.engineYellow = { ...(S.yellow || {}) };
   S.engineYellowCtx = _engineYellowCtx();
+  S.lastForceMinOne = document.getElementById("forceMinOneBox")?.checked || false;
   S.engineRunAt = new Date().toISOString();
+}
+
+/** คู่ที่กติกาไม่เคยขายตัดเป็น 0 จากคำตอบ /optimize (หนึ่งหรือหลายทีม) → Set "allocKey|sku" */
+function _neverSoldZeroKeySet(jsons) {
+  const out = new Set();
+  for (const j of jsons || []) {
+    const m = j?.never_sold_zero_pairs;
+    if (!m || typeof m !== "object") continue;
+    for (const [sku, keys] of Object.entries(m)) {
+      for (const k of keys || []) out.add(`${String(k).trim()}|${String(sku).trim()}`);
+    }
+  }
+  return out;
+}
+
+/** คีย์เดียวกับ or_emp_id ฝั่ง server: รหัส หรือ "รหัส|คลัง" เมื่อแถวแยกคลัง */
+function _neverSoldZeroKeyOf(a) {
+  const emp = String(a?.emp_id || "").trim();
+  const wh = String(a?.warehouse_code || "").trim();
+  return `${wh ? `${emp}|${wh}` : emp}|${String(a?.sku || "").trim()}`;
 }
 
 function _engineYellowCtx(supId = S.supId, month = S.targetMonth, year = S.targetYear) {
@@ -8460,6 +8487,12 @@ function autoRebalance(silent = false, opts = {}) {
   const skus = [...allocsBySku.keys()];
   // รอบที่มีทีมกระจายไม่สำเร็จ ต้องเทียบกับเป้าของ "เฉพาะทีมที่สำเร็จ" เท่านั้น
   const targetOverride = _rebalanceTargetOverride();
+  // SKU ที่กติกาไม่เคยขายสั่งให้เฉลี่ยทุกคน (คีย์ summary = sku หรือ "ทีม|sku" ในรวมภาค)
+  const evenNeverSold = new Set(
+    Object.entries(S.neverSoldSummary || {})
+      .filter(([, v]) => v?.reason === "no_seller" || v?.reason === "push_target")
+      .map(([k]) => (String(k).includes("|") ? String(k).split("|").pop() : String(k)).trim())
+  );
   let changed = false;
   const residuals = [];
   const unknownSkus = [];
@@ -8503,15 +8536,22 @@ function autoRebalance(silent = false, opts = {}) {
     const delta = Math.round(target - currentSum);
     if (delta === 0) return;
 
-    const weights = unedited.map(a => {
-      const key = String(a.sku || "").trim();
-      const evenNew =
-        S.newProductsEvenMode !== "off" &&
+    // กฎเดียวกับ backend (ผลตรวจ §4.1-7): คู่ที่กติกาไม่เคยขายตัดเป็น 0 ห้ามได้เพิ่ม ·
+    // SKU แบ่งเท่า (สินค้าใหม่ + ไม่มีใครเคยขาย/ดันเป้า) แจกเท่ากัน · ติ๊ก「อย่างน้อย 1 หีบ」
+    // ตอนกระจาย = ดึงคืนไม่ต่ำกว่า 1 (เมื่อเป้าพอให้ทุกคน เหมือน _min_one_floor)
+    const skuKey = String(sku || "").trim();
+    const evenSku =
+      (S.newProductsEvenMode !== "off" &&
         S.newProductSkus &&
         typeof S.newProductSkus.has === "function" &&
-        S.newProductSkus.has(key);
-      return evenNew ? 1 : Math.max(Number(a.hist_avg) || 0, 0) + 0.1;
+        S.newProductSkus.has(skuKey))
+      || evenNeverSold.has(skuKey);
+    const zeroKeys = S.neverSoldZeroKeys instanceof Set ? S.neverSoldZeroKeys : new Set();
+    const weights = unedited.map((a) => {
+      if (zeroKeys.has(_neverSoldZeroKeyOf(a))) return 0;
+      return evenSku ? 1 : Math.max(Number(a.hist_avg) || 0, 0) + 0.1;
     });
+    const minFloor = S.lastForceMinOne && target >= allocs.length ? 1 : 0;
     if (delta > 0) {
       // เติมส่วนที่ขาด: แจกเพิ่มให้ unedited ตามสัดส่วน hist (largest remainder)
       const add = AppLogic.spreadIncrease(delta, weights);
@@ -8522,7 +8562,9 @@ function autoRebalance(silent = false, opts = {}) {
       // (คนที่มีหีบเยอะก่อน ประวัติน้อยก่อน — กันดึงจากคนขายเยอะจนผิดธรรมชาติ)
       // ดึงไม่ครบก็ปล่อยไป แล้วรายงานเป็น residual ข้างล่าง — ห้ามแตะช่องที่ล็อกไว้
       const boxes = unedited.map((a) => Number(a.allocated_boxes) || 0);
-      const take = AppLogic.spreadDecrease(Math.abs(delta), boxes, weights);
+      const take = AppLogic.spreadDecrease(
+        Math.abs(delta), boxes, weights, unedited.map(() => minFloor)
+      );
       unedited.forEach((a, i) => { a.allocated_boxes = boxes[i] - take[i]; });
       changed = true;
     }
@@ -11925,6 +11967,9 @@ async function saveServerAllocationSnapshot(status = "draft", opts = {}) {
     if (S.engineYellow && S.engineYellowCtx === _engineYellowCtx(S.supId, body.target_month, body.target_year)) {
       body.engine_yellow = S.engineYellow;
       body.engine_run_at = S.engineRunAt || null;
+      // กฎของปุ่มปรับยอดอัตโนมัติ ต้องรอดข้ามการโหลดร่างกลับ (§4.1-7)
+      body.never_sold_zero_keys = [...(S.neverSoldZeroKeys || [])];
+      body.force_min_one = !!S.lastForceMinOne;
     }
     // กระจายทั้งภาคคือการตั้งใจทับทุกทีม (ผู้ใช้ยืนยันใน modal「กระจายใหม่ทั้งภาค」แล้ว)
     // จึงไม่ส่ง precondition — ไม่งั้นจะเด้ง modal ถามทีละทีมกลางลูป
@@ -12780,6 +12825,8 @@ async function _applyServerAllocationSnapshot(supId, opts = {}) {
     S.yellowLocked = { ...snap.yellow_locked };
   }
   if (!opts.readOnly) {
+    S.neverSoldZeroKeys = new Set(Array.isArray(snap.never_sold_zero_keys) ? snap.never_sold_zero_keys : []);
+    S.lastForceMinOne = !!snap.force_min_one;
     S.engineYellow = snap.engine_yellow && typeof snap.engine_yellow === "object" ? { ...snap.engine_yellow } : null;
     S.engineYellowCtx = S.engineYellow ? _engineYellowCtx() : null;
     S.engineRunAt = snap.engine_run_at || null;
@@ -12882,6 +12929,8 @@ function saveDraft(silent = false) {
     yellowLocked: S.yellowLocked,
     allocations: _slimAllocationsForDraft(S.allocations),
     histWindowMonths: S.histWindowMonths,
+    neverSoldZeroKeys: [...(S.neverSoldZeroKeys || [])],
+    lastForceMinOne: !!S.lastForceMinOne,
   };
   try {
     _persistDraftToLocal(draftKey, draftData);
@@ -12975,6 +13024,8 @@ function checkAndLoadDraft() {
 
       S.yellow = draftData.yellow || S.yellow;
       S.yellowLocked = draftData.yellowLocked || {};
+      S.neverSoldZeroKeys = new Set(Array.isArray(draftData.neverSoldZeroKeys) ? draftData.neverSoldZeroKeys : []);
+      S.lastForceMinOne = !!draftData.lastForceMinOne;
       _sanitizeYellowForEligibleOnly();
       S.allocations = _filterAllocationsEligibleOnly(_enrichDraftAllocations(draftData.allocations || []));
       {

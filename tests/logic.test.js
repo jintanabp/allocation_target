@@ -90,6 +90,24 @@ test("spreadDecrease — ไม่มีอะไรให้ดึง", () => {
   assert.deepEqual(L.spreadDecrease(0, [5], [1]), [0]);
 });
 
+test("spreadIncrease — น้ำหนัก 0 ไม่ได้เพิ่ม (คู่ที่กติกาไม่เคยขายตัดทิ้ง §4.1-7)", () => {
+  const add = L.spreadIncrease(7, [0, 3, 0, 1]);
+  assert.equal(add[0], 0);
+  assert.equal(add[2], 0);
+  assert.equal(add.reduce((a, b) => a + b, 0), 7);
+});
+
+test("spreadIncrease — น้ำหนักไม่ใช่ตัวเลขไม่ทำให้ผลเป็น NaN", () => {
+  const add = L.spreadIncrease(4, [NaN, 1, undefined, -2]);
+  assert.ok(add.every(Number.isFinite));
+  assert.deepEqual(add, [0, 4, 0, 0]);
+});
+
+test("spreadDecrease — ไม่ดึงต่ำกว่าขั้นต่ำต่อช่อง (ทุกคนอย่างน้อย 1 หีบ)", () => {
+  const take = L.spreadDecrease(10, [3, 2, 1], [1, 1, 1], [1, 1, 1]);
+  assert.deepEqual(take, [2, 1, 0]);
+});
+
 test("sumTargetBoxesBySku — บวกข้ามทีมต่อ SKU", () => {
   const t = { SLA: { A: 10, B: 4 }, SLB: { A: 7 } };
   assert.deepEqual({ ...L.sumTargetBoxesBySku(t, ["SLA", "SLB"]) }, { A: 17, B: 4 });

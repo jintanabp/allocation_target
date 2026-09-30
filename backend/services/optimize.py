@@ -555,6 +555,13 @@ def _fill_missing_peer_hist(
         )
 
 
+def _zero_pairs_by_sku(pairs) -> dict[str, list[str]]:
+    out: dict[str, set[str]] = {}
+    for emp, sku in pairs or ():
+        out.setdefault(str(sku).strip(), set()).add(str(emp).strip())
+    return {k: sorted(v) for k, v in sorted(out.items())}
+
+
 def _strategy_group_targets(
     df_emp_targets: pd.DataFrame,
     grp_value: float,
@@ -1867,6 +1874,10 @@ def run_optimization_service(
         # กติกาไม่เคยขาย = เป้า 0 ทำอะไรไปบ้าง — หน้าจอต้องบอกผู้ใช้ได้ว่าทำไมเลขเปลี่ยน
         # โดยเฉพาะ SKU ที่เป้าไปกองที่คนเคยขายไม่กี่คน ซึ่งผู้ใช้ขอให้ "แจ้งบอก" ไว้
         "never_sold_summary": never_sold_summary_all,
+        # คู่ที่กติกาไม่เคยขายตัดเป็น 0 — {sku: [alloc_key]} (alloc_key = รหัสพนักงาน หรือ
+        # "รหัส|คลัง" ถ้าแยกคลัง) · ปุ่มปรับยอดอัตโนมัติในหน้าเว็บต้องไม่แจกหีบกลับเข้าช่องพวกนี้
+        # (ผลตรวจ §4.1-7) เดิมหน้าเว็บไม่รู้ว่าใครถูกตัด จึงเติมให้ตามประวัติ +0.1 ทุกคน
+        "never_sold_zero_pairs": _zero_pairs_by_sku(never_sold_pairs_all),
         # ทำไมกติกาไม่ทำงานรอบนี้ (None = ทำงานปกติ) — ห้ามปิดเงียบ หน้าจอต้องบอกได้ว่า
         # เพราะทีมไหนถูกสั่งปิด ไม่งั้นซุปเห็นเลขไม่เหมือนรอบก่อนแล้วหาเหตุผลไม่เจอ
         "never_sold_off_reason": never_sold_off_reason,
