@@ -542,6 +542,30 @@ def _fill_missing_peer_hist(
         )
 
 
+def _strategy_group_targets(
+    df_emp_targets: pd.DataFrame,
+    grp_value: float,
+    total_value: float,
+    *,
+    history_only: bool,
+) -> tuple[pd.DataFrame, bool]:
+    """
+    เป้าเงินของพนักงานสำหรับกลุ่มสินค้าหนึ่งในโหมดหลายกลยุทธ์ — คืน (เป้า, กลุ่มนี้ใช้ประวัติล้วนไหม)
+
+    ปกติ: เป้าเงินแต่ละคน × สัดส่วนมูลค่าของกลุ่ม (หีบ×ราคา) · คนที่ได้ ≤ 0 ออกจากกลุ่ม
+
+    ผลตรวจ 28 ก.ย. 2026 §4.1-6: เดิมใช้สูตรนี้ทุกกรณี แล้วได้ 409 เสมอในสองกรณี
+      - history_only: เป้าเงินเป็น 0 ทุกคน → ถูกตัดหมดทุกกลุ่ม ไม่มีอะไรถูกกระจาย
+      - กลุ่มที่มูลค่า 0 (ราคาเป็น 0): สัดส่วน 0 → ทั้งกลุ่มถูกข้าม สินค้ากลุ่มนั้นไม่มีหีบ
+    ทั้งสองกรณีเป้าเงินไม่มีความหมาย จึงเก็บทุกคนไว้ แล้วกระจายกลุ่มนั้นตามประวัติล้วน
+    """
+    df = df_emp_targets.copy()
+    if history_only or grp_value <= 0 or total_value <= 0:
+        return df, True
+    df["yellow_target"] = df["yellow_target"] * (grp_value / total_value)
+    return df[df["yellow_target"] > 0], False
+
+
 def _never_sold_known_emps(
     df_hist_12_raw: pd.DataFrame,
     df_all_targets: pd.DataFrame,
@@ -1460,11 +1484,12 @@ def run_optimization_service(
             df_sku_grp = df_sku_local[df_sku_local["_strategy_resolved"] == strat].copy()
             if df_sku_grp.empty:
                 continue
-            grp_value = float(df_sku_grp["_value"].sum())
-            share = (grp_value / total_value) if total_value > 0 else 0.0
-            df_targets_grp = df_emp_targets.copy()
-            df_targets_grp["yellow_target"] = df_targets_grp["yellow_target"] * share
-            df_targets_grp = df_targets_grp[df_targets_grp["yellow_target"] > 0]
+            df_targets_grp, grp_history_only = _strategy_group_targets(
+                df_emp_targets,
+                float(df_sku_grp["_value"].sum()),
+                total_value,
+                history_only=bool(req.history_only),
+            )
             if df_targets_grp.empty:
                 continue
 
@@ -1493,7 +1518,7 @@ def run_optimization_service(
                 tier_pct=float(req.tier_pct),
                 df_sold_12m=df_hist_12 if never_sold_on else None,
                 push_multiple=alloc_rules_store.push_multiple(),
-                history_only=bool(req.history_only),
+                history_only=grp_history_only,
                 never_sold_known_emps=never_sold_known_emps,
             )
             if df_alloc_grp.attrs.get("optimization_fallback"):
