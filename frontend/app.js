@@ -6265,6 +6265,10 @@ function _applyOptimizeMetaFromJson(json) {
   S.neverSoldOffReasons = json.never_sold_off_reason
     ? [{ supId: String(S.supId || ""), ...json.never_sold_off_reason }]
     : [];
+  // กติกาทำงาน แต่บางทีมไม่มีประวัติ 12 เดือน — คนทีมนั้นไม่ถูกตัด (§4.1-4)
+  if (json.never_sold_hist_missing) {
+    S.neverSoldOffReasons.push({ supId: String(S.supId || ""), reason: "hist_missing", ...json.never_sold_hist_missing });
+  }
   // เส้นทางซุปเดียว — ไม่มีรายชื่อทีมให้ระบุ ล้างค่าจากรอบรวมภาคก่อนหน้าทิ้ง
   S.optimizationFallbackSups = [];
   S.regionalFailedSups = [];
@@ -6342,6 +6346,12 @@ function _applyOptimizeMetaFromSups(metaBySup) {
   S.newProductsEvenMode = evenMode;
   S.newProductSkus = newSkus;
   S.neverSoldSummary = neverSold;
+  // กติกาทำงาน แต่บางทีมไม่มีประวัติ 12 เดือน — คนทีมนั้นไม่ถูกตัด (§4.1-4)
+  for (const [supId, json] of entries) {
+    if (json?.never_sold_hist_missing) {
+      neverSoldOff.push({ supId, reason: "hist_missing", ...json.never_sold_hist_missing });
+    }
+  }
   S.neverSoldOffReasons = neverSoldOff;
   S.tierFlexSkus = flexSkus;
   S.tierStrictSkuCount = strictCount;
@@ -7282,6 +7292,16 @@ function _neverSoldOffLines() {
       `กติกา「ไม่เคยขาย = เป้า 0」ไม่ได้ใช้รอบนี้ เพราะยังไม่มีประวัติ 12 เดือนให้ตัดสิน`
       + ` (${[...new Set(noHist)].join(", ")}) — กดโหลดข้อมูลขั้นที่ 1 ใหม่หนึ่งครั้ง`
       + ` แล้วกระจายอีกที ถ้าต้องการให้กติกาทำงาน`
+    );
+  }
+
+  const partial = rows.filter((r) => r?.reason === "hist_missing");
+  if (partial.length) {
+    const sups = [...new Set(partial.flatMap((r) => r.sups || []))];
+    lines.push(
+      `กติกา「ไม่เคยขาย = เป้า 0」ไม่ได้ใช้กับทีม ${sups.join(", ") || "—"} เพราะยังไม่มีประวัติ 12 เดือน`
+      + ` (ไม่มีข้อมูลไม่ได้แปลว่าไม่เคยขาย จึงไม่ตัดใครในทีมนั้น) — โหลดข้อมูลขั้นที่ 1 ของทีมนั้นใหม่`
+      + ` แล้วกระจายอีกที ถ้าต้องการให้กติกาทำงานครบ`
     );
   }
 
