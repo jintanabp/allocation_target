@@ -6461,6 +6461,13 @@ function _neverSoldZeroKeySet(jsons) {
   return out;
 }
 
+/** คีย์ของเป้าเงินรายคน (S.yellow) ของแถวผล: รหัส หรือ "รหัส|คลัง" เมื่อแถวแยกคลัง */
+function _moneyKeyOf(a) {
+  const emp = String(a?.emp_id || "").trim();
+  const wh = String(a?.warehouse_code || "").trim();
+  return wh ? `${emp}|${wh}` : emp;
+}
+
 /** คีย์เดียวกับ or_emp_id ฝั่ง server: รหัส หรือ "รหัส|คลัง" เมื่อแถวแยกคลัง */
 function _neverSoldZeroKeyOf(a) {
   const emp = String(a?.emp_id || "").trim();
@@ -8508,6 +8515,17 @@ function autoRebalance(silent = false, opts = {}) {
   const unknownSkus = [];
   // SKU ที่ทีมรับส่วนต่างเองไม่ไหว หีบจึงย้ายข้ามทีม (โหมดรวม) — บอกในแผงรีเช็ค
   const crossTeam = [];
+  // มูลค่ารายคน (คีย์เดียวกับเป้าเงิน S.yellow) — ใช้เลือกคนรับ/คนถูกหักแบบผสม อัปเดตทุกหีบที่ย้าย
+  const priceOf = (a) => {
+    const info = skuInfoByCode.get(a.sku);
+    return Number(info?.price_per_box ?? a.price_per_box) || 0;
+  };
+  const valueByKey = new Map();
+  for (const a of S.allocations) {
+    const k = _moneyKeyOf(a);
+    valueByKey.set(k, (valueByKey.get(k) || 0) + (Number(a.allocated_boxes) || 0) * priceOf(a));
+  }
+  const yellowOf = (a) => Number((S.yellow || {})[_moneyKeyOf(a)]) || 0;
 
   skus.forEach(sku => {
     const targetInfo = skuInfoByCode.get(sku);
@@ -8561,23 +8579,55 @@ function autoRebalance(silent = false, opts = {}) {
     const zeroKeys = S.neverSoldZeroKeys instanceof Set ? S.neverSoldZeroKeys : new Set();
     const minFloor = S.lastForceMinOne && target >= allocs.length ? 1 : 0;
     // เกลี่ย d หีบลงช่องที่ยังไม่ได้แก้ในชุด cells — คืนจำนวนหีบที่ย้ายได้จริง
+    // ปุ่มปรับยอดแบบผสม (ผู้ใช้เลือก 30 ก.ย. 2026): อิงประวัติแต่ให้เงินรายคนใกล้เป้า
+    //   เติม: เฉพาะคนที่มีประวัติขายสินค้านั้นในช่วงที่เลือก → ให้คนที่เงินขาดเป้ามากสุดก่อน
+    //   หัก: เอาจากคนที่เงินเกินเป้ามากสุดก่อน (ไม่ต่ำกว่าขั้นต่ำ)
+    // สินค้าแบ่งเท่า / ไม่มีใครเคยขาย / ไม่มีเป้าเงิน (โหมดประวัติล้วน) → วิธีเดิมตามประวัติ
+    // จำลอง export 10/2026 (18 ทีม แก้สุ่ม 3 ช่อง): เงินห่างเป้ารวม ตามประวัติ 7,881 → ผสม 5,053
+    // ห่างสัดส่วนประวัติ 50.6 → 51.6 หีบ
+    const price = priceOf(allocs[0] || {});
+    const move = (a, n) => {
+      a.allocated_boxes = (Number(a.allocated_boxes) || 0) + n;
+      const k = _moneyKeyOf(a);
+      valueByKey.set(k, (valueByKey.get(k) || 0) + n * price);
+    };
+    // เกลี่ย d หีบลงช่องที่ยังไม่ได้แก้ในชุด cells — คืนจำนวนหีบที่ย้ายได้จริง
     const spreadOver = (cells, d) => {
       if (!cells.length || !d) return 0;
       const weights = cells.map((a) => {
         if (zeroKeys.has(_neverSoldZeroKeyOf(a))) return 0;
         return evenSku ? 1 : Math.max(Number(a.hist_avg) || 0, 0) + 0.1;
       });
+      const moneyOk = !evenSku && price > 0 && cells.some((a) => yellowOf(a) > 0);
       if (d > 0) {
-        // เติมส่วนที่ขาด: ตามสัดส่วน hist (largest remainder)
+        const sellers = moneyOk
+          ? cells.filter((a, i) => weights[i] > 0 && (Number(a.hist_avg) || 0) > 0)
+          : [];
+        if (sellers.length) {
+          const add = AppLogic.moneyFirstIncrease(d, sellers.map((a) => ({
+            short: yellowOf(a) - (valueByKey.get(_moneyKeyOf(a)) || 0),
+            hist: Number(a.hist_avg) || 0,
+          })), price);
+          sellers.forEach((a, i) => { if (add[i]) move(a, add[i]); });
+          return d;
+        }
+        // ไม่มีใครเคยขาย / แบ่งเท่า / ไม่มีเป้าเงิน: ตามสัดส่วน hist (largest remainder)
         const add = AppLogic.spreadIncrease(d, weights);
-        cells.forEach((a, i) => { a.allocated_boxes = (Number(a.allocated_boxes) || 0) + add[i]; });
+        cells.forEach((a, i) => { if (add[i]) move(a, add[i]); });
         return d;
       }
-      // ลดส่วนที่เกิน: คนที่มีหีบเยอะก่อน ประวัติน้อยก่อน ไม่ติดลบ ไม่ต่ำกว่าขั้นต่ำ
-      // ดึงไม่ครบก็ปล่อยไป แล้วรายงานเป็น residual ข้างล่าง — ห้ามแตะช่องที่ล็อกไว้
+      // หัก: ไม่ติดลบ ไม่ต่ำกว่าขั้นต่ำ · ดึงไม่ครบก็ปล่อยไป แล้วรายงานเป็น residual ข้างล่าง
+      // ห้ามแตะช่องที่ล็อกไว้
       const boxes = cells.map((a) => Number(a.allocated_boxes) || 0);
-      const take = AppLogic.spreadDecrease(Math.abs(d), boxes, weights, cells.map(() => minFloor));
-      cells.forEach((a, i) => { a.allocated_boxes = boxes[i] - take[i]; });
+      const take = moneyOk
+        ? AppLogic.moneyFirstDecrease(Math.abs(d), cells.map((a, i) => ({
+          boxes: boxes[i],
+          floor: minFloor,
+          over: (valueByKey.get(_moneyKeyOf(a)) || 0) - yellowOf(a),
+          hist: Number(a.hist_avg) || 0,
+        })), price)
+        : AppLogic.spreadDecrease(Math.abs(d), boxes, weights, cells.map(() => minFloor));
+      cells.forEach((a, i) => { if (take[i]) move(a, -take[i]); });
       return take.reduce((x, y) => x + y, 0);
     };
 

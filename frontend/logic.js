@@ -101,6 +101,60 @@
   }
 
   /**
+   * เติมทีละหีบให้คนที่เงินยังขาดเป้ามากที่สุด (ปุ่มปรับยอดแบบผสม 30 ก.ย. 2026)
+   *
+   * cells: [{ short, hist }] — short = เป้าเงิน − มูลค่าที่ได้ตอนนี้ (บาท) · price = ราคาต่อหีบของสินค้านี้
+   * ผู้เรียกต้องกรองมาแค่คนที่เคยขายสินค้านั้นแล้ว (อิงประวัติ) · เงินขาดเท่ากัน → ประวัติมากก่อน
+   * คืนจำนวนหีบที่เติมต่อช่อง ผลรวมเท่า delta เสมอ (I1)
+   */
+  function moneyFirstIncrease(delta, cells, price) {
+    const n = cells.length;
+    const add = new Array(n).fill(0);
+    if (n === 0 || delta <= 0) return add;
+    const p = Math.max(0, Number(price) || 0);
+    const short = cells.map((c) => Number(c.short) || 0);
+    const hist = cells.map((c) => Number(c.hist) || 0);
+    for (let k = 0; k < delta; k++) {
+      let best = 0;
+      for (let i = 1; i < n; i++) {
+        if (short[i] > short[best] || (short[i] === short[best] && hist[i] > hist[best])) best = i;
+      }
+      add[best] += 1;
+      short[best] -= p;
+    }
+    return add;
+  }
+
+  /**
+   * หักทีละหีบจากคนที่เงินเกินเป้ามากที่สุด — ไม่ติดลบ ไม่ต่ำกว่าขั้นต่ำต่อช่อง
+   *
+   * cells: [{ boxes, floor, over, hist }] — over = มูลค่าที่ได้ − เป้าเงิน · เกินเท่ากัน → ประวัติน้อยก่อน
+   * หักได้ไม่ครบก็คืนเท่าที่หักได้ (ผู้เรียกรายงานเป็น residual)
+   */
+  function moneyFirstDecrease(need, cells, price) {
+    const n = cells.length;
+    const take = new Array(n).fill(0);
+    let left = Math.max(0, Math.round(Number(need) || 0));
+    if (n === 0 || left <= 0) return take;
+    const p = Math.max(0, Number(price) || 0);
+    const room = cells.map((c) => Math.max(0, (Number(c.boxes) || 0) - Math.max(0, Number(c.floor) || 0)));
+    const over = cells.map((c) => Number(c.over) || 0);
+    const hist = cells.map((c) => Number(c.hist) || 0);
+    while (left > 0) {
+      let best = -1;
+      for (let i = 0; i < n; i++) {
+        if (room[i] - take[i] <= 0) continue;
+        if (best < 0 || over[i] > over[best] || (over[i] === over[best] && hist[i] < hist[best])) best = i;
+      }
+      if (best < 0) break;
+      take[best] += 1;
+      over[best] -= p;
+      left -= 1;
+    }
+    return take;
+  }
+
+  /**
    * เป้าหีบต่อ SKU ของ "หลายทีมรวมกัน" — คู่ขนานกับ load_summed_target_boxes ฝั่ง server
    *
    * ใช้ตอนแสดงผลรวมภาคเท่านั้น ตัวเลขที่ใช้กระจายจริงมาจาก server เสมอ
@@ -146,6 +200,8 @@
     parseMoney,
     spreadIncrease,
     spreadDecrease,
+    moneyFirstIncrease,
+    moneyFirstDecrease,
     sumTargetBoxesBySku,
   };
 

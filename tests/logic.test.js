@@ -108,6 +108,35 @@ test("spreadDecrease — ไม่ดึงต่ำกว่าขั้นต�
   assert.deepEqual(take, [2, 1, 0]);
 });
 
+test("moneyFirstIncrease — เติมให้คนที่เงินขาดเป้ามากสุดก่อน ผลรวมเท่า delta", () => {
+  // ราคา 1,000 · ขาด 3,500 / 500 / 0 → หีบ 1-3 ไปคนแรก (ขาดเหลือ 500 เท่าคนที่สอง) หีบ 4 เสมอกัน → ประวัติมากก่อน
+  const add = L.moneyFirstIncrease(4, [
+    { short: 3500, hist: 1 }, { short: 500, hist: 9 }, { short: 0, hist: 5 },
+  ], 1000);
+  assert.deepEqual(add, [3, 1, 0]);
+  assert.equal(add.reduce((a, b) => a + b, 0), 4);
+});
+
+test("moneyFirstIncrease — ไม่มีคน/ไม่มีส่วนต่าง = ไม่เติม", () => {
+  assert.deepEqual(L.moneyFirstIncrease(3, [], 100), []);
+  assert.deepEqual(L.moneyFirstIncrease(0, [{ short: 1, hist: 1 }], 100), [0]);
+});
+
+test("moneyFirstDecrease — หักจากคนที่เงินเกินมากสุดก่อน ไม่ต่ำกว่าขั้นต่ำ", () => {
+  const take = L.moneyFirstDecrease(4, [
+    { boxes: 5, floor: 1, over: 3000, hist: 5 },
+    { boxes: 2, floor: 1, over: 9000, hist: 5 },
+    { boxes: 6, floor: 1, over: -500, hist: 1 },
+  ], 1000);
+  // คนที่สองเกินมากสุดแต่หักได้แค่ 1 (เหลือขั้นต่ำ 1) → ที่เหลือหักคนแรกจนเกินเท่ากับคนที่สาม
+  assert.deepEqual(take, [3, 1, 0]);
+});
+
+test("moneyFirstDecrease — หักได้ไม่ครบก็คืนเท่าที่หักได้", () => {
+  const take = L.moneyFirstDecrease(9, [{ boxes: 2, floor: 0, over: 0, hist: 1 }], 100);
+  assert.deepEqual(take, [2]);
+});
+
 test("sumTargetBoxesBySku — บวกข้ามทีมต่อ SKU", () => {
   const t = { SLA: { A: 10, B: 4 }, SLB: { A: 7 } };
   assert.deepEqual({ ...L.sumTargetBoxesBySku(t, ["SLA", "SLB"]) }, { A: 17, B: 4 });
