@@ -163,3 +163,36 @@ test("เกณฑ์สินค้าดันเป้า — บอกเห
   // เลขไทยต้องผ่าน — ช่องกรอกอื่นในแอปรับเลขไทยได้หมดแล้ว
   assert.equal(err("๕"), "");
 });
+
+test("nightlyReasonText — รหัสเหตุผลเป็นภาษาไทย", () => {
+  assert.equal(L.nightlyReasonText("table_not_ready"), "ยังไม่ถึงวันที่ 15 ตารางยังว่าง");
+  assert.equal(L.nightlyReasonText("empty_table"), "ตารางว่าง");
+  assert.equal(L.nightlyReasonText("cross_env"), "อ่านกับส่งคนละระบบ");
+  assert.equal(L.nightlyReasonText("read_source_not_targetsun"), "แหล่งอ่านเป้าไม่ใช่ Target Sun");
+  assert.equal(L.nightlyReasonText("disabled"), "ปิดอยู่");
+  assert.equal(L.nightlyReasonText("busy"), "มีอีกรอบกำลังรัน");
+  assert.equal(L.nightlyReasonText("error: timeout"), "อ่านไม่สำเร็จ — timeout");
+  assert.equal(L.nightlyReasonText(""), "");
+  assert.equal(L.nightlyReasonText("something_new"), "something_new");
+});
+
+test("nightlyResultText — ผลรอบล่าสุด", () => {
+  assert.equal(L.nightlyResultText(null), "ยังไม่เคยรัน");
+  assert.equal(L.nightlyResultText({ skipped: "busy" }), "ข้าม: มีอีกรอบกำลังรัน");
+  assert.equal(L.nightlyResultText({ teams: 3, errors: 1, pruned: 0 }), "ตรวจ 3 ทีม×งวด · อ่านไม่ได้ 1");
+  assert.equal(L.nightlyResultText({ teams: 2, errors: 0 }), "ตรวจ 2 ทีม×งวด");
+});
+
+test("splitTargetRowKey — แยกคีย์ 7 ส่วนตามลำดับ backend", () => {
+  assert.deepEqual(L.splitTargetRowKey("S1|E9|1|S|3|10|G010"), {
+    sku: "S1", emp: "E9", salestype: "1", division: "S", area: "3", province: "10", warehouse: "G010",
+  });
+  // คลังว่างเป็นค่าคีย์ค่าหนึ่ง — ต้องได้ "" ไม่ใช่ undefined
+  assert.equal(L.splitTargetRowKey("S1|E9|1|S|3|10|").warehouse, "");
+  assert.equal(L.splitTargetRowKey("S1").emp, "");
+});
+
+test("parseNightlyTeamTag — แยกทีมกับงวด", () => {
+  assert.deepEqual(L.parseNightlyTeamTag("SL123|2026-10"), { sup: "SL123", year: 2026, month: 10 });
+  assert.equal(L.parseNightlyTeamTag("junk"), null);
+});

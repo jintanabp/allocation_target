@@ -1726,6 +1726,34 @@ def admin_export_all_allocations(
     )
 
 
+@router.get("/allocations/edit-report")
+def admin_allocations_edit_report(
+    admin: dict = Depends(require_capability("edit_report")),
+    target_month: int = Query(..., ge=1, le=12),
+    target_year: int = Query(..., ge=2020, le=2100),
+):
+    """รายงานการแก้มือ (เฟส F1) — ซุปแก้เลขที่ระบบให้มากแค่ไหน ต่อทีม
+
+    ขอบเขตเดียวกับ export-all (_scoped_allocation_items): dev เห็นทุกทีม ผู้ดูแลเห็นเฉพาะทีมในขอบเขต
+    อ่านอย่างเดียว — ไม่เขียนไฟล์ ไม่แตะ Target Sun (ผลตรวจรายคืนอ่านจากไฟล์สถานะที่มีอยู่แล้ว)
+    """
+    from ..services import edit_report, nightly_check
+
+    items = _scoped_allocation_items(admin, target_month, target_year)
+    snaps: dict[str, dict] = {}
+    for it in items:
+        sid = str(it.get("sup_id") or "").strip().upper()
+        if sid and sid not in snaps:
+            snap = read_snapshot(sid, target_month, target_year)
+            if snap:
+                snaps[sid] = snap
+    return edit_report.build_report(
+        items, snaps, target_month, target_year,
+        nightly_state=nightly_check.read_state(),
+        nightly_enabled=nightly_check.read_settings().get("enabled", False),
+    )
+
+
 @router.get("/allocations/export-xlsx")
 def admin_export_allocations_xlsx(
     admin: dict = Depends(require_admin_scoped),

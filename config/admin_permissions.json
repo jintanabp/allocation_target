@@ -13,7 +13,8 @@
       "emp_moves",
       "feedback",
       "alloc_rules",
-      "warehouse_pin_rules"
+      "warehouse_pin_rules",
+      "edit_report"
     ],
     "admin": [
       "users",
@@ -23,7 +24,8 @@
       "usage_logs",
       "usage_summary",
       "team",
-      "emp_moves"
+      "emp_moves",
+      "edit_report"
     ],
     "marketing": [
       "team",
