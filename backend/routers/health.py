@@ -6,6 +6,7 @@ from fastapi import APIRouter
 
 from .. import auth_entra
 from ..core.constants import VALID_STRATEGIES, debug_endpoints_enabled
+from ..core.runtime_checks import runtime_status
 
 router = APIRouter(tags=["health"])
 
@@ -49,6 +50,9 @@ def health():
             "version": _git_short_hash(),
             "built_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         },
+        # ตรวจตอนเปิดแอป (ผลตรวจ §5.2): data_dir.same=false = data/ แยกสองที่ ·
+        # single_process=false = มีหลายโปรเซสใช้ข้อมูลชุดเดียวกัน (ล็อกในแอปใช้ไม่ได้)
+        "runtime": runtime_status(),
         "files": {
             # ไฟล์เป้าแยกราย sup แล้ว — รายงานเป็นจำนวนไฟล์ ส่วน legacy_* คือไฟล์ global เก่าที่ยังค้าง
             "target_boxes_files": _count_data_files("target_boxes_"),

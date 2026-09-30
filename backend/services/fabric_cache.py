@@ -81,6 +81,10 @@ def seed_cache_from_repo() -> int:
     วางไว้ที่ seed/ แทนที่จะ track ไฟล์ใน data/cache/ ตรง ๆ เพราะไฟล์แคชจริง
     เขียนทับตัวเองทุกครั้งที่ดึงสำเร็จ ถ้า track ไว้ pull ครั้งหน้าจะชนกันเอง
     (บทเรียนเดียวกับ config/app_runtime.json ที่โดน pull ทับจนค่าหาย)
+
+    **ตอนนี้ไม่มี seed/cache/ ใน repo แล้ว** (เอาออกใน b105474 หลัง Fabric กลับมาปกติ) ฟังก์ชันนี้
+    จึงคืน 0 ทุกครั้ง — เก็บกลไกไว้เป็นทางกู้ฉุกเฉิน: ถ้า Fabric ล่มอีก ให้ commit ไฟล์แคชลง
+    seed/cache/ แล้ว deploy ครั้งเดียว จากนั้นเอาออก (ผลตรวจ §7)
     """
     src_dir = os.path.join(_repo_root(), "seed", "cache")
     if not os.path.isdir(src_dir):

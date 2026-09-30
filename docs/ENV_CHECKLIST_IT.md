@@ -17,7 +17,7 @@
 | `ALLOCATION_ADMIN_EMAILS` | อีเมลแอดมิน (คั่นด้วย comma) |
 | `ALLOCATIONS_DATA_DIR` | Volume เก็บ snapshot กระจายหีบ |
 | `USAGE_LOGS_DIR` | Volume เก็บ usage log |
-| `FABRIC_CACHE_DIR` | Volume เก็บ cache DAX/hist |
+| `FABRIC_CACHE_DIR` | Volume เก็บ cache ของ Fabric (`data/cache/`: ราคา/สินค้า/รายชื่อ) — **ไม่รวม**ไฟล์ประวัติขาย `hist_*` เป้า และ baseline ซึ่งอยู่ใต้ `data/` ของโฟลเดอร์ที่รันแอปเสมอ (ผลตรวจ §5.2) |
 | `USER_ACCESS_JSON_PATH` | ค่าแนะนำ: `config/user_access.json` |
 
 ## แนะนำ

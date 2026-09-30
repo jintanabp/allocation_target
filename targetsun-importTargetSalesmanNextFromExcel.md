@@ -165,7 +165,16 @@ The entire batch runs in a single transaction — any error rolls back all chang
 
 The **Target allocation** web app calls the same import API from the backend (not from the browser):
 
-- **Route:** `POST /lakehouse/import-targetsun` (JSON body = same payload as Excel export; server builds `.xlsx` and posts `multipart/form-data` field `file`).
+- **Flow (current, 2 steps + batch check):**
+  1. `POST /lakehouse/prepare-targetsun` — server builds the `.xlsx` from the JSON payload, runs all
+     pre-send gates (box totals must equal targets exactly, target unchanged since Step 1, warehouse
+     keys match existing Target Sun rows, row validity) and returns a `prepare_token` (valid 30 min).
+  2. Region/multi-team send only: `POST /lakehouse/verify-send-batch` — checks the batch totals across
+     all teams per SKU before any team is sent.
+  3. `POST /lakehouse/import-targetsun` with `prepare_token` — re-checks the live state, posts the
+     prepared file as `multipart/form-data` field `file`, then reads back totals and row counts.
+  The old single-shot call (payload without `prepare_token`) still exists for older frontends but
+  is refused for multi-team batches.
 - **URL:** `targetsun_import_excel_url()` in `backend/services/targetsun_endpoints.py` (overridable via admin preset in `config/app_runtime.json` — not `.env`).
 - **Env:** `TARGETSUN_IMPORT_TIMEOUT_SEC`, optional `TARGETSUN_IMPORT_AUTH_HEADER`, `TARGETSUN_IMPORT_VERIFY_SSL`.
 

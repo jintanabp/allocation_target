@@ -218,6 +218,9 @@ Supervisor และแอดมินพร้อมกันได้ ตำ�
 | `config/sl_links.json`, `config/sku_links.json` | การผูกรหัส | ✅ ใช่ |
 | `config/admin_permissions.json` | บทบาทไหนเข้าหน้าแอดมินหน้าไหนได้ | ✅ ใช่ |
 | `config/no_target_employees.json` | พนักงานที่ไม่ต้องตั้งเป้า | ✅ ใช่ |
+| `config/emp_assignments.json` | การย้ายพนักงานไปให้ทีมอื่นเกลี่ยเป้า | ✅ ใช่ |
+| `data/alloc_rules.json` | กติกาการเกลี่ยที่แอดมินตั้งจากหน้าเว็บ | ❌ ไม่ |
+| `data/warehouse_pin_rules.json` | กติกาบังคับคลังเดียว | ❌ ไม่ |
 | `data/allocations/*.json` | ผลการกระจายราย SL × งวด | ❌ ไม่ |
 | `data/baselines/*.json` | เป้าตั้งต้นของงวด | ❌ ไม่ |
 | `data/logs/*.jsonl` | บันทึกการใช้งาน | ❌ ไม่ |
@@ -225,9 +228,14 @@ Supervisor และแอดมินพร้อมกันได้ ตำ�
 ทุกอย่างใน `data/` **ไม่มีทางหายจาก `git pull`** เพราะไม่เคยอยู่ใน git เลย
 `config/app_runtime.json` (ปลายทาง Target Sun) ถูกถอดออกจาก git แล้ว
 
-แต่อีก 4 ไฟล์ใน `config/` ยังถูกติดตามอยู่ → 🔴 **ห้าม `git reset --hard` / `git checkout .`
+แต่อีก 7 ไฟล์ข้อมูลใน `config/` ยังถูกติดตามอยู่ (`user_access`, `access_hierarchy`, `sl_links`,
+`sku_links`, `admin_permissions`, `no_target_employees`, `emp_assignments` — ส่วน `allocation_rules.json`
+เป็นค่าตั้งต้นจากโค้ด ค่าที่แอดมินตั้งอยู่ใน `data/`) → 🔴 **ห้าม `git reset --hard` / `git checkout .`
 บน server เด็ดขาด** เพราะจะทับค่าที่ตั้งบนเว็บด้วยเวอร์ชันในโค้ดทันที
 ถ้า `git pull` ฟ้อง "local changes would be overwritten" ให้ copy ไฟล์นั้นเก็บก่อนแล้วค่อยแก้ ไม่ใช่ reset
+
+⚠ **`config/access_hierarchy.json` แอปเขียนใหม่เองอัตโนมัติ** ทุกครั้งที่แก้ผู้ใช้บนเว็บ ไฟล์บน server
+จึงต่างจากใน git แทบตลอด — `git pull` ที่มี commit แตะไฟล์นี้จะชน ให้ทำตามวิธีข้างบน (สำรองก่อน)
 
 > **`config/user_access.json` ยัง track โดยตั้งใจ** — ทีมงานเข้าไปแก้ไฟล์บนเซิร์ฟเวอร์
 > เองไม่ได้ git จึงเป็นช่องทางเดียวที่จะส่งรายชื่อขึ้นไป · แลกมากับข้อเสียคือ

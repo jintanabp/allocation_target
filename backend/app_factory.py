@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import auth_entra
 from .core.caches import cleanup_export_artifacts_keep_latest_per_sup, cleanup_old_caches
+from .core.runtime_checks import run_startup_checks
 from .routers import admin as admin_router
 from .routers import auth as auth_router
 from .routers import data as data_router
@@ -78,6 +79,7 @@ def create_app() -> FastAPI:
         except Exception as e:
             logger.warning("เติมแคชตั้งต้นไม่สำเร็จ: %s", e)
         _warn_if_multi_worker()
+        run_startup_checks()
         _warn_if_ssl_verification_off()
         cleanup_old_caches(max_age_days=7)
         cleanup_export_artifacts_keep_latest_per_sup(keep_n=1)

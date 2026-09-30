@@ -78,8 +78,27 @@ def warm_managers_cache_at_startup() -> None:
 
 
 def rebuild_managers_from_roster() -> dict:
-    """เรียกหลัง import/repair user_access — rebuild hierarchy + cache"""
-    payload = build_hierarchy_payload()
-    persist_hierarchy(payload)
-    persist_managers_payload(payload)
+    """
+    เรียกหลัง import/repair user_access — rebuild hierarchy + cache
+
+    ผลตรวจ §5.1-5: ทำทั้งหมดใต้ lock ของ user_access (RLock — build อ่าน read_rows ซ้ำได้)
+    เดิมคำนวณนอก lock แอดมินสองคนแก้ผู้ใช้พร้อมกัน รอบที่อ่านรายชื่อเก่ากว่า
+    เขียนทีหลังได้ แล้วลำดับสิทธิ์ถอยไปไม่รู้จักผู้ใช้ที่เพิ่งเพิ่ม · พอถือ lock เดียวกับ
+    ตัวแก้รายชื่อ รอบที่เขียนทีหลังสุดจะอ่านรายชื่อล่าสุดเสมอ
+
+    แคช managers_cache.json: persist_hierarchy เขียนให้แล้ว (atomic) — เขียนซ้ำที่นี่เฉพาะ
+    ตอน MANAGERS_CACHE_FILE (path สัมพัทธ์กับ cwd) ชี้ไปคนละไฟล์กับของ persist_hierarchy
+    ไม่งั้นไฟล์เดียวถูกเขียนสองรอบใต้ lock คนละตัว
+    """
+    from .access_hierarchy import _repo_root as _hier_repo_root
+    from .user_access_store import _STORE_LOCK as _USER_ACCESS_LOCK
+
+    with _USER_ACCESS_LOCK:
+        payload = build_hierarchy_payload()
+        persist_hierarchy(payload)
+        hier_cache = os.path.join(_hier_repo_root(), "data", "managers_cache.json")
+        if os.path.normcase(os.path.abspath(MANAGERS_CACHE_FILE)) != os.path.normcase(
+            os.path.abspath(hier_cache)
+        ):
+            persist_managers_payload(payload)
     return payload

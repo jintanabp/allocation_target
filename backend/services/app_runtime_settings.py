@@ -7,9 +7,10 @@ from __future__ import annotations
 import json
 import logging
 import os
-import tempfile
 import threading
 from typing import Any, Literal
+
+from ..core.atomic_io import atomic_write_text
 
 logger = logging.getLogger("target_allocation")
 
@@ -111,22 +112,11 @@ def read_settings() -> dict[str, Any]:
 def _write_settings_unlocked(data: dict[str, Any]) -> dict[str, Any]:
     path = settings_json_path()
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    fd, tmp = tempfile.mkstemp(
-        dir=os.path.dirname(path) or ".",
-        prefix=".app_runtime.",
-        suffix=".json",
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-            f.write("\n")
-        os.replace(tmp, path)
-    except OSError:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    # ผลตรวจ §5.1-4: เดิมเขียน tempfile + os.replace เองโดยไม่มี retry — บน Windows
+    # antivirus/ตัวทำ index ถือไฟล์ค้างชั่วขณะแล้วบันทึกพังเป็น PermissionError
+    # เนื้อไฟล์เหมือน json.dump(indent=2) + "\n" แบบ text mode เดิมทุกไบต์
+    payload = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+    atomic_write_text(path, payload.replace("\n", os.linesep))
     return dict(data)
 
 

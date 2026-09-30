@@ -83,7 +83,7 @@ allocations/{SUP}_{YYYY}_{MM}.json
 | `data/alloc_rules.json` | ค่ากติกาการเกลี่ยที่แอดมินตั้งจากหน้าเว็บ (เปิด/ปิด "ไม่เคยขาย=0", เกณฑ์ดันเป้า, รายทีมที่ปิด) | กติกาเป็นค่าตั้งของทั้งบริษัท ไม่ใช่ของทีมใดทีมหนึ่ง |
 | `data/feedback/feedback.json` | ข้อความจากปุ่ม 💬 ของผู้ใช้ทุกทีม | หน้าแอดมินต้องอ่านรวมทุกทีมในที่เดียว |
 
-ทั้งคู่ป้องกัน read-modify-write ชนกันแล้ว (ต่างจาก `user_access.json` ด้านล่างที่ยังมีรู):
+ทั้งคู่ป้องกัน read-modify-write ชนกันแล้ว (`user_access.json` ก็แก้แล้วตั้งแต่ 25 ก.ย. — ดูด้านล่าง):
 `backend/services/alloc_rules_store.py` (`write_settings()`) อ่าน + เช็ค `expected_rev` +
 เขียนทั้งหมด **ใต้ `_STORE_LOCK` เดียว** แล้วปฏิเสธด้วย `AllocRulesConflict` ถ้า `rev` ไม่ตรง
 (compare-and-swap แบบเดียวกับ `allocation_store.py`) · `feedback_store.py` ก็ครอบ
@@ -134,9 +134,16 @@ client บันทึก → ส่ง if_match_version: 3
 | `services/allocation_store.py` | `_STORE_LOCK` (**RLock**) | CAS + `mark_sent_targetsun` RMW |
 | `services/user_access_store.py` | `_STORE_LOCK` (**RLock**) + `mutate_rows()` + `atomic_write_text` | อ่าน→แก้→เขียน รอบเดียวใต้ล็อกเดียว (ทุก endpoint ผู้ใช้/สิทธิ์ในหน้าแอดมิน) · retry ตอน `os.replace` โดน PermissionError |
 | `services/fabric_cache.py` | `_LOCK` | เขียน cache |
-| `services/app_runtime_settings.py` | `_LOCK` | เขียน settings |
+| `services/app_runtime_settings.py` | `_LOCK` + `atomic_write_text` | เขียน settings (retry ตอน PermissionError) |
 | `services/usage_log_store.py` | `_LOCK` | append/rewrite jsonl |
-| `services/sl_link_store.py` / `sku_link_store.py` | `_LOCK` | เขียน links |
+| `services/sl_link_store.py` / `sku_link_store.py` | `_STORE_LOCK` (**RLock**) + `mutate_links()` + `atomic_write_text` | แอดมินสร้าง/แก้/ลบการผูกรหัส อ่าน→แก้→เขียน ใต้ล็อกเดียว (ผลตรวจ §5.1-1) |
+| `services/no_target_store.py` | `_STORE_LOCK` (**RLock**) + atomic | บันทึกรายชื่อ「ไม่ต้องตั้งเป้า」ของสองทีมพร้อมกันไม่ทับกัน (§5.1-2) |
+| `services/emp_assignment_store.py` | `_STORE_LOCK` (**RLock**) + `read_locked` | การย้ายพนักงานไปเกลี่ยทีมอื่น |
+| `services/admin_permissions_store.py` | `_STORE_LOCK` + `atomic_write_text` | สิทธิ์หน้าแอดมินรายบทบาท |
+| `services/warehouse_pin_rules_store.py` | `_STORE_LOCK` + `atomic_write_json` | กติกาบังคับคลังเดียว |
+| `services/notification_store.py` | `_STORE_LOCK` (**RLock**) | กล่องแจ้งเตือนในแอป |
+| `services/managers.py::rebuild_managers_from_roster` | ล็อกของ `user_access_store` | สร้างลำดับสิทธิ์ใหม่จากรายชื่อล่าสุดเสมอ ไม่เขียน `managers_cache.json` ซ้ำสองรอบ (§5.1-5) |
+| `emp_cache_*.csv` (admin_team / employees / lakehouse) | `atomic_write_csv` + `read_locked` | เขียนจากสองที่ อ่านไม่เจอไฟล์ครึ่งใบ (§5.1-4) |
 | `fabric_dax_connector.py` | `_TOKEN_CACHE_LOCK` | เขียน `data/token_cache.bin` (เฉพาะโหมดล็อกอินผู้ใช้) |
 | `services/alloc_rules_store.py` | `_STORE_LOCK` | CAS ด้วย `rev` (ดูหัวข้อ "ไฟล์ global" ด้านบน) |
 | `services/feedback_store.py` | `_STORE_LOCK` | append/แก้สถานะความเห็นผู้ใช้ |
@@ -178,6 +185,11 @@ data/Final_Dashboard_{SUP}_{YYYY}_{MM}.xlsx
 `download_excel_response()` ไม่รับงวด จึงใช้ `latest_excel_path_for_sup()` หยิบงวดล่าสุด
 
 ## ที่ยังไม่ได้แก้ (รู้อยู่)
+
+> **แก้แล้ว (30 ก.ย. 2026, ผลตรวจ §5.1):** การผูกรหัส SKU/SL, รายชื่อไม่ต้องตั้งเป้า, emp_cache,
+> store ที่เขียน temp + `os.replace` เอง และการสร้างลำดับสิทธิ์ใหม่ — ดูตาราง lock ด้านบน
+> (`tests/test_store_concurrency_e1.py` ยิงสองคำขอพร้อมกันแล้วตรวจว่าของทั้งสองรอด) · ตอนเปิดแอป
+> ตรวจด้วยว่ามีหลายโปรเซสใช้ `data/` ชุดเดียวกันไหม (`core/runtime_checks.py` → `/health` runtime)
 
 > **แก้แล้ว (25 ก.ย. 2026):** `config/user_access.json` lost update — `routers/admin.py` เคยทำ
 > `read_rows()` → แก้ → `write_rows()` ซึ่งจับ `_STORE_LOCK` คนละรอบ แอดมิน 2 คนบันทึกพร้อมกัน
