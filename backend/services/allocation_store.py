@@ -111,6 +111,11 @@ def _validate_body(body: dict[str, Any]) -> dict[str, Any]:
         out["engine_yellow"] = engine_yellow
         if body.get("engine_run_at"):
             out["engine_run_at"] = str(body.get("engine_run_at"))
+    zero_keys = body.get("never_sold_zero_keys")
+    if isinstance(zero_keys, list):
+        out["never_sold_zero_keys"] = [str(k) for k in zero_keys]
+    if body.get("force_min_one") is not None:
+        out["force_min_one"] = bool(body.get("force_min_one"))
     sent_at = body.get("target_sun_sent_at")
     if sent_at:
         out["target_sun_sent_at"] = str(sent_at)

@@ -317,6 +317,9 @@ class AllocationSnapshotBody(BaseModel):
     # ทีหลังได้ ฝั่งวิเคราะห์จึงต้องมีชุดที่ใช้จริง · None = หน้าเว็บไม่ได้ส่งมา → คงค่าเดิม
     engine_yellow: dict[str, Any] | None = None
     engine_run_at: str | None = None
+    # กฎของปุ่มปรับยอดอัตโนมัติในหน้าเว็บ ณ รอบกระจายล่าสุด (§4.1-7) — ไปกับ engine_yellow
+    never_sold_zero_keys: list[str] | None = None
+    force_min_one: bool | None = None
     # version ที่ client เห็นตอนโหลด — ไม่ส่งมา = เขียนทับแบบเดิม (tab เก่าจึงไม่พัง)
     # ใช้ field ใน body ไม่ใช่ header If-Match เพื่อเลี่ยงปัญหา preflight/proxy ตัด header
     if_match_version: int | None = None
@@ -400,6 +403,8 @@ def _team_only_yellow(sid: str, body, payload: dict, prev: dict | None) -> None:
     if not payload.get("engine_yellow"):
         payload["engine_yellow"] = (prev or {}).get("engine_yellow") or {}
         payload["engine_run_at"] = (prev or {}).get("engine_run_at")
+        payload["never_sold_zero_keys"] = (prev or {}).get("never_sold_zero_keys")
+        payload["force_min_one"] = (prev or {}).get("force_min_one")
 
 
 @router.get("/data/allocations")
