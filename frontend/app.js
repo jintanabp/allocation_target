@@ -1134,6 +1134,40 @@ function _logClientError(action, message, detail = "") {
 }
 
 /**
+ * นับการกระทำบนตารางผลแบบรวมยอดต่อรอบ (เฟส F4, 30 ก.ย. 2026) — ไม่ log ทุกคลิก
+ *
+ * หนึ่งรอบ = ตั้งแต่กดกระจายจนกดกระจายใหม่ / ส่ง Target Sun / ออกจากหน้า · ส่งเป็น log บรรทัดเดียว
+ * (client_edit_round) ใช้ดูพฤติกรรม: แก้มือกี่ช่อง ล็อกกี่ช่อง คืนค่ากี่ครั้ง ปุ่มปรับยอดย้ายหีบเท่าไร
+ * ข้ามทีมไหม ใช้กลยุทธ์อะไร — คู่กับรายงานการแก้มือ (F1) ที่ดูจากผลที่บันทึกไว้
+ */
+const _TALLY_KEYS = ["edits", "locks", "reverts", "revert_all", "rebalance_boxes", "cross_team_boxes", "runs"];
+let _actionTally = _newActionTally();
+
+function _newActionTally() {
+  const t = { started_at: new Date().toISOString(), strategy: "" };
+  _TALLY_KEYS.forEach((k) => { t[k] = 0; });
+  return t;
+}
+
+function _tally(kind, n = 1) {
+  if (!_TALLY_KEYS.includes(kind)) return;
+  _actionTally[kind] += Number(n) || 0;
+}
+
+function _tallyFlush(reason) {
+  const t = _actionTally;
+  _actionTally = _newActionTally();
+  const acted = ["edits", "locks", "reverts", "revert_all", "rebalance_boxes"].some((k) => t[k] > 0);
+  if (!acted) return;
+  _logClientAction(
+    "client_edit_round",
+    `แก้ ${t.edits} ช่อง · ล็อก ${t.locks} · คืนค่า ${t.reverts}${t.revert_all ? " + ทั้งตาราง" : ""}`
+      + ` · ปรับยอดอัตโนมัติ ${t.rebalance_boxes} หีบ${t.cross_team_boxes ? ` (ข้ามทีม ${t.cross_team_boxes})` : ""}`,
+    JSON.stringify({ ...t, reason, ended_at: new Date().toISOString() }),
+  );
+}
+
+/**
  * บันทึกว่าขั้นไหนใช้เวลาเท่าไร — ตอบเสียง "ช้า โหลดนาน" 6 เสียงในผลสำรวจ
  *
  * ผลสำรวจบอกว่าช้า แต่เราไม่มีตัวเลขสักตัวว่าช้าตรงไหน (โหลดข้อมูล หรือกระจาย)
@@ -6442,6 +6476,9 @@ function _stampEngineRun(allocs) {
     a.row_source = "engine";
     a.engine_boxes = a.is_edited && prev.has(k(a)) ? prev.get(k(a)) : Number(a.allocated_boxes) || 0;
   }
+  _tallyFlush("recalc");
+  _actionTally.strategy = _strategySummaryTh(_getSelectedStrategies());
+  _tally("runs");
   S.engineYellow = { ...(S.yellow || {}) };
   S.engineYellowCtx = _engineYellowCtx();
   S.lastForceMinOne = document.getElementById("forceMinOneBox")?.checked || false;
@@ -7889,6 +7926,7 @@ function revertResultCell(empId, sku, wh) {
     return;
   }
   _pushUndoState(`revert:${empId}:${sku}`);
+  _tally("reverts");
   // ล็อกเฉย ๆ (ไม่เคยเปลี่ยนเลข) → ↺ คือ "ปลดล็อก" ไม่ใช่ "คืนค่า" — บอกให้ตรงกับที่เกิดขึ้น
   const wasLockOnly = (Number(engBoxes) || 0) === (Number(alloc.allocated_boxes) || 0);
   alloc.allocated_boxes = Number(engBoxes) || 0;
@@ -8010,6 +8048,7 @@ async function revertAllResultCells() {
     { title: "คืนค่าที่ระบบคำนวณทั้งตาราง", okLabel: "คืนค่าทั้งตาราง", cancelLabel: "ยกเลิก" }
   );
   if (!ok) return;
+  _tally("revert_all");
 
   _pushUndoState("revert-all");
   for (const a of edited) {
@@ -8094,6 +8133,7 @@ function onResultEdit(el) {
        ไปเป็น locked_edits — เดิมถือว่าไม่ได้แก้ เลขที่ตั้งใจคงไว้จึงถูกเกลี่ยหาย
        ตอนไปแก้ช่องอื่น โดยผู้ใช้ไม่มีทางบอกระบบได้เลยว่า "ช่องนี้ห้ามขยับ" */
     _pushUndoState(`lock:${emp}:${sku}`);
+    _tally("locks");
     if (alloc) {
       if (alloc._engine_boxes == null) alloc._engine_boxes = prev;
       alloc.is_edited = true;
@@ -8124,6 +8164,7 @@ function onResultEdit(el) {
   _rebalanceTriggers.add(`${wh ? `${emp}|${wh}` : emp}::${sku}`);
 
   _pushUndoState(`edit:${emp}:${sku}`);
+  _tally("edits");
   el.classList.add("is-edited");
   S._hasUnsaved = true;
 
@@ -8656,6 +8697,8 @@ function autoRebalance(silent = false, opts = {}) {
       changed = true;
       if (teamFirst) crossTeam.push({ sku, boxes: Math.abs(rest) });
     }
+    _tally("rebalance_boxes", Math.abs(target - currentSum));
+    if (teamFirst && rest) _tally("cross_team_boxes", Math.abs(rest));
     // allocs เป็น reference เดียวกับ S.allocations (mutate in place) — sum ใหม่จากชุดเดิมได้เลย
     const afterSum = allocs.reduce((s, a) => s + (Number(a.allocated_boxes) || 0), 0);
     if (afterSum !== target) {
@@ -10434,6 +10477,7 @@ function _teamRowsAndYellow(sid, allocs = S.allocations) {
 
 function _markAllocationSentTargetSun(supId = null) {
   if (S.targetSunPreviewMode) return;
+  _tallyFlush("sent");
   const sid = String(supId || S.supId || "").trim().toUpperCase();
   if (!sid) return;
   // รวมภาค: ประทับเฉพาะแถวของทีมนี้ ห้ามเอาแถวทั้งภาคไปทับ snapshot ของทีม
@@ -14226,7 +14270,10 @@ async function checkTargetSunDrift(opts = {}) {
  */
 function _installDriftRecheckOnReturn() {
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) return;
+    if (document.hidden) {
+      _tallyFlush("page_hidden");   // ปิดแท็บ/สลับแอป — ส่งยอดรอบนี้ก่อนหาย (F4)
+      return;
+    }
     if (Date.now() - _lastDriftCheckAt < DRIFT_RECHECK_AFTER_MS) return;
     if (!_driftScopeSupIds().length) return;   // ยังไม่ได้เลือกทีม / ยังไม่ได้โหลดข้อมูล
     checkTargetSunDrift({ silent: true }).catch((e) =>
