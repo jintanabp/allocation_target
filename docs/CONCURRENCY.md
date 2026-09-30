@@ -144,6 +144,9 @@ client บันทึก → ส่ง if_match_version: 3
 | `services/notification_store.py` | `_STORE_LOCK` (**RLock**) | กล่องแจ้งเตือนในแอป |
 | `services/managers.py::rebuild_managers_from_roster` | ล็อกของ `user_access_store` | สร้างลำดับสิทธิ์ใหม่จากรายชื่อล่าสุดเสมอ ไม่เขียน `managers_cache.json` ซ้ำสองรอบ (§5.1-5) |
 | `emp_cache_*.csv` (admin_team / employees / lakehouse) | `atomic_write_csv` + `read_locked` | เขียนจากสองที่ อ่านไม่เจอไฟล์ครึ่งใบ (§5.1-4) |
+| `services/sent_ledger.py` | `_path_lock(path)` + `atomic_write_json` | ส่งหลายรอบ/หลายทีมพร้อมกันไม่ทับ ledger ของกันและกัน (F2) |
+| `services/nightly_check.py` | ล็อกไฟล์ `data/.nightly_check.lock` (ข้ามโปรเซส) | ตรวจรายคืนไม่รันซ้อน — ทั้งตัวตั้งเวลา ปุ่มรันเดี๋ยวนี้ และหลาย worker (F3) |
+| `core/runtime_checks.py` | ล็อกไฟล์ `data/.app_process.lock` ตลอดอายุโปรเซส | ตรวจว่ามีโปรเซสเดียวใช้ `data/` — ล็อกไม่ได้ = log error + `/health` (§5.2) |
 | `fabric_dax_connector.py` | `_TOKEN_CACHE_LOCK` | เขียน `data/token_cache.bin` (เฉพาะโหมดล็อกอินผู้ใช้) |
 | `services/alloc_rules_store.py` | `_STORE_LOCK` | CAS ด้วย `rev` (ดูหัวข้อ "ไฟล์ global" ด้านบน) |
 | `services/feedback_store.py` | `_STORE_LOCK` | append/แก้สถานะความเห็นผู้ใช้ |

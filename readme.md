@@ -407,13 +407,16 @@ API `POST /optimize` และไฟล์ Excel สามารถมีฟิ�
   `import-targetsun` ด้วย token (POST จริง) · ด่านสำคัญ (`backend/services/targetsun_import.py`):
   - **เป้าเปลี่ยนหลังโหลดขั้นที่ 1** (`assert_target_snapshot_is_fresh`) ตรวจทั้งตอน prepare และ**ซ้ำ
     ตอน import ก่อน POST** เทียบด้วยพนักงานทั้งทีมจาก grain (ไม่ใช่แค่คนในไฟล์) · 409
-    `send_target_stale` · การยืนยัน `confirm_stale_target` ตอน prepare ถูกจดลง bundle
-    (`confirmed_stale_target`) เพราะคำขอ import แบบ token ไม่พกค่านี้มา
+    `send_target_stale` · **บล็อกเสมอ ไม่มีปุ่มยืนยันข้ามแล้ว** (29 ก.ย. 2026)
+  - **ยอดหีบต่อ SKU ต้องตรงเป้าเป๊ะ** ไม่มีทางยืนยันข้าม (รวมภาคตรวจยอดรวมทั้งภาคด้วย `verify-send-batch`)
+  - **คลังในไฟล์ต้องตรงแถวที่มีอยู่ใน Target Sun** — 409 `send_warehouse_conflict` ให้เลือกใช้คลังตาม Target Sun
+    (`use_targetsun_warehouse`) · ไม่มี grain ขั้นที่ 1 = 409 `grain_missing` · ดู `docs/DATA_FLOW.md` หัวข้อ 5
   - **กันส่งซ้อน** — token เดียวกันถูกจับจองระหว่าง POST · คำขอที่สองได้ 409 `send_already_in_progress`
   - **ตรวจหลังส่ง** (`readback`) — ยอดที่ลงจริงต่อ SKU + **จำนวนแถวก่อน/หลัง** (`readback.row_count`)
-    จับแถวซ้ำคนละคลัง · ดูย้อนหลังได้ที่ `GET /admin/targetsun/row-count-checks`
-- ฝั่งหน้าเว็บวนส่งทีละทีม ทีมที่ล้ม (HTTP error) หรือ**ไม่รู้ผล** (fetch throw — เน็ตหลุด/หมดเวลา)
-  หยุดชุดทันทีแล้วขึ้นกล่อง「ส่งไม่ครบทุกทีม」แยกกลุ่ม ส่งแล้ว / ล้ม / ไม่รู้ผล / ยังไม่ได้ส่ง
+    จับแถวซ้ำคนละคลังและ**แถวใหม่ซ้อนคู่เดิม** · ดูย้อนหลังได้ที่ `GET /admin/targetsun/row-count-checks` ·
+    ผิดปกติแจ้งเตือนในแอป · ทุกการส่งบันทึกถาวรใน `data/sent_ledger/` (ใช้ตรวจรายคืน)
+- ฝั่งหน้าเว็บวนส่งทีละทีม ทีมที่ล้ม (HTTP error) หรือ**ยังยืนยันผลไม่ได้** (fetch throw — เน็ตหลุด/หมดเวลา)
+  หยุดชุดทันทีแล้วขึ้นกล่อง「ส่งไม่ครบทุกทีม」แยกกลุ่ม ส่งแล้ว / ล้ม / ยังยืนยันผลไม่ได้ / ยังไม่ได้ส่ง
 - คู่ที่ไม่มี grain ใน TGA ณ ตอนส่ง → **ไม่ส่ง** และแสดงจำนวนใน response / modal (**ไม่มีใน Target Sun ณ ตอนนี้**)
 - **Performance (ดู `data/app.log`):** แยกเวลา `build_xlsx` (เตรียมข้อมูล + Excel) กับ `post_upstream` (รอ UAT) — ถ้า grain cache ครบทุกแถว ระบบข้าม Fabric DAX ซ้ำ; ถ้ายังมีแถว dim ว่างจะดึง Fabric ~2–3 วินาทีก่อนส่ง
 
@@ -446,6 +449,10 @@ API `POST /optimize` และไฟล์ Excel สามารถมีฟิ�
 | **ข้อเสนอแนะจากผู้ใช้** | head_admin เท่านั้น | อ่านความเห็นที่ผู้ใช้ส่งจากปุ่ม 💬 มุมขวาล่าง — กรองสถานะ/ประเภท, กด อ่านแล้ว/จัดการแล้ว/กลับเป็นใหม่ |
 | **กติกาการเกลี่ย** | head_admin เท่านั้น | เปิด/ปิดกติกา「ไม่เคยขาย=เป้า 0」ทั้งระบบ/รายทีม + ปรับเกณฑ์สินค้าดันเป้า — ไม่ต้อง deploy |
 | **ย้ายพนักงาน** | แอดมิน (เปิดให้ผ่านแท็บ「สิทธิ์หน้าแอดมิน」) | ย้ายพนักงานข้ามทีม — รายชื่อมาจาก 3 แหล่ง รวมทะเบียนพนักงานทั้งบริษัท (ดูหัวข้อแท็บ「สรุปการใช้งาน」) |
+| **กติกาบังคับคลัง** | head_admin เท่านั้น | บังคับคลังเดียวสำหรับสินค้าที่เลือก × ภาค × division |
+| **ตรวจจำนวนแถวหลังส่ง** | แอดมิน | ก่อน/หลัง/คาดแถวใหม่/ส่วนเกิน/ซ้อนคู่เดิม ต่อการส่งแต่ละครั้ง |
+| **รายงานการแก้มือ** | dev + head_admin + admin (ตามขอบเขต) | แต่ละทีมแก้เลขที่ระบบกระจายให้มากแค่ไหน + แก้ใน Target Sun หลังส่ง (เมื่อเปิดตรวจรายคืน) |
+| **ตรวจ Target Sun รายคืน** | dev เท่านั้น | เปิด/ปิด (ค่าตั้งต้นปิด), ตั้งชั่วโมง, รันเดี๋ยวนี้, ผลรายทีม — อ่าน Target Sun อย่างเดียว |
 
 รายละเอียด config: [`config/README.md`](config/README.md) · data flow: [`docs/DATA_FLOW.md`](docs/DATA_FLOW.md)
 
@@ -541,6 +548,10 @@ API: `PUT /admin/user-access/targetsun/bulk` รับ `{emails: [...], enabled:
 | `PUT` | `/admin/settings/alloc-rules` | บันทึกค่ากติกาการเกลี่ย — ลง `data/alloc_rules.json` เท่านั้น (compare-and-swap ด้วย `expected_rev`) |
 | `POST` | `/admin/settings/alloc-rules/reset` | ลบค่าที่ตั้งจากเว็บ กลับไปใช้ค่าเริ่มต้นจากโค้ดใน `config/allocation_rules.json` |
 | `POST` | `/admin/alloc-rules/round-check` | ผู้ใช้ทั่วไปยิงได้ — เช็คว่ารหัสทีมที่ระบุถูกปิดกติกาไหมก่อนกดกระจายรวมภาค |
+| `GET` | `/admin/allocations/edit-report` | รายงานการแก้มือต่อทีม (engine_boxes vs ที่บันทึก) — ตามขอบเขตแอดมิน |
+| `GET/PUT` | `/admin/nightly-check` | ค่าตั้ง + ผลตรวจ Target Sun รายคืน — **dev เท่านั้น** (ค่าเก็บใน `data/nightly_check.json`) |
+| `POST` | `/admin/nightly-check/run` | รันตรวจรายคืนเดี๋ยวนี้ (อ่าน Target Sun จริง อ่านอย่างเดียว) — **dev เท่านั้น** |
+| `GET` | `/admin/nightly-check/team` | รายการแถวที่ต่างของทีม × งวด (ผลล่าสุด) — **dev เท่านั้น** |
 
 Swagger UI: `<URL แอปบน server>/docs`
 

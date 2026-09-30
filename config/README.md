@@ -221,6 +221,8 @@ Supervisor และแอดมินพร้อมกันได้ ตำ�
 | `config/emp_assignments.json` | การย้ายพนักงานไปให้ทีมอื่นเกลี่ยเป้า | ✅ ใช่ |
 | `data/alloc_rules.json` | กติกาการเกลี่ยที่แอดมินตั้งจากหน้าเว็บ | ❌ ไม่ |
 | `data/warehouse_pin_rules.json` | กติกาบังคับคลังเดียว | ❌ ไม่ |
+| `data/sent_ledger/*.json` | สิ่งที่ส่งเข้า Target Sun จริงต่อทีม × งวด (ฐานของตรวจรายคืน) | ❌ ไม่ |
+| `data/nightly_check.json` | ค่าตั้งตรวจรายคืน (ค่าตั้งต้นปิด) | ❌ ไม่ |
 | `data/allocations/*.json` | ผลการกระจายราย SL × งวด | ❌ ไม่ |
 | `data/baselines/*.json` | เป้าตั้งต้นของงวด | ❌ ไม่ |
 | `data/logs/*.jsonl` | บันทึกการใช้งาน | ❌ ไม่ |

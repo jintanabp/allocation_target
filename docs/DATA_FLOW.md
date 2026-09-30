@@ -182,7 +182,14 @@ python scripts/access/repair_user_access.py
 | `cache/salesman_roster.json` | `Dim_Salesman` ทั้งบริษัท คำสั่งเดียว (`company_roster.py`) — ใช้โดยแท็บ「สรุปการใช้งาน」**และ**แท็บ「ย้ายพนักงาน」(เป็นแหล่งที่ 3 เติมพนักงานของทีมที่ยังไม่เคยเปิดใช้งาน) · รีเฟรชด้วย `POST /admin/cache/refresh?layer=roster` — ไม่รวมอยู่ใน `layer=all` |
 | `alloc_rules.json` | ค่ากติกาการเกลี่ยที่แอดมินตั้งจากหน้าเว็บ (global ไม่ผูก sup — ดู `docs/CONCURRENCY.md`) |
 | `feedback/feedback.json` | ข้อความจากปุ่ม 💬 ของผู้ใช้ (global ไม่ผูก sup) |
-| `ts_prepare/*.xlsx` | ไฟล์ชั่วคราวก่อนส่ง TargetSun |
+| `ts_prepare/*.xlsx` | ไฟล์ชั่วคราวก่อนส่ง TargetSun (อายุ 30 นาที) |
+| `ts_sent/{token}.json` | แถวของไฟล์ที่ส่งแล้ว เก็บ 14 วัน — ใช้ปุ่ม「ส่งซ้ำเฉพาะแถวที่ตกหล่น」 |
+| `sent_ledger/{SUP}_{YYYY}_{MM}.json` | **สิ่งที่ส่งเข้า Target Sun จริง** ต่อทีม × งวด แบบถาวร (เฟส F2) — คีย์แถว → หีบ/เวลา/รอบส่ง + ประวัติการส่ง · ส่งรอบหลังทับเฉพาะคีย์ในไฟล์รอบนั้น |
+| `ts_nightly/{SUP}_{YYYY}_{MM}/{วันที่}.json` | ผลตรวจรายคืน (F3): แถวที่ถูกแก้ / หาย / เพิ่มเอง ใน Target Sun เทียบ sent ledger · ลบเก่ากว่า N เดือนเอง |
+| `nightly_check.json`, `nightly_check_state.json` | ค่าตั้งตรวจรายคืน (ค่าตั้งต้นปิด) + ผลรอบล่าสุดต่อทีม |
+| `notifications/notifications.json` | กล่องแจ้งเตือนในแอป (global) |
+| `warehouse_pin_rules.json` | กติกาบังคับคลังเดียว (แอดมินตั้งจากหน้าเว็บ) |
+| `.app_process.lock`, `.nightly_check.lock` | ล็อกไฟล์: ตรวจว่ามีโปรเซสเดียวใช้ `data/` · กันตรวจรายคืนรันซ้อน |
 
 TTL: `EMPLOYEE_PAYLOAD_CACHE_TTL_SEC`, `MANAGERS_CACHE_TTL_SEC`, `ADMIN_TEAM_CACHE_TTL_SEC`, `FABRIC_STATIC_CACHE_TTL_SEC` (roster)
 
@@ -197,7 +204,9 @@ TTL: `EMPLOYEE_PAYLOAD_CACHE_TTL_SEC`, `MANAGERS_CACHE_TTL_SEC`, `ADMIN_TEAM_CAC
 | `GET /data/employees/aggregate` | ใช่ | รวมหลาย Supervisor — โหลดขนานกัน (`AGGREGATE_LOAD_WORKERS`) |
 | `POST /optimize` | บางส่วน | ตรวจ TGA period · **409 ถ้าผลรวมต่อ SKU ไม่ตรงเป้า** · **400 ถ้าล็อกเกินเป้า** |
 | `POST /export/excel`, `GET /download/excel` | ไม่ | Export จาก cache |
-| `POST /lakehouse/*` | บางส่วน | Excel / TargetSun / OneLake |
+| `POST /lakehouse/*` | บางส่วน | Excel / TargetSun / OneLake — ส่งจริงคือ prepare-targetsun → (รวมภาค) verify-send-batch → import-targetsun (ดูหัวข้อ 5) |
+| `GET /admin/allocations/edit-report` | ไม่ | รายงานการแก้มือต่อทีม (F1) ตามขอบเขตแอดมิน |
+| `GET/PUT /admin/nightly-check`, `POST /admin/nightly-check/run`, `GET /admin/nightly-check/team` | อ่าน Target Sun (เฉพาะ run) | ตรวจรายคืน (F3) เฉพาะ dev |
 | `GET /admin/user-access` | ไม่ | จัดการสิทธิ |
 | `GET /admin/supervisor-team` | ใช่ | รายชื่อพนักงานใต้ Supervisor |
 | `GET /admin/data-inventory` | บางส่วน | สรุปแหล่งข้อมูล |
@@ -308,7 +317,27 @@ Target Sun ไว้ · อ่าน Fabric ไม่ได้ = ข้ามด
 - เอกสาร: `targetsun-importTargetSalesmanNextFromExcel.md`, `docs/TARGETSUN_READ_API_SPEC.md`
 - **กติกา `WAREHOUSECODE`** (อยู่ในคีย์ upsert ของปลายทางตั้งแต่ 7 ก.ย. 2026 — คลังว่างนับ
   เป็นค่าคีย์ค่าหนึ่ง): ดู `docs/ALLOCATION_INVARIANTS.md` หัวข้อ "คีย์ upsert ของ
-  Target Sun ห้ามซ้ำในไฟล์เดียวกัน"
+  Target Sun ห้ามซ้ำในไฟล์เดียวกัน" และ "คลังในไฟล์ต้องตรงกับแถวที่มีอยู่ใน Target Sun"
+
+**ลำดับการส่งและประตูตรวจ (30 ก.ย. 2026):**
+
+```
+POST /lakehouse/prepare-targetsun  (ต่อทีม · ยังไม่ส่งอะไร)
+  ├ เป้าใน Target Sun เปลี่ยนหลังโหลดขั้นที่ 1          → 409 send_target_stale (บล็อก ไม่มีปุ่มข้าม)
+  ├ ไม่มี grain ขั้นที่ 1 (ไม่รู้คลังจริง)                → 409 grain_missing (ไม่เดาคลัง)
+  ├ ยอดหีบต่อ SKU ≠ เป้าทีม (ทีมเดียว)                  → 409 send_target_mismatch (ไม่มีปุ่มข้าม)
+  ├ ทุกแถวตามกติกา Target Sun (ผิดแถวเดียวไม่ส่งทั้งไฟล์)
+  ├ คลังในไฟล์ไม่ตรงแถวที่มีใน Target Sun (อ่านสด)      → 409 send_warehouse_conflict
+  │     └ ผู้ใช้เลือก「ใช้คลังตาม Target Sun」→ use_targetsun_warehouse=true แตกหีบเดิมลงแถวที่มีจริง
+  └ คืน prepare_token (30 นาที)
+POST /lakehouse/verify-send-batch  (เฉพาะรวมภาค · ยอดรวมทั้งภาคต่อ SKU ต้องตรงเป้า)
+POST /lakehouse/import-targetsun   (ต่อทีม)
+  ├ อ่านสดก่อนส่ง: เป้าไม่ขยับ + คลังยังไม่ชน (ชน = ไม่ส่งทีมนั้น)
+  ├ POST ไฟล์ → send_status ok / partial / failed / unknown (504 = ยังยืนยันผลไม่ได้)
+  ├ บันทึก ts_sent (ส่งซ้ำแถวตกหล่น) + sent_ledger (F2)
+  └ อ่านกลับ: ยอดต่อ SKU · จำนวนแถวก่อน/หลัง/คาดแถวใหม่ · แถวใหม่ซ้อนคู่เดิม · แถวที่ยังไม่ลง
+        → ผิดปกติ/ตรวจไม่ได้ = แจ้งเตือนในแอป (ผู้ส่ง เจ้าของ SL แอดมินที่ดูแล dev)
+```
 
 ### OneLake
 
