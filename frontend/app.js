@@ -15990,9 +15990,11 @@ const ADMIN_TAB_META = {
   slLinks: { group: "การผูกรหัส", title: "ผูกรหัส SL", sub: "รหัสใหม่สืบทอดสิทธิ/ทีมจากรหัสเก่า — เช่น SL524 → SL508" },
   skuLinks: { group: "การผูกรหัส", title: "ผูกรหัส SKU", sub: "รวมประวัติขายข้ามรหัสเก่า — แสดงรายการสินค้าทันทีเมื่อเปิดแท็บ" },
   data: { group: "ข้อมูล", title: "แหล่งข้อมูล", sub: "สรุปการดึง ใช้ และส่งข้อมูลในระบบ + แคช" },
+  nightlyCheck: { group: "ข้อมูล", title: "ตรวจ Target Sun รายคืน", sub: "ดูว่ามีใครไปแก้เป้าใน Target Sun หลังส่ง — อ่านอย่างเดียว (เฉพาะ dev)" },
   usageLogs: { group: "ผลการดำเนินงาน", title: "บันทึกการใช้งาน", sub: "ใครส่ง Target Sun / ข้อผิดพลาด — เก็บถาวร ไม่มีการลบ" },
   allocations: { group: "ผลการดำเนินงาน", title: "ผลการกระจาย", sub: "snapshot บน server ต่อ SL × งวด" },
   usageSummary: { group: "ผลการดำเนินงาน", title: "สรุปการใช้งาน", sub: "ใครใช้จริงบ้างในงวดนี้ — เทียบกับทั้งหมดในระบบ" },
+  editReport: { group: "ผลการดำเนินงาน", title: "รายงานการแก้มือ", sub: "แต่ละทีมแก้เลขที่ระบบกระจายให้มากแค่ไหน — ดูอย่างเดียว" },
   team: { group: "ทีม", title: "ทีมพนักงาน", sub: "รายชื่อพนักงานใต้ Supervisor จาก Fabric / cache" },
   empMoves: {
     group: "ทีม",
@@ -16063,6 +16065,8 @@ function adminSwitchTab(tab) {
   if (_adminActiveTab === "usageLogs") adminInitUsageLogsPanel();
   if (_adminActiveTab === "allocations") adminInitAllocationsPanel();
   if (_adminActiveTab === "usageSummary") adminInitUsageSummaryPanel();
+  if (_adminActiveTab === "editReport") adminInitEditReportPanel();
+  if (_adminActiveTab === "nightlyCheck") adminLoadNightlyCheck();
   if (_adminActiveTab === "slLinks") adminInitSlLinksPanel();
   if (_adminActiveTab === "skuLinks") adminInitSkuLinksPanel();
   if (_adminActiveTab === "permissions") adminPermsLoad();
@@ -17813,6 +17817,317 @@ async function adminDownloadAllocationsXlsx() {
     );
   } catch (e) {
     toast(e.message, "red");
+  }
+}
+
+/* ── รายงานการแก้มือ (เฟส F1) ─────────────────────────────────────────
+   ตัวเลขทั้งหมดคำนวณฝั่ง server (backend/services/edit_report.py) ฝั่งนี้แค่วาด
+   ผลสำรวจชี้ว่าตัวชี้ขาดคือ "ต้องแก้มือแค่ไหน" หน้านี้จึงตอบข้อนั้นข้อเดียว */
+
+function adminInitEditReportPanel() {
+  const m = document.getElementById("adminEditRepMonth");
+  const y = document.getElementById("adminEditRepYear");
+  const firstOpen = !!(m && !m.options.length);
+  _adminFillMonthSelect(m);
+  if (firstOpen) {
+    const p = _effectiveTargetPeriod();
+    if (m) m.value = String(p.month);
+    if (y && !y.value) y.value = String(p.year);
+  }
+  _adminBindPeriodReload(["adminEditRepMonth", "adminEditRepYear"], () => adminLoadEditReport());
+  adminLoadEditReport();
+}
+
+function _editRepNum(v, digits = 0) {
+  if (v === null || v === undefined) return "—";
+  return Number(v).toLocaleString("th-TH", { maximumFractionDigits: digits });
+}
+
+function _editRepTopList(items) {
+  if (!Array.isArray(items) || !items.length) return "—";
+  return items
+    .map((d) => {
+      const name = d.name ? ` ${escapeHtml(d.name)}` : "";
+      return `<div>${escapeHtml(d.code || "?")}${name} <span class="alloc-rules-note">(${_editRepNum(d.boxes, 1)} หีบ)</span></div>`;
+    })
+    .join("");
+}
+
+function _editRepTsCell(n) {
+  if (!n) return "ยังไม่เคยตรวจ";
+  if (n.status !== "ok") {
+    const why = AppLogic.nightlyReasonText(n.reason) || n.status || "";
+    return `${escapeHtml(why)}${n.date ? `<div class="alloc-rules-note">${escapeHtml(n.date)}</div>` : ""}`;
+  }
+  const cnt = Number(n.changed || 0) + Number(n.missing || 0) + Number(n.extra || 0);
+  if (!cnt) return `ไม่มีการแก้ <div class="alloc-rules-note">${escapeHtml(n.date || "")}</div>`;
+  return `<strong>${_editRepNum(cnt)} แถว</strong> · ${_editRepNum(n.boxes_changed)} หีบ`
+    + `<div class="alloc-rules-note">เปลี่ยน ${_editRepNum(n.changed)} · หาย ${_editRepNum(n.missing)} · เพิ่ม ${_editRepNum(n.extra)} · ${escapeHtml(n.date || "")}</div>`;
+}
+
+function _adminRenderEditReport(d) {
+  const head = document.getElementById("adminEditRepHead");
+  const body = document.getElementById("adminEditRepTable");
+  const sum = document.getElementById("adminEditRepSummary");
+  const meta = document.getElementById("adminEditRepMeta");
+  const tsHelp = document.getElementById("adminEditRepTsHelp");
+  if (!head || !body) return;
+  const teams = Array.isArray(d?.teams) ? d.teams : [];
+  // คอลัมน์ Target Sun โผล่เมื่อเปิดตัวตรวจแล้ว หรือมีผลตรวจเก่าค้างอยู่ — ไม่งั้นเห็นแต่ขีดทั้งคอลัมน์
+  const showTs = !!d?.nightly_enabled || teams.some((t) => t.nightly);
+  if (tsHelp) tsHelp.style.display = showTs ? "none" : "";
+  const cols = ["ทีม", "ผู้บันทึก", "สถานะ", "ช่องที่แก้ %", "หีบที่ย้าย", "สินค้าที่แก้บ่อย", "คนที่ถูกแก้บ่อย"];
+  if (showTs) cols.push("แก้ใน Target Sun หลังส่ง");
+  const numCols = new Set([3, 4]);
+  head.innerHTML = `<tr>${cols.map((c, i) => `<th${numCols.has(i) ? ' class="usage-num"' : ""}>${c}</th>`).join("")}</tr>`;
+  if (meta) meta.textContent = `${teams.length} ทีม`;
+  const t = d?.totals || {};
+  if (sum) {
+    sum.innerHTML = teams.length
+      ? `<p class="alloc-rules-note">รวมทุกทีมที่เห็น: แก้ <strong>${_editRepNum(t.edited_cells)}</strong> จาก ${_editRepNum(t.rows)} ช่อง`
+        + ` (<strong>${t.edited_pct == null ? "—" : `${Number(t.edited_pct).toFixed(1)}%`}</strong>)`
+        + ` · ย้าย <strong>${_editRepNum(t.boxes_moved, 1)}</strong> หีบ</p>`
+      : "";
+  }
+  if (!teams.length) {
+    body.innerHTML = `<tr><td colspan="${cols.length}" class="admin-empty">งวดนี้ยังไม่มีทีมไหนบันทึกผลกระจาย</td></tr>`;
+    return;
+  }
+  body.innerHTML = teams
+    .map((it) => {
+      const who = `${escapeHtml(it.sup_id)}${it.full_name ? `<div class="alloc-rules-note">${escapeHtml(it.full_name)}</div>` : ""}`;
+      const by = `${escapeHtml(it.updated_by || "—")}<div class="alloc-rules-note">${escapeHtml(_adminFmtTime(it.updated_at))}</div>`;
+      const st = `<span class="${_allocationStatusClass(it.status)}">${escapeHtml(_allocationStatusLabel(it.status))}</span>`;
+      if (!it.rows) {
+        const rest = cols.length - 3;
+        return `<tr><td>${who}</td><td>${by}</td><td>${st}</td><td colspan="${rest}" class="alloc-rules-note">${escapeHtml(it.note || "ไม่มีแถวให้เทียบ")}</td></tr>`;
+      }
+      const pct = `<strong>${Number(it.edited_pct).toFixed(1)}%</strong><div class="alloc-rules-note">${_editRepNum(it.edited_cells)} / ${_editRepNum(it.rows)} ช่อง</div>`;
+      const zeroNote = (it.to_zero || it.from_zero)
+        ? `<div class="alloc-rules-note">เป็น 0: ${_editRepNum(it.to_zero)} · จาก 0: ${_editRepNum(it.from_zero)}</div>`
+        : "";
+      const cells = [
+        who, by, st,
+        pct,
+        `${_editRepNum(it.boxes_moved, 1)}${zeroNote}`,
+        _editRepTopList(it.top_skus),
+        _editRepTopList(it.top_emps),
+      ];
+      if (showTs) cells.push(_editRepTsCell(it.nightly));
+      return `<tr>${cells.map((c, i) => `<td${numCols.has(i) ? ' class="usage-num"' : ""}>${c}</td>`).join("")}</tr>`;
+    })
+    .join("");
+}
+
+async function adminLoadEditReport() {
+  const body = document.getElementById("adminEditRepTable");
+  if (!body) return;
+  const m = Number(document.getElementById("adminEditRepMonth")?.value || 0);
+  const y = Number(document.getElementById("adminEditRepYear")?.value || 0);
+  const meta = document.getElementById("adminEditRepMeta");
+  const sum = document.getElementById("adminEditRepSummary");
+  if (!m || y < 2020 || y > 2100) {
+    // ล้างตารางงวดก่อนทิ้ง ไม่งั้นอ่านผิดว่าเป็นตัวเลขของงวดที่กำลังพิมพ์
+    body.innerHTML = `<tr><td class="admin-empty">เลือกเดือนและกรอกปีให้ครบก่อน</td></tr>`;
+    if (meta) meta.textContent = "";
+    if (sum) sum.innerHTML = "";
+    return;
+  }
+  body.innerHTML = `<tr><td class="admin-empty">กำลังโหลด…</td></tr>`;
+  try {
+    const q = new URLSearchParams({ target_month: String(m), target_year: String(y) });
+    const data = await _adminJsonFetch(`/admin/allocations/edit-report?${q}`, { timeout: 60000 });
+    _adminRenderEditReport(data);
+  } catch (e) {
+    body.innerHTML = `<tr><td class="admin-empty"><div class="admin-alert admin-alert--error">${escapeHtml(e.message)}</div></td></tr>`;
+    if (meta) meta.textContent = "";
+    if (sum) sum.innerHTML = "";
+  }
+}
+
+/* ── ตรวจ Target Sun รายคืน (เฟส F3) — dev เท่านั้น ───────────────────
+   ใช้ endpoint /admin/nightly-check ที่มีอยู่แล้ว · ค่าตั้งต้นปิด ต้องเห็นชัดว่าปิดอยู่
+   ปุ่ม「รันเดี๋ยวนี้」อ่าน Target Sun จริง (อ่านอย่างเดียว) จึงต้องยืนยันก่อนทุกครั้ง */
+
+let _adminNightlyData = null;
+let _adminNightlyPicked = "";
+
+function _nightlyRows(data) {
+  // ทีม×งวดจากผลตรวจ + ทีมที่มี ledger แต่ยังไม่เคยตรวจ (ให้เห็นว่ามีของรอตรวจ)
+  const teams = data?.state?.teams || {};
+  const out = Object.entries(teams).map(([tag, v]) => ({ tag, ...(v || {}) }));
+  const seen = new Set(out.map((r) => r.tag));
+  for (const l of data?.ledgers || []) {
+    const tag = `${l.sup_id}|${l.target_year}-${String(l.target_month).padStart(2, "0")}`;
+    if (!seen.has(tag)) out.push({ tag, status: "never" });
+  }
+  // งวดใหม่ขึ้นก่อน แล้วเรียงตามรหัสทีม
+  return out.sort((a, b) => String(b.tag.split("|")[1] || "").localeCompare(String(a.tag.split("|")[1] || ""))
+    || a.tag.localeCompare(b.tag));
+}
+
+function _nightlyStatusText(st) {
+  return { ok: "ตรวจแล้ว", skipped: "ข้าม", error: "อ่านไม่ได้", never: "ยังไม่เคยตรวจ" }[st] || st || "—";
+}
+
+function _adminRenderNightlyCheck(data) {
+  const s = data?.settings || {};
+  const state = data?.state || {};
+  const en = document.getElementById("adminNightlyEnabled");
+  const hr = document.getElementById("adminNightlyHour");
+  const kp = document.getElementById("adminNightlyKeep");
+  if (en) en.checked = !!s.enabled;
+  if (hr) hr.value = String(s.hour ?? 2);
+  if (kp) kp.value = String(s.keep_months ?? 6);
+  const box = document.getElementById("adminNightlyStatus");
+  if (box) {
+    const last = state.last_run
+      ? `รอบล่าสุด ${escapeHtml(_adminFmtTime(state.last_run))} — ${escapeHtml(AppLogic.nightlyResultText(state.last_result))}`
+      : "ยังไม่เคยรัน";
+    box.innerHTML = s.enabled
+      ? `<div class="admin-alert admin-alert--ok">เปิดอยู่ — ตรวจทุกคืนเวลา ${String(s.hour).padStart(2, "0")}:00 น. · ${last}</div>`
+      : `<div class="admin-alert admin-alert--warn">ปิดอยู่ — ระบบไม่ตรวจเอง (กด「รันเดี๋ยวนี้」ได้ถ้าต้องการตรวจรอบเดียว) · ${last}</div>`;
+  }
+  const meta = document.getElementById("adminNightlyMeta");
+  if (meta) {
+    meta.textContent = s.updated_at ? `ตั้งค่าล่าสุด ${_adminFmtTime(s.updated_at)}${s.updated_by ? ` โดย ${s.updated_by}` : ""}` : "";
+  }
+  const body = document.getElementById("adminNightlyTable");
+  if (!body) return;
+  const rows = _nightlyRows(data);
+  if (!rows.length) {
+    body.innerHTML = `<tr><td colspan="9" class="admin-empty">ยังไม่มีทีมที่ส่งเข้า Target Sun ผ่านระบบนี้ (ยังไม่มีบันทึกการส่ง)</td></tr>`;
+    return;
+  }
+  const n = (v) => (v === null || v === undefined ? "—" : Number(v).toLocaleString("th-TH"));
+  body.innerHTML = rows
+    .map((r) => {
+      const p = AppLogic.parseNightlyTeamTag(r.tag) || { sup: r.tag, month: "", year: "" };
+      const period = p.month ? `${String(p.month).padStart(2, "0")}/${p.year}` : "—";
+      const ok = r.status === "ok";
+      const picked = r.tag === _adminNightlyPicked ? " is-picked" : "";
+      return `<tr class="admin-row-click${picked}" data-tag="${escapeHtml(r.tag)}" onclick="adminNightlyPickTeam(this.dataset.tag)" title="กดเพื่อดูรายการที่ไม่ตรง">`
+        + `<td>${escapeHtml(p.sup)}</td><td>${period}</td><td>${escapeHtml(_nightlyStatusText(r.status))}</td>`
+        + `<td class="usage-num">${ok ? n(r.changed) : "—"}</td><td class="usage-num">${ok ? n(r.missing) : "—"}</td>`
+        + `<td class="usage-num">${ok ? n(r.extra) : "—"}</td><td class="usage-num">${ok ? n(r.boxes_changed) : "—"}</td>`
+        + `<td>${escapeHtml(r.date || "—")}</td><td>${escapeHtml(AppLogic.nightlyReasonText(r.reason))}</td></tr>`;
+    })
+    .join("");
+}
+
+async function adminLoadNightlyCheck() {
+  const body = document.getElementById("adminNightlyTable");
+  if (body) body.innerHTML = `<tr><td colspan="9" class="admin-empty">กำลังโหลด…</td></tr>`;
+  try {
+    _adminNightlyData = await _adminJsonFetch("/admin/nightly-check");
+    _adminRenderNightlyCheck(_adminNightlyData);
+  } catch (e) {
+    _adminNightlyData = null;
+    if (body) body.innerHTML = `<tr><td colspan="9" class="admin-empty"><div class="admin-alert admin-alert--error">${escapeHtml(e.message)}</div></td></tr>`;
+  }
+}
+
+async function adminSaveNightlyCheck() {
+  const msg = document.getElementById("adminNightlyMsg");
+  const enabled = !!document.getElementById("adminNightlyEnabled")?.checked;
+  const hour = Number(document.getElementById("adminNightlyHour")?.value);
+  const keep = Number(document.getElementById("adminNightlyKeep")?.value);
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23) {
+    if (msg) msg.textContent = "ชั่วโมงต้องเป็นเลข 0–23";
+    return;
+  }
+  if (!Number.isInteger(keep) || keep < 1 || keep > 24) {
+    if (msg) msg.textContent = "เก็บประวัติได้ 1–24 เดือน";
+    return;
+  }
+  const wasOn = !!_adminNightlyData?.settings?.enabled;
+  if (enabled && !wasOn) {
+    const ok = await _confirmDialog(
+      `เปิดตรวจอัตโนมัติทุกคืนเวลา ${String(hour).padStart(2, "0")}:00 น.?\n`
+        + "ระบบจะอ่านเป้าจริงใน Target Sun ของทุกทีมที่มีบันทึกการส่ง วันละครั้ง (อ่านอย่างเดียว ไม่แก้อะไรใน Target Sun)",
+      { title: "เปิดตรวจ Target Sun รายคืน", okLabel: "เปิด" },
+    );
+    if (!ok) return;
+  }
+  try {
+    const r = await _adminJsonFetch("/admin/nightly-check", {
+      method: "PUT",
+      body: { enabled, hour, keep_months: keep },
+    });
+    if (msg) msg.textContent = "บันทึกแล้ว";
+    toast(r?.settings?.enabled ? "เปิดตรวจรายคืนแล้ว" : "บันทึกแล้ว — ตรวจรายคืนปิดอยู่", "green");
+    await adminLoadNightlyCheck();
+  } catch (e) {
+    if (msg) msg.textContent = e.message;
+    toast(e.message, "red");
+  }
+}
+
+async function adminRunNightlyCheckNow() {
+  const n = (_adminNightlyData?.ledgers || []).length;
+  const ok = await _confirmDialog(
+    "ตรวจเดี๋ยวนี้หนึ่งรอบ?\n"
+      + `ระบบจะอ่านเป้าจริงใน Target Sun ของทุกทีมที่มีบันทึกการส่ง (ตอนนี้ ${n} ทีม×งวด) แล้วเทียบกับที่ส่งไป\n`
+      + "อ่านอย่างเดียว — ไม่แก้ ไม่ส่งอะไรเข้า Target Sun · รันได้แม้ปิดตัวตั้งเวลาไว้ · อาจใช้เวลาหลายนาที",
+    { title: "รันตรวจ Target Sun เดี๋ยวนี้", okLabel: "รันเดี๋ยวนี้" },
+  );
+  if (!ok) return;
+  const msg = document.getElementById("adminNightlyMsg");
+  try {
+    await _adminJsonFetch("/admin/nightly-check/run", { method: "POST" });
+    if (msg) msg.textContent = "เริ่มตรวจแล้ว — รอสักครู่แล้วกด「โหลดใหม่」เพื่อดูผล";
+    toast("เริ่มตรวจแล้ว ทำงานอยู่เบื้องหลัง", "green");
+  } catch (e) {
+    if (msg) msg.textContent = e.message;
+    toast(e.message, "red");
+  }
+}
+
+function _nightlyDiffTable(title, list) {
+  if (!Array.isArray(list) || !list.length) return "";
+  const n = (v) => (v === null || v === undefined ? "—" : Number(v).toLocaleString("th-TH"));
+  const rows = list
+    .map((d) => {
+      const k = AppLogic.splitTargetRowKey(d.key);
+      return `<tr><td>${escapeHtml(k.sku)}</td><td>${escapeHtml(k.emp)}</td><td>${escapeHtml(k.salestype)}</td>`
+        + `<td>${escapeHtml(k.division)}</td><td>${escapeHtml(k.area)}</td><td>${escapeHtml(k.province)}</td>`
+        + `<td>${escapeHtml(k.warehouse || "(ว่าง)")}</td><td class="usage-num">${n(d.sent)}</td><td class="usage-num">${n(d.now)}</td></tr>`;
+    })
+    .join("");
+  return `<h4 class="alloc-rules-subtitle">${escapeHtml(title)} (${list.length})</h4>`
+    + `<div class="admin-table-wrap" style="max-height:min(40vh, 360px);"><table class="admin-table admin-table--zebra"><thead><tr>`
+    + `<th>สินค้า</th><th>พนักงาน</th><th>ประเภทขาย</th><th>Division</th><th>ภาค</th><th>จังหวัด</th><th>คลัง</th>`
+    + `<th class="usage-num">ที่ส่งไป</th><th class="usage-num">ตอนนี้</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+async function adminNightlyPickTeam(tag) {
+  const box = document.getElementById("adminNightlyDetail");
+  const p = AppLogic.parseNightlyTeamTag(tag);
+  if (!box || !p) return;
+  _adminNightlyPicked = tag;
+  document.querySelectorAll("#adminNightlyTable tr.admin-row-click").forEach((tr) => {
+    tr.classList.toggle("is-picked", tr.dataset.tag === tag);
+  });
+  box.style.display = "";
+  const head = `<h3 class="alloc-rules-subtitle">${escapeHtml(p.sup)} งวด ${String(p.month).padStart(2, "0")}/${p.year}</h3>`;
+  box.innerHTML = `${head}<div class="admin-loading">กำลังโหลด…</div>`;
+  try {
+    const q = new URLSearchParams({ sup_id: p.sup, target_month: String(p.month), target_year: String(p.year) });
+    const r = await _adminJsonFetch(`/admin/nightly-check/team?${q}`);
+    const d = r?.diff;
+    if (!d) {
+      box.innerHTML = `${head}<p class="alloc-rules-note">ยังไม่มีผลตรวจของทีมนี้ (ยังไม่เคยตรวจ หรือรอบที่ตรวจถูกข้าม)</p>`;
+      return;
+    }
+    const parts = [
+      _nightlyDiffTable("หีบเปลี่ยน — ใน Target Sun ไม่ตรงกับที่ส่ง", d.changed),
+      _nightlyDiffTable("หายไป — ส่งไปแต่ใน Target Sun ไม่มีแถวนี้แล้ว", d.missing),
+      _nightlyDiffTable("เพิ่มเอง — มีใน Target Sun แต่ระบบไม่เคยส่ง", d.extra),
+    ].filter(Boolean);
+    box.innerHTML = `${head}<p class="alloc-rules-note">ตรวจเมื่อ ${escapeHtml(_adminFmtTime(d.checked_at))}</p>`
+      + (parts.length ? parts.join("") : `<p class="alloc-rules-note">ตรงกับที่ส่งไปทุกแถว — ไม่มีใครแก้</p>`);
+  } catch (e) {
+    box.innerHTML = `${head}<div class="admin-alert admin-alert--error">${escapeHtml(e.message)}</div>`;
   }
 }
 
