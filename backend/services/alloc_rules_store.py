@@ -163,7 +163,9 @@ def push_multiple() -> float:
             val = float(cfg.get("push_multiple", DEFAULT_PUSH_MULTIPLE))
             # ต่ำกว่า 1 เท่ากับยกเว้นเกือบทุก SKU = กติกาไม่ทำงานเลย กันไว้ก่อน
             if val >= 1.0:
-                return val
+                # เพดานเดียวกับหน้าแอดมิน (ผลตรวจ §4.2-15) — เดิม clamp แค่ตอนแสดง ค่า 200 ในไฟล์
+                # จึงโชว์ 100 แต่ตัวกระจายใช้ 200
+                return min(val, MAX_PUSH_MULTIPLE)
             logger.warning("push_multiple=%s ต่ำเกินไป — ใช้ค่าเริ่มต้น %s", val, DEFAULT_PUSH_MULTIPLE)
         except (TypeError, ValueError):
             logger.warning("push_multiple ในไฟล์ตั้งค่าไม่ใช่ตัวเลข — ใช้ค่าเริ่มต้น")

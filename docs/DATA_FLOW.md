@@ -249,11 +249,12 @@ locked_edits ──► ตรวจ "ล็อกรวม <= เป้าขอ
                           │
                           ▼
    allocate_boxes()  1. normalize คีย์ + ปัดเป้าเป็น int + ยุบ SKU ซ้ำ
-                     2. _proportional      baseline จากประวัติ + cap
-                     3. _lp_optimize (CBC) ปรับมูลค่าเงินภายในรั้ว ±%
-                        └ แก้ไม่ได้ → ใช้ผลข้อ 2 (optimization_fallback=True)
-                     4. _greedy_revenue_balancer  ปิดช่องว่างเงินที่เหลือ
-                     5. _enforce_even_skus_on_df  สินค้าใหม่แบ่งเท่า
+                     2. _never_sold_plan   กติกาไม่เคยขาย=เป้า 0 (ถ้าเปิด)
+                     3. _proportional      baseline จากประวัติ + cap
+                     4. _lp_optimize (CBC) ปรับมูลค่าเงินภายในรั้ว ±% (วิธี 3M/6M/LY)
+                        └ แก้ไม่ได้ → ใช้ผลข้อ 3 (optimization_fallback=True)
+                     5. _greedy_revenue_balancer  ปิดช่องว่างเงินที่เหลือ (เฉพาะโหมดหลัก/รอง)
+                     6. _enforce_even_skus_on_df  สินค้าใหม่/SKU ที่กติกาสั่งเฉลี่ย แบ่งเท่า
                           │
                           ▼
    validate_allocation_vs_targets ──► 409 ถ้าไม่ตรงเป้า (ไม่เขียนไฟล์ ไม่สร้าง Excel)
@@ -263,6 +264,14 @@ locked_edits ──► ตรวจ "ล็อกรวม <= เป้าขอ
 ```
 
 กฎที่แต่ละขั้นต้องรักษา: `docs/ALLOCATION_INVARIANTS.md`
+
+**ด่านตรวจงวดตอนกระจาย (ผลตรวจ §4.2-12):** ก่อนกระจาย `/optimize` เรียก
+`enforce_tga_selection_matches_effective_window(FabricDAXConnector(), ...)` **โดยไม่ส่ง
+division_code / sales_type** จึงตรวจกับ `MAX(EFFECTIVEDATE)` ของตาราง TGA ทั้งตารางใน Fabric
+(ยิง Fabric หนึ่งครั้งทุกครั้งที่กดกระจาย) ไม่ใช่งวดของ division/sales type ของทีม ต่างจากตอนโหลด
+ขั้นที่ 1 (`employees.py`) ที่ส่ง division/sales type และถามจาก Target Sun โดยตรงเมื่อเปิด
+Target Sun ไว้ · อ่าน Fabric ไม่ได้ = ข้ามด่าน (log warning) ไม่บล็อก · ปิดทั้งด่านได้ด้วย
+`TGA_ENFORCE_EFFECTIVE_WINDOW=0` · วันที่ปี พ.ศ. แปลงเป็น ค.ศ. ก่อนเทียบ (`_parse_effective_raw`)
 
 ---
 
