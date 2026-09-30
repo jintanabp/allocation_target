@@ -313,6 +313,10 @@ class AllocationSnapshotBody(BaseModel):
     yellow_locked: dict[str, Any] = Field(default_factory=dict)
     strategy: str = ""
     target_sun_sent_at: str | None = None
+    # เป้าเงินที่ตัวกระจายเห็นตอนกระจายครั้งล่าสุด (30 ก.ย. 2026) — เป้าเงินบนจอ (yellow) ถูกแก้
+    # ทีหลังได้ ฝั่งวิเคราะห์จึงต้องมีชุดที่ใช้จริง · None = หน้าเว็บไม่ได้ส่งมา → คงค่าเดิม
+    engine_yellow: dict[str, Any] | None = None
+    engine_run_at: str | None = None
     # version ที่ client เห็นตอนโหลด — ไม่ส่งมา = เขียนทับแบบเดิม (tab เก่าจึงไม่พัง)
     # ใช้ field ใน body ไม่ใช่ header If-Match เพื่อเลี่ยงปัญหา preflight/proxy ตัด header
     if_match_version: int | None = None
@@ -360,6 +364,42 @@ def _refuse_other_teams_rows(user: dict, sid: str, body) -> None:
             "employees": sample,
         },
     )
+
+
+def _yellow_emp(key: Any) -> str:
+    from ..services.lakehouse import norm_emp_code
+
+    return norm_emp_code(str(key or "").split("|")[0])
+
+
+def _team_only_yellow(sid: str, body, payload: dict, prev: dict | None) -> None:
+    """
+    เป้าเงินใน snapshot ต้องมีแต่พนักงานของทีมนี้ (ผู้ใช้ขอ 30 ก.ย. 2026)
+
+    โหมดรวมทีม/รวมภาคถือเป้าเงินของทุกทีมไว้ในก้อนเดียว (S.yellow) แล้วบันทึกทั้งก้อนลงทุกทีม
+    export 10/2026: SL375 มีเป้าเงินของพนักงานทีมอื่น 14 คน · ตัดเฉพาะคนที่รู้แน่ว่าอยู่ทีมอื่น
+    (กติกาเดียวกับ _refuse_other_teams_rows) คนที่ไม่มีข้อมูลทีมเก็บไว้ตามเดิม
+
+    engine_yellow ที่ไม่ได้ส่งมา หรือเหลือว่างหลังตัด = คงค่าเดิม ไม่เขียนทับด้วยชุดว่าง
+    """
+    from ..services.lakehouse import employee_teams_in_period
+
+    maps = ("yellow", "yellow_locked", "engine_yellow")
+    emps = {
+        _yellow_emp(k)
+        for m in maps
+        for k in (payload.get(m) or {})
+        if str(k or "").strip()
+    }
+    teams = employee_teams_in_period(body.target_month, body.target_year, emps) if emps else {}
+    foreign = {e for e in emps if teams.get(e) and sid not in teams[e]}
+    for m in maps:
+        v = payload.get(m)
+        if isinstance(v, dict) and foreign:
+            payload[m] = {k: x for k, x in v.items() if _yellow_emp(k) not in foreign}
+    if not payload.get("engine_yellow"):
+        payload["engine_yellow"] = (prev or {}).get("engine_yellow") or {}
+        payload["engine_run_at"] = (prev or {}).get("engine_run_at")
 
 
 @router.get("/data/allocations")
@@ -431,6 +471,7 @@ def put_allocation_snapshot(
     acting = str(user.get("acting_admin_email") or "").strip()
     if acting:
         payload["updated_by_acting_admin"] = acting
+    _team_only_yellow(sid, body, payload, read_snapshot(sid, body.target_month, body.target_year))
 
     if expected_version is None and read_snapshot(sid, body.target_month, body.target_year):
         # แยกสามกรณีออกจากกัน — เดิมเหมาว่าเป็น "client เก่า" ทั้งหมด ซึ่งไม่จริง

@@ -105,6 +105,12 @@ def _validate_body(body: dict[str, Any]) -> dict[str, Any]:
     acting = str(body.get("updated_by_acting_admin") or "").strip()
     if acting:
         out["updated_by_acting_admin"] = acting
+    # เป้าเงินที่ตัวกระจายเห็นตอนกระจาย (30 ก.ย. 2026) — ใช้วิเคราะห์ว่าผลห่างเป้าเงินเพราะอะไร
+    engine_yellow = body.get("engine_yellow")
+    if isinstance(engine_yellow, dict) and engine_yellow:
+        out["engine_yellow"] = engine_yellow
+        if body.get("engine_run_at"):
+            out["engine_run_at"] = str(body.get("engine_run_at"))
     sent_at = body.get("target_sun_sent_at")
     if sent_at:
         out["target_sun_sent_at"] = str(sent_at)

@@ -1635,6 +1635,8 @@ _ALLOC_ANALYSIS_FIELDS = (
     "hist_dev_pct",
     "hist_dev_status",
     "price_per_box",
+    # engine = ผลตัวกระจาย · targetsun = เป้าเดิมที่มีอยู่ใน Target Sun (30 ก.ย. 2026)
+    "row_source",
 )
 
 
