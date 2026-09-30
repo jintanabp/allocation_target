@@ -7,7 +7,7 @@ import pandas as pd
 from fastapi import HTTPException
 
 from ..core.allocation_checks import detect_new_product_skus
-from ..core.atomic_io import atomic_write_csv
+from ..core.atomic_io import atomic_write_csv, read_locked
 from ..core.constants import PRICE_FALLBACK
 from . import demo_data, emp_assignment_store, no_target_store
 from ..core.paths import (
@@ -476,7 +476,9 @@ def load_employees_payload(
         cp = emp_cache_path(sup_id, target_month, target_year)
         if os.path.exists(cp):
             logger.warning("Fabric error → emp cache: %s", e)
-            df_emp_fabric = pd.read_csv(cp, dtype={"emp_id": str})
+            # ผลตรวจ §5.1-3: อ่านใต้ lock ต่อ path เดียวกับตัวเขียน (atomic_write_csv)
+            with read_locked(cp):
+                df_emp_fabric = pd.read_csv(cp, dtype={"emp_id": str})
         else:
             # ไม่มีแคชของงวดนี้ — ถอยไปใช้รายชื่องวดล่าสุดของทีมเดียวกัน
             # ดีกว่าปล่อยให้เปิดงวดไม่ได้เลยทั้งวันตอน Fabric ล่ม แต่ต้องติดธง
@@ -491,7 +493,8 @@ def load_employees_payload(
                 "Fabric error + ไม่มี emp cache ของงวดนี้ → ใช้รายชื่องวด %s ของ %s: %s",
                 stamp, sup_id, e,
             )
-            df_emp_fabric = pd.read_csv(path, dtype={"emp_id": str})
+            with read_locked(path):
+                df_emp_fabric = pd.read_csv(path, dtype={"emp_id": str})
             emp_list_stale_from = stamp
 
     # ── ย้ายพนักงานตามที่แอดมินตั้งไว้ (กรณีพิเศษ เช่น ขายชายแดน) ──
@@ -544,8 +547,10 @@ def load_employees_payload(
     # และรหัสที่ไม่เคยมีลูกทีมกลายเป็น "ทีม" ในสายตาตัวจัดขอบเขต
     try:
         _raw_to_cache, _ = drop_van_employees(df_emp_raw)
-        _raw_to_cache.to_csv(
-            emp_cache_path(sup_id, target_month, target_year), index=False
+        # ผลตรวจ §5.1-3: เขียนแบบ atomic — ไฟล์เดียวกับที่ admin_team.py เขียน
+        # to_csv ตรง ๆ ทำให้คนอ่านพอดีได้ไฟล์ครึ่งใบ (รายชื่อทีมขาด)
+        atomic_write_csv(
+            emp_cache_path(sup_id, target_month, target_year), _raw_to_cache, index=False
         )
     except Exception as e:                     # เขียนแคชพังต้องไม่ทำให้เปิดงวดไม่ได้
         logger.warning("เขียนแคชรายชื่อของ %s ไม่สำเร็จ: %s", sup_id, e)
@@ -2346,7 +2351,8 @@ def load_live_targets_payload(
         emp_path = emp_cache_path(sid, target_month, target_year)
         if os.path.exists(emp_path):
             try:
-                df_cached = pd.read_csv(emp_path, dtype={"emp_id": str})
+                with read_locked(emp_path):
+                    df_cached = pd.read_csv(emp_path, dtype={"emp_id": str})
                 emp_list = df_cached["emp_id"].astype(str).str.strip().tolist()
             except Exception as e:
                 logger.warning("read emp cache for live targets: %s", e)

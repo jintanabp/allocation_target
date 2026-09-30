@@ -25,7 +25,9 @@ from ..core.atomic_io import atomic_write_json
 
 logger = logging.getLogger("target_allocation")
 
-_STORE_LOCK = threading.Lock()
+# RLock: set_for_supervisor ถือ lock ตลอด read → แก้ → write แล้วเรียก read_entries /
+# write_entries ที่จับ lock ตัวเดียวกันซ้ำใน thread เดิม (ผลตรวจ §5.1-2)
+_STORE_LOCK = threading.RLock()
 
 
 def _repo_root() -> str:
@@ -178,6 +180,24 @@ def set_for_supervisor(
     sup = norm_sup(super_code)
     if not sup:
         raise ValueError("ไม่ได้ระบุรหัสซุป")
+    # ผลตรวจ §5.1-2: อ่าน → แก้ → เขียน ต้องอยู่ใต้ lock เดียว — เดิมอ่านกับเขียน
+    # จับ lock คนละรอบ สองทีมกดบันทึกพร้อมกันแล้วรายชื่อของทีมแรกหาย คนที่ควรถูกกัน
+    # กลับได้เป้าและถูกส่งขึ้น Target Sun
+    with _STORE_LOCK:
+        return _set_for_supervisor_locked(
+            sup, emp_ids, updated_by=updated_by, notes=notes, names=names
+        )
+
+
+def _set_for_supervisor_locked(
+    sup: str,
+    emp_ids: list[str],
+    *,
+    updated_by: str | None,
+    notes: dict[str, str] | None,
+    names: dict[str, str] | None,
+) -> list[dict[str, Any]]:
+    """ตัวทำงานของ set_for_supervisor — ผู้เรียกต้องถือ _STORE_LOCK อยู่แล้ว"""
     existing = read_entries()
     keep = [r for r in existing if r["super_code"] != sup]
     prev = {r["emp_id"]: r for r in existing if r["super_code"] == sup}

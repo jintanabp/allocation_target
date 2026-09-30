@@ -11,10 +11,10 @@ from __future__ import annotations
 import json
 import logging
 import os
-import tempfile
 import threading
 from typing import Any
 
+from ..core.atomic_io import atomic_write_text
 from .admin_capabilities import (
     CONFIGURABLE_ROLES,
     DEFAULT_ROLE_CAPABILITIES,
@@ -133,19 +133,11 @@ def write_roles(roles: Any, updated_by: str = "", updated_at: str = "") -> dict[
         indent=2,
     )
     payload += "\n"
-    dir_name = os.path.dirname(path) or "."
+    # ผลตรวจ §5.1-4: เดิมเขียน tempfile + os.replace เองโดยไม่มี retry — บน Windows
+    # antivirus/ตัวทำ index ถือไฟล์ค้างชั่วขณะแล้วบันทึกพังเป็น PermissionError
+    # แปลงท้ายบรรทัดเป็น os.linesep เองเพราะของเดิมเขียนแบบ text mode — ไฟล์เหมือนเดิมทุกไบต์
     with _STORE_LOCK:
-        fd, tmp = tempfile.mkstemp(prefix=".admin_permissions_", suffix=".json", dir=dir_name)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(payload)
-            os.replace(tmp, path)
-        except Exception:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
+        atomic_write_text(path, payload.replace("\n", os.linesep))
     logger.info("บันทึกตารางสิทธิ์หน้าแอดมิน → %s", path)
     return normalized
 

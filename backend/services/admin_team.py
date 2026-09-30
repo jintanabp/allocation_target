@@ -10,6 +10,7 @@ from typing import Any
 import pandas as pd
 from fastapi import HTTPException
 
+from ..core.atomic_io import atomic_write_csv, read_locked
 from ..core.employee_filter import drop_van_employees
 from ..core.paths import emp_cache_path
 from .access_hierarchy import load_hierarchy_payload, parse_hierarchy_metadata
@@ -80,7 +81,10 @@ def _read_fresh_emp_cache(cache_path: str, ttl_sec: int) -> tuple[pd.DataFrame |
     if age_sec > ttl_sec:
         return None, datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
     try:
-        df = pd.read_csv(cache_path, dtype={"emp_id": str})
+        # ผลตรวจ §5.1-3: อ่านใต้ lock ต่อ path เดียวกับตัวเขียน — บน Windows ถ้า reader
+        # ถือ handle ค้างตอนอีกฝั่ง replace ไฟล์ ตัวเขียนจะพัง PermissionError
+        with read_locked(cache_path):
+            df = pd.read_csv(cache_path, dtype={"emp_id": str})
         cached_at = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
         return df, cached_at
     except (OSError, pd.errors.EmptyDataError, ValueError) as e:
@@ -160,7 +164,9 @@ def load_supervisor_team(
         raise HTTPException(status_code=404, detail=f"ไม่พบพนักงานใต้ SuperCode '{sc}'")
 
     os.makedirs("data", exist_ok=True)
-    df_fabric.to_csv(cache_path, index=False)
+    # ผลตรวจ §5.1-3: ไฟล์นี้ถูกเขียนจากสองที่ (ตรงนี้ + employees.py ตอนเปิดงวด)
+    # to_csv ตรง ๆ ตัดไฟล์เหลือ 0 ไบต์ก่อนเขียน คนที่อ่านพอดีได้รายชื่อครึ่งทีม
+    atomic_write_csv(cache_path, df_fabric, index=False)
 
     return {
         "super_code": sc,

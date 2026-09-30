@@ -72,23 +72,23 @@ from ..services.admin_team import list_supervisor_codes, load_supervisor_team
 from ..services.admin_inventory import build_data_inventory
 from ..services.sku_link_store import (
     collapse_hist_to_canonical,
-    delete_link,
+    deleted_links,
     expand_skus_for_dax,
     find_link,
+    mutate_links,
     normalize_sku,
     read_links,
-    upsert_link,
-    write_links,
+    upserted_links,
 )
 from ..services.sl_link_store import (
-    delete_link as delete_sl_link,
+    deleted_links as deleted_sl_links,
     find_link as find_sl_link,
     link_row_for_api,
+    mutate_links as mutate_sl_links,
     normalize_sl,
     read_links as read_sl_links,
     resolve_to_canonical,
-    upsert_link as upsert_sl_link,
-    write_links as write_sl_links,
+    upserted_links as upserted_sl_links,
 )
 from ..services.employee_payload_cache import (
     invalidate_employee_payload_cache,
@@ -769,18 +769,23 @@ def create_sku_link(
     canon = normalize_sku(body.canonical_sku)
     if not canon:
         raise HTTPException(status_code=400, detail="canonical_sku ว่าง")
-    links = read_links()
-    if find_link(canon, links):
-        raise HTTPException(status_code=409, detail="มีกลุ่มผูกรหัสนี้อยู่แล้ว")
     email = str(admin.get("email") or admin.get("preferred_username") or "").strip()
-    saved = upsert_link(
-        links,
-        canonical_sku=canon,
-        alias_skus=body.alias_skus or [canon],
-        product_name=body.product_name,
-        note=body.note,
-        updated_by=email,
-    )
+
+    # ผลตรวจ §5.1-1: ตรวจซ้ำ + เพิ่ม + เขียน ต้องอยู่ใต้ lock เดียว — เดิมอ่านแล้วค่อย
+    # เขียนคนละรอบ แอดมินสองคนบันทึกพร้อมกันแล้วของคนแรกหายเงียบ ๆ
+    def _apply(links: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], None]:
+        if find_link(canon, links):
+            raise HTTPException(status_code=409, detail="มีกลุ่มผูกรหัสนี้อยู่แล้ว")
+        return upserted_links(
+            links,
+            canonical_sku=canon,
+            alias_skus=body.alias_skus or [canon],
+            product_name=body.product_name,
+            note=body.note,
+            updated_by=email,
+        ), None
+
+    saved, _ = mutate_links(_apply)
     row = find_link(canon, saved)
     _audit_admin(admin, "admin_sku_link_create", f"ผูกรหัสสินค้า {canon}", f"alias={len(body.alias_skus or [])}")
     return {"ok": True, "row": _sku_link_row_for_api(row or {})}
@@ -795,27 +800,31 @@ def update_sku_link(
     canon = normalize_sku(body.canonical_sku)
     if not canon:
         raise HTTPException(status_code=400, detail="canonical_sku ว่าง")
-    links = read_links()
-    if not find_link(canon, links):
-        raise HTTPException(status_code=404, detail="ไม่พบกลุ่มผูกรหัส")
     new_canon = normalize_sku(body.new_canonical_sku) if body.new_canonical_sku else canon
-    if new_canon != canon and find_link(new_canon, links):
-        raise HTTPException(status_code=409, detail="canonical_sku ใหม่ซ้ำกับกลุ่มอื่น")
     email = str(admin.get("email") or admin.get("preferred_username") or "").strip()
-    out: list[dict[str, Any]] = []
-    for row in links:
-        if row["canonical_sku"] == canon:
-            nr = dict(row)
-            nr["canonical_sku"] = new_canon
-            nr["alias_skus"] = body.alias_skus or nr.get("alias_skus") or [new_canon]
-            nr["product_name"] = str(body.product_name or nr.get("product_name") or "").strip()
-            nr["note"] = str(body.note if body.note is not None else nr.get("note") or "").strip()
-            if email:
-                nr["updated_by"] = email
-            out.append(nr)
-        else:
-            out.append(dict(row))
-    saved = write_links(out)
+
+    # ผลตรวจ §5.1-1: ตรวจ + แก้ + เขียน ใต้ lock เดียว (ดู create_sku_link)
+    def _apply(links: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], None]:
+        if not find_link(canon, links):
+            raise HTTPException(status_code=404, detail="ไม่พบกลุ่มผูกรหัส")
+        if new_canon != canon and find_link(new_canon, links):
+            raise HTTPException(status_code=409, detail="canonical_sku ใหม่ซ้ำกับกลุ่มอื่น")
+        out: list[dict[str, Any]] = []
+        for row in links:
+            if row["canonical_sku"] == canon:
+                nr = dict(row)
+                nr["canonical_sku"] = new_canon
+                nr["alias_skus"] = body.alias_skus or nr.get("alias_skus") or [new_canon]
+                nr["product_name"] = str(body.product_name or nr.get("product_name") or "").strip()
+                nr["note"] = str(body.note if body.note is not None else nr.get("note") or "").strip()
+                if email:
+                    nr["updated_by"] = email
+                out.append(nr)
+            else:
+                out.append(dict(row))
+        return out, None
+
+    saved, _ = mutate_links(_apply)
     row = find_link(new_canon, saved)
     _audit_admin(admin, "admin_sku_link_update", f"แก้ผูกรหัสสินค้า {canon}→{new_canon}")
     return {"ok": True, "row": _sku_link_row_for_api(row or {})}
@@ -828,10 +837,15 @@ def remove_sku_link(
 ) -> dict[str, Any]:
     ensure_not_demo_for_global_write(admin)
     canon = normalize_sku(body.canonical_sku)
-    try:
-        delete_link(read_links(), canon)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+    # ผลตรวจ §5.1-1: ลบบนรายการล่าสุดใต้ lock เดียว — เดิมลบจากรายการที่อ่านไว้ก่อน
+    # ถ้ามีคนเพิ่มกลุ่มอื่นแทรกเข้ามาระหว่างนั้น กลุ่มนั้นหายไปด้วย
+    def _apply(links: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], None]:
+        try:
+            return deleted_links(links, canon), None
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+    mutate_links(_apply)
     _audit_admin(admin, "admin_sku_link_delete", f"ลบผูกรหัสสินค้า {canon}", level="warn")
     return {"ok": True}
 
@@ -982,17 +996,21 @@ def create_sl_link(
     if not old:
         raise HTTPException(status_code=400, detail="รหัสเก่า (old_sl) ว่าง")
     _ensure_sl_link_in_scope(admin, old, new_sls)
-    links = read_sl_links()
-    if find_sl_link(old, links):
-        raise HTTPException(status_code=409, detail="มีกลุ่มผูกรหัสนี้อยู่แล้ว")
     email = str(admin.get("email") or admin.get("preferred_username") or "").strip()
-    saved = upsert_sl_link(
-        links,
-        canonical_sl=old,
-        alias_sls=[old, *new_sls],
-        note=body.note,
-        updated_by=email,
-    )
+
+    # ผลตรวจ §5.1-1: ตรวจซ้ำ + เพิ่ม + เขียน ใต้ lock เดียว (ดู create_sku_link)
+    def _apply(links: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], None]:
+        if find_sl_link(old, links):
+            raise HTTPException(status_code=409, detail="มีกลุ่มผูกรหัสนี้อยู่แล้ว")
+        return upserted_sl_links(
+            links,
+            canonical_sl=old,
+            alias_sls=[old, *new_sls],
+            note=body.note,
+            updated_by=email,
+        ), None
+
+    saved, _ = mutate_sl_links(_apply)
     row = find_sl_link(old, saved)
     _audit_admin(admin, "admin_sl_link_create", f"ผูกรหัส SL {old}", f"→ {', '.join(new_sls) or '-'}")
     return {"ok": True, "row": _sl_link_row_for_api(row or {})}
@@ -1008,31 +1026,36 @@ def update_sl_link(
     if not old:
         raise HTTPException(status_code=400, detail="รหัสเก่า (old_sl) ว่าง")
     _ensure_sl_link_in_scope(admin, old, new_sls)
-    links = read_sl_links()
-    if not find_sl_link(old, links):
-        raise HTTPException(status_code=404, detail="ไม่พบกลุ่มผูกรหัส")
     new_old = normalize_sl(body.new_old_sl) if body.new_old_sl else old
-    if new_old != old and find_sl_link(new_old, links):
-        raise HTTPException(status_code=409, detail="รหัสเก่าใหม่ซ้ำกับกลุ่มอื่น")
-    if new_old != old:
-        _ensure_sl_link_in_scope(admin, new_old, [])
     email = str(admin.get("email") or admin.get("preferred_username") or "").strip()
-    out: list[dict[str, Any]] = []
-    for row in links:
-        row_old = normalize_sl(row.get("old_sl") or row.get("canonical_sl"))
-        if row_old == old:
-            nr = dict(row)
-            nr["old_sl"] = new_old
-            nr["canonical_sl"] = new_old
-            nr["new_sls"] = new_sls
-            nr["alias_sls"] = [new_old, *new_sls]
-            nr["note"] = str(body.note if body.note is not None else nr.get("note") or "").strip()
-            if email:
-                nr["updated_by"] = email
-            out.append(nr)
-        else:
-            out.append(dict(row))
-    saved = write_sl_links(out)
+
+    # ผลตรวจ §5.1-1: ตรวจ + แก้ + เขียน ใต้ lock เดียว (ดู create_sku_link)
+    # ลำดับการตรวจ (404 → 409 → ขอบเขต) คงเดิม · ตรวจขอบเขตไม่แตะไฟล์ ทำใต้ lock ได้
+    def _apply(links: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], None]:
+        if not find_sl_link(old, links):
+            raise HTTPException(status_code=404, detail="ไม่พบกลุ่มผูกรหัส")
+        if new_old != old and find_sl_link(new_old, links):
+            raise HTTPException(status_code=409, detail="รหัสเก่าใหม่ซ้ำกับกลุ่มอื่น")
+        if new_old != old:
+            _ensure_sl_link_in_scope(admin, new_old, [])
+        out: list[dict[str, Any]] = []
+        for row in links:
+            row_old = normalize_sl(row.get("old_sl") or row.get("canonical_sl"))
+            if row_old == old:
+                nr = dict(row)
+                nr["old_sl"] = new_old
+                nr["canonical_sl"] = new_old
+                nr["new_sls"] = new_sls
+                nr["alias_sls"] = [new_old, *new_sls]
+                nr["note"] = str(body.note if body.note is not None else nr.get("note") or "").strip()
+                if email:
+                    nr["updated_by"] = email
+                out.append(nr)
+            else:
+                out.append(dict(row))
+        return out, None
+
+    saved, _ = mutate_sl_links(_apply)
     row = find_sl_link(new_old, saved)
     _audit_admin(admin, "admin_sl_link_update", f"แก้ผูกรหัส SL {old}→{new_old}", f"→ {', '.join(new_sls) or '-'}")
     return {"ok": True, "row": _sl_link_row_for_api(row or {})}
@@ -1045,13 +1068,19 @@ def remove_sl_link(
 ) -> dict[str, Any]:
     ensure_not_demo_for_global_write(admin)
     old = normalize_sl(body.old_sl or body.canonical_sl)
-    existing = find_sl_link(old, read_sl_links())
-    if existing:
-        _ensure_sl_link_in_scope(admin, old, list(existing.get("new_sls") or []))
-    try:
-        delete_sl_link(read_sl_links(), old)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    # ผลตรวจ §5.1-1: ตรวจขอบเขตกับกลุ่ม "ที่กำลังจะลบจริง" แล้วลบ ใต้ lock เดียว
+    # เดิมอ่านสองรอบแยกกัน — ระหว่างนั้นมีคนแก้ new_sls ได้ ขอบเขตที่ตรวจจึงไม่ใช่ของที่ลบ
+    def _apply(links: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], None]:
+        existing = find_sl_link(old, links)
+        if existing:
+            _ensure_sl_link_in_scope(admin, old, list(existing.get("new_sls") or []))
+        try:
+            return deleted_sl_links(links, old), None
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+    mutate_sl_links(_apply)
     _audit_admin(admin, "admin_sl_link_delete", f"ลบผูกรหัส SL {old}", level="warn")
     return {"ok": True}
 

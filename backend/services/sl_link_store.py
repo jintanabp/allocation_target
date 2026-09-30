@@ -7,13 +7,18 @@ from __future__ import annotations
 import json
 import logging
 import os
-import tempfile
 import threading
-from typing import Any
+from typing import Any, Callable, TypeVar
+
+from ..core.atomic_io import atomic_write_text
 
 logger = logging.getLogger("target_allocation")
 
-_STORE_LOCK = threading.Lock()
+# RLock: mutate_links ถือ lock ตลอด read → fn → write และ fn อาจเรียก read_links()
+# หรือ find_link() แบบไม่ส่ง links ซ้ำใน thread เดิม — Lock ธรรมดาจะ deadlock ทันที
+_STORE_LOCK = threading.RLock()
+
+_T = TypeVar("_T")
 
 
 def _repo_root() -> str:
@@ -132,21 +137,34 @@ def write_links(links: list[dict[str, Any]]) -> list[dict[str, Any]]:
     path = sl_links_json_path()
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     payload = json.dumps({"links": normalized}, ensure_ascii=False, indent=2) + "\n"
-    dir_name = os.path.dirname(path) or "."
+    # ผลตรวจ §5.1-4: เดิมเขียน tempfile + os.replace เองโดยไม่มี retry — บน Windows
+    # antivirus/ตัวทำ index ถือไฟล์ค้างชั่วขณะแล้วบันทึกพังเป็น PermissionError
+    # atomic_write_text ทำ temp + replace + retry ให้ · แปลงท้ายบรรทัดเป็น os.linesep เอง
+    # เพราะของเดิมเขียนแบบ text mode (Windows ได้ CRLF) — ให้ไฟล์ออกมาเหมือนเดิมทุกไบต์
     with _STORE_LOCK:
-        fd, tmp = tempfile.mkstemp(prefix=".sl_links_", suffix=".json", dir=dir_name)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(payload)
-            os.replace(tmp, path)
-        except Exception:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
+        atomic_write_text(path, payload.replace("\n", os.linesep))
     logger.info("บันทึก sl_links %d กลุ่ม → %s", len(normalized), path)
     return normalized
+
+
+def mutate_links(
+    fn: Callable[[list[dict[str, Any]]], tuple[list[dict[str, Any]], _T]],
+) -> tuple[list[dict[str, Any]], _T]:
+    """
+    อ่าน → แก้ → ตรวจ → เขียน ใต้ lock เดียว (ผลตรวจ §5.1-1)
+
+    เดิม endpoint แอดมินเรียก read_links() แล้วค่อย write_links() คนละรอบ lock
+    แอดมินสองคนบันทึกพร้อมกัน = ของคนแรกหายเงียบ ๆ (lost update)
+
+    fn รับรายการปัจจุบัน คืน (รายการใหม่, ค่าอะไรก็ได้ที่ผู้เรียกอยากได้กลับ)
+    fn raise (HTTPException / ValueError) = ยกเลิก ไม่เขียนอะไรลงไฟล์
+    คืน (รายการที่บันทึกแล้ว, ค่าที่ fn คืนมา)
+    """
+    with _STORE_LOCK:
+        current = read_links_unlocked()
+        new_links, extra = fn([dict(r) for r in current])
+        saved = write_links(new_links)
+        return saved, extra
 
 
 def alias_to_canonical_map(links: list[dict[str, Any]] | None = None) -> dict[str, str]:
@@ -254,7 +272,7 @@ def find_link(canonical_sl: str, links: list[dict[str, Any]] | None = None) -> d
     return None
 
 
-def upsert_link(
+def upserted_links(
     links: list[dict[str, Any]],
     *,
     canonical_sl: str,
@@ -262,6 +280,7 @@ def upsert_link(
     note: str | None = None,
     updated_by: str | None = None,
 ) -> list[dict[str, Any]]:
+    """รายการหลังเพิ่ม/แก้กลุ่ม — ไม่เขียนไฟล์ (ใช้ใน mutate_links ได้)"""
     canon = normalize_sl(canonical_sl)
     if not canon:
         raise ValueError("canonical_sl ว่าง")
@@ -289,15 +308,27 @@ def upsert_link(
                 **({"updated_by": str(updated_by).strip()} if updated_by else {}),
             }
         )
-    return write_links(out)
+    return out
 
 
-def delete_link(links: list[dict[str, Any]], canonical_sl: str) -> list[dict[str, Any]]:
+def upsert_link(
+    links: list[dict[str, Any]],
+    **kwargs: Any,
+) -> list[dict[str, Any]]:
+    return write_links(upserted_links(links, **kwargs))
+
+
+def deleted_links(links: list[dict[str, Any]], canonical_sl: str) -> list[dict[str, Any]]:
+    """รายการหลังลบกลุ่ม — ไม่เขียนไฟล์ · ไม่พบ = ValueError"""
     canon = normalize_sl(canonical_sl)
     kept = [r for r in links if r.get("old_sl") != canon and r.get("canonical_sl") != canon]
     if len(kept) == len(links):
         raise ValueError(f"ไม่พบกลุ่มผูกรหัส SL: {canon}")
-    return write_links(kept)
+    return kept
+
+
+def delete_link(links: list[dict[str, Any]], canonical_sl: str) -> list[dict[str, Any]]:
+    return write_links(deleted_links(links, canonical_sl))
 
 
 def link_row_for_api(row: dict[str, Any]) -> dict[str, Any]:
