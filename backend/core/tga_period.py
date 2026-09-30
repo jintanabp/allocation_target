@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -39,9 +40,23 @@ _MONTH_TH = (
 )
 
 
+_BE_DATE_RE = re.compile(r"^\s*(\d{4})([-/.]\d{1,2}(?:[-/.]\d{1,2})?)(.*)$")
+
+
 def _parse_effective_raw(raw) -> pd.Timestamp | None:
+    """
+    แปลง EFFECTIVEDATE เป็น Timestamp ค.ศ. — รองรับปี พ.ศ. (ผลตรวจ §4.2-13)
+
+    pd.to_datetime รองรับปีได้ถึง 2262 เท่านั้น ค่า พ.ศ. (เช่น "2569-10-01") จึงกลายเป็น NaT
+    แล้วด่านตรวจงวดถูกข้ามไปเงียบ ๆ (_to_ce_year_month ที่ตั้งใจแปลง พ.ศ. ไม่เคยถูกเรียกถึง)
+    แปลงปี ≥ 2400 เป็น ค.ศ. ก่อนส่งให้ pandas
+    """
     if raw is None or raw == "":
         return None
+    if isinstance(raw, str):
+        m = _BE_DATE_RE.match(raw)
+        if m and int(m.group(1)) >= 2400:
+            raw = f"{int(m.group(1)) - 543}{m.group(2)}{m.group(3)}"
     dt = pd.to_datetime(raw, errors="coerce")
     if pd.isna(dt):
         return None
