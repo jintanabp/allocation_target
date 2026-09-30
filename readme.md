@@ -140,7 +140,7 @@ allocation_target/
 
 ตั้งบน **server** (ไม่ commit): คัดลอก **`config/.env.example` → `config/.env`** แล้วกรอกค่า — backend โหลด **`config/.env` ก่อน** แล้วโหลด `.env` ที่รากโปรเจกต์ถ้ามี (ค่าที่รากทับค่าซ้ำได้)
 
-> **ทดสอบบนเครื่องตัวเอง (ทางเลือก):** ใช้ `scripts\setup.bat` + `scripts\start_server.bat` หรือ `Run_Local.bat` — ดูหัวข้อท้าย README
+> **ทดสอบบนเครื่องตัวเอง (ทางเลือก):** ใช้ `scripts\dev\setup.bat` + `scripts\dev\start_server.bat` หรือ `Run_Local.bat` — ดูหัวข้อท้าย README
 
 ตัวแปรหลัก:
 
@@ -623,7 +623,7 @@ Log: **`data/app.log`** บน server (path ตาม working directory ขอ�
 
 ใช้เมื่อแก้โค้ดก่อน push GitHub เท่านั้น:
 
-1. `git clone` + `scripts\setup.bat` (conda `allocation_env`) หรือ venv / `Run_Local.bat`
+1. `git clone` + `scripts\dev\setup.bat` (conda `allocation_env`) หรือ venv / `Run_Local.bat`
 2. สร้าง **`config/.env`** ในเครื่อง (อย่า commit)
 3. `uvicorn backend.main:app --host 127.0.0.1 --port 8000` → http://localhost:8000/
 

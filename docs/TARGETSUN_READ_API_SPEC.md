@@ -23,7 +23,7 @@ Read API อ่านเป้าหีบจากตาราง `TGA_TARGET_S
 ### เรียก API เมื่อ
 
 - ตอน user เปิด **Step 1** / เลือกงวด / กด refresh
-- แอป cache ผล ~15 นาที ไม่ยิง API ทุกคลิก
+- แอป cache ผล 60 วินาที (`_LIVE_CACHE_TTL_SEC` ใน `targetsun_read.py`) ไม่ยิง API ทุกคลิก
 
 ---
 
@@ -170,7 +170,7 @@ Read API อ่านเป้าหีบจากตาราง `TGA_TARGET_S
     "rows": [
       {
         "PRODUCTCODE": "123456",
-        "SALESTYPE": "0",
+        "SALESTYPE": "S",
         "DIVISIONCODE": "B",
         "SALESMANCODE": "12345",
         "AREACODE": "1",
@@ -182,7 +182,7 @@ Read API อ่านเป้าหีบจากตาราง `TGA_TARGET_S
       },
       {
         "PRODUCTCODE": "123457",
-        "SALESTYPE": "0",
+        "SALESTYPE": "S",
         "DIVISIONCODE": "B",
         "SALESMANCODE": "12345",
         "AREACODE": "1",
@@ -225,7 +225,7 @@ Read API อ่านเป้าหีบจากตาราง `TGA_TARGET_S
 | Column | Field | Required | Length | หมายเหตุ |
 |--------|-------|----------|--------|----------|
 | A | `PRODUCTCODE` | Yes | 6 | รหัสสินค้า |
-| B | `SALESTYPE` | Yes | 1 | `0` = credit, `1` = van |
+| B | `SALESTYPE` | Yes | 1 | `S` = credit (เครดิต), `C` = van (รถเงินสด) — ค่าจริงที่ระบบใช้ (เอกสารเดิมเขียน 0/1 ซึ่งไม่ตรง · ผลตรวจ §7) |
 | C | `DIVISIONCODE` | Yes | 1 | เช่น `B`, `E`, `S` |
 | D | `SALESMANCODE` | Yes | 5 | รหัสพนักงาน |
 | E | `AREACODE` | Yes | 1 | |
@@ -352,7 +352,7 @@ PRODUCTCODE + SALESTYPE + DIVISIONCODE + SALESMANCODE + AREACODE + PROVINCECODE 
 | รายการ | เป้า |
 |--------|------|
 | Latency ต่อทีม (UAT) | < 5 วินาที |
-| Cache ฝั่งแอป | TTL ~900 วินาที (15 นาที) |
+| Cache ฝั่งแอป | TTL 60 วินาที |
 | ความถี่เรียก | ตอน cache miss / refresh เท่านั้น |
 
 ---

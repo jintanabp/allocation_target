@@ -2837,7 +2837,10 @@ def _build_tga_upload_dataframe(
         dg=grain_dg,
         grain_lookup=grain_lookup,
     )
-    # เฉพาะเส้นทางส่งจริง — ไฟล์ Excel ที่ผู้ใช้โหลดไปดูไม่ต้องมีแถวล้างค่าปนมาให้งง
+    # เฉพาะเส้นทางส่งจริง: แถว 0 ที่ใช้ "ล้าง" เป้าคนไม่ต้องตั้งเป้า / คู่ที่หลุดจากรอบนี้ (ค8)
+    # ไฟล์ Excel ที่ดาวน์โหลดจึงไม่มีสองชุดนี้ — แต่ยังมีแถว 0 จากการแตกตาม grain ของ Target Sun
+    # (_align_zero_allocations_to_tga_grain / _ensure_zero_pairs_have_rows ข้างบน) เหมือนไฟล์ที่ส่ง
+    # (คอมเมนต์เดิมบอกว่าไฟล์ดาวน์โหลด "ไม่มีแถวล้าง" ซึ่งไม่จริงทั้งหมด · ผลตรวจ §7)
     stale_rows_cleared = 0
     if drop_incomplete_rows:
         # ล้างแถวที่หลุดจากรอบนี้ (ค8) ต้องเป็นการส่งแบบเต็ม — brand_filter=="ALL" และ
