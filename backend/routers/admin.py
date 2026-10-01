@@ -212,6 +212,47 @@ def _patch_row_meta(row: dict[str, Any], body: UserAccessUpdateBody) -> None:
             row.pop(key, None)
 
 
+def _wide_visibility_label(row: dict[str, Any] | None) -> str | None:
+    """ตำแหน่งที่ทำให้เห็นข้อมูลเกินภาคของตัวเอง — None = เห็นแค่ในภาค/ทีม"""
+    r = row or {}
+    lk = str(r.get("login_kind") or "").strip().lower()
+    if lk == "marketing":
+        return "Marketing (MKT)"
+    if lk == "district_manager" or (
+        lk == "manager_acc" and str(r.get("manager_level") or "").strip().lower() == "division"
+    ):
+        return "Manager ระดับเขต"
+    return None
+
+
+def _ensure_can_grant_wide_visibility(admin: dict, before: dict[str, Any] | None, after: dict[str, Any]) -> None:
+    """
+    ตำแหน่งที่เห็นข้อมูลเกินภาค ตั้งได้เฉพาะ dev / หัวหน้าแอดมิน (ผลตรวจ 1 ต.ค. 2026 ข12 · ผู้ใช้เลือกข้อ 2)
+
+    ขอบเขตแอดมินตรวจแค่ว่า "ผู้ใช้อยู่ภาคไหน" ไม่ได้ดูว่าตำแหน่งที่ตั้งให้เห็นกว้างแค่ไหน — แอดมินภาคเหนือ
+    ตั้งคนในภาคเป็น Marketing (เห็นทุกทีมทั้งบริษัท) หรือ Manager ระดับเขต (ทุกภาคใน division) ได้
+    ทั้งที่ตัวเองเห็นภาคอื่นไม่ได้ · แถวที่ตั้งไว้แล้วไม่ถูกแตะ — แก้ช่องอื่นของแถวนั้นได้ตามเดิม
+    """
+    if admin.get("auth_disabled") or admin.get("role") in (ROLE_DEV, ROLE_HEAD_ADMIN):
+        return
+    wide = _wide_visibility_label(after)
+    if not wide:
+        return
+    same_person = before is not None and (
+        normalized_email(before.get("email")) == normalized_email(after.get("email"))
+        and normalize_userpl(before.get("userpl")) == normalize_userpl(after.get("userpl"))
+    )
+    if same_person and _wide_visibility_label(before) == wide:
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            f"ตำแหน่ง {wide} เห็นข้อมูลเกินภาคที่บัญชีนี้ดูแล — "
+            "ให้หัวหน้าแอดมินหรือ dev เป็นคนตั้งตำแหน่งนี้"
+        ),
+    )
+
+
 def _scope_rows(admin: dict, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """dev เห็นทุกแถว ผู้ดูแลเห็นเฉพาะขอบเขตตัวเอง"""
     if admin.get("auth_disabled") or admin.get("role") == ROLE_DEV:
@@ -323,6 +364,7 @@ def create_user_access(
     _patch_row_meta(new_row, body)
     # ผู้ดูแลสร้างคนนอกขอบเขตไม่ได้ — ตรวจ "ค่าที่จะบันทึก" ไม่ใช่แค่ตัวผู้เรียก
     ensure_row_in_admin_scope(admin, new_row)
+    _ensure_can_grant_wide_visibility(admin, None, new_row)
 
     # ตรวจซ้ำ + เขียน ใต้ล็อกเดียว (mutate_rows) — เดิม read_rows() แล้ว write_rows()
     # แยกกัน แอดมินอีกคนบันทึกคั่นกลางแล้วการแก้ของเขาหายเงียบ ๆ
@@ -386,6 +428,7 @@ def update_user_access(
         _patch_row_meta(updated_row, body)
         # ตรวจปลายทางด้วย ไม่งั้นย้ายคนออกนอกภาคตัวเองได้
         ensure_row_in_admin_scope(admin, updated_row)
+        _ensure_can_grant_wide_visibility(admin, existing, updated_row)
         captured["existing"], captured["updated"] = existing, updated_row
         return [
             updated_row if r["email"] == em and r["userpl"] == upl else r
