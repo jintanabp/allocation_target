@@ -83,6 +83,23 @@ _PROTECTED_CONFIGS = (
     "config/allocation_rules.json",
 )
 
+# โฟลเดอร์ที่ทุกไฟล์ข้างในห้ามแตะ (ออดิต 26 ส.ค. 2026) — แคชราคา/สินค้าของจริง
+# เทสต์ที่ลืมตั้ง FABRIC_CACHE_DIR แล้วเขียน price_per_box_*.json / dim_product_*.json ทับ
+# = ทำให้เกิดเหตุ "ทุกทีมเปิดงวดไม่ได้" เองได้ · ไฟล์ที่เทสต์สร้างใหม่ในนี้ถูกลบทิ้ง
+_PROTECTED_DIRS = ("data/cache",)
+
+
+def _protected_paths() -> list[str]:
+    rels = list(_PROTECTED_CONFIGS)
+    for d in _PROTECTED_DIRS:
+        base = os.path.join(repo_root(), d)
+        if not os.path.isdir(base):
+            continue
+        for name in sorted(os.listdir(base)):
+            if os.path.isfile(os.path.join(base, name)):
+                rels.append(f"{d}/{name}")
+    return rels
+
 
 def _snapshot_protected() -> dict[str, bytes | None]:
     """
@@ -95,7 +112,7 @@ def _snapshot_protected() -> dict[str, bytes | None]:
     ก็แดงตั้งแต่รอบถัดไป)
     """
     out: dict[str, bytes | None] = {}
-    for rel in _PROTECTED_CONFIGS:
+    for rel in _protected_paths():
         p = os.path.join(repo_root(), rel)
         out[rel] = None
         if os.path.isfile(p):
@@ -107,6 +124,8 @@ def _snapshot_protected() -> dict[str, bytes | None]:
 def _restore_protected(before: dict[str, bytes | None]) -> list[str]:
     """คืนค่าไฟล์ที่ถูกแก้/ถูกสร้างใหม่ คืนรายชื่อไฟล์ที่โดน"""
     dirty: list[str] = []
+    # ไฟล์ที่เพิ่งโผล่ในโฟลเดอร์ที่ห้ามแตะ = เทสต์สร้างเอง ต้องลบ (ตอนเริ่มไม่อยู่ใน before)
+    before = {**{rel: None for rel in _protected_paths() if rel not in before}, **before}
     for rel, data in before.items():
         p = os.path.join(repo_root(), rel)
         exists = os.path.isfile(p)
@@ -165,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "\n"
             + "!" * 70
-            + "\nเทสต์ไปแก้ไฟล์ config จริง (กู้คืนให้แล้ว):\n  - "
+            + "\nเทสต์ไปแก้ไฟล์ config / แคชจริง (กู้คืนให้แล้ว):\n  - "
             + "\n  - ".join(dirty)
             + "\n\nเทสต์ต้องเขียนลงไฟล์ชั่วคราวเสมอ — ตั้ง env ของ store นั้น"
             "\n(เช่น APP_RUNTIME_SETTINGS_PATH) ชี้ไป tempdir ก่อนเรียกฟังก์ชันที่เขียนไฟล์"
