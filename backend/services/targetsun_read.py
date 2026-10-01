@@ -144,6 +144,28 @@ def _fabric_sales_type_to_code(sales_type: int | None) -> str:
     return ""
 
 
+def sales_type_from_fabric_dim(sup_id: str, fabric) -> str:
+    """
+    หน่วยขาย (S/C) ของทีมจาก Dim ของ Fabric — "" ถ้าหาไม่ได้ · ไม่ raise
+
+    ใช้ตอนอ่านเป้าจาก Fabric (ไม่ผ่าน resolve_targetsun_scope) และ acc_unit ในทะเบียนว่าง
+    (ผลตรวจ 1 ต.ค. 2026 ข11) — เดิมตกไปราคาเครดิตเงียบ ๆ ทีมรถเงินสดได้เป้าเงินผิดราคา
+    """
+    if fabric is None:
+        return ""
+    upl = normalize_userpl(sup_id)
+    try:
+        for r in fabric.get_dim_salesman_supervisor_index() or []:
+            sc = str(r.get("super_code") or r.get("SuperCode") or "").strip().upper()
+            if sc == upl:
+                st = _fabric_sales_type_to_code(r.get("sales_type"))
+                if st:
+                    return st
+    except Exception as e:
+        logger.warning("sales_type_from_fabric_dim failed (%s): %s", sup_id, e)
+    return ""
+
+
 def resolve_targetsun_scope(
     sup_id: str,
     *,

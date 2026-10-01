@@ -80,6 +80,16 @@ def _shared_pca(client_id: str, authority: str, cache_file: str) -> tuple["msal.
         return app, cache, True
 
 
+
+def _dax_str(v) -> str:
+    """
+    ค่าตัวอักษรใน DAX แบบ escape แล้ว (ผลตรวจ 1 ต.ค. 2026 ข13)
+
+    เดิมต่อ '"' + ค่า + '"' ตรง ๆ — alias SKU / รหัสพนักงานที่แอดมินบันทึก ถ้ามี " อยู่ข้างใน
+    คิวรีของทุกทีมที่ใช้ SKU นั้นพัง (หรือถูกแก้เงื่อนไขกรอง) · DAX escape " ด้วยการเขียนซ้ำ ""
+    """
+    return '"' + str(v).replace('"', '""') + '"'
+
 class FabricDAXConnector:
     def __init__(self):
         # ค่า default ใช้สำหรับ dev — production ตั้งใน .env หรือ environment
@@ -337,14 +347,14 @@ class FabricDAXConnector:
     def _sku_treatas(sku_list: list) -> str:
         if not sku_list:
             return ""
-        s = ", ".join(f'"{x}"' for x in sku_list)
+        s = ", ".join(_dax_str(x) for x in sku_list)
         return f"TREATAS({{{s}}}, 'cross_sold_history_2y_qu'[ProductCode]),"
 
     @staticmethod
     def _emp_treatas(emp_list: list) -> str:
         if not emp_list:
             return ""
-        s = ", ".join(f'"{x}"' for x in emp_list)
+        s = ", ".join(_dax_str(x) for x in emp_list)
         return f"TREATAS({{{s}}}, 'cross_sold_history_2y_qu'[SalesmanCode]),"
 
     # ══════════════════════════════════════════════
@@ -474,7 +484,7 @@ EVALUATE
 SELECTCOLUMNS(
     FILTER(
         'Dim_Salesman', 
-        TRIM(UPPER('Dim_Salesman'[SuperCode])) = "{manager_code.upper()}"
+        TRIM(UPPER('Dim_Salesman'[SuperCode])) = {_dax_str(manager_code.upper())}
     ),
     "SalesmanCode", 'Dim_Salesman'[SalesmanCode],
     "SalesmanName", 'Dim_Salesman'[Salesman_NameThai],
@@ -567,7 +577,7 @@ EVALUATE
 SELECTCOLUMNS(
     FILTER(
         'Dim_Super',
-        TRIM(UPPER('Dim_Super'[Code])) = "{sc.upper()}"
+        TRIM(UPPER('Dim_Super'[Code])) = {_dax_str(sc.upper())}
     ),
     "SuperNameThai", 'Dim_Super'[Namethai]
 )
@@ -587,7 +597,7 @@ EVALUATE
 SELECTCOLUMNS(
     FILTER(
         'Dim_Salesman',
-        TRIM(UPPER('Dim_Salesman'[SalesmanCode])) = "{sc.upper()}"
+        TRIM(UPPER('Dim_Salesman'[SalesmanCode])) = {_dax_str(sc.upper())}
     ),
     "SalesmanName", 'Dim_Salesman'[Salesman_NameThai]
 )
@@ -674,7 +684,7 @@ SUMMARIZECOLUMNS(
         asof = self._price_asof_dax(target_year, target_month)
         print(f"📡 [Dim_Product] ดึงข้อมูลสินค้า... (ราคา ณ {asof})")
         if sku_list:
-            s = ", ".join(f'"{x}"' for x in sku_list)
+            s = ", ".join(_dax_str(x) for x in sku_list)
             table_expr = f"FILTER('Dim_Product', 'Dim_Product'[ProductCode] IN {{{s}}})"
         else:
             table_expr = "'Dim_Product'"
@@ -1287,7 +1297,7 @@ SUMMARIZECOLUMNS(
         print(f"📡 [LY] ดึงยอดขายปีก่อนเดือน {ly_month}/{ly_year} (ยอดรวมทุกสินค้า)...")
 
         if emp_list:
-            emp_str = ", ".join(f'"{e}"' for e in emp_list)
+            emp_str = ", ".join(_dax_str(e) for e in emp_list)
             # ใช้ CALCULATETABLE + VALUES แทน TREATAS ใน SUMMARIZECOLUMNS
             # เพื่อให้แน่ใจว่า filter ทำงานถูกต้องและคืนทุก emp ที่มีข้อมูล
             dax = f"""
@@ -1568,7 +1578,7 @@ ROW("{row_alias}", MAX('{table}'[{col}]))
         if not emp_list:
             return pd.DataFrame(columns=empty_cols)
 
-        emp_str = ", ".join(f'"{str(e)}"' for e in emp_list)
+        emp_str = ", ".join(_dax_str(e) for e in emp_list)
 
         eff_filters = ""
         if filter_period and c_eff:
@@ -1686,7 +1696,7 @@ CALCULATETABLE(
         if not sku_list:
             return pd.DataFrame(columns=empty_cols)
 
-        sku_str = ", ".join(f'"{str(s)}"' for s in sku_list)
+        sku_str = ", ".join(_dax_str(s) for s in sku_list)
 
         eff_filters = ""
         if filter_period and c_eff:
@@ -1830,8 +1840,8 @@ CALCULATETABLE(
             "provincecode": os.environ.get("LAKEHOUSE_COL_PROVINCE", "PROVINCECODE").strip(),
             "warehouse_code": os.environ.get("LAKEHOUSE_COL_WAREHOUSE", "WAREHOUSECODE").strip(),
         }
-        emp_str = ", ".join(f'"{str(e)}"' for e in emp_list)
-        sku_str = ", ".join(f'"{str(s)}"' for s in sku_list)
+        emp_str = ", ".join(_dax_str(e) for e in emp_list)
+        sku_str = ", ".join(_dax_str(s) for s in sku_list)
         col_lines = ",\n        ".join(
             f'"{alias}", \'{t}\'[{col}]' for alias, col in dim_cols.items()
         )
@@ -1905,7 +1915,7 @@ CALCULATETABLE(
             "provincecode": os.environ.get("LAKEHOUSE_COL_PROVINCE", "PROVINCECODE").strip(),
             "warehouse_code": os.environ.get("LAKEHOUSE_COL_WAREHOUSE", "WAREHOUSECODE").strip(),
         }
-        emp_str = ", ".join(f'"{str(e)}"' for e in emp_list)
+        emp_str = ", ".join(_dax_str(e) for e in emp_list)
         measure_lines = ",\n        ".join(
             f'"{alias}", MAX(\'{t}\'[{col}])' for alias, col in dim_cols.items()
         )

@@ -370,6 +370,7 @@ def _keep_sent_record(token: str, meta: dict, send_status: str = "") -> None:
             str(meta.get("sup_id") or ""), int(meta.get("target_month") or 0), int(meta.get("target_year") or 0),
             rows, token=token, user=str(meta.get("upload_user_code") or ""),
             send_status=send_status, send_batch_id=meta.get("send_batch_id"),
+            import_url=_current_import_url(),
         )
         rec = {k: meta.get(k) for k in ("sup_id", "target_month", "target_year", "upload_user_code", "send_batch_id")}
         # ปลายทางที่ส่งจริง (ผลตรวจ 1 ต.ค. 2026 ก4) — ส่งซ้ำได้เฉพาะปลายทางเดิม กันไฟล์ที่ส่ง UAT ไปลง Prod หลังสลับ preset
@@ -465,6 +466,37 @@ def _warehouse_conflict_error(sup_id: str, conflicts: list[dict], *, resolvable:
     )
 
 
+def _warehouse_check_expected() -> bool:
+    """ระบบตั้งให้อ่านเป้าจาก Target Sun อยู่ = ด่านคลังซ้ำต้องทำงานได้ อ่านไม่ได้ถือว่าผิดปกติ"""
+    from . import targetsun_read as tsr
+
+    try:
+        return bool(tsr.is_enabled() and tsr.get_target_read_source() == "targetsun")
+    except Exception:
+        return False
+
+
+def _warehouse_check_unavailable(sup_id: str) -> HTTPException:
+    """
+    อ่าน Target Sun ไม่ได้ตอนต้องตรวจคลังซ้ำ = ไม่ส่ง (ผลตรวจ 1 ต.ค. 2026 ข3)
+
+    เดิม "ไม่บล็อก" — แต่จังหวะที่อ่านไม่ได้คือจังหวะเดียวกับที่ไฟล์คนละคลังสร้างแถวที่สองของคู่เดิม
+    แล้วเป้าเบิ้ล (SL380 / SL453) โดยไม่มีอะไรเตือน · โหมดที่ไม่ได้อ่านจาก Target Sun ไม่เข้าทางนี้
+    """
+    return HTTPException(
+        503,
+        detail={
+            "code": "warehouse_check_unavailable",
+            "message": (
+                f"ทีม {sup_id}: อ่านข้อมูลจาก Target Sun ไม่ได้ตอนนี้ — ตรวจคลังซ้ำไม่ได้ จึงยังไม่ส่ง "
+                "(กันเป้าเบิ้ล) ไม่มีอะไรถูกส่งเข้า Target Sun"
+            ),
+            "hint_th": "รอสักครู่แล้วกดส่งอีกครั้ง · ถ้ายังไม่ได้ แจ้ง dev ตรวจ Read API",
+            "sup_id": sup_id,
+        },
+    )
+
+
 def _live_warehouse_conflicts(sup_id: str, month: int, year: int, df) -> tuple[list[dict], dict | None]:
     """ไฟล์ที่เตรียมไว้ × Target Sun ตอนนี้ — อ่านไม่ได้ = ไม่บล็อก (เหมือนด่านเป้าเปลี่ยน)
     การนับแถวหลังส่งจะรายงาน「ตรวจไม่ได้」ให้เอง"""
@@ -476,6 +508,8 @@ def _live_warehouse_conflicts(sup_id: str, month: int, year: int, df) -> tuple[l
     if snap is None:
         if codes:
             logger.warning("ตรวจคลังก่อนส่งไม่ได้ (%s) — อ่าน Target Sun ไม่ได้", sup_id)
+            if _warehouse_check_expected():
+                raise _warehouse_check_unavailable(str(sup_id or "").strip().upper())
         return [], None
     return warehouse_conflicts(snap.get("qty_by_key") or {}, _file_qty_by_key(_file_rows(df))), snap
 
@@ -712,6 +746,24 @@ def _post_targetsun_multipart(
             ct or "?",
             text_head[:500],
         )
+        if int(r.status_code) in (502, 504):
+            # proxy ตอบหน้า HTML ตอนรอนาน = ปลายทางอาจยังบันทึกอยู่ ผลยังไม่รู้ (ผลตรวจ 1 ต.ค. 2026 ข5)
+            # ส่งเป็น 504 ให้ทางเดียวกับหมดเวลารอ: เก็บไฟล์ที่ส่ง + จด ledger เป็น unknown ไม่ลบทิ้ง
+            raise HTTPException(
+                504,
+                detail={
+                    "message": (
+                        f"ระบบเป้าหมายตอบกลับช้าจนตัวกลางตัดการเชื่อมต่อ (HTTP {r.status_code}) — "
+                        "ข้อมูลอาจลงไปแล้ว ยังยืนยันผลไม่ได้"
+                    ),
+                    "error_kind": "gateway_unknown",
+                    "upstream_status": int(r.status_code),
+                    "content_type": ct or None,
+                    "body_preview": text_head[:800],
+                    "import_url": url,
+                    "hint_th": "ตรวจยอดใน Target Sun ก่อนส่งซ้ำ (แท็บตรวจจำนวนแถวหลังส่ง)",
+                },
+            )
         raise HTTPException(
             502,
             detail={
@@ -929,7 +981,7 @@ def resend_unlanded_rows(sup_id: str, token: str) -> dict:
             sent_ledger.record_send(
                 sup_id, month, year, sub.to_dict(orient="records"), token=token,
                 user=str(rec.get("upload_user_code") or ""), send_status=str(out.get("send_status") or ""),
-                send_batch_id=rec.get("send_batch_id"),
+                send_batch_id=rec.get("send_batch_id"), import_url=sent_url,
             )
         after = _live_target_snapshot(sup_id, month, year, emp_codes)
         remaining = (
@@ -992,6 +1044,8 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
         )
         # ด่านคลังซ้ำอีกครั้งด้วยค่าที่อ่านสดข้างบน — Target Sun อาจถูกแก้ระหว่าง prepare กับ
         # ตอนนี้ (รอผู้ใช้ยืนยัน / รอส่งทีมก่อนหน้าในรอบรวมภาค) ส่งไปตอนนี้ = เป้าเบิ้ล
+        if before_row_snapshot is None and file_qty and _warehouse_check_expected():
+            raise _warehouse_check_unavailable(str(req.sup_id or "").strip().upper())
         if before_row_snapshot is not None and file_qty:
             _late = warehouse_conflicts(before_row_snapshot.get("qty_by_key") or {}, file_qty)
             if _late:
@@ -1143,6 +1197,7 @@ def _import_allocations_one_shot(req: LakehouseUploadRequest) -> dict:
     sent_ledger.record_send(
         req.sup_id, int(req.target_month), int(req.target_year), _file_rows(df),
         user=str(req.upload_user_code or ""), send_status=str(out.get("send_status") or ""),
+        import_url=_current_import_url(),
     )
     logger.info(
         "TargetSun import timing: build_xlsx=%.2fs post_upstream=%.2fs total=%.2fs rows=%d",

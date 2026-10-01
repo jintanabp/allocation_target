@@ -126,12 +126,18 @@ def compare(ledger_rows: dict[str, dict], live_qty_by_key: dict[str, int]) -> di
         k: int(q) for k, q in (live_qty_by_key or {}).items()
         if k.split("|")[0] in skus and (k.split("|") + [""])[1] in emps
     }
+    # แถวที่ส่งแบบยังไม่ยืนยันผล (partial / unknown) ไม่นับเป็นการแก้หลังส่ง — แยกไว้อีกกลุ่ม (ผลตรวจ 1 ต.ค. 2026 ข4)
+    unconf = {k for k, v in (ledger_rows or {}).items() if (v or {}).get("unconfirmed")}
     changed = [{"key": k, "sent": q, "now": live[k]} for k, q in sent.items() if k in live and live[k] != q]
     missing = [{"key": k, "sent": q, "now": None} for k, q in sent.items() if k not in live and q > 0]
     extra = [{"key": k, "sent": None, "now": q} for k, q in live.items() if k not in sent and q > 0]
+    unconfirmed = [d for d in changed + missing if d["key"] in unconf]
+    changed = [d for d in changed if d["key"] not in unconf]
+    missing = [d for d in missing if d["key"] not in unconf]
     return {"changed": sorted(changed, key=lambda d: d["key"]),
             "missing": sorted(missing, key=lambda d: d["key"]),
-            "extra": sorted(extra, key=lambda d: d["key"])}
+            "extra": sorted(extra, key=lambda d: d["key"]),
+            "unconfirmed": sorted(unconfirmed, key=lambda d: d["key"])}
 
 
 def _live_qty(fetch: Callable, month: int, year: int, emp_codes: list[str]) -> tuple[dict | None, str]:
@@ -221,11 +227,16 @@ def run_once(*, now: datetime | None = None, fetch: Callable | None = None,
     from . import targetsun_read as tsr
     from .targetsun_endpoints import targetsun_endpoints_summary
 
+    current_url = ""
+    try:
+        current_url = str(targetsun_endpoints_summary().get("import_url") or "")
+    except Exception:
+        pass
     if fetch is None:
         if str(targetsun_endpoints_summary().get("cross_env") or "") == "1":
-            return _finish(now, {"skipped": "cross_env"}, {}, closing)
+            return _finish(now, {"skipped": "cross_env"}, {}, closing, manual=force)
         if not tsr.is_enabled() or tsr.get_target_read_source() != "targetsun":
-            return _finish(now, {"skipped": "read_source_not_targetsun"}, {}, closing)
+            return _finish(now, {"skipped": "read_source_not_targetsun"}, {}, closing, manual=force)
         fetch = tsr.fetch_target_rows
 
     lock = _try_file_lock(os.path.join("data", ".nightly_check.lock"))
@@ -245,6 +256,10 @@ def run_once(*, now: datetime | None = None, fetch: Callable | None = None,
                 teams[tag] = {"status": "skipped", "reason": "table_not_ready"}
                 continue
             led = sent_ledger.read_ledger(sup, m, y) or {}
+            # ledger ของปลายทางอื่น (ส่งตอน preset อื่น) เทียบกับ Target Sun ที่อ่านตอนนี้ไม่ได้ (ผลตรวจ 1 ต.ค. 2026 ข2)
+            if led.get("import_url") and current_url and led.get("import_url") != current_url:
+                teams[tag] = {"status": "skipped", "reason": "other_destination"}
+                continue
             rows = led.get("rows") or {}
             emps = sorted({(k.split("|") + [""])[1] for k in rows} - {""})
             if not emps:
@@ -262,7 +277,7 @@ def run_once(*, now: datetime | None = None, fetch: Callable | None = None,
             diff = compare(rows, live)
             summary = {k: len(v) for k, v in diff.items()}
             summary["boxes_changed"] = int(sum(abs((d["now"] or 0) - (d["sent"] or 0))
-                                               for v in diff.values() for d in v))
+                                               for k, v in diff.items() if k != "unconfirmed" for d in v))
             teams[tag] = {"status": "ok", **summary}
             _save_history(sup, m, y, f"{day}_close" if closing else day, {
                 "sup_id": sup, "target_month": m, "target_year": y, "checked_at": now.isoformat(timespec="seconds"),
@@ -281,11 +296,11 @@ def run_once(*, now: datetime | None = None, fetch: Callable | None = None,
                  f"อ่านไม่ได้ {len(failed)} ทีม: {', '.join(failed[:10])} — จะลองใหม่คืนถัดไป"),
                 {"failed": failed[:50], "date": day},
             )
-        return _finish(now, result, teams, closing)
+        return _finish(now, result, teams, closing, manual=force)
     except Exception as e:
         logger.exception("ตรวจรายคืนล้ม")
         _notify_dev("ตรวจ Target Sun รายคืนล้ม", str(e)[:500], {"date": now.strftime("%Y-%m-%d")})
-        return _finish(now, {"error": str(e)[:300]}, {}, closing)
+        return _finish(now, {"error": str(e)[:300]}, {}, closing, manual=force)
     finally:
         try:
             lock.close()
@@ -293,10 +308,13 @@ def run_once(*, now: datetime | None = None, fetch: Callable | None = None,
             pass
 
 
-def _finish(now: datetime, result: dict, teams: dict, closing: bool = False) -> dict:
+def _finish(now: datetime, result: dict, teams: dict, closing: bool = False, manual: bool = False) -> dict:
     state = read_state()
     state["last_run"] = now.isoformat(timespec="seconds")
-    if closing:
+    if manual:
+        # 「รันเดี๋ยวนี้」ไม่นับเป็นรอบของวัน (ผลตรวจ 1 ต.ค. 2026 ข16) — เดิมกดก่อนตี 2 แล้วล้ม รอบตามเวลาวันนั้นก็ไม่รันอีก
+        state["last_manual_run_date"] = now.strftime("%Y-%m-%d")
+    elif closing:
         state["last_closing_date"] = now.strftime("%Y-%m-%d")
     else:
         state["last_run_date"] = now.strftime("%Y-%m-%d")

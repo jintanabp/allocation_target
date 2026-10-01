@@ -122,6 +122,7 @@ def record_send(
     user: str = "",
     send_status: str = "",
     send_batch_id: str | None = None,
+    import_url: str = "",
 ) -> bool:
     """
     บันทึกการส่งหนึ่งรอบ — คืน True ถ้าบันทึกได้ · ไม่ raise
@@ -145,12 +146,27 @@ def record_send(
                 "sup_id": sid, "target_month": int(month), "target_year": int(year),
                 "rows": {}, "sends": [],
             }
+            # ปลายทาง (ผลตรวจ 1 ต.ค. 2026 ข2): ledger ใช้เทียบกับ Target Sun ที่อ่านได้ตอนนี้ — แถวที่ส่ง UAT
+            # ปนกับ Prod จะฟ้องผิดทุกทีมหลังสลับ preset · ปลายทางเปลี่ยน = เริ่มชุดแถวใหม่ (ประวัติการส่งยังอยู่)
+            url = str(import_url or "")
+            if url and data.get("import_url") and data.get("import_url") != url:
+                logger.warning("sent ledger %s %s-%02d: ปลายทางเปลี่ยน (%s → %s) — เริ่มชุดแถวใหม่",
+                               sid, year, month, data.get("import_url"), url)
+                data["rows"] = {}
+            if url:
+                data["import_url"] = url
+            # ส่งได้บางส่วน / ยังไม่รู้ผล (ผลตรวจ 1 ต.ค. 2026 ข4) — ไม่รู้ว่าแถวไหนลง จึงจดเป็น "ยังไม่ยืนยัน"
+            # ตรวจรายคืนแยกแถวพวกนี้ไว้อีกกลุ่ม ไม่นับเป็น「มีคนแก้หลังส่ง」
+            unconfirmed = status in ("partial", "unknown")
             for k, q in by_key.items():
-                data["rows"][k] = {"qty": int(q), "sent_at": now, "token": token}
+                entry = {"qty": int(q), "sent_at": now, "token": token}
+                if unconfirmed:
+                    entry["unconfirmed"] = True
+                data["rows"][k] = entry
             data["sends"] = (data.get("sends") or [])[-(_MAX_SENDS_KEPT - 1):] + [{
                 "token": token, "sent_at": now, "user": user, "rows": len(by_key),
                 "boxes": int(sum(by_key.values())), "send_status": status or None,
-                "send_batch_id": send_batch_id or None,
+                "send_batch_id": send_batch_id or None, "import_url": url or None,
             }]
             data["updated_at"] = now
             atomic_write_json(path, data, ensure_ascii=False)

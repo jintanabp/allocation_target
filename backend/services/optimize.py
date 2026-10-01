@@ -1309,6 +1309,8 @@ def run_optimization_service(
                 "hist LY same-month loaded: %d rows (blend weight env ALLOC_HIST_LYM_WEIGHT, default 0.5)",
                 len(df_hist_lysm),
             )
+    except HTTPException:
+        raise  # ไฟล์มีแต่เสีย — บอกผู้ใช้ให้โหลดขั้นที่ 1 ใหม่ ไม่ใช่ถือว่าไม่มีไฟล์ (ผลตรวจ 1 ต.ค. 2026 ข10)
     except Exception as e:
         logger.warning("hist LY same-month cache read failed: %s", e)
         df_hist_lysm = pd.DataFrame()
@@ -1338,6 +1340,8 @@ def run_optimization_service(
         )
         if not df_hist_prev.empty:
             logger.info("hist prev-month loaded: %d rows", len(df_hist_prev))
+    except HTTPException:
+        raise  # ไฟล์มีแต่เสีย — บอกผู้ใช้ให้โหลดขั้นที่ 1 ใหม่ ไม่ใช่ถือว่าไม่มีไฟล์ (ผลตรวจ 1 ต.ค. 2026 ข10)
     except Exception as e:
         logger.warning("hist prev-month cache read failed: %s", e)
         df_hist_prev = pd.DataFrame()

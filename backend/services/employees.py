@@ -611,6 +611,8 @@ def load_employees_payload(
         # หน่วยขายใช้เลือกคอลัมน์ราคา (เครดิต/รถเงินสด) — คนละเรื่องกับ pre-check
         # ของ TargetSun ที่ล้มแล้วล้าง ts_st ทิ้ง จึงต้องเก็บแยกไม่ให้หายไปด้วย
         sales_unit = sales_unit or _sales_unit_from_user_access(sup_id)
+        if not sales_unit and not targetsun_read.is_enabled():
+            sales_unit = targetsun_read.sales_type_from_fabric_dim(sup_id, fabric)
         if targetsun_read.is_enabled():
             ts_div, ts_st = targetsun_read.resolve_targetsun_scope(sup_id, fabric=fabric)
             sales_unit = ts_st or sales_unit

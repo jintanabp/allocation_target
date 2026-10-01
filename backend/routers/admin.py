@@ -1032,8 +1032,12 @@ def update_sl_link(
     # ผลตรวจ §5.1-1: ตรวจ + แก้ + เขียน ใต้ lock เดียว (ดู create_sku_link)
     # ลำดับการตรวจ (404 → 409 → ขอบเขต) คงเดิม · ตรวจขอบเขตไม่แตะไฟล์ ทำใต้ lock ได้
     def _apply(links: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], None]:
-        if not find_sl_link(old, links):
+        existing = find_sl_link(old, links)
+        if not existing:
             raise HTTPException(status_code=404, detail="ไม่พบกลุ่มผูกรหัส")
+        # สมาชิกเดิมของกลุ่มต้องอยู่ในขอบเขตด้วย เหมือน DELETE (ผลตรวจ 1 ต.ค. 2026 ข15) — เดิมตรวจแค่ชุดใหม่
+        # แอดมินภาคหนึ่งจึงตัดรหัสของภาคอื่นออกจากกลุ่มได้ (เปลี่ยนว่าใครเห็นทีมนั้น / snapshot ผูกกับรหัสไหน)
+        _ensure_sl_link_in_scope(admin, old, list(existing.get("new_sls") or []))
         if new_old != old and find_sl_link(new_old, links):
             raise HTTPException(status_code=409, detail="รหัสเก่าใหม่ซ้ำกับกลุ่มอื่น")
         if new_old != old:

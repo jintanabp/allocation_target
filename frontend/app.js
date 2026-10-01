@@ -1138,18 +1138,20 @@ function _userFacingError(err, fallback = "เกิดข้อผิดพล�
  *
  * ยิงแบบทิ้ง ไม่รอผล และกลืน error ทั้งหมด — การบันทึกล้มต้องไม่ทำให้สิ่งที่ผู้ใช้กำลังทำพัง
  */
-function _logClientAction(action, message, detail = "", level = "info") {
+function _logClientAction(action, message, detail = "", level = "info", opts = {}) {
   const body = {
     level: String(level || "info"),
     action: String(action || "client"),
     message: String(message || "").slice(0, 500),
     detail: String(detail || "").slice(0, 2000),
-    sup_id: String(S.supId || ""),
+    sup_id: String(opts.supId ?? S.supId ?? ""),
   };
   fetchWithTimeout(`${API_BASE_URL}/admin/usage-logs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    // ปิดแท็บ: keepalive ให้คำขอวิ่งต่อหลังหน้าถูกปิด (ผลตรวจ 1 ต.ค. 2026 ข17)
+    ...(opts.keepalive ? { keepalive: true } : {}),
   }, 8000).catch(() => {});
 }
 
@@ -1175,6 +1177,9 @@ function _newActionTally() {
 
 function _tally(kind, n = 1) {
   if (!_TALLY_KEYS.includes(kind)) return;
+  // จำทีมตั้งแต่การกระทำแรกของรอบ (ผลตรวจ 1 ต.ค. 2026 ข17) — เดิมอ่าน S.supId ตอนส่ง log
+  // สลับทีมแล้วค่อยส่ง ยอดของทีม A จึงไปลงชื่อทีม B
+  if (!_actionTally.sup_id) _actionTally.sup_id = String(S.supId || "");
   _actionTally[kind] += Number(n) || 0;
 }
 
@@ -1188,6 +1193,8 @@ function _tallyFlush(reason) {
     `แก้ ${t.edits} ช่อง · ล็อก ${t.locks} · คืนค่า ${t.reverts}${t.revert_all ? " + ทั้งตาราง" : ""}`
       + ` · ปรับยอดอัตโนมัติ ${t.rebalance_boxes} หีบ${t.cross_team_boxes ? ` (ข้ามทีม ${t.cross_team_boxes})` : ""}`,
     JSON.stringify({ ...t, reason, ended_at: new Date().toISOString() }),
+    "info",
+    { supId: t.sup_id || S.supId, keepalive: reason === "page_hidden" },
   );
 }
 
@@ -2622,12 +2629,13 @@ async function onManagerViewRegionChange() {
   await refreshManagerDashboardData();
 }
 
+/** คืน true เมื่อโหลดสำเร็จจริง (ผลตรวจ 1 ต.ค. 2026 ข6) — ตัวเรียกที่ต้องใช้เป้าใหม่ต้องเช็คค่านี้ */
 async function refreshManagerDashboardData(opts = {}) {
   const supRegion = _supervisorRegionPeersView();
   if (S.loginRole === "manager") {
-    if (!S.managerCode) return;
+    if (!S.managerCode) return false;
   } else if (!supRegion) {
-    return;
+    return false;
   }
   if (S._hasUnsaved && S.managerViewMode !== "individual") {
     const ok = await _confirmDialog(
@@ -2637,7 +2645,7 @@ async function refreshManagerDashboardData(opts = {}) {
     if (!ok) {
       updateManagerViewControlsUI();
       updateSupervisorSwitcherUI();
-      return;
+      return false;
     }
   }
   setSupervisorSwitchLoading(true, "กำลังโหลดข้อมูล…");
@@ -2654,16 +2662,16 @@ async function refreshManagerDashboardData(opts = {}) {
       ok = await loadSupervisorRegionAggregate({ refresh: !!opts.refresh });
     } else if (S.managerViewMode === "region" && S.managerViewOptions?.scope_kind === "division" && !S.managerViewRegion) {
       toast("กรุณาเลือกภาค", "amber");
-      return;
+      return false;
     } else {
       ok = await loadAggregateData(S.managerViewMode, S.managerViewRegion, {
         refresh: !!opts.refresh,
       });
     }
-    if (_isDashboardLoadStale(gen)) return;
+    if (_isDashboardLoadStale(gen)) return false;
     if (!ok) {
       toast("โหลดข้อมูลไม่สำเร็จ — ลองสลับมุมมองอีกครั้ง", "red");
-      return;
+      return false;
     }
     S.allocations = [];
     S._hasUnsaved = false;
@@ -2672,6 +2680,7 @@ async function refreshManagerDashboardData(opts = {}) {
     const rb = document.getElementById("resultBlock");
     if (rb) rb.style.display = "none";
     await _finalizeDashboardAfterLoad(gen);
+    return true;
   } finally {
     popGlobalBusy();
     setSupervisorSwitchLoading(false);
@@ -4770,6 +4779,10 @@ function applyDataPayload(data) {
 }
 
 async function loadSupervisorRegionAggregate(opts = {}) {
+  _tallyFlush("context_switch");
+  // ชุดข้อมูลใหม่ = ลืม「สินค้าที่เพิ่งกระจาย」ของชุดเดิม (ผลตรวจ 1 ต.ค. 2026 ข8) — ไม่งั้นตัวเลือก
+  //「ส่งเฉพาะผลกระจายใหม่」ของทีมใหม่ใช้รายการของทีมเก่า
+  S.recentReallocSkus = [];
   const home = String(
     (S.homeSupervisorCodes && S.homeSupervisorCodes[0]) || S.supId || ""
   ).trim().toUpperCase();
@@ -4801,6 +4814,10 @@ async function loadSupervisorRegionAggregate(opts = {}) {
 }
 
 async function loadAggregateData(viewMode, regionKey, opts = {}) {
+  _tallyFlush("context_switch");
+  // ชุดข้อมูลใหม่ = ลืม「สินค้าที่เพิ่งกระจาย」ของชุดเดิม (ผลตรวจ 1 ต.ค. 2026 ข8) — ไม่งั้นตัวเลือก
+  //「ส่งเฉพาะผลกระจายใหม่」ของทีมใหม่ใช้รายการของทีมเก่า
+  S.recentReallocSkus = [];
   const mgr = String(S.managerCode || "").trim().toUpperCase();
   if (!mgr) return false;
   const view = viewMode === "all" ? "all" : "region";
@@ -4837,6 +4854,10 @@ async function loadAggregateData(viewMode, regionKey, opts = {}) {
 }
 
 async function loadData(supId, targetMonth, targetYear, refresh = false) {
+  _tallyFlush("context_switch");
+  // ชุดข้อมูลใหม่ = ลืม「สินค้าที่เพิ่งกระจาย」ของชุดเดิม (ผลตรวจ 1 ต.ค. 2026 ข8) — ไม่งั้นตัวเลือก
+  //「ส่งเฉพาะผลกระจายใหม่」ของทีมใหม่ใช้รายการของทีมเก่า
+  S.recentReallocSkus = [];
   S.aggregateMode = false;
   S.aggregateSupIds = [];
   S.targetBoxesBySup = {};
@@ -8726,6 +8747,9 @@ function autoRebalance(silent = false, opts = {}) {
           sellers.forEach((a, i) => { if (add[i]) move(a, add[i]); });
           return d;
         }
+        // ทุกช่องที่เหลือเป็นคู่ที่กติกาไม่เคยขายตัดเป็น 0 — ห้ามได้เพิ่ม (ผลตรวจ 1 ต.ค. 2026 ข9)
+        // spreadIncrease ถอยไปแบ่งเท่าเมื่อน้ำหนักเป็น 0 หมด จึงต้องหยุดที่นี่ ปล่อยเป็น residual ให้รายงาน
+        if (!weights.some((w) => w > 0)) return 0;
         // ไม่มีใครเคยขาย / แบ่งเท่า / ไม่มีเป้าเงิน: ตามสัดส่วน hist (largest remainder)
         const add = AppLogic.spreadIncrease(d, weights);
         cells.forEach((a, i) => { if (add[i]) move(a, add[i]); });
@@ -11242,12 +11266,25 @@ async function _doLakehouseUploadInner() {
 
   // ส่งไม่ครบทุกทีม — บอกให้ชัดว่าอะไรเข้าไปแล้วบ้าง เพราะย้อนคืนไม่ได้
   if (failedSup) {
+    // ส่งรวมภาคล้มกลางทาง (ผลตรวจ 1 ต.ค. 2026 ข1) — ทีมที่ลงแล้วย้อนไม่ได้ ยอดรวมทั้งภาคใน Target Sun
+    // จึงยังไม่ตรงเป้าจนกว่าจะส่งทีมที่เหลือ · จดลงบันทึกการใช้งานให้แอดมินเห็น ไม่ใช่รู้แค่คนกด
+    const batchIncomplete = !!sendBatchId && sentSupIds.length > 0;
+    if (batchIncomplete) {
+      _logClientAction(
+        "send_batch_incomplete",
+        `ส่งรวมหลายทีมไม่ครบ — ลงแล้ว ${sentSupIds.length} ทีม · ล้มที่ ${failedSup.supId} · ยังไม่ส่ง ${notSentSupIds.length} ทีม`,
+        `batch=${sendBatchId} · sent=${sentSupIds.join(",")} · failed=${failedSup.supId}`
+          + `${failedSup.uncertain ? " (ยังไม่รู้ผล)" : ""} · not_sent=${notSentSupIds.join(",")}`,
+        "warn",
+      );
+    }
     _showPartialSendSummaryModal({
       sent: sentSupIds,
       failed: failedSup.supId,
       failedUncertain: !!failedSup.uncertain,
       notSent: notSentSupIds,
       pending,
+      batchIncomplete,
     });
     return;
   }
@@ -11364,7 +11401,7 @@ async function resendUnlandedRows(supId, token, btn) {
    เดิมเจอทีมล้มแล้ว return ทันที ผู้ใช้เห็นแค่ toast ว่าทีมนั้นล้ม โดยไม่รู้ว่า
    ทีมก่อนหน้าเข้า Target Sun ไปแล้ว (ย้อนไม่ได้) และไม่รู้ว่าเหลือทีมไหน
    ที่ยังไม่ได้ส่ง — ต้องส่งซ้ำเฉพาะทีมที่เหลือ ไม่ใช่ส่งใหม่ทั้งชุด */
-function _showPartialSendSummaryModal({ sent, failed, notSent, pending, failedUncertain = false }) {
+function _showPartialSendSummaryModal({ sent, failed, notSent, pending, failedUncertain = false, batchIncomplete = false }) {
   const chip = (s, cls) =>
     `<span class="send-sum__chip send-sum__chip--${cls}">${escapeHtml(s)}</span>`;
   const line = (label, ids, cls, note) =>
@@ -11394,6 +11431,13 @@ function _showPartialSendSummaryModal({ sent, failed, notSent, pending, failedUn
           pending.length
             ? `<p class="send-sum__pending">นอกจากนี้ยังมี <strong>${pending.length}</strong> `
               + `SKU ที่ไม่ได้ถูกส่ง ต้องไปเกลี่ยหีบเองใน Target Sun</p>`
+            : ""
+        }
+        ${
+          batchIncomplete
+            ? `<p class="send-sum__pending"><strong>ยอดรวมทั้งภาคใน Target Sun ยังไม่ตรงเป้า</strong> — `
+              + `ตอนกระจายรวมภาคมีการย้ายหีบข้ามทีม ทีมที่ลงแล้วถือตัวเลขที่ถูกต้องเฉพาะเมื่อส่งครบทั้งชุด `
+              + `จนกว่าจะส่งทีมที่เหลือ (ระบบจดเหตุการณ์นี้ไว้ในบันทึกการใช้งานแล้ว)</p>`
             : ""
         }
         <p class="send-sum__how">วิธีส่งต่อ: แก้ต้นเหตุแล้วเลือกเฉพาะทีมที่ยังไม่เข้า
@@ -12452,19 +12496,21 @@ function updateStep3SnapshotBadge(snap) {
   el.style.display = "block";
 }
 
+/** คืน true เมื่อโหลดสำเร็จจริง (ผลตรวจ 1 ต.ค. 2026 ข6) — ตัวเรียกที่ต้องใช้เป้าใหม่ต้องเช็คค่านี้ */
 async function refreshDashboardData(forceRefresh = true) {
   if (S.aggregateMode || _isAllocReadOnlyView()) {
     toast("สลับเป็นมุมมองรายคนก่อนดึงข้อมูลใหม่", "amber");
-    return;
+    return false;
   }
   pushGlobalBusy(UX.busyRefreshTeam);
   _setStep1Skeleton(true);
   const gen = _bumpDashboardLoadGen();
   try {
     const ok = await loadData(S.supId, S.targetMonth, S.targetYear, !!forceRefresh);
-    if (_isDashboardLoadStale(gen) || !ok) return;
+    if (_isDashboardLoadStale(gen) || !ok) return false;
     await _finalizeDashboardAfterLoad(gen);
     toast("ดึงข้อมูลล่าสุดแล้ว", "green");
+    return true;
   } finally {
     popGlobalBusy();
     _setStep1Skeleton(false);
@@ -13033,6 +13079,7 @@ async function _applyServerAllocationSnapshot(supId, opts = {}) {
   }
   if (!opts.readOnly) {
     S.neverSoldZeroKeys = new Set(Array.isArray(snap.never_sold_zero_keys) ? snap.never_sold_zero_keys : []);
+    S.recentReallocSkus = [];
     S.lastForceMinOne = !!snap.force_min_one;
     S.engineYellow = snap.engine_yellow && typeof snap.engine_yellow === "object" ? { ...snap.engine_yellow } : null;
     S.engineYellowCtx = S.engineYellow ? _engineYellowCtx() : null;
@@ -13232,6 +13279,7 @@ function checkAndLoadDraft() {
       S.yellow = draftData.yellow || S.yellow;
       S.yellowLocked = draftData.yellowLocked || {};
       S.neverSoldZeroKeys = new Set(Array.isArray(draftData.neverSoldZeroKeys) ? draftData.neverSoldZeroKeys : []);
+      S.recentReallocSkus = [];
       S.lastForceMinOne = !!draftData.lastForceMinOne;
       _sanitizeYellowForEligibleOnly();
       S.allocations = _filterAllocationsEligibleOnly(_enrichDraftAllocations(draftData.allocations || []));
@@ -13811,17 +13859,27 @@ async function runReAllocationKeepEdits() {
     const _ctx = _allocContextKey();
     const allocs = await _doOptimize(lockedEdits);
     if (allocs && _allocContextChanged(_ctx)) return;
-    if (!allocs) return;
+    if (!allocs) {
+      // กระจายล้ม — คืนปุ่มบนแบนเนอร์ ไม่งั้นค้าง「⏳ กำลังดำเนินการ...」กดซ้ำไม่ได้
+      if (bannerBtn && document.body.contains(bannerBtn)) {
+        bannerBtn.disabled = false;
+        bannerBtn.textContent = "🔄 กระจายหีบใหม่ (คงตัวเลขที่แก้เอง)";
+      }
+      return;
+    }
 
     const strategy = document.querySelector('[name="strategy"]:checked')?.value || "L3M";
-    S.allocations = allocs;
+    // ตัวกรองคนมีสิทธิ์ + ซ่อมคีย์คลัง แบบเดียวกับปุ่มกระจายหลัก (ผลตรวจ 1 ต.ค. 2026 ข7)
+    let keptAllocs = _filterAllocationsEligibleOnly(allocs);
+    if (!keptAllocs.length) keptAllocs = allocs;
+    S.allocations = keptAllocs;
 
     qs("#runEmoji").textContent = "✅";
     qs("#runTitle").textContent = "กระจายหีบใหม่สำเร็จ";
     qs("#runSub").textContent = `วิธี: ${_strategySummaryTh([strategy])} — ตัวเลขที่แก้เองยังคงอยู่`;
     qs("#runBtn").textContent = "คำนวณใหม่";
     qs("#runBtn").disabled = false;
-    buildBrandTabs(allocs);
+    buildBrandTabs(keptAllocs);
     document.getElementById("changeBanner")?.remove();
     qs("#resultBlock").style.display = "block";
 
@@ -13831,13 +13889,13 @@ async function runReAllocationKeepEdits() {
       console.error("autoRebalance:", e);
     }
     await wait(200);
-    renderResult(allocs);
+    renderResult(S.allocations);
     requestAnimationFrame(() => adjustResultStickyGap());
     qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
     toast("✅ กระจายหีบใหม่สำเร็จ — ตัวเลขที่แก้เองยังคงอยู่", "green");
     if (_regionalAggregateWritable()) {
       S.compositeAllocView = true;
-      saveRegionalAllocationSnapshots(allocs, "optimized")
+      saveRegionalAllocationSnapshots(keptAllocs, "optimized")
         .then((saved) => {
           for (const supId of saved || []) {
             S.allocSourceBySup[supId] = "snapshot";
@@ -14421,12 +14479,19 @@ async function reloadThenReallocChanged(skus) {
       return;
     }
     _dismissInfoModal();
+    let reloaded = false;
     try {
       // รวมภาคโหลดผ่านตัวสลับมุมมองรวมภาค (ดึงสดทุกทีม) · ทีมเดียวโหลดขั้นที่ 1 ของทีม
-      if (S.aggregateMode) await refreshManagerDashboardData({ refresh: true });
-      else await refreshDashboardData(true);
+      reloaded = S.aggregateMode
+        ? await refreshManagerDashboardData({ refresh: true })
+        : await refreshDashboardData(true);
     } catch (e) {
       toast("❌ " + _userFacingError(e, "โหลดเป้าใหม่ไม่สำเร็จ"), "red");
+      return;
+    }
+    // โหลดไม่สำเร็จแต่ไม่ throw (เน็ตสะดุด / โหลดซ้อน) — ห้ามกระจายด้วยเป้าเก่าแล้วลบคำเตือนทิ้ง
+    if (!reloaded) {
+      toast("โหลดเป้าใหม่ไม่สำเร็จ — ยังไม่กระจาย ลองกดอีกครั้ง", "red");
       return;
     }
     S.targetDrift = null;
@@ -14665,8 +14730,11 @@ async function runReAllocationForSkus(skus, opts = {}) {
     // รวมภาคแบบรายทีม: ทีมที่ไม่อยู่ในผลรอบนี้ (กระจายไม่สำเร็จ หรือไม่มีสินค้าที่เลือกในเป้าทีม)
     // ต้องคงแถวเดิมของสินค้าเหล่านั้นไว้ — ไม่งั้นแถวของทีมนั้นหายไปทั้งที่ไม่ได้กระจายใหม่เลย
     // ทีมที่กระจายได้คืนแถวครบทุกคนอยู่แล้ว (เติมหีบ 0 ให้คนที่ไม่ได้ — I8) จึงเทียบระดับทีมได้
+    // ตัวกรองคนมีสิทธิ์ + ซ่อมคีย์คลัง แบบเดียวกับปุ่มกระจายหลัก (ผลตรวจ 1 ต.ค. 2026 ข7)
+    let partKept = _filterAllocationsEligibleOnly(part);
+    if (!partKept.length) partKept = part;
     const merged = _mergePartialAllocs(
-      S.allocations || [], part, changedSet, !!(S.compositeAllocView || S.aggregateMode), _supervisorCodeForAllocRow
+      S.allocations || [], partKept, changedSet, !!(S.compositeAllocView || S.aggregateMode), _supervisorCodeForAllocRow
     );
     S.allocations = merged;
     S.recentReallocSkus = [...changedSet];
