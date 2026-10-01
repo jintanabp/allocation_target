@@ -2235,8 +2235,12 @@ def admin_get_usage_logs(
 
 def _filter_usage_items_for_admin(admin: dict, items: list[dict]) -> list[dict]:
     """ผู้ดูแลเห็นเฉพาะเหตุการณ์ของทีมในขอบเขตตัวเอง หรือของผู้ใช้ในขอบเขตนั้น"""
-    if admin.get("role") not in ADMIN_ROLES:
+    if admin.get("auth_disabled") or admin.get("role") == ROLE_DEV:
         return items
+    if admin.get("role") not in ADMIN_ROLES:
+        # บทบาทอื่นที่ dev เปิดสิทธิ์ให้ภายหลัง (เช่น marketing) ไม่มีขอบเขต — เดิมได้ทุกทีม (ผลตรวจ 1 ต.ค. 2026 ค)
+        # ปิดไว้ก่อน ต้องการให้เห็นค่อยกำหนดขอบเขตให้บทบาทนั้นโดยตั้งใจ
+        return []
     scope = admin.get("admin_scope") or {}
     codes = {str(c).strip().upper() for c in (scope.get("sl_codes") or set())}
     emails = {
@@ -3394,6 +3398,9 @@ def run_nightly_check_now(admin: dict = Depends(require_admin_scoped)) -> dict[s
     from ..services import nightly_check
 
     _require_dev(admin)
+    if nightly_check.is_running():
+        # มีอีกรอบถือล็อกอยู่ — บอกตามจริง ไม่ใช่ตอบว่าเริ่มแล้ว (ผลตรวจ 1 ต.ค. 2026 ค)
+        return {"ok": True, "started": False, "reason": "busy"}
     threading.Thread(target=lambda: nightly_check.run_once(force=True), name="nightly-check-now",
                      daemon=True).start()
     _audit_admin(admin, "admin_nightly_check_run", "สั่งตรวจ Target Sun รายคืนเดี๋ยวนี้", level="warn")

@@ -84,6 +84,13 @@ def read_settings() -> dict[str, Any]:
 def write_settings(*, enabled: bool | None = None, hour: int | None = None,
                    keep_months: int | None = None, closing_hour: int | None = None,
                    updated_by: str = "") -> dict[str, Any]:
+    # อ่าน-แก้-เขียนใต้ล็อกเดียว (ผลตรวจ 1 ต.ค. 2026 ค) — dev สองคนบันทึกพร้อมกันแล้วค่าของคนหนึ่งหาย
+    with _path_lock(_settings_path()):
+        return _write_settings_locked(enabled=enabled, hour=hour, keep_months=keep_months,
+                                      closing_hour=closing_hour, updated_by=updated_by)
+
+
+def _write_settings_locked(*, enabled, hour, keep_months, closing_hour, updated_by) -> dict[str, Any]:
     cur = read_settings()
     if enabled is not None:
         cur["enabled"] = bool(enabled)
@@ -179,8 +186,20 @@ def _try_file_lock(path: str):
     return None
 
 
+def is_running() -> bool:
+    """มีรอบตรวจกำลังถือล็อกอยู่ไหม (ลองจับแล้วปล่อยทันที) — ใช้ตอบปุ่ม「รันเดี๋ยวนี้」"""
+    try:
+        fh = _try_file_lock(os.path.join("data", ".nightly_check.lock"))
+    except OSError:
+        return False
+    if fh is None:
+        return True
+    fh.close()
+    return False
+
+
 def _save_history(sup: str, month: int, year: int, day: str, payload: dict) -> None:
-    d = os.path.join(_history_dir(), f"{sup}_{int(year)}_{int(month):02d}")
+    d = os.path.join(_history_dir(), f"{_safe_sup(sup)}_{int(year)}_{int(month):02d}")
     os.makedirs(d, exist_ok=True)
     atomic_write_json(os.path.join(d, f"{day}.json"), payload, ensure_ascii=False)
 
@@ -239,9 +258,23 @@ def run_once(*, now: datetime | None = None, fetch: Callable | None = None,
             return _finish(now, {"skipped": "read_source_not_targetsun"}, {}, closing, manual=force)
         fetch = tsr.fetch_target_rows
 
-    lock = _try_file_lock(os.path.join("data", ".nightly_check.lock"))
+    try:
+        lock = _try_file_lock(os.path.join("data", ".nightly_check.lock"))
+    except OSError as e:
+        # เปิดไฟล์ล็อกไม่ได้ (สิทธิ์ไฟล์ / data/ อ่านอย่างเดียว) — เดิม raise ออกไปเงียบ ๆ (ผลตรวจ 1 ต.ค. 2026 ค)
+        _notify_dev("ตรวจ Target Sun รายคืนเริ่มไม่ได้", f"เปิดไฟล์ล็อกไม่ได้: {e}"[:500],
+                    {"date": now.strftime("%Y-%m-%d")})
+        return _finish(now, {"error": f"lock: {e}"[:300]}, {}, closing, manual=force)
     if lock is None:
         return {"skipped": "busy"}
+    if not force:
+        # อีกโปรเซส/thread เพิ่งรันรอบของวันนี้จบระหว่างที่เราเช็คเวลา — ตรวจซ้ำหลังได้ล็อก
+        # กันรันซ้ำสองรอบในวันเดียว (ล็อกเดิมกันได้แค่รันทับเวลากัน) (ผลตรวจ 1 ต.ค. 2026 ค)
+        _st = read_state()
+        _key = "last_closing_date" if closing else "last_run_date"
+        if _st.get(_key) == now.strftime("%Y-%m-%d"):
+            lock.close()
+            return {"skipped": "already_ran"}
     try:
         day = now.strftime("%Y-%m-%d")
         cur = (now.year, now.month)
@@ -309,6 +342,11 @@ def run_once(*, now: datetime | None = None, fetch: Callable | None = None,
 
 
 def _finish(now: datetime, result: dict, teams: dict, closing: bool = False, manual: bool = False) -> dict:
+    with _path_lock(_state_path()):  # อ่าน-แก้-เขียน state ใต้ล็อก (ผลตรวจ 1 ต.ค. 2026 ค)
+        return _finish_locked(now, result, teams, closing, manual)
+
+
+def _finish_locked(now: datetime, result: dict, teams: dict, closing: bool, manual: bool) -> dict:
     state = read_state()
     state["last_run"] = now.isoformat(timespec="seconds")
     if manual:
@@ -330,8 +368,16 @@ def _finish(now: datetime, result: dict, teams: dict, closing: bool = False, man
     return result
 
 
+def _safe_sup(sup_id: str) -> str:
+    """รหัสทีมสำหรับชื่อโฟลเดอร์ — กติกาเดียวกับ sent_ledger.ledger_path (กัน ../ — ผลตรวจ 1 ต.ค. 2026 ค)"""
+    return "".join(ch for ch in str(sup_id or "").strip().upper() if ch.isalnum() or ch in "-_")
+
+
 def latest_diff(sup_id: str, month: int, year: int) -> dict | None:
-    d = os.path.join(_history_dir(), f"{str(sup_id).strip().upper()}_{int(year)}_{int(month):02d}")
+    sid = _safe_sup(sup_id)
+    if not sid:
+        return None
+    d = os.path.join(_history_dir(), f"{sid}_{int(year)}_{int(month):02d}")
     if not os.path.isdir(d):
         return None
     files = sorted(f for f in os.listdir(d) if f.endswith(".json"))

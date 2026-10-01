@@ -6817,8 +6817,8 @@ function buildBrandTabs(allocs) {
   const selectEl = qs("#brandSelect");
   if (selectEl) {
     selectEl.innerHTML = brands.map(b => `
-      <option value="${b.replace(/"/g, '&quot;')}">
-        ${b === "ALL" ? "📦 ทุกแบรนด์ (ทั้งหมด)" : "🏷️ " + b}
+      <option value="${escH(b)}">
+        ${b === "ALL" ? "📦 ทุกแบรนด์ (ทั้งหมด)" : "🏷️ " + escH(b)}
       </option>
     `).join("");
     selectEl.value = S.activeBrand;
@@ -8868,8 +8868,8 @@ function showExportModal() {
   const brands = ["ALL", ...new Set(S.allocations.map(a => a.brand_name_thai || a.brand_name_english || "").filter(Boolean))];
   qs("#exportOpts").innerHTML = brands.map((b, i) => `
     <label class="export-opt">
-      <input type="radio" name="exportBrand" value="${b}" ${i === 0 ? "checked" : ""}>
-      <span>${b === "ALL" ? "📦 ทุกแบรนด์" : "🏷️ " + b}</span>
+      <input type="radio" name="exportBrand" value="${escH(b)}" ${i === 0 ? "checked" : ""}>
+      <span>${b === "ALL" ? "📦 ทุกแบรนด์" : "🏷️ " + escH(b)}</span>
     </label>
   `).join("");
   qs("#exportModal").style.display = "flex";
@@ -18254,7 +18254,13 @@ async function adminRunNightlyCheckNow() {
   if (!ok) return;
   const msg = document.getElementById("adminNightlyMsg");
   try {
-    await _adminJsonFetch("/admin/nightly-check/run", { method: "POST" });
+    const r = await _adminJsonFetch("/admin/nightly-check/run", { method: "POST" });
+    if (r && r.started === false) {
+      // มีอีกรอบกำลังรันอยู่ — เดิมบอกว่า「เริ่มตรวจแล้ว」ทั้งที่ไม่ได้เริ่ม (ผลตรวจ 1 ต.ค. 2026 ค)
+      if (msg) msg.textContent = "มีอีกรอบกำลังตรวจอยู่ — รอให้เสร็จแล้วกด「โหลดใหม่」เพื่อดูผล";
+      toast("มีอีกรอบกำลังตรวจอยู่ ไม่ได้เริ่มรอบใหม่", "amber");
+      return;
+    }
     if (msg) msg.textContent = "เริ่มตรวจแล้ว — รอสักครู่แล้วกด「โหลดใหม่」เพื่อดูผล";
     toast("เริ่มตรวจแล้ว ทำงานอยู่เบื้องหลัง", "green");
   } catch (e) {
@@ -18300,11 +18306,14 @@ async function adminNightlyPickTeam(tag) {
       return;
     }
     const parts = [
-      _nightlyDiffTable("หีบเปลี่ยน — ใน Target Sun ไม่ตรงกับที่ส่ง", d.changed),
+      _nightlyDiffTable("ถูกแก้ — หีบใน Target Sun ไม่ตรงกับที่ส่ง", d.changed),
       _nightlyDiffTable("หายไป — ส่งไปแต่ใน Target Sun ไม่มีแถวนี้แล้ว", d.missing),
       _nightlyDiffTable("เพิ่มเอง — มีใน Target Sun แต่ระบบไม่เคยส่ง", d.extra),
+      _nightlyDiffTable("ยังไม่ยืนยัน — รอบส่งที่ได้ผลบางส่วน / ไม่รู้ผล (ไม่นับเป็นการแก้)", d.unconfirmed),
     ].filter(Boolean);
-    box.innerHTML = `${head}<p class="alloc-rules-note">ตรวจเมื่อ ${escapeHtml(_adminFmtTime(d.checked_at))}</p>`
+    // บอกว่าเป็นรอบไหน (ผลตรวจ 1 ต.ค. 2026 ค) — วันสุดท้ายของเดือนผลล่าสุดคือรอบปิดงวด ไม่ใช่รอบตี 2
+    const roundLabel = d.round === "closing" ? " · รอบปิดงวด (วันสุดท้ายของเดือน)" : " · รอบรายคืน";
+    box.innerHTML = `${head}<p class="alloc-rules-note">ตรวจเมื่อ ${escapeHtml(_adminFmtTime(d.checked_at))}${roundLabel}</p>`
       + (parts.length ? parts.join("") : `<p class="alloc-rules-note">ตรงกับที่ส่งไปทุกแถว — ไม่มีใครแก้</p>`);
   } catch (e) {
     box.innerHTML = `${head}<div class="admin-alert admin-alert--error">${escapeHtml(e.message)}</div>`;

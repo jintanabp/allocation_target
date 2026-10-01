@@ -501,6 +501,8 @@ API `POST /optimize` และไฟล์ Excel สามารถมีฟิ�
 | `POST` | `/lakehouse/export-csv` | ดาวน์โหลด Excel คอลัมน์ **`tga_target_salesman_next`** |
 | `POST` | `/lakehouse/prepare-targetsun` | สร้าง Excel เก็บชั่วคราว คืน `prepare_token` |
 | `POST` | `/lakehouse/import-targetsun` | ส่ง Excel เข้า Target Sun API |
+| `POST` | `/lakehouse/verify-send-batch` | ส่งหลายทีม: ตรวจยอดรวมทั้งชุดต่อ SKU ก่อนส่ง (ไม่ผ่าน = 409 ไม่มีทางข้าม) |
+| `POST` | `/lakehouse/resend-unlanded` | ส่งซ้ำเฉพาะแถวที่ไม่ลง — ใช้ได้เฉพาะไฟล์รอบส่งล่าสุดของทีม×งวด และปลายทางเดิม |
 | `POST` | `/lakehouse/upload` | ส่งผลเข้า **OneLake** (API/ops — ไม่มีใน UI) |
 | `GET` | `/health` | ตรวจสอบสถานะ server |
 | `GET` | `/debug/fabric` | debug Fabric (ต้องตั้ง `ENABLE_DEBUG_ENDPOINTS=1`) |
@@ -553,6 +555,8 @@ API: `PUT /admin/user-access/targetsun/bulk` รับ `{emails: [...], enabled:
 | `GET/PUT` | `/admin/nightly-check` | ค่าตั้ง + ผลตรวจ Target Sun รายคืน — **dev เท่านั้น** (ค่าเก็บใน `data/nightly_check.json`) |
 | `POST` | `/admin/nightly-check/run` | รันตรวจรายคืนเดี๋ยวนี้ (อ่าน Target Sun จริง อ่านอย่างเดียว) — **dev เท่านั้น** |
 | `GET` | `/admin/nightly-check/team` | รายการแถวที่ต่างของทีม × งวด (ผลล่าสุด) — **dev เท่านั้น** |
+| `GET/PUT` | `/admin/settings/warehouse-pin-rules` | กติกาบังคับคลัง (SKU × ภาค × division → คลังเดียว) — ลง `data/warehouse_pin_rules.json` · **หัวหน้าแอดมิน** |
+| `GET` | `/admin/warehouse-pin-rules/combos` | ตัวเลือกภาค/คลังจาก Fabric สำหรับหน้าตั้งกติกาบังคับคลัง |
 
 Swagger UI: `<URL แอปบน server>/docs`
 

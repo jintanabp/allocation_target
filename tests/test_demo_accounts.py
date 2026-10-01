@@ -33,15 +33,12 @@ from backend.services import employees as emp_svc  # noqa: E402
 
 def _roster_path() -> str:
     """
-    รายชื่อผู้ใช้ที่จะตรวจ — ไฟล์จริงถ้ามี ไม่มีก็ไฟล์ต้นแบบ
+    รายชื่อผู้ใช้ที่จะตรวจ = ไฟล์ต้นแบบที่อยู่ใน git เสมอ (ผลตรวจ 1 ต.ค. 2026 ค)
 
-    config/user_access.json ไม่อยู่ใน git แล้ว (แอดมินแก้บนเซิร์ฟเวอร์ผ่านหน้าเว็บ
-    การ track ไว้ทำให้ pull เขียนทับจนคนที่เพิ่งเพิ่มหายไป) · บนเครื่อง dev และ
-    เซิร์ฟเวอร์จะมีไฟล์จริง ส่วนบน CI ตรวจไฟล์ต้นแบบซึ่งเป็นที่มาของการติดตั้งใหม่
+    เดิมอ่าน config/user_access.json ตัวจริงของเครื่องที่รัน — ผลเทสต์จึงขึ้นกับว่าแอดมินเครื่องนั้นแก้
+    รายชื่อไว้อย่างไร (และคอมเมนต์เดิมบอกว่าไฟล์นี้ไม่อยู่ใน git ซึ่งไม่จริง — ตั้งใจ track ไว้ ดู docs)
+    ไฟล์ต้นแบบคือที่มาของการติดตั้งใหม่และมีบัญชีสาธิตครบ จึงตรวจได้แน่นอนทุกเครื่อง
     """
-    real = os.path.join(REPO, "config", "user_access.json")
-    if os.path.isfile(real):
-        return real
     return os.path.join(REPO, "config", "user_access.example.json")
 
 
@@ -50,10 +47,7 @@ class TestDemoRosterRows(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        # config/user_access.json ไม่อยู่ใน git แล้ว (แอดมินแก้บนเซิร์ฟเวอร์ผ่านหน้าเว็บ
-        # การ track ไว้ทำให้ pull เขียนทับจนคนที่เพิ่งเพิ่มหาย) — บนเครื่อง dev/เซิร์ฟเวอร์
-        # จะมีไฟล์จริงให้ตรวจ ส่วนบน CI ตรวจไฟล์ต้นแบบซึ่งเป็นที่มาของการติดตั้งใหม่
-        path = _roster_path()
+        path = _roster_path()  # ไฟล์ต้นแบบใน git — ไม่ขึ้นกับรายชื่อจริงของเครื่องที่รัน
         cls.roster_path = path
         with open(path, encoding="utf-8") as fh:
             cls.rows = json.load(fh)

@@ -152,8 +152,14 @@ class WarehousePinRulesWiringTest(unittest.TestCase):
     def test_capability_is_granted_to_head_admin_in_the_tracked_config(self):
         """ถ้าไม่อยู่ในไฟล์นี้ head_admin จะไม่เห็นแท็บบน production เลย (ดูคอมเมนต์
         admin_capabilities.py เรื่อง DEFAULT_ROLE_CAPABILITIES เป็น fallback เท่านั้น)"""
-        cfg = _read("config/admin_permissions.json")
-        self.assertIn("warehouse_pin_rules", cfg)
+        # อ่านเป็น JSON แล้วดูราย role — เดิมค้นสตริงทั้งไฟล์ ผ่านแม้ให้ผิด role (ผลตรวจ 1 ต.ค. 2026 ค)
+        import json
+
+        roles = json.loads(_read("config/admin_permissions.json"))["roles"]
+        self.assertIn("warehouse_pin_rules", roles["head_admin"])
+        for role in ("admin", "marketing"):
+            with self.subTest(role=role):
+                self.assertNotIn("warehouse_pin_rules", roles.get(role, []), "เฉพาะหัวหน้าแอดมิน")
 
     def test_the_frontend_tab_is_wired(self):
         app_js = _read("frontend/app.js")

@@ -203,6 +203,7 @@
     read_source_not_targetsun: "แหล่งอ่านเป้าไม่ใช่ Target Sun",
     disabled: "ปิดอยู่",
     busy: "มีอีกรอบกำลังรัน",
+    already_ran: "วันนี้ตรวจไปแล้ว",
     bad_response: "Target Sun ตอบกลับผิดรูปแบบ",
     incomplete_read: "อ่านได้ไม่ครบ",
     other_destination: "ส่งไปปลายทางอื่น (preset อื่น) — เทียบไม่ได้",

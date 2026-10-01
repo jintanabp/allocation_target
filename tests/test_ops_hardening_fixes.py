@@ -160,11 +160,31 @@ class TestA7PeriodComesFromServerTime(unittest.TestCase):
         self.assertIn("expected_allocation_period_ce", src)
 
     def test_server_helper_uses_bangkok(self):
-        from backend.core.tga_period import expected_allocation_period_ce
+        """
+        ตรึงนาฬิกาที่จุดที่ UTC กับเวลาไทยคนละวัน — เดิมตรวจแค่ปี > 2000 จึงไม่มีวันตก (ผลตรวจ 1 ต.ค. 2026 ค)
+        30 ก.ย. 18:00 UTC = 1 ต.ค. 01:00 เวลาไทย → งวดที่ต้องทำคือ พ.ย. (ถ้าใช้ UTC จะได้ ต.ค.)
+        """
+        from datetime import datetime as real_dt, timezone
+        from unittest.mock import patch
 
-        y, m = expected_allocation_period_ce()
-        self.assertGreater(y, 2000)
-        self.assertTrue(1 <= m <= 12)
+        from backend.core import tga_period
+
+        def fixed(instant):
+            class _Fake(real_dt):
+                @classmethod
+                def now(cls, tz=None):
+                    return instant.astimezone(tz) if tz else instant.replace(tzinfo=None)
+            return _Fake
+
+        cases = [
+            (real_dt(2026, 9, 30, 18, 0, tzinfo=timezone.utc), (2026, 11)),
+            (real_dt(2026, 11, 30, 17, 30, tzinfo=timezone.utc), (2027, 1)),   # ข้ามปี
+            (real_dt(2026, 10, 1, 5, 0, tzinfo=timezone.utc), (2026, 11)),
+        ]
+        for instant, want in cases:
+            with self.subTest(instant=instant.isoformat()):
+                with patch.object(tga_period, "datetime", fixed(instant)):
+                    self.assertEqual(tga_period.expected_allocation_period_ce(), want)
 
 
 class TestB11LockedCellKeysAreNormalised(unittest.TestCase):
