@@ -82,7 +82,8 @@ def read_settings() -> dict[str, Any]:
 
 
 def write_settings(*, enabled: bool | None = None, hour: int | None = None,
-                   keep_months: int | None = None, updated_by: str = "") -> dict[str, Any]:
+                   keep_months: int | None = None, closing_hour: int | None = None,
+                   updated_by: str = "") -> dict[str, Any]:
     cur = read_settings()
     if enabled is not None:
         cur["enabled"] = bool(enabled)
@@ -90,6 +91,10 @@ def write_settings(*, enabled: bool | None = None, hour: int | None = None,
         if not 0 <= int(hour) <= 23:
             raise ValueError("ชั่วโมงต้องอยู่ 0–23")
         cur["hour"] = int(hour)
+    if closing_hour is not None:
+        if not 0 <= int(closing_hour) <= 23:
+            raise ValueError("ชั่วโมงรอบปิดงวดต้องอยู่ 0–23")
+        cur["closing_hour"] = int(closing_hour)
     if keep_months is not None:
         if not 1 <= int(keep_months) <= 24:
             raise ValueError("เก็บประวัติได้ 1–24 เดือน")

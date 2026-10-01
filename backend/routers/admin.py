@@ -3307,6 +3307,7 @@ def _require_dev(admin: dict) -> None:
 class NightlyCheckBody(BaseModel):
     enabled: bool | None = None
     hour: int | None = Field(default=None, ge=0, le=23)
+    closing_hour: int | None = Field(default=None, ge=0, le=23)
     keep_months: int | None = Field(default=None, ge=1, le=24)
 
 
@@ -3329,9 +3330,11 @@ def put_nightly_check(body: NightlyCheckBody, admin: dict = Depends(require_admi
     _require_dev(admin)
     email = str(admin.get("email") or "").strip()
     saved = nightly_check.write_settings(enabled=body.enabled, hour=body.hour,
-                                         keep_months=body.keep_months, updated_by=email)
+                                         keep_months=body.keep_months, closing_hour=body.closing_hour,
+                                         updated_by=email)
     _audit_admin(admin, "admin_nightly_check_settings",
-                 f"ตั้งค่าตรวจ Target Sun รายคืน: {'เปิด' if saved['enabled'] else 'ปิด'} เวลา {saved['hour']:02d}:00",
+                 f"ตั้งค่าตรวจ Target Sun รายคืน: {'เปิด' if saved['enabled'] else 'ปิด'} เวลา {saved['hour']:02d}:00"
+                 f" · รอบปิดงวด {saved['closing_hour']:02d}:00",
                  level="warn")
     return {"ok": True, "settings": saved}
 

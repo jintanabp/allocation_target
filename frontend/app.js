@@ -18008,9 +18008,11 @@ function _adminRenderNightlyCheck(data) {
   const state = data?.state || {};
   const en = document.getElementById("adminNightlyEnabled");
   const hr = document.getElementById("adminNightlyHour");
+  const ch = document.getElementById("adminNightlyClosingHour");
   const kp = document.getElementById("adminNightlyKeep");
   if (en) en.checked = !!s.enabled;
   if (hr) hr.value = String(s.hour ?? 2);
+  if (ch) ch.value = String(s.closing_hour ?? 23);
   if (kp) kp.value = String(s.keep_months ?? 6);
   const box = document.getElementById("adminNightlyStatus");
   if (box) {
@@ -18018,7 +18020,8 @@ function _adminRenderNightlyCheck(data) {
       ? `รอบล่าสุด ${escapeHtml(_adminFmtTime(state.last_run))} — ${escapeHtml(AppLogic.nightlyResultText(state.last_result))}`
       : "ยังไม่เคยรัน";
     box.innerHTML = s.enabled
-      ? `<div class="admin-alert admin-alert--ok">เปิดอยู่ — ตรวจทุกคืนเวลา ${String(s.hour).padStart(2, "0")}:00 น. · ${last}</div>`
+      ? `<div class="admin-alert admin-alert--ok">เปิดอยู่ — ตรวจทุกคืนเวลา ${String(s.hour).padStart(2, "0")}:00 น.`
+        + ` และรอบปิดงวดวันสุดท้ายของเดือน ${String(s.closing_hour ?? 23).padStart(2, "0")}:00 น. · ${last}</div>`
       : `<div class="admin-alert admin-alert--warn">ปิดอยู่ — ระบบไม่ตรวจเอง (กด「รันเดี๋ยวนี้」ได้ถ้าต้องการตรวจรอบเดียว) · ${last}</div>`;
   }
   const meta = document.getElementById("adminNightlyMeta");
@@ -18064,9 +18067,14 @@ async function adminSaveNightlyCheck() {
   const msg = document.getElementById("adminNightlyMsg");
   const enabled = !!document.getElementById("adminNightlyEnabled")?.checked;
   const hour = Number(document.getElementById("adminNightlyHour")?.value);
+  const closingHour = Number(document.getElementById("adminNightlyClosingHour")?.value);
   const keep = Number(document.getElementById("adminNightlyKeep")?.value);
   if (!Number.isInteger(hour) || hour < 0 || hour > 23) {
     if (msg) msg.textContent = "ชั่วโมงต้องเป็นเลข 0–23";
+    return;
+  }
+  if (!Number.isInteger(closingHour) || closingHour < 0 || closingHour > 23) {
+    if (msg) msg.textContent = "ชั่วโมงรอบปิดงวดต้องเป็นเลข 0–23";
     return;
   }
   if (!Number.isInteger(keep) || keep < 1 || keep > 24) {
@@ -18076,7 +18084,8 @@ async function adminSaveNightlyCheck() {
   const wasOn = !!_adminNightlyData?.settings?.enabled;
   if (enabled && !wasOn) {
     const ok = await _confirmDialog(
-      `เปิดตรวจอัตโนมัติทุกคืนเวลา ${String(hour).padStart(2, "0")}:00 น.?\n`
+      `เปิดตรวจอัตโนมัติทุกคืนเวลา ${String(hour).padStart(2, "0")}:00 น.`
+        + ` และรอบปิดงวดวันสุดท้ายของเดือน ${String(closingHour).padStart(2, "0")}:00 น.?\n`
         + "ระบบจะอ่านเป้าจริงใน Target Sun ของทุกทีมที่มีบันทึกการส่ง วันละครั้ง (อ่านอย่างเดียว ไม่แก้อะไรใน Target Sun)",
       { title: "เปิดตรวจ Target Sun รายคืน", okLabel: "เปิด" },
     );
@@ -18085,7 +18094,7 @@ async function adminSaveNightlyCheck() {
   try {
     const r = await _adminJsonFetch("/admin/nightly-check", {
       method: "PUT",
-      body: { enabled, hour, keep_months: keep },
+      body: { enabled, hour, closing_hour: closingHour, keep_months: keep },
     });
     if (msg) msg.textContent = "บันทึกแล้ว";
     toast(r?.settings?.enabled ? "เปิดตรวจรายคืนแล้ว" : "บันทึกแล้ว — ตรวจรายคืนปิดอยู่", "green");

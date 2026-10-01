@@ -136,6 +136,22 @@ class TestRunOnce(_Base):
         with self.assertRaises(ValueError):
             nc.write_settings(hour=25)
 
+    def test_closing_hour_saved_and_validated(self):
+        self.assertEqual(nc.read_settings()["closing_hour"], 23)
+        self.assertEqual(nc.write_settings(closing_hour=21)["closing_hour"], 21)
+        self.assertEqual(nc.read_settings()["closing_hour"], 21)
+        with self.assertRaises(ValueError):
+            nc.write_settings(closing_hour=24)
+
+    def test_admin_page_has_the_closing_hour_field(self):
+        root = os.path.join(os.path.dirname(__file__), "..")
+        html = open(os.path.join(root, "frontend", "index.html"), encoding="utf-8").read()
+        js = open(os.path.join(root, "frontend", "app.js"), encoding="utf-8").read()
+        self.assertIn('id="adminNightlyClosingHour"', html)
+        self.assertIn("closing_hour: closingHour", js)
+        api = open(os.path.join(root, "backend", "routers", "admin.py"), encoding="utf-8").read()
+        self.assertIn("closing_hour=body.closing_hour", api)
+
 
 class TestScheduler(_Base):
     def test_due_only_when_enabled_at_hour_once_a_day(self):
