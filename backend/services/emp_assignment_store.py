@@ -78,8 +78,13 @@ def _clean_row(raw: Any) -> dict[str, Any] | None:
     }
 
 
-def read_rows() -> list[dict[str, Any]]:
-    """ทุกการย้ายที่ตั้งไว้ — ไฟล์หายหรือพังต้องไม่ทำให้ระบบล่ม แค่ถือว่าไม่มีการย้าย"""
+def read_rows(*, strict: bool = False) -> list[dict[str, Any]]:
+    """
+    ทุกการย้ายที่ตั้งไว้ — ไฟล์หายหรือพังต้องไม่ทำให้ระบบล่ม แค่ถือว่าไม่มีการย้าย
+
+    strict=True (ใช้ก่อนเขียน — ผลตรวจ 1 ต.ค. 2026 ก1): ไฟล์มีอยู่แต่อ่านไม่ได้ → ValueError
+    เดิมถือเป็น "ไม่มีการย้าย" แล้ว set_assignment เขียนทับเหลือแถวเดียว การย้ายของคนอื่นหายหมด
+    """
     path = emp_assignments_json_path()
     if not os.path.isfile(path):
         return []
@@ -90,10 +95,17 @@ def read_rows() -> list[dict[str, Any]]:
             doc = json.load(f)
     except (OSError, json.JSONDecodeError) as e:
         logger.error("อ่าน emp_assignments ไม่ได้ %s: %s — ถือว่าไม่มีการย้าย", path, e)
+        if strict:
+            raise ValueError(
+                "อ่านไฟล์การย้ายพนักงานเดิมไม่ได้ — ไม่บันทึก เพื่อไม่ให้การย้ายของคนอื่นหาย "
+                "(ลองใหม่อีกครั้ง หรือแจ้ง dev ตรวจ config/emp_assignments.json)"
+            ) from e
         return []
     raw = doc.get("assignments") if isinstance(doc, dict) else doc
     if not isinstance(raw, list):
         logger.error("รูปแบบ emp_assignments ไม่ถูกต้อง %s — ถือว่าไม่มีการย้าย", path)
+        if strict:
+            raise ValueError("ไฟล์การย้ายพนักงานรูปแบบไม่ถูกต้อง — ไม่บันทึก (แจ้ง dev ตรวจ config/emp_assignments.json)")
         return []
     out: dict[str, dict[str, Any]] = {}
     for item in raw:
@@ -134,7 +146,7 @@ def set_assignment(
     if not emp:
         raise ValueError("ต้องระบุรหัสพนักงาน")
     with _STORE_LOCK:
-        rows = [r for r in read_rows() if r["emp_id"] != emp]
+        rows = [r for r in read_rows(strict=True) if r["emp_id"] != emp]
         if norm_sup(to_sup):
             rows.append({
                 "emp_id": emp,

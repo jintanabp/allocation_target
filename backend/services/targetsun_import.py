@@ -372,10 +372,52 @@ def _keep_sent_record(token: str, meta: dict, send_status: str = "") -> None:
             send_status=send_status, send_batch_id=meta.get("send_batch_id"),
         )
         rec = {k: meta.get(k) for k in ("sup_id", "target_month", "target_year", "upload_user_code", "send_batch_id")}
-        rec.update(token=token, sent_at=now, rows=rows)
+        # ปลายทางที่ส่งจริง (ผลตรวจ 1 ต.ค. 2026 ก4) — ส่งซ้ำได้เฉพาะปลายทางเดิม กันไฟล์ที่ส่ง UAT ไปลง Prod หลังสลับ preset
+        rec.update(token=token, sent_at=now, rows=rows, send_status=send_status or None,
+                   import_url=_current_import_url())
         atomic_write_text(str(_SENT_DIR / f"{token}.json"), json.dumps(rec, ensure_ascii=False))
     except Exception:
         logger.exception("เก็บไฟล์ที่ส่งไว้ส่งซ้ำไม่สำเร็จ (%s)", token[:8])
+
+
+def _current_import_url() -> str:
+    try:
+        from .targetsun_endpoints import targetsun_endpoints_summary
+
+        return str(targetsun_endpoints_summary().get("import_url") or "")
+    except Exception:
+        return ""
+
+
+def _newer_send_exists(rec: dict) -> bool:
+    """
+    มีการส่งทีม×งวดเดียวกันที่ใหม่กว่าไฟล์นี้ไหม (ผลตรวจ 1 ต.ค. 2026 ก4)
+
+    「ส่งแถวที่ไม่ลง」ต้องใช้ไฟล์ของรอบล่าสุดเท่านั้น — ไฟล์รอบเก่า (เก็บ 14 วัน) เทียบกับ Target Sun
+    แล้วทุกแถวที่รอบใหม่เปลี่ยนไปจะดูเหมือน "ไม่ลง" แล้วตัวเลขเก่าทับของใหม่ · ดูทั้ง ts_sent และ sent ledger
+    """
+    sid = str(rec.get("sup_id") or "").strip().upper()
+    m, y = int(rec.get("target_month") or 0), int(rec.get("target_year") or 0)
+    at = float(rec.get("sent_at") or 0)
+    tok = str(rec.get("token") or "")
+    for p in _SENT_DIR.glob("*.json"):
+        if p.stem == tok:
+            continue
+        try:
+            other = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if (str(other.get("sup_id") or "").strip().upper() == sid
+                and int(other.get("target_month") or 0) == m and int(other.get("target_year") or 0) == y
+                and float(other.get("sent_at") or 0) > at):
+            return True
+    led = sent_ledger.read_ledger(sid, m, y) or {}
+    for snd in led.get("sends") or []:
+        if str(snd.get("token") or "") != tok and float(snd.get("sent_at") or 0) > at + 1:
+            return True
+    return False
+
+
 
 
 def load_sent_record(token: str, sup_id: str) -> dict:
@@ -850,6 +892,16 @@ def resend_unlanded_rows(sup_id: str, token: str) -> dict:
     rec = load_sent_record(token, sup_id)
     if str(targetsun_endpoints_summary().get("cross_env") or "") == "1":
         raise HTTPException(409, detail="ระบบอ่านกับระบบที่ส่งเป็นคนละที่ — ตรวจว่าแถวไหนตกหล่นไม่ได้")
+    sent_url = str(rec.get("import_url") or "")
+    if not sent_url or sent_url != _current_import_url():
+        raise HTTPException(409, detail=(
+            "ไฟล์นี้ส่งไปปลายทางอื่น (หรือส่งก่อนระบบจดปลายทาง) — ส่งซ้ำไม่ได้ ให้กดส่งทีมนี้ใหม่ตามปกติ"
+        ))
+    if _newer_send_exists(rec):
+        raise HTTPException(409, detail=(
+            "ทีมนี้มีการส่งรอบใหม่กว่าไฟล์นี้แล้ว — ส่งซ้ำจากไฟล์เก่าจะเอาตัวเลขเก่าไปทับ "
+            "ให้ใช้ปุ่มส่งซ้ำของรอบล่าสุด หรือกดส่งทีมนี้ใหม่ตามปกติ"
+        ))
     month, year = int(rec["target_month"]), int(rec["target_year"])
     rows = rec.get("rows") or []
     file_qty = _file_qty_by_key(rows)
@@ -872,6 +924,13 @@ def resend_unlanded_rows(sup_id: str, token: str) -> dict:
             nrow=len(sub), zero_rows=int((pd.to_numeric(sub["QUANTITYCASE"], errors="coerce") == 0).sum()),
             dropped_dims=0, not_in_ts=[],
         )
+        # จดแถวที่ส่งซ้ำลง ledger ด้วย — เดิมไม่จด แถวที่เพิ่งลงจึงถูกตรวจรายคืนนับเป็น「มีคนเพิ่มเอง」
+        if str(out.get("send_status") or "").lower() != "failed":
+            sent_ledger.record_send(
+                sup_id, month, year, sub.to_dict(orient="records"), token=token,
+                user=str(rec.get("upload_user_code") or ""), send_status=str(out.get("send_status") or ""),
+                send_batch_id=rec.get("send_batch_id"),
+            )
         after = _live_target_snapshot(sup_id, month, year, emp_codes)
         remaining = (
             unlanded_rows(file_qty, after.get("qty_by_key") or {}) if after is not None else None
@@ -983,6 +1042,10 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
             # ผิดพลาดแบบอื่นลบทิ้งตามเดิม
             if e.status_code != 504:
                 _delete_prepare_bundle(token)
+            else:
+                # จด ledger + ts_sent เป็น "unknown" (ผลตรวจ 1 ต.ค. 2026 ก5) — ของอาจลงแล้วจริง ถ้าไม่จด
+                # ตรวจรายคืนจะนับแถวที่ลงเป็นการแก้มือ และปุ่มส่งแถวที่ไม่ลงก็ใช้ไม่ได้
+                _keep_sent_record(token, meta, "unknown")
             raise
         except BaseException:
             _delete_prepare_bundle(token)

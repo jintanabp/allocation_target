@@ -863,7 +863,8 @@ def _post_merge_revenue_balance(
 
 
 def _merge_partial_result(
-    result_csv_path: str, df_new: pd.DataFrame, only_skus: list[str]
+    result_csv_path: str, df_new: pd.DataFrame, only_skus: list[str],
+    allowed_emps: set[str] | None = None,
 ) -> pd.DataFrame:
     """
     รวมผลกระจายบางส่วนเข้ากับผลเดิมทั้งงวด — แทนที่เฉพาะ SKU ที่เพิ่งกระจายใหม่
@@ -881,6 +882,16 @@ def _merge_partial_result(
         return df_new
     df_old["sku"] = df_old["sku"].astype(str).str.strip()
     keep = df_old[~df_old["sku"].isin({str(x).strip() for x in only_skus})]
+    if allowed_emps is not None and "emp_id" in keep.columns:
+        # แถวเก่าของคนที่ไม่อยู่ในรอบนี้แล้ว (ถูกตั้ง「ไม่ต้องตั้งเป้า」/ ย้ายออก หลังกระจายเต็ม) ห้ามรวมกลับ
+        # (ผลตรวจ 1 ต.ค. 2026 ก9) — ด่าน I1 ทั้งงวดเทียบแค่ยอดต่อ SKU จึงไม่จับ
+        _gone = ~keep["emp_id"].astype(str).str.strip().isin(allowed_emps)
+        if _gone.any():
+            logger.warning(
+                "กระจายเฉพาะ %d SKU — ตัดแถวเก่าของ %d คนที่ไม่อยู่ในรอบนี้แล้วออก (%d แถว)",
+                len(only_skus), keep.loc[_gone, "emp_id"].nunique(), int(_gone.sum()),
+            )
+            keep = keep[~_gone]
     if keep.empty:
         return df_new
     merged = pd.concat([keep, df_new], ignore_index=True)
@@ -889,6 +900,26 @@ def _merge_partial_result(
         len(only_skus), len(keep),
     )
     return merged
+
+
+def _sku_brand_key(row) -> str:
+    """ชื่อแบรนด์ที่ใช้จับคู่ brand_strategy_map — ไทยก่อน แล้วอังกฤษ (ตรงกับหน้าเว็บ)"""
+    for col in ("brand_name_thai", "brand_name_english"):
+        v = str(row.get(col, "") or "").strip()
+        if v:
+            return v
+    return ""
+
+
+def _resolved_strategies_by_sku(df_sku: pd.DataFrame, brand_map: dict, default: str) -> set[str]:
+    """ชุดวิธีกระจายที่ SKU ในรอบนี้ใช้จริง (แบรนด์ที่ไม่ได้กำหนด = default)"""
+    d = str(default or "").upper()
+    if df_sku is None or df_sku.empty or not brand_map:
+        return {d}
+    return {
+        str(brand_map.get(_sku_brand_key(r), default) or default).upper()
+        for _, r in df_sku.iterrows()
+    }
 
 
 def _dedupe_locks(locks: list[dict]) -> list[dict]:
@@ -1190,7 +1221,15 @@ def run_optimization_service(
         columns={"or_emp_id": "emp_id"}
     )
 
-    strategy_u = req.strategy.upper()
+    # วิธีที่ใช้จริงต่อ SKU (ผลตรวจ 1 ต.ค. 2026 ก8): แบรนด์ที่ไม่ได้กำหนด = req.strategy · ถ้าทุก SKU ลงเอยวิธีเดียว
+    # ใช้วิธีนั้นทั้งรอบ — เดิมนับแค่ค่าใน brand_map ตั้งทุกแบรนด์เป็น EVEN แล้วได้ L3M (วิธีแรกที่ติ๊ก) แทน
+    _resolved_strategies = _resolved_strategies_by_sku(df_sku, req.brand_strategy_map or {}, req.strategy)
+    single_strategy = (
+        next(iter(_resolved_strategies)) if len(_resolved_strategies) == 1 else req.strategy.upper()
+    )
+    if single_strategy not in VALID_STRATEGIES:
+        single_strategy = req.strategy.upper()
+    strategy_u = single_strategy
     # กระจายรวมทั้งหน่วย: พนักงานมาจากหลายทีม ต้องอ่านประวัติจาก cache ของทุกทีมที่เกี่ยว
     # (ทีมเจ้าของเป้าอยู่ในลิสต์เสมอ และเรียงมาก่อนเพื่อให้ชนะตอนตัดคู่ซ้ำ)
     # ตัวพิมพ์ใหญ่ทุกตัว (ผลตรวจ §4.3) — เดิมทีมหลักไม่แปลง ถ้า sup_id มาเป็นตัวเล็ก ทีมหลักกับ peer
@@ -1369,7 +1408,7 @@ def run_optimization_service(
 
     logger.info(
         "Running strategy=%s for sup=%s (eligible emps for boxes: %d)",
-        req.strategy,
+        single_strategy if len(_resolved_strategies) <= 1 else "multi",
         sup_id,
         len(emp_list),
     )
@@ -1491,7 +1530,7 @@ def run_optimization_service(
     never_sold_summary_all: dict = {}
     sku_strategy_map: dict[str, str] = {}
     hist_by_strategy: dict[str, pd.DataFrame] = {}
-    if brand_map and len(distinct_strategies) > 1 and not df_sku.empty:
+    if brand_map and len(_resolved_strategies) > 1 and not df_sku.empty:
         logger.info(
             "multi-strategy run: %d distinct strategies across %d brands",
             len(distinct_strategies), len(brand_map),
@@ -1629,7 +1668,7 @@ def run_optimization_service(
             df_emp_targets,
             df_sku,
             df_hist_input,
-            strategy=req.strategy,
+            strategy=single_strategy,
             force_min_one=req.force_min_one,
             locked_edits=locked_edits_data if locked_edits_data else None,
             cap_multiplier=req.cap_multiplier,
@@ -1846,7 +1885,10 @@ def run_optimization_service(
         # ถ้าเขียนทับทั้งไฟล์ ผลของ SKU อื่นทั้งงวดหายไปจากไฟล์และจาก Excel ฝั่ง
         # เซิร์ฟเวอร์ทันที (หน้าจอไม่ฟ้องเพราะ merge ฝั่งเบราว์เซอร์เอง) แล้วใครที่
         # กดดาวน์โหลดทีหลังจะได้ไฟล์ที่มีสินค้าไม่กี่ตัว
-        df_to_write = _merge_partial_result(result_csv_path, df_final, only_skus)
+        df_to_write = _merge_partial_result(
+            result_csv_path, df_final, only_skus,
+            allowed_emps={str(e).strip() for e in df_all_targets["emp_id"]},
+        )
         if df_to_write is not df_final:
             # ผลเดิมของ SKU อื่นถูกรวมกลับเข้ามา — ต้องตรวจ I1 ทั้งงวดอีกรอบ
             # ไม่งั้นผลเดิมที่ค้างจากเป้าชุดเก่า (เป้าเปลี่ยนแต่ไม่ได้อยู่ในชุดที่เลือก)

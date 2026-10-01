@@ -1179,7 +1179,10 @@ def _proportional(
             floored = _even_split_by_rank(
                 total, active_employees, _fair_rank(active_employees, hist_by_emp, yellow_by_emp)
             )
-        elif _spread_one_each(total_orig, _eligible_emp_count(employees, sku, zero_pairs)):
+        elif (_spread_one_each(total_orig, _eligible_emp_count(employees, sku, zero_pairs))
+              and total <= len(active_employees)):
+            # ต้องพอที่ลงด้วย (ผลตรวจ 1 ต.ค. 2026 ก3): ล็อกบางคนไว้ที่ 0 แล้วหีบที่เหลือมากกว่าคนที่ยังรับได้
+            # ถ้าคงเพดาน 1 หีบ หีบส่วนเกินไม่มีที่ลง ยอดขาดเป้า → 409 ทั้งที่ล็อกถูกต้อง · กรณีนั้นไปทางสัดส่วนแทน
             # เป้าน้อยกว่าจำนวนคน → คนละไม่เกิน 1 หีบ ให้ทั่วถึงตามลำดับประวัติการขาย
             # (เทียบกับ "จำนวนคนทั้งทีม" ไม่ใช่คนที่เหลือหลังหักล็อก — นิยามเดียวกับที่
             #  ผลตรวจรอบ 0 นับ และไม่แกว่งตามว่าผู้ใช้ล็อกช่องไปแล้วกี่ช่อง)
@@ -1763,6 +1766,16 @@ def _lp_optimize(
             if not _spread_one_each(target_boxes[sku], _eligible_emp_count(employees, sku, zero_pairs)):
                 continue
             if _norm_sku(sku) in even_skus:
+                continue
+            # เพดาน 1 หีบใช้ได้เฉพาะเมื่อหีบที่เหลือหลังหักล็อก ไม่เกินจำนวนคนที่ยังรับได้ (ผลตรวจ 1 ต.ค. 2026 ก3)
+            # ไม่งั้นโจทย์แก้ไม่ได้ แล้ว LP ตกไป fallback ทั้งทีม
+            _locked_sum = sum(int(v) for (e, s_), v in locked_map.items() if s_ == sku and e in employees)
+            _free = sum(
+                1 for e in employees
+                if (e, sku) not in locked_map
+                and (str(e).strip(), _norm_sku(sku)) not in (zero_pairs or ())
+            )
+            if int(target_boxes[sku]) - _locked_sum > _free:
                 continue
             for emp in employees:
                 if (emp, sku) in locked_map:

@@ -82,7 +82,8 @@ class TestResendOnlyMissedRows(unittest.TestCase):
         rows = [_row(sku="A"), _row(sku="B", qty="2"), _row(sku="C", qty="7")]
         os.makedirs("data/ts_sent")
         with open("data/ts_sent/tok12345.json", "w", encoding="utf-8") as fh:
-            json.dump({"sup_id": "SL397", "target_month": 10, "target_year": 2026, "rows": rows}, fh)
+            json.dump({"sup_id": "SL397", "target_month": 10, "target_year": 2026, "rows": rows,
+                       "token": "tok12345", "sent_at": 1000.0, "import_url": "https://uat.example.test/import"}, fh)
         self.keys = lh.import_row_key_series(pd.DataFrame(rows)).tolist()
 
     def tearDown(self):
@@ -102,7 +103,7 @@ class TestResendOnlyMissedRows(unittest.TestCase):
         with patch.object(ti, "_live_target_snapshot", side_effect=[before, after]), \
                 patch.object(ti, "_post_targetsun_multipart", side_effect=fake_post), \
                 patch("backend.services.targetsun_endpoints.targetsun_endpoints_summary",
-                      return_value={"cross_env": "0"}):
+                      return_value={"cross_env": "0", "import_url": "https://uat.example.test/import"}):
             out = ti.resend_unlanded_rows("SL397", "tok12345")
         self.assertEqual(sorted(sent["df"]["PRODUCTCODE"]), ["B", "C"])
         self.assertEqual(out["resent_rows"], 2)
@@ -113,7 +114,7 @@ class TestResendOnlyMissedRows(unittest.TestCase):
         with patch.object(ti, "_live_target_snapshot", return_value=full), \
                 patch.object(ti, "_post_targetsun_multipart") as post, \
                 patch("backend.services.targetsun_endpoints.targetsun_endpoints_summary",
-                      return_value={"cross_env": "0"}):
+                      return_value={"cross_env": "0", "import_url": "https://uat.example.test/import"}):
             out = ti.resend_unlanded_rows("SL397", "tok12345")
         post.assert_not_called()
         self.assertEqual(out["resent_rows"], 0)

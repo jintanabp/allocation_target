@@ -55,7 +55,16 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _read_unlocked() -> list[dict[str, Any]]:
+class _Unreadable(RuntimeError):
+    pass
+
+
+def _read_unlocked(*, for_update: bool = False) -> list[dict[str, Any]]:
+    """
+    for_update=True (ก่อนเขียน — ผลตรวจ 1 ต.ค. 2026 ก1): ไฟล์มีแต่อ่านไม่ได้ห้ามถือว่าว่าง
+    เดิม create ครั้งถัดไปเขียนทับเหลือรายการเดียว — มักเป็นคำเตือนของตัวตรวจรายคืนเอง กล่องจึงถูกล้าง
+    ตรงตอนที่ระบบกำลังมีปัญหา · JSON เสีย = เก็บสำเนาข้าง ๆ แล้วเริ่มใหม่ · อ่านไม่ได้ชั่วคราว = ไม่เขียน
+    """
     path = notifications_json_path()
     if not os.path.isfile(path):
         return []
@@ -63,8 +72,20 @@ def _read_unlocked() -> list[dict[str, Any]]:
         with read_locked(path):
             with open(path, encoding="utf-8") as fh:
                 data = json.load(fh)
-    except (OSError, json.JSONDecodeError) as e:
+    except json.JSONDecodeError as e:
+        logger.error("กล่องแจ้งเตือนเสีย (%s) — ถือว่าว่าง", e)
+        if for_update:
+            aside = f"{path}.corrupt-{int(datetime.now(timezone.utc).timestamp())}"
+            try:
+                os.replace(path, aside)
+            except OSError as e2:
+                raise _Unreadable(str(e2)) from e
+            logger.error("เก็บสำเนากล่องแจ้งเตือนที่เสียไว้ที่ %s", aside)
+        return []
+    except OSError as e:
         logger.error("อ่านกล่องแจ้งเตือนไม่ได้ (%s) — ถือว่าว่าง", e)
+        if for_update:
+            raise _Unreadable(str(e)) from e
         return []
     items = data.get("items") if isinstance(data, dict) else None
     return [x for x in (items or []) if isinstance(x, dict)]
@@ -107,7 +128,11 @@ def create(
         "created_at": _now_iso(),
     }
     with _STORE_LOCK:
-        items = _read_unlocked()
+        try:
+            items = _read_unlocked(for_update=True)
+        except _Unreadable as e:
+            logger.error("ไม่เพิ่มแจ้งเตือน (%s) — อ่านกล่องเดิมไม่ได้ ไม่เขียนทับ: %s", title, e)
+            return None
         items.append(item)
         _write_unlocked(items)
     return item
@@ -148,7 +173,10 @@ def acknowledge(email: str, item_id: str) -> bool:
     """กดรับทราบ — ได้เฉพาะคนที่อยู่ในรายชื่อผู้รับ คืน False ถ้าไม่พบ/ไม่ใช่ผู้รับ"""
     ne = normalized_email(email)
     with _STORE_LOCK:
-        items = _read_unlocked()
+        try:
+            items = _read_unlocked(for_update=True)
+        except _Unreadable:
+            return False
         for x in items:
             if x.get("id") != item_id:
                 continue

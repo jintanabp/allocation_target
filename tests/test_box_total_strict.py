@@ -98,7 +98,7 @@ class TestOptimizeHasNoEscapeHatch(unittest.TestCase):
     def test_partial_merge_is_rechecked_against_full_targets(self):
         """กระจายเฉพาะบาง SKU แล้วรวมผลเดิมกลับ — ต้องตรวจ I1 ทั้งงวดอีกรอบ"""
         src = inspect.getsource(opt)
-        merge_at = src.index("_merge_partial_result(result_csv_path")
+        merge_at = src.index("df_to_write = _merge_partial_result(")
         after = src[merge_at:merge_at + 1500]
         self.assertIn("validate_allocation_vs_targets(df_to_write, df_sku_full)", after)
 

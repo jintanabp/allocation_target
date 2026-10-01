@@ -412,9 +412,21 @@ function _confirmDialog(message, { title = "ยืนยัน", okLabel = "ต�
   });
 }
 
+/**
+ * ปิดกล่องข้อความแบบ "ยกเลิก" — เรียก onSecondary ของกล่องนั้นด้วยเสมอ (ผลตรวจ 1 ต.ค. 2026 ก7)
+ *
+ * เดิมลบด้วย .remove() ตรง ๆ (ปุ่ม ⚡ โหลดเป้าใหม่ / ไปที่คอลัมน์ / เปิดกล่องใหม่ทับ) ตัวที่ await
+ * คำตอบของกล่องนั้นจึงค้างตลอดไป เช่นขั้นส่ง Target Sun ค้าง「กำลังส่งอยู่แล้ว」จนรีเฟรชหน้า
+ */
+function _dismissInfoModal() {
+  const m = document.getElementById("infoModal");
+  if (!m) return;
+  if (typeof m._dismiss === "function") m._dismiss();
+  else m.remove();
+}
+
 function _showInfoModal({ title, bodyHtml, primaryLabel, onPrimary, secondaryLabel = "ปิด", onSecondary } = {}) {
-  const existing = document.getElementById("infoModal");
-  if (existing) existing.remove();
+  _dismissInfoModal();
 
   const modal = document.createElement("div");
   modal.id = "infoModal";
@@ -435,8 +447,17 @@ function _showInfoModal({ title, bodyHtml, primaryLabel, onPrimary, secondaryLab
   document.body.appendChild(modal);
   let unbind = () => {};
   const close = () => {
+    modal._dismiss = null;
     unbind();
     modal.remove();
+  };
+  modal._dismiss = () => {
+    modal._dismiss = null;
+    try {
+      onSecondary && onSecondary();
+    } finally {
+      close();
+    }
   };
   // Escape = เหมือนกดปุ่มรอง (ยกเลิก) — ต้องเรียก onSecondary ด้วย ไม่งั้นตัวที่รอคำตอบค้าง
   unbind = bindModalBehaviour(modal, () => {
@@ -451,6 +472,7 @@ function _showInfoModal({ title, bodyHtml, primaryLabel, onPrimary, secondaryLab
     (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
+      modal._dismiss = null;
       try {
         onSecondary && onSecondary();
       } finally {
@@ -461,6 +483,7 @@ function _showInfoModal({ title, bodyHtml, primaryLabel, onPrimary, secondaryLab
   );
   modal.addEventListener("click", (e) => {
     if (e.target === modal) {
+      modal._dismiss = null;
       try {
         onSecondary && onSecondary();
       } finally {
@@ -474,6 +497,7 @@ function _showInfoModal({ title, bodyHtml, primaryLabel, onPrimary, secondaryLab
       (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
+        modal._dismiss = null; // กดปุ่มหลักแล้ว — onPrimary เปิดกล่องใหม่ทับได้โดยไม่เรียกยกเลิกของกล่องนี้
         try {
           onPrimary && onPrimary();
         } finally {
@@ -2783,6 +2807,12 @@ async function switchSupervisorContext(newSupId) {
   const ns = String(newSupId ?? "").trim();
   const cur = String(S.supId ?? "").trim();
   if (!ns || ns === cur) return;
+  // กำลังกระจายอยู่ = ห้ามสลับทีม (ผลตรวจ 1 ต.ค. 2026 ก6) — ผลของทีมเดิมจะมาลงตาราง/บันทึกของทีมใหม่
+  if (_allocRunInFlight) {
+    toast("กำลังกระจายอยู่ — รอให้เสร็จก่อนค่อยสลับทีม", "amber");
+    updateSupervisorSwitcherUI();
+    return;
+  }
   if (S.loginRole === "manager" && S.managerViewMode !== "individual") return;
   if (S._hasUnsaved) {
     const ok = await _confirmDialog(
@@ -4978,6 +5008,7 @@ function _showSkuWarnings() {
   const vanExcluded = warnings.filter(w => w.type === "employees_excluded_van_code");
   const whSplitActive = warnings.filter(w => w.type === "wh_split_active");
   const empListStale = warnings.filter(w => w.type === "emp_list_stale");
+  const cashPriceUnavailable = warnings.filter(w => w.type === "cash_price_unavailable");
   const mixedUnit = warnings.filter(w => w.type === "aggregate_mixed_sales_unit");
   const teamSkipped = warnings.filter(w => w.type === "aggregate_team_skipped");
   const soldOnlyExcluded = warnings.filter(w => w.type === "sold_only_skus_excluded");
@@ -5059,6 +5090,13 @@ function _showSkuWarnings() {
   if (empListStale.length > 0) {
     html += `<li><strong style="color:var(--danger, #c0392b)">⚠️ รายชื่อพนักงานไม่ใช่ของงวดนี้</strong><br>`;
     html += _warningLinesHtml(empListStale);
+    html += `</li>`;
+  }
+
+  // ราคารถเงินสดดึงไม่ได้ — เป้าเงินคิดด้วยราคาเครดิตไปก่อน (ผลตรวจ 1 ต.ค. 2026 ก2)
+  if (cashPriceUnavailable.length > 0) {
+    html += `<li><strong style="color:var(--danger, #c0392b)">⚠️ ใช้ราคาเครดิตแทนราคารถเงินสด</strong><br>`;
+    html += _warningLinesHtml(cashPriceUnavailable);
     html += `</li>`;
   }
 
@@ -6117,6 +6155,18 @@ async function _confirmRevenueScaleBeforeRun() {
 // nested=true = ถูกเรียกต่อจากปุ่มกระจายที่ถือธงอยู่แล้ว ห้ามกันตัวเอง
 let _allocRunInFlight = false;
 
+/** บริบทที่ผลกระจายผูกอยู่ — เปลี่ยนระหว่างรอผล = ทิ้งผลนั้น ห้ามเอาไปลงตาราง/บันทึกของบริบทใหม่ */
+function _allocContextKey() {
+  return [S.supId, S.targetMonth, S.targetYear, S.loginRole === "manager" ? S.managerViewMode : "", S.aggregateMode ? 1 : 0]
+    .map((x) => String(x ?? "")).join("|");
+}
+
+function _allocContextChanged(ctx) {
+  if (ctx === _allocContextKey()) return false;
+  toast("ทีม/งวดเปลี่ยนระหว่างกระจาย — ไม่ใช้ผลรอบนี้ กรุณากระจายใหม่", "amber");
+  return true;
+}
+
 async function _runAllocGuarded(nested, fn) {
   if (nested) return fn();
   if (_allocRunInFlight) {
@@ -6178,7 +6228,9 @@ async function runOptimization() {
     pushGlobalBusy(UX.busyAllocate, _formatAllocateBusyHint());
     let allocs;
     try {
+      const _ctx = _allocContextKey();
       allocs = await _doOptimize(lockedEdits);
+      if (_allocContextChanged(_ctx)) return;
       if (!allocs || !allocs.length) return;
 
       // จำ "เลขที่เครื่องคำนวณให้" ของทุกแถว ตั้งแต่วินาทีที่ผลออกมา
@@ -9602,7 +9654,7 @@ function jumpToResultCell(sku, empId) {
   const emp = String(empId || "").trim();
   if (!skuKey) return;
   _resultJumpInFlight = true;
-  document.getElementById("infoModal")?.remove();
+  _dismissInfoModal();
 
   const block = document.getElementById("resultBlock");
   if (!block || block.style.display === "none") {
@@ -13756,7 +13808,9 @@ async function runReAllocationKeepEdits() {
 
     const lockedEdits = _collectLockedEdits();
 
+    const _ctx = _allocContextKey();
     const allocs = await _doOptimize(lockedEdits);
+    if (allocs && _allocContextChanged(_ctx)) return;
     if (!allocs) return;
 
     const strategy = document.querySelector('[name="strategy"]:checked')?.value || "L3M";
@@ -14366,7 +14420,7 @@ async function reloadThenReallocChanged(skus) {
       toast("มุมมองนี้แก้ผลกระจายไม่ได้", "amber");
       return;
     }
-    document.getElementById("infoModal")?.remove();
+    _dismissInfoModal();
     try {
       // รวมภาคโหลดผ่านตัวสลับมุมมองรวมภาค (ดึงสดทุกทีม) · ทีมเดียวโหลดขั้นที่ 1 ของทีม
       if (S.aggregateMode) await refreshManagerDashboardData({ refresh: true });
@@ -14579,8 +14633,14 @@ async function runReAllocationForSkus(skus, opts = {}) {
     // S.newProductSkus เป็น Set (ป้าย「ใหม่」+ ปุ่มปรับยอดอัตโนมัติใช้ .has) — เดิมเช็ค Array.isArray
     // จึงได้ [] เสมอ แล้วยังเขียนกลับเป็น Array ทำให้ .has หายเงียบ ๆ หลังกระจายเฉพาะสินค้า
     const prevNewSkus = S.newProductSkus ? [...S.newProductSkus] : [];
+    // กติกาไม่เคยขาย: ผลรอบนี้รู้แค่ SKU ที่เลือก (ผลตรวจ 1 ต.ค. 2026 ก9) — เก็บของ SKU อื่นไว้รวมกลับ
+    // เดิมทับทั้งชุด ปุ่มปรับยอดอัตโนมัติจึงให้หีบคู่ที่ควรเป็น 0 แล้วบันทึกชุดที่หดลงขึ้น server
+    const prevZeroKeys = S.neverSoldZeroKeys instanceof Set ? [...S.neverSoldZeroKeys] : [];
+    const prevNeverSoldSummary = { ...(S.neverSoldSummary || {}) };
 
+    const _ctx = _allocContextKey();
     const part = await _doOptimize(lockedEdits, { onlySkus: changed });
+    if (part && _allocContextChanged(_ctx)) return;
     if (!part || !part.length) {
       if (btn && document.body.contains(btn)) {
         btn.disabled = false;
@@ -14592,6 +14652,14 @@ async function runReAllocationForSkus(skus, opts = {}) {
 
     // meta สินค้าใหม่จากรอบ partial รู้จักแค่ subset — union กลับกันป้าย "ใหม่" ของตัวอื่นหาย
     S.newProductSkus = new Set([...prevNewSkus, ...(S.newProductSkus || [])]);
+    S.neverSoldZeroKeys = new Set([
+      ...prevZeroKeys.filter((k) => !changedSet.has(String(k).split("|").pop().trim())),
+      ...(S.neverSoldZeroKeys || []),
+    ]);
+    S.neverSoldSummary = {
+      ...Object.fromEntries(Object.entries(prevNeverSoldSummary).filter(([sku]) => !changedSet.has(String(sku).trim()))),
+      ...(S.neverSoldSummary || {}),
+    };
 
     // merge: SKU ที่กระจายรอบนี้ใช้แถวใหม่ทั้งชุด · SKU อื่นคงเดิมทุกประการ (รวมสถานะล็อก)
     // รวมภาคแบบรายทีม: ทีมที่ไม่อยู่ในผลรอบนี้ (กระจายไม่สำเร็จ หรือไม่มีสินค้าที่เลือกในเป้าทีม)

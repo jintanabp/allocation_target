@@ -52,6 +52,44 @@ def _read(path: str) -> dict[str, Any] | None:
         return None
 
 
+class LedgerUnreadable(RuntimeError):
+    """ไฟล์ ledger มีอยู่แต่อ่านไม่ได้ — ห้ามเขียนทับ (จะลบประวัติการส่งถาวรทั้งไฟล์)"""
+
+
+def _read_for_update(path: str) -> dict[str, Any] | None:
+    """
+    อ่านก่อนเขียน (ผลตรวจ 1 ต.ค. 2026 ก1) — แยก "ไม่มีไฟล์" ออกจาก "อ่านไม่ได้"
+
+    เดิมใช้ _read ซึ่งคืน None ทั้งสองแบบ แล้วเริ่ม ledger ใหม่ทับไฟล์เดิม: แค่ antivirus/backup
+    เปิดไฟล์ค้างบน Windows ตอนส่ง ประวัติการส่งทุกรอบของทีม×งวดนั้นหายถาวร
+      - ไม่มีไฟล์ → None (เริ่มใหม่ได้)
+      - OSError ชั่วคราว → ลองใหม่ 3 ครั้ง ยังไม่ได้ → LedgerUnreadable (ไม่เขียน)
+      - JSON เสีย → เก็บสำเนาไว้ข้าง ๆ (.corrupt-<เวลา>) แล้วเริ่มใหม่ — ไฟล์เสียแล้วอ่านต่อไม่ได้อยู่ดี
+    """
+    last: Exception | None = None
+    for attempt in range(3):
+        if not os.path.isfile(path):
+            return None
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                raise json.JSONDecodeError("ไม่ใช่ object", "", 0)
+            return data
+        except json.JSONDecodeError as e:
+            aside = f"{path}.corrupt-{int(time.time())}"
+            try:
+                os.replace(path, aside)
+            except OSError as e2:
+                raise LedgerUnreadable(f"ledger เสียและย้ายออกไม่ได้: {e2}") from e
+            logger.error("sent ledger เสีย (%s) — เก็บสำเนาไว้ที่ %s แล้วเริ่มใหม่", e, aside)
+            return None
+        except OSError as e:
+            last = e
+            time.sleep(0.2 * (attempt + 1))
+    raise LedgerUnreadable(f"อ่าน ledger ไม่ได้: {last}")
+
+
 def read_ledger(sup_id: str, month: int, year: int) -> dict[str, Any] | None:
     path = ledger_path(sup_id, month, year)
     with _path_lock(path):
@@ -103,7 +141,7 @@ def record_send(
         path = ledger_path(sid, month, year)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with _path_lock(path):
-            data = _read(path) or {
+            data = _read_for_update(path) or {
                 "sup_id": sid, "target_month": int(month), "target_year": int(year),
                 "rows": {}, "sends": [],
             }
@@ -117,9 +155,31 @@ def record_send(
             data["updated_at"] = now
             atomic_write_json(path, data, ensure_ascii=False)
         return True
+    except LedgerUnreadable as e:
+        logger.error("ไม่บันทึก sent ledger (%s %s-%02d) — ไฟล์เดิมอ่านไม่ได้ ไม่เขียนทับ: %s",
+                     sup_id, year, month, e)
+        _notify_dev_unrecorded(sup_id, month, year, token, str(e))
+        return False
     except Exception:
         logger.exception("บันทึก sent ledger ไม่สำเร็จ (%s %s-%02d)", sup_id, year, month)
         return False
+
+
+def _notify_dev_unrecorded(sup_id: str, month: int, year: int, token: str, why: str) -> None:
+    try:
+        from . import notification_store
+        from .send_alerts import _dev_emails
+        from .user_access_store import read_rows
+
+        notification_store.create(
+            kind="sent_ledger",
+            title="บันทึกการส่งไม่ได้ (sent ledger)",
+            message=f"ทีม {sup_id} งวด {int(month):02d}/{int(year)} — ไฟล์เดิมอ่านไม่ได้ จึงไม่เขียนทับ: {why[:200]}",
+            recipients=_dev_emails(read_rows()),
+            context={"sup_id": sup_id, "token": token},
+        )
+    except Exception:
+        logger.exception("แจ้ง dev เรื่อง sent ledger ไม่สำเร็จ")
 
 
 def list_ledgers() -> list[dict[str, Any]]:

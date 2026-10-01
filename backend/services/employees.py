@@ -131,9 +131,9 @@ def _build_sku_and_sun_from_tga(
             pname_en = str(r0.get("product_name_english", "") or "")
             section = str(r0.get("section", "") or "").strip()
             # แคชรุ่นเก่ามีแต่ราคาเครดิต — ถอยไปใช้ตัวนั้นดีกว่าได้ 0
-            credit_unit_price = float(r0.get(price_col, 0) or 0)
+            credit_unit_price = _price_or_zero(r0.get(price_col, 0))
             if credit_unit_price <= 0 and price_col != "credit_unit_price":
-                credit_unit_price = float(r0.get("credit_unit_price", 0) or 0)
+                credit_unit_price = _price_or_zero(r0.get("credit_unit_price", 0))
         sk = str(sku).strip()
         sales_price: float | None = None
         if price_latest_by_sku is not None and sk in price_latest_by_sku:
@@ -754,6 +754,7 @@ def load_employees_payload(
             )
 
         df_sku_base = pd.DataFrame()
+        price_credit_only = False
         from . import fabric_cache as fc
 
         if sku_union:
@@ -775,13 +776,17 @@ def load_employees_payload(
                         target_month=target_month,
                     )
                     if df_fresh is not None and not df_fresh.empty:
+                        # ชั้นถอย「เครดิตอย่างเดียว」(ผลตรวจ 1 ต.ค. 2026 ก2): ห้ามเขียนลงแคชกลาง — เดิม merge
+                        # กับแคชเดิมแล้ว SKU ใหม่ได้ราคารถเงินสด NaN ค้าง 24 ชม. (ด่านแคชดูแค่แถวแรก)
+                        price_credit_only = bool(df_fresh.attrs.get("credit_only"))
                         if cached_product is not None and not cached_product.empty:
                             merged = pd.concat([cached_product, df_fresh]).drop_duplicates(
                                 subset=["sku"], keep="last"
                             )
                         else:
                             merged = df_fresh
-                        fc.write_product_info_df(target_year, target_month, merged)
+                        if not price_credit_only:
+                            fc.write_product_info_df(target_year, target_month, merged)
                         df_sku_base = merged[merged["sku"].astype(str).isin(sku_union)].copy()
                 except Exception as e:
                     logger.warning("get_product_info error: %s", e)
@@ -1384,6 +1389,18 @@ def load_employees_payload(
                 + " (ตั้งได้ที่หน้าแอดมิน > ย้ายพนักงาน)"
             ),
         })
+    if price_credit_only and str(sales_unit or "").strip().upper()[:1] == "C":
+        sku_warnings.append(
+            {
+                "type": "cash_price_unavailable",
+                "sku": "",
+                "brand": "",
+                "message": (
+                    "ดึงราคารถเงินสดจาก Fabric ไม่ได้รอบนี้ — สินค้าที่เพิ่งดึงใช้ราคาเครดิตไปก่อน "
+                    "เป้าเงินอาจไม่ตรงราคาจริง กรุณาโหลดใหม่อีกครั้งเมื่อระบบกลับมาปกติ"
+                ),
+            }
+        )
     if emp_list_stale_from:
         sku_warnings.append(
             {
@@ -1428,6 +1445,15 @@ def load_employees_payload(
     }
     write_cached_employee_payload(sup_id, target_month, target_year, payload)
     return payload
+
+
+def _price_or_zero(v: Any) -> float:
+    """ราคาจากแคช/Fabric → float · ว่าง / อ่านไม่ได้ / NaN = 0 (NaN เทียบ <= 0 ไม่ได้ จะไม่ถอยไปราคาเครดิต)"""
+    try:
+        f = float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return f if f == f else 0.0
 
 
 def _newest_emp_cache_other_period(
@@ -1579,11 +1605,8 @@ def _infer_sales_units_from_prices(
         sku = str(r.get("sku") or "").strip()
         if not sku:
             continue
-        try:
-            credit[sku] = float(r.get("credit_unit_price") or 0)
-            cash[sku] = float(r.get("cash_unit_price") or 0)
-        except (TypeError, ValueError):
-            continue
+        credit[sku] = _price_or_zero(r.get("credit_unit_price"))
+        cash[sku] = _price_or_zero(r.get("cash_unit_price"))
 
     out = dict(unit_by_sup)
     for p in payloads:
@@ -1647,12 +1670,9 @@ def _authoritative_price_map(
             sku = str(r.get("sku") or "").strip()
             if sku not in skus:
                 continue
-            try:
-                price = float(r.get(col) or 0)
-                if price <= 0 and col != "credit_unit_price":
-                    price = float(r.get("credit_unit_price") or 0)
-            except (TypeError, ValueError):
-                continue
+            price = _price_or_zero(r.get(col))
+            if price <= 0 and col != "credit_unit_price":
+                price = _price_or_zero(r.get("credit_unit_price"))
             if price > 0:
                 out[sku] = (price, False)
 

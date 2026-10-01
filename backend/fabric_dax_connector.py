@@ -898,6 +898,8 @@ SELECTCOLUMNS(
             columns=["sku", "brand", "brand_name_thai", "brand_name_english", "section",
                      "product_name_thai", "product_name_english", "unit_cost", "cost_per_unit",
                      "credit_unit_price"] + ([] if credit_only else ["cash_unit_price"]))
+        if credit_only:
+            df.attrs["credit_only"] = True  # ตัวเรียกต้องไม่เขียนลงแคชกลาง + เตือนทีมรถเงินสด
         print(f"✅ ดึงข้อมูลสินค้า {len(df)} รายการ")
         return df
 
