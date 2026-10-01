@@ -10660,3 +10660,81 @@ tr.emp-row--no-target .emp-tag {
   flex-wrap: wrap;
   margin-top: 4px;
 }
+
+/* ══════════════════════════════════════════════
+   UI polish 2026-10 (ผู้ใช้ขอ 1 ต.ค. 2026)
+   ความสวยงาม / ความชัดเท่านั้น — ไม่ขยับโครงหน้า ตำแหน่งปุ่ม หรือลำดับขั้นตอน
+   (ผู้ใช้สูงวัยถนัดแบบเดิม) · ใช้ token ทั้งหมด โหมดมืดจึงตามไปเอง · ลบบล็อกนี้ = กลับเป็นแบบเดิมทันที
+══════════════════════════════════════════════ */
+
+/* เลขขั้นตอน 1-2-3 เด่นขึ้น — ผู้ใช้ไล่ตามขั้นได้ง่าย */
+.step-num {
+  width: 28px;
+  height: 28px;
+  margin-top: 1px;
+  font-size: 13px;
+  background: var(--accent);
+  color: var(--white);
+  border-color: var(--accent);
+  box-shadow: 0 2px 6px rgba(79, 70, 229, 0.25);
+}
+
+.step-title {
+  font-size: 17px;
+}
+
+/* หัวการ์ด: ไล่เฉดจาง ๆ ให้แยกจากเนื้อหา */
+.panel-head {
+  background: linear-gradient(180deg, var(--white) 0%, var(--surface-2) 100%);
+}
+
+.panel-title {
+  color: var(--text-1);
+}
+
+/* ตัวเลขทุกตารางกว้างเท่ากัน — หลักหน่วย/สิบ/ร้อยตรงกันทั้งคอลัมน์ อ่านเทียบง่าย */
+.tbl,
+.admin-table {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ปุ่มหลัก: ยกขึ้นเล็กน้อยตอนชี้ กดแล้วยุบ · ปุ่มที่ยังกดไม่ได้ดูออกชัด (ไม่ใช่แค่จางลง) */
+.btn-run {
+  transition: background-color 0.2s, box-shadow 0.2s, transform 0.12s;
+}
+
+.btn-run:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.btn-run:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: var(--shadow-sm);
+}
+
+.btn-run:disabled {
+  opacity: 0.55;
+  filter: saturate(0.35);
+}
+
+/* ช่องกรอก / ตัวเลือก: ขอบเปลี่ยนสีตอนชี้ บอกว่ากดได้ */
+.field-input:hover:not(:focus):not(:disabled) {
+  border-color: var(--accent-brd);
+}
+
+/* ป้าย「ใหม่」: ตัวอักษรเคยเป็นเขียวเข้มตายตัว โหมดมืดมองไม่เห็นเลย · ขยายจาก 10px ให้อ่านง่ายขึ้น */
+.badge-new {
+  font-size: 11px;
+}
+
+:root[data-theme="dark"] .badge-new {
+  color: var(--green);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-run,
+  .btn-run:hover:not(:disabled) {
+    transition: none;
+    transform: none;
+  }
+}
