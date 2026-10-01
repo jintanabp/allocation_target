@@ -1525,6 +1525,29 @@ def target_drift_for_sups(
 _UNSET = object()
 
 
+def _own_sent_boxes_by_sku(sup_id: str, month: int, year: int) -> dict[str, int]:
+    """
+    ยอดหีบต่อ SKU ที่ระบบเราส่งเข้า Target Sun ครั้งล่าสุดของทีม×งวด (จาก sent ledger) — ใช้แยก
+    "Target Sun เปลี่ยนเพราะเราส่งเอง" ออกจาก "เป้าต้นทางเปลี่ยน" · ledger ของปลายทางอื่น = ไม่นับ
+    """
+    from . import sent_ledger
+    from .targetsun_endpoints import targetsun_endpoints_summary
+
+    try:
+        led = sent_ledger.read_ledger(sup_id, month, year) or {}
+        url = str(targetsun_endpoints_summary().get("import_url") or "")
+    except Exception:
+        return {}
+    if not led.get("rows") or not led.get("import_url") or led.get("import_url") != url:
+        return {}
+    out: dict[str, int] = {}
+    for k, v in (led.get("rows") or {}).items():
+        sku = str(k).split("|")[0].strip()
+        if sku:
+            out[sku] = out.get(sku, 0) + int((v or {}).get("qty") or 0)
+    return out
+
+
 def assert_target_snapshot_is_fresh(
     sup_id: str,
     month: int,
@@ -1581,6 +1604,14 @@ def assert_target_snapshot_is_fresh(
                     "removed_sku": sku not in live,
                 }
             )
+    if drifts:
+        # ค่าที่เปลี่ยนเพราะ "เราส่งเอง" ไม่ใช่เป้าเปลี่ยน (ผลตรวจ 1 ต.ค. 2026 ข1 ทางที่ 1) — ส่งรวมภาคล้มกลางทาง
+        # ทีมที่ลงแล้วถือยอดหลังย้ายหีบข้ามทีม (เช่น 60 → 70) ส่งทั้งชุดซ้ำต้องผ่าน ไม่งั้นผู้ใช้ค้าง
+        # และถ้าหันไปโหลดขั้นที่ 1 ใหม่ เป้ารวมภาคจะกลายเป็นยอดที่ผิด (ทีมที่ลงแล้ว + ทีมที่ยังค้างค่าเก่า)
+        # ยอมรับเฉพาะ SKU ที่ยอดสดเท่ากับที่ ledger จดว่าเราส่งครั้งล่าสุดพอดี — คนอื่นแก้เป้า = ยังบล็อก
+        own = _own_sent_boxes_by_sku(sup_id, month, year)
+        if own:
+            drifts = [d for d in drifts if int(own.get(d["sku"], -1)) != int(d["current_boxes"])]
     if not drifts:
         return
     # เปลี่ยนมากก่อน — ผู้ใช้ไล่ดูตัวใหญ่ก่อน

@@ -207,6 +207,54 @@ class TestSlLinkAndNightlyManual(_Tmp):
         self.assertTrue(nc._due(s, st, datetime(2026, 9, 20, 2, 5, tzinfo=TZ)))
 
 
+# ── ข1 ทางที่ 1: ส่งทั้งชุดซ้ำหลังล้มกลางทาง (ผู้ใช้เลือก 1 ต.ค. 2026) ─────────────
+
+
+class TestResendWholeBatchAfterPartialFailure(_Tmp):
+    """
+    ตัวอย่างที่อธิบายผู้ใช้: เป้า A 60 / B 40 → กระจายรวมภาคได้ A 70 / B 30 → A ลง B ล้ม
+    ส่งทั้งชุดซ้ำ: ทีม A ใน Target Sun ตอนนี้ 70 ≠ เป้าที่โหลดไว้ 60 — ต้องไม่ถูกบล็อกว่า「เป้าเปลี่ยน」
+    เพราะ 70 คือของที่เราส่งเอง · ไม่มีการส่งจริงในเทสต์
+    """
+    URL = "https://uat.x.test/import"
+
+    def _check(self, live, *, ledger_url=URL, current_url=URL, sent_qty=70):
+        from backend.services import lakehouse as lh
+
+        sl.record_send("SLA", 10, 2026, [_row("X", "E1", sent_qty)], send_status="ok", import_url=ledger_url)
+        with patch.object(lh, "_sup_target_boxes_by_sku", return_value={"X": 60}),              patch("backend.services.targetsun_endpoints.targetsun_endpoints_summary",
+                   return_value={"cross_env": "0", "import_url": current_url}):
+            lh.assert_target_snapshot_is_fresh("SLA", 10, 2026, live_by_sku=live)
+
+    def test_change_made_by_our_own_send_passes(self):
+        self._check({"X": 70})
+
+    def test_change_by_someone_else_still_blocks(self):
+        with self.assertRaises(HTTPException) as cm:
+            self._check({"X": 75})
+        self.assertEqual(cm.exception.detail["code"], "send_target_stale")
+
+    def test_ledger_of_other_destination_does_not_count(self):
+        with self.assertRaises(HTTPException):
+            self._check({"X": 70}, ledger_url="https://prod.x.test/import")
+
+    def test_resending_same_file_creates_no_conflict(self):
+        from backend.services.lakehouse import import_row_key_series, warehouse_conflicts
+
+        df = pd.DataFrame([_row("X", "E1", 70), _row("X", "E2", 0, wh="W1")])
+        keys = import_row_key_series(df).tolist()
+        file_qty = dict(zip(keys, df["QUANTITYCASE"]))
+        self.assertEqual(warehouse_conflicts(dict(file_qty), file_qty), [])
+
+    def test_summary_tells_user_to_resend_whole_set(self):
+        body = _fn("_showPartialSendSummaryModal")
+        self.assertIn("กดส่งชุดเดิมทั้งหมดอีกครั้ง", body)
+        self.assertNotIn("อย่ากดส่งทั้งชุดซ้ำ", body)
+        self.assertNotIn("ห้ามส่งทีมเหล่านี้ซ้ำ", body)
+        manual = _src("docs", "user-manual-th.md")
+        self.assertNotIn("อย่ากดส่งทั้งชุดซ้ำ", manual)
+
+
 # ── ข1 / ข6 / ข7 / ข8 / ข9 / ข17 หน้าเว็บ ───────────────────────────────────
 
 
