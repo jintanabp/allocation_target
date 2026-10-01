@@ -138,14 +138,14 @@ client บันทึก → ส่ง if_match_version: 3
 | `services/usage_log_store.py` | `_LOCK` | append/rewrite jsonl |
 | `services/sl_link_store.py` / `sku_link_store.py` | `_STORE_LOCK` (**RLock**) + `mutate_links()` + `atomic_write_text` | แอดมินสร้าง/แก้/ลบการผูกรหัส อ่าน→แก้→เขียน ใต้ล็อกเดียว (ผลตรวจ §5.1-1) |
 | `services/no_target_store.py` | `_STORE_LOCK` (**RLock**) + atomic | บันทึกรายชื่อ「ไม่ต้องตั้งเป้า」ของสองทีมพร้อมกันไม่ทับกัน (§5.1-2) |
-| `services/emp_assignment_store.py` | `_STORE_LOCK` (**RLock**) + `read_locked` | การย้ายพนักงานไปเกลี่ยทีมอื่น |
+| `services/emp_assignment_store.py` | `_STORE_LOCK` (**RLock**) + `read_locked` | การย้ายพนักงานไปเกลี่ยทีมอื่น · ก่อนเขียนอ่านแบบ `strict` — ไฟล์อ่านไม่ได้ = ไม่บันทึก (เดิมเขียนทับเหลือแถวเดียว) |
 | `services/admin_permissions_store.py` | `_STORE_LOCK` + `atomic_write_text` | สิทธิ์หน้าแอดมินรายบทบาท |
 | `services/warehouse_pin_rules_store.py` | `_STORE_LOCK` + `atomic_write_json` | กติกาบังคับคลังเดียว |
-| `services/notification_store.py` | `_STORE_LOCK` (**RLock**) | กล่องแจ้งเตือนในแอป |
+| `services/notification_store.py` | `_STORE_LOCK` (**RLock**) | กล่องแจ้งเตือนในแอป · ก่อนเขียนอ่านแบบ `for_update` — อ่านไม่ได้ = ไม่เพิ่ม/ไม่รับทราบ · JSON เสีย = เก็บสำเนาแล้วเริ่มใหม่ |
 | `services/managers.py::rebuild_managers_from_roster` | ล็อกของ `user_access_store` | สร้างลำดับสิทธิ์ใหม่จากรายชื่อล่าสุดเสมอ ไม่เขียน `managers_cache.json` ซ้ำสองรอบ (§5.1-5) |
 | `emp_cache_*.csv` (admin_team / employees / lakehouse) | `atomic_write_csv` + `read_locked` | เขียนจากสองที่ อ่านไม่เจอไฟล์ครึ่งใบ (§5.1-4) |
-| `services/sent_ledger.py` | `_path_lock(path)` + `atomic_write_json` | ส่งหลายรอบ/หลายทีมพร้อมกันไม่ทับ ledger ของกันและกัน (F2) |
-| `services/nightly_check.py` | ล็อกไฟล์ `data/.nightly_check.lock` (ข้ามโปรเซส) | ตรวจรายคืนไม่รันซ้อน — ทั้งตัวตั้งเวลา ปุ่มรันเดี๋ยวนี้ และหลาย worker (F3) |
+| `services/sent_ledger.py` | `_path_lock(path)` + `atomic_write_json` | ส่งหลายรอบ/หลายทีมพร้อมกันไม่ทับ ledger ของกันและกัน (F2) · `_read_for_update` แยก「ไม่มีไฟล์」กับ「อ่านไม่ได้」 (ลองใหม่ 3 ครั้ง ยังไม่ได้ = ไม่เขียน + แจ้ง dev) |
+| `services/nightly_check.py` | ล็อกไฟล์ `data/.nightly_check.lock` (ข้ามโปรเซส) + `_path_lock` ของ settings/state | ตรวจรายคืนไม่รันซ้อน — ทั้งตัวตั้งเวลา ปุ่มรันเดี๋ยวนี้ และหลาย worker (F3) · ได้ล็อกแล้วตรวจซ้ำว่าวันนี้รันไปหรือยัง (กันรันซ้ำวันเดียว) · settings/state อ่าน-แก้-เขียนใต้ล็อก · ปุ่มรันเดี๋ยวนี้ตอบ busy เมื่อมีรอบถือล็อก (`is_running`) |
 | `core/runtime_checks.py` | ล็อกไฟล์ `data/.app_process.lock` ตลอดอายุโปรเซส | ตรวจว่ามีโปรเซสเดียวใช้ `data/` — ล็อกไม่ได้ = log error + `/health` (§5.2) |
 | `fabric_dax_connector.py` | `_TOKEN_CACHE_LOCK` | เขียน `data/token_cache.bin` (เฉพาะโหมดล็อกอินผู้ใช้) |
 | `services/alloc_rules_store.py` | `_STORE_LOCK` | CAS ด้วย `rev` (ดูหัวข้อ "ไฟล์ global" ด้านบน) |

@@ -642,6 +642,10 @@ Log: **`data/app.log`** บน server (path ตาม working directory ขอ�
 1. `git clone` + `scripts\dev\setup.bat` (conda `allocation_env`) หรือ venv / `Run_Local.bat`
 2. สร้าง **`config/.env`** ในเครื่อง (อย่า commit)
 3. `uvicorn backend.main:app --host 127.0.0.1 --port 8000` → http://localhost:8000/
+4. เทสต์: `python run_tests.py` เท่านั้น (กันชนเน็ตแบบ allowlist + คุ้ม config/ และ data/cache/ — ดู `config/README.md`)
+5. ดูหน้าจอโดยไม่ต้องมี backend: เสิร์ฟ `frontend/` แบบ static บน 127.0.0.1 แล้วป้อนข้อมูลทีมสาธิต
+   (`backend.services.demo_data.build_employees_payload`) ผ่านตัวดัก `window.fetch` — คำขอทุกอันวิ่งอยู่ในเครื่อง
+   ไม่ไปถึงระบบจริง
 
 สคริปต์ `build_portable_runtime.bat` / แจก zip — **ไม่จำเป็น** ถ้า deploy ผ่าน server บริษัทแล้ว
 

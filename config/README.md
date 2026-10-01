@@ -221,8 +221,8 @@ Supervisor และแอดมินพร้อมกันได้ ตำ�
 | `config/emp_assignments.json` | การย้ายพนักงานไปให้ทีมอื่นเกลี่ยเป้า | ✅ ใช่ |
 | `data/alloc_rules.json` | กติกาการเกลี่ยที่แอดมินตั้งจากหน้าเว็บ | ❌ ไม่ |
 | `data/warehouse_pin_rules.json` | กติกาบังคับคลังเดียว | ❌ ไม่ |
-| `data/sent_ledger/*.json` | สิ่งที่ส่งเข้า Target Sun จริงต่อทีม × งวด (ฐานของตรวจรายคืน) | ❌ ไม่ |
-| `data/nightly_check.json` | ค่าตั้งตรวจรายคืน (ค่าตั้งต้นปิด) | ❌ ไม่ |
+| `data/sent_ledger/*.json` | สิ่งที่ส่งเข้า Target Sun จริงต่อทีม × งวด (ฐานของตรวจรายคืน + ด่านเป้าเปลี่ยนแยก「เราส่งเอง」) — **สร้างใหม่ไม่ได้ สำรองก่อน deploy** | ❌ ไม่ |
+| `data/nightly_check.json` | ค่าตั้งตรวจรายคืน (ค่าตั้งต้นปิด · ชั่วโมงรอบรายคืน + รอบปิดงวด) | ❌ ไม่ |
 | `data/allocations/*.json` | ผลการกระจายราย SL × งวด | ❌ ไม่ |
 | `data/baselines/*.json` | เป้าตั้งต้นของงวด | ❌ ไม่ |
 | `data/logs/*.jsonl` | บันทึกการใช้งาน | ❌ ไม่ |
@@ -259,6 +259,10 @@ Supervisor และแอดมินพร้อมกันได้ ตำ�
 
 1. รัน `python run_tests.py` บนเครื่อง dev (ต้องใช้ตัวนี้ ไม่ใช่ `unittest` ตรง ๆ — มันติดตั้ง
    กันชนไม่ให้เทสต์เขียนทับ config จริงและไม่ให้ยิงเน็ตขึ้นระบบจริง)
+   - กันชนเน็ต (`tests/_netguard.py`) เป็น **allowlist** ตั้งแต่ 1 ต.ค. 2026: ยอมแค่ loopback / `localhost` / `testserver`
+     ทั้งชั้น `requests` และ `socket.connect` (ครอบ urllib / httpx / msal) — เทสต์ที่ต้องใช้โฮสต์ปลอมต้อง mock เอง
+   - ไฟล์ที่คุ้ม: `config/*.json` ชุดสำคัญ + `data/managers_cache.json` + **ทุกไฟล์ใน `data/cache/`**
+     (แก้ = กู้คืน · สร้างใหม่ = ลบ · ลบ = คืนให้) — มีไฟล์ถูกแตะ = ชุดเทสต์จบด้วย exit 1
 2. ตรวจว่าไม่ commit `config/.env` และ `.cursor/`
 3. GitHub Actions (`.github/workflows/test.yml`) ต้องผ่านบน PR
 
