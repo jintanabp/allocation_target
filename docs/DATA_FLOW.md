@@ -185,7 +185,7 @@ python scripts/access/repair_user_access.py
 | `ts_prepare/*.xlsx` | ไฟล์ชั่วคราวก่อนส่ง TargetSun (อายุ 30 นาที) |
 | `ts_sent/{token}.json` | แถวของไฟล์ที่ส่งแล้ว เก็บ 14 วัน — ใช้ปุ่ม「ส่งซ้ำเฉพาะแถวที่ตกหล่น」 |
 | `sent_ledger/{SUP}_{YYYY}_{MM}.json` | **สิ่งที่ส่งเข้า Target Sun จริง** ต่อทีม × งวด แบบถาวร (เฟส F2) — คีย์แถว → หีบ/เวลา/รอบส่ง + ประวัติการส่ง · ส่งรอบหลังทับเฉพาะคีย์ในไฟล์รอบนั้น |
-| `ts_nightly/{SUP}_{YYYY}_{MM}/{วันที่}.json` | ผลตรวจรายคืน (F3): แถวที่ถูกแก้ / หาย / เพิ่มเอง ใน Target Sun เทียบ sent ledger · ลบเก่ากว่า N เดือนเอง |
+| `ts_nightly/{SUP}_{YYYY}_{MM}/{วันที่}.json` | ผลตรวจรายคืน (F3): แถวที่ถูกแก้ / หาย / เพิ่มเอง ใน Target Sun เทียบ sent ledger · ลบเก่ากว่า N เดือนเอง · วันสุดท้ายของเดือนมี `{วันที่}_close.json` เพิ่ม (รอบปิดงวด 23 น.) |
 | `nightly_check.json`, `nightly_check_state.json` | ค่าตั้งตรวจรายคืน (ค่าตั้งต้นปิด) + ผลรอบล่าสุดต่อทีม |
 | `notifications/notifications.json` | กล่องแจ้งเตือนในแอป (global) |
 | `warehouse_pin_rules.json` | กติกาบังคับคลังเดียว (แอดมินตั้งจากหน้าเว็บ) |

@@ -13,6 +13,10 @@
   - ล็อกไฟล์ data/.nightly_check.lock กันรันซ้อน (หลาย worker / กดรันซ้ำ / restart)
   - อ่านทีละทีม หน่วงระหว่างทีม (fetch_target_rows แบ่งชุดละ 200 รหัสอยู่แล้ว)
   - อ่านล้ม → แจ้ง dev ผ่านกล่องแจ้งเตือน แล้วลองใหม่คืนถัดไป
+
+รอบปิดงวด (ผู้ใช้สั่ง 1 ต.ค. 2026): วันสุดท้ายของเดือนรันเพิ่มอีกรอบตอน closing_hour (ค่าตั้งต้น 23 น.)
+เพราะรอบตี 2 ของวันนั้นเป็นรอบสุดท้ายที่เห็นงวดถัดไป — แก้หลังตี 2 จะไม่มีวันถูกเห็น พอขึ้นวันที่ 1
+ตารางก็ล้างตัวเอง · เปิด/ปิดตาม enabled ตัวเดียวกัน · ผลเก็บแยกไฟล์ <วันที่>_close.json ไม่ทับรอบตี 2
 """
 
 from __future__ import annotations
@@ -23,7 +27,7 @@ import os
 import shutil
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
@@ -33,7 +37,8 @@ from . import sent_ledger
 logger = logging.getLogger("target_allocation")
 
 _TZ = ZoneInfo("Asia/Bangkok")
-DEFAULTS: dict[str, Any] = {"enabled": False, "hour": 2, "keep_months": 6, "team_delay_sec": 2.0}
+DEFAULTS: dict[str, Any] = {"enabled": False, "hour": 2, "closing_hour": 23, "keep_months": 6,
+                            "team_delay_sec": 2.0}
 _TICK_SEC = 300
 _MAX_DIFFS_SAVED = 500
 _scheduler_started = False
@@ -69,6 +74,8 @@ def read_settings() -> dict[str, Any]:
     s = {**DEFAULTS, **_read_json(_settings_path(), {})}
     s["enabled"] = bool(s.get("enabled"))
     s["hour"] = max(0, min(23, int(s.get("hour") or 0)))
+    s["closing_hour"] = max(0, min(23, int(s.get("closing_hour") if s.get("closing_hour") is not None
+                                           else DEFAULTS["closing_hour"])))
     s["keep_months"] = max(1, min(24, int(s.get("keep_months") or DEFAULTS["keep_months"])))
     s["team_delay_sec"] = max(0.0, min(30.0, float(s.get("team_delay_sec") or 0)))
     return s
@@ -197,8 +204,10 @@ def _notify_dev(title: str, message: str, context: dict) -> None:
 
 
 def run_once(*, now: datetime | None = None, fetch: Callable | None = None,
-             sleep: Callable[[float], None] = time.sleep, force: bool = False) -> dict[str, Any]:
-    """รันหนึ่งรอบ — คืนสรุป · ไม่ raise · force=True ข้ามเงื่อนไข "เปิดอยู่" (ปุ่มรันเดี๋ยวนี้ของ dev)"""
+             sleep: Callable[[float], None] = time.sleep, force: bool = False,
+             closing: bool = False) -> dict[str, Any]:
+    """รันหนึ่งรอบ — คืนสรุป · ไม่ raise · force=True ข้ามเงื่อนไข "เปิดอยู่" (ปุ่มรันเดี๋ยวนี้ของ dev)
+    closing=True = รอบปิดงวดคืนวันสุดท้ายของเดือน (ไฟล์ประวัติแยก ไม่ทับรอบตี 2)"""
     now = now or datetime.now(_TZ)
     settings = read_settings()
     if not settings["enabled"] and not force:
@@ -209,9 +218,9 @@ def run_once(*, now: datetime | None = None, fetch: Callable | None = None,
 
     if fetch is None:
         if str(targetsun_endpoints_summary().get("cross_env") or "") == "1":
-            return _finish(now, {"skipped": "cross_env"}, {})
+            return _finish(now, {"skipped": "cross_env"}, {}, closing)
         if not tsr.is_enabled() or tsr.get_target_read_source() != "targetsun":
-            return _finish(now, {"skipped": "read_source_not_targetsun"}, {})
+            return _finish(now, {"skipped": "read_source_not_targetsun"}, {}, closing)
         fetch = tsr.fetch_target_rows
 
     lock = _try_file_lock(os.path.join("data", ".nightly_check.lock"))
@@ -250,23 +259,28 @@ def run_once(*, now: datetime | None = None, fetch: Callable | None = None,
             summary["boxes_changed"] = int(sum(abs((d["now"] or 0) - (d["sent"] or 0))
                                                for v in diff.values() for d in v))
             teams[tag] = {"status": "ok", **summary}
-            _save_history(sup, m, y, day, {
+            _save_history(sup, m, y, f"{day}_close" if closing else day, {
                 "sup_id": sup, "target_month": m, "target_year": y, "checked_at": now.isoformat(timespec="seconds"),
+                "round": "closing" if closing else "nightly",
                 "summary": summary, **{k: v[:_MAX_DIFFS_SAVED] for k, v in diff.items()},
             })
         pruned = _prune_history(settings["keep_months"], now)
         result = {"teams": len(teams), "errors": len(failed), "pruned": pruned}
+        if closing:
+            result["round"] = "closing"
         if failed:
             _notify_dev(
                 "ตรวจ Target Sun รายคืนอ่านไม่สำเร็จ",
-                f"อ่านไม่ได้ {len(failed)} ทีม: {', '.join(failed[:10])} — จะลองใหม่คืนถัดไป",
+                (f"รอบปิดงวดอ่านไม่ได้ {len(failed)} ทีม: {', '.join(failed[:10])} — รอบนี้ลองใหม่ไม่ได้ (ขึ้นวันที่ 1 ตารางล้าง)"
+                 if closing else
+                 f"อ่านไม่ได้ {len(failed)} ทีม: {', '.join(failed[:10])} — จะลองใหม่คืนถัดไป"),
                 {"failed": failed[:50], "date": day},
             )
-        return _finish(now, result, teams)
+        return _finish(now, result, teams, closing)
     except Exception as e:
         logger.exception("ตรวจรายคืนล้ม")
         _notify_dev("ตรวจ Target Sun รายคืนล้ม", str(e)[:500], {"date": now.strftime("%Y-%m-%d")})
-        return _finish(now, {"error": str(e)[:300]}, {})
+        return _finish(now, {"error": str(e)[:300]}, {}, closing)
     finally:
         try:
             lock.close()
@@ -274,10 +288,13 @@ def run_once(*, now: datetime | None = None, fetch: Callable | None = None,
             pass
 
 
-def _finish(now: datetime, result: dict, teams: dict) -> dict:
+def _finish(now: datetime, result: dict, teams: dict, closing: bool = False) -> dict:
     state = read_state()
     state["last_run"] = now.isoformat(timespec="seconds")
-    state["last_run_date"] = now.strftime("%Y-%m-%d")
+    if closing:
+        state["last_closing_date"] = now.strftime("%Y-%m-%d")
+    else:
+        state["last_run_date"] = now.strftime("%Y-%m-%d")
     state["last_result"] = result
     if teams:
         state["teams"] = {**(state.get("teams") or {}),
@@ -308,12 +325,24 @@ def _due(settings: dict, state: dict, now: datetime) -> bool:
             and state.get("last_run_date") != now.strftime("%Y-%m-%d"))
 
 
+def _is_last_day_of_month(now: datetime) -> bool:
+    return (now + timedelta(days=1)).day == 1
+
+
+def _closing_due(settings: dict, state: dict, now: datetime) -> bool:
+    return (settings["enabled"] and _is_last_day_of_month(now) and now.hour == settings["closing_hour"]
+            and state.get("last_closing_date") != now.strftime("%Y-%m-%d"))
+
+
 def _loop() -> None:
     while True:
         try:
             now = datetime.now(_TZ)
-            if _due(read_settings(), read_state(), now):
+            settings, state = read_settings(), read_state()
+            if _due(settings, state, now):
                 logger.info("เริ่มตรวจ Target Sun รายคืน: %s", run_once(now=now))
+            elif _closing_due(settings, state, now):
+                logger.info("เริ่มตรวจ Target Sun รอบปิดงวด: %s", run_once(now=now, closing=True))
         except Exception:
             logger.exception("ตัวตั้งเวลาตรวจรายคืนผิดพลาด")
         time.sleep(_TICK_SEC)

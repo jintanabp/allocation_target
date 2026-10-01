@@ -146,6 +146,36 @@ class TestScheduler(_Base):
         self.assertFalse(nc._due({**s, "enabled": False}, {}, now))
         self.assertFalse(nc._due(s, {}, now.replace(hour=3)))
 
+    def test_closing_due_only_on_last_day_at_closing_hour_once(self):
+        s = {**nc.DEFAULTS, "enabled": True}
+        last = datetime(2026, 9, 30, 23, 10, tzinfo=TZ)
+        self.assertTrue(nc._closing_due(s, {}, last))
+        self.assertTrue(nc._closing_due(s, {"last_run_date": "2026-09-30"}, last), "รอบตี 2 ไม่กันรอบปิดงวด")
+        self.assertFalse(nc._closing_due(s, {"last_closing_date": "2026-09-30"}, last))
+        self.assertFalse(nc._closing_due(s, {}, last.replace(day=29)))
+        self.assertFalse(nc._closing_due(s, {}, last.replace(hour=22)))
+        self.assertFalse(nc._closing_due({**s, "enabled": False}, {}, last))
+        self.assertTrue(nc._closing_due(s, {}, datetime(2028, 2, 29, 23, 0, tzinfo=TZ)), "ก.พ. ปีอธิกสุรทิน")
+        self.assertFalse(nc._closing_due(s, {}, datetime(2028, 2, 28, 23, 0, tzinfo=TZ)))
+
+
+class TestClosingRound(_Base):
+    def test_closing_round_saved_separately_and_becomes_latest(self):
+        self._send()
+        nc.write_settings(enabled=True)
+        nc.run_once(now=datetime(2026, 9, 30, 2, 5, tzinfo=TZ),
+                    fetch=self._fetch([_row("A", "E1", "", 5), _row("B", "E2", "W1", 3)]), sleep=lambda s: None)
+        res = nc.run_once(now=datetime(2026, 9, 30, 23, 5, tzinfo=TZ),
+                          fetch=self._fetch([_row("A", "E1", "", 7), _row("B", "E2", "W1", 3)]),
+                          sleep=lambda s: None, closing=True)
+        self.assertEqual(res.get("round"), "closing")
+        d = os.path.join("data", "ts_nightly", "SLA_2026_10")
+        self.assertEqual(sorted(os.listdir(d)), ["2026-09-30.json", "2026-09-30_close.json"])
+        latest = nc.latest_diff("SLA", 10, 2026)
+        self.assertEqual((latest["round"], latest["changed"][0]["now"]), ("closing", 7))
+        st = nc.read_state()
+        self.assertEqual((st["last_run_date"], st["last_closing_date"]), ("2026-09-30", "2026-09-30"))
+
 
 if __name__ == "__main__":
     unittest.main()
