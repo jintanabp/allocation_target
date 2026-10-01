@@ -9,6 +9,10 @@ merge จะบวกแต่หีบ ส่วนราคาใช้ขอ�
 
 ทุกเทสรันในโฟลเดอร์ชั่วคราว — reconcile เขียนทับไฟล์เป้าจริงในโฟลเดอร์ data/
 (ขั้นกระจายอ่านเป้าหีบจากไฟล์ ไม่ใช่จาก payload) จึงห้ามให้แตะของจริงเด็ดขาด
+
+หน่วยขายของทีมประทับไว้ใน payload ปลอมเอง และปิดตัวถอยที่อ่าน config/user_access.json
+ตัวจริง — เดิมผลเทสต์ขึ้นกับว่าไฟล์จริงในเครื่องนั้นเขียน acc_unit ของ SL397/SL346 ไว้ว่าอะไร
+(ผลตรวจ 28 ก.ย. 2026: ตก 6 ตัวทั้งที่โค้ดไม่พัง)
 """
 
 import json
@@ -16,6 +20,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -25,6 +30,7 @@ from backend.services.employees import (
 )
 
 MONTH, YEAR = 9, 2026
+SALES_UNIT = "S"  # ทุกทีมในเทสต์เป็นรถเครดิตเหมือนกัน = จับกลุ่มเทียบราคากันได้
 NEW_PRICE, OLD_PRICE = 352.0, 312.0
 SKU = "734046"
 
@@ -77,8 +83,12 @@ class _TempDataDir(unittest.TestCase):
         os.environ["FABRIC_CACHE_DIR"] = self._cache
         os.environ["FABRIC_STATIC_CACHE_TTL_SEC"] = "99999999"
         os.chdir(self._tmpdir)
+        # ห้ามถอยไปอ่าน user_access ตัวจริง — หน่วยขายต้องมาจาก payload ปลอมเท่านั้น
+        self._ua = patch("backend.services.employees._sales_unit_by_sup", return_value={})
+        self._ua.start()
 
     def tearDown(self):
+        self._ua.stop()
         os.chdir(self._cwd)
         for k, v in self._old_env.items():
             if v is None:
@@ -124,8 +134,21 @@ class _TempDataDir(unittest.TestCase):
         pd.DataFrame([{"emp_id": e["emp_id"], "target_sun": e["target_sun"]} for e in emps]).to_csv(
             f"data/target_sun_{sup}_{YEAR}_{MONTH:02d}.csv", index=False
         )
-        return {"_source_sup_id": sup, "employees": emps, "skus": sku_rows,
+        return {"_source_sup_id": sup, "sales_unit": SALES_UNIT, "employees": emps, "skus": sku_rows,
                 "sku_warnings": [], "new_product_skus": []}
+
+
+class TestIsolatedFromRealUserAccess(_TempDataDir):
+    """ผลต้องไม่ขึ้นกับ config/user_access.json ในเครื่องที่รัน"""
+
+    def test_stamped_unit_wins_over_user_access_fallback(self):
+        # สภาพไฟล์จริง ณ 28 ก.ย. 2026: SL397 = รถเงินสด ส่วน SL346 ไม่รู้หน่วย → เคยทำเทสต์ตก 6 ตัว
+        self.write_product_cache(NEW_PRICE)
+        payloads = [self.make_team("SL397", NEW_PRICE, {"C413": 20}),
+                    self.make_team("SL346", OLD_PRICE, {"C501": 10})]
+        with patch("backend.services.employees._sales_unit_by_sup", return_value={"SL397": "C"}):
+            report = reconcile_prices_across_payloads(payloads, MONTH, YEAR)
+        self.assertEqual([r["status"] for r in report], ["fixed"])
 
 
 class TestReconcilePrices(_TempDataDir):
@@ -233,8 +256,6 @@ class TestOnlyWritableViewsReconcile(_TempDataDir):
     """
 
     def _bulk(self, can_write: bool):
-        from unittest.mock import patch
-
         self.write_product_cache(NEW_PRICE)
         made = {
             "SL397": self.make_team("SL397", NEW_PRICE, {"C413": 20}),
