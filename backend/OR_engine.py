@@ -169,6 +169,19 @@ def _normalize_engine_inputs(
             .round()
             .astype(int)
         )
+    # ราคาต้องเป็นตัวเลขเสมอ (ออดิต 26 ส.ค. 2026) — เดิมคอลัมน์หาย = KeyError, เป็นข้อความ = TypeError ตอนคูณ
+    # ทั้งสองแบบได้ 500 กลางการกระจาย · ราคาที่อ่านไม่ได้ถือเป็น 0 เหมือนสินค้าที่ราคาหาย (กลุ่มมูลค่า 0)
+    if "price_per_box" not in sku.columns:
+        logger.warning("ข้อมูลสินค้าไม่มีคอลัมน์ price_per_box — ถือราคาเป็น 0 ทุกตัว")
+        sku["price_per_box"] = 0.0
+    else:
+        _raw_price = sku["price_per_box"]
+        sku["price_per_box"] = pd.to_numeric(_raw_price, errors="coerce")
+        _bad = sku["price_per_box"].isna() & _raw_price.notna()
+        if _bad.any():
+            logger.warning("ราคาอ่านไม่ได้ %d SKU — ถือเป็น 0: %s", int(_bad.sum()),
+                           sorted(sku.loc[_bad, "sku"].tolist())[:10])
+        sku["price_per_box"] = sku["price_per_box"].fillna(0.0).astype(float)
 
     # SKU รหัสเดียวต้องมีแถวเดียว (I6)
     # dict(zip(...)) ที่ใช้ทั่วไฟล์เก็บแค่แถวสุดท้ายอยู่แล้ว จึงยุบแบบ keep="last"

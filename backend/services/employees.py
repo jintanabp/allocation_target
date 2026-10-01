@@ -319,7 +319,7 @@ def _load_history(
     if df is not None and not df.empty:
         df = collapse_hist_to_canonical(df, sku_links)
         try:
-            df.to_csv(path, index=False)
+            atomic_write_csv(path, df, index=False)
             logger.info("ประวัติ%s: เก็บไว้ %d แถว → %s", label, len(df), path)
         except OSError as e:
             logger.warning("เขียนไฟล์ประวัติ%s ไม่สำเร็จ: %s", label, e)
@@ -584,8 +584,9 @@ def load_employees_payload(
                 "provincecode",
                 "warehouse_code",
             ]
-            pd.DataFrame(columns=_gc).to_csv(
+            atomic_write_csv(
                 tga_grain_cache_path(sup_id, target_month, target_year),
+                pd.DataFrame(columns=_gc),
                 index=False,
             )
         except Exception:
@@ -695,9 +696,9 @@ def load_employees_payload(
         try:
             p_grain = tga_grain_cache_path(sup_id, target_month, target_year)
             if df_tga_granular is None or df_tga_granular.empty:
-                pd.DataFrame(columns=grain_cols).to_csv(p_grain, index=False)
+                atomic_write_csv(p_grain, pd.DataFrame(columns=grain_cols), index=False)
             else:
-                df_tga_granular.to_csv(p_grain, index=False)
+                atomic_write_csv(p_grain, df_tga_granular, index=False)
             logger.info(
                 "tga grain cache: %s (%d rows)", p_grain, len(df_tga_granular)
             )
@@ -1048,7 +1049,7 @@ def load_employees_payload(
             pcy = hist_calendar_year_cache_path(sup_id, cy)
             if df_cy is not None and not df_cy.empty:
                 df_cy = collapse_hist_to_canonical(df_cy, sku_links)
-                df_cy.to_csv(pcy, index=False)
+                atomic_write_csv(pcy, df_cy, index=False)
                 logger.info(
                     "historical calendar-year %d cache: %d rows → %s",
                     cy,
@@ -1056,9 +1057,11 @@ def load_employees_payload(
                     pcy,
                 )
             else:
-                pd.DataFrame(
-                    columns=["emp_id", "sku", "hist_boxes", "hist_amount"]
-                ).to_csv(pcy, index=False)
+                atomic_write_csv(
+                    pcy,
+                    pd.DataFrame(columns=["emp_id", "sku", "hist_boxes", "hist_amount"]),
+                    index=False,
+                )
                 logger.info("historical calendar-year %d: empty → %s", cy, pcy)
     except Exception as e:
         logger.warning("historical calendar-year caches skipped: %s", e)
@@ -2390,9 +2393,9 @@ def load_live_targets_payload(
     try:
         p_grain = tga_grain_cache_path(sid, target_month, target_year)
         if df_granular is None or df_granular.empty:
-            pd.DataFrame(columns=grain_cols).to_csv(p_grain, index=False)
+            atomic_write_csv(p_grain, pd.DataFrame(columns=grain_cols), index=False)
         else:
-            df_granular.to_csv(p_grain, index=False)
+            atomic_write_csv(p_grain, df_granular, index=False)
     except Exception as e:
         logger.warning("live targets grain cache write: %s", e)
 

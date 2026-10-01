@@ -757,6 +757,7 @@ SELECTCOLUMNS(
                            RETURN COALESCE(val, 0)
 )
 """
+        credit_only = False
         try:
             rows = self._execute_dax(dax, debug=True)
         except Exception as ex:
@@ -838,7 +839,17 @@ SELECTCOLUMNS(
                            RETURN COALESCE(val, 0)
 )
 """
-            rows = self._execute_dax(dax_no_sec, debug=True)
+            try:
+                rows = self._execute_dax(dax_no_sec, debug=True)
+            except Exception as ex2:
+                # ชั้นถอยสุดท้าย (ออดิต 26 ส.ค. 2026): ทั้งสอง query ใช้ CASHUNITPRICE — ถ้าคอลัมน์นี้หาย
+                # หรือถูกเปลี่ยนชื่อ จะล้มพร้อมกันแล้วราคาเป็น 0 ทุกทีม · ตัดราคารถเงินสดทิ้ง เหลือเครดิต
+                # ทีมรถเงินสดถอยไปใช้ราคาเครดิตเอง (หลักเดียวกับแคชรุ่นเก่า) ซึ่งใกล้ความจริงกว่า 0 มาก
+                # และไม่ใส่คอลัมน์ cash_unit_price ในผล แคชรอบนี้จึงถูกทิ้งแล้วดึงใหม่รอบหน้า (ไม่ค้าง TTL)
+                print(f"⚠️ Dim_Product ไม่มี Section ก็ยังล้มเหลว ลองราคาเครดิตอย่างเดียว: {ex2}")
+                cut = dax_no_sec.index(',\n    "CashUnitPrice",')
+                rows = self._execute_dax(dax_no_sec[:cut] + "\n)\n", debug=True)
+                credit_only = True
         records = []
         for r in rows:
             sku = str(self._get(r,
@@ -881,10 +892,12 @@ SELECTCOLUMNS(
                                           "cfm_product_characteristic[CASHUNITPRICE]",
                                           default=0) or 0),
             })
+            if credit_only:
+                records[-1].pop("cash_unit_price")
         df = pd.DataFrame(records) if records else pd.DataFrame(
             columns=["sku", "brand", "brand_name_thai", "brand_name_english", "section",
                      "product_name_thai", "product_name_english", "unit_cost", "cost_per_unit",
-                     "credit_unit_price", "cash_unit_price"])
+                     "credit_unit_price"] + ([] if credit_only else ["cash_unit_price"]))
         print(f"✅ ดึงข้อมูลสินค้า {len(df)} รายการ")
         return df
 

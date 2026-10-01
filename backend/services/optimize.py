@@ -421,10 +421,28 @@ def _maybe_split_hist(
 
 
 def _read_hist_cache(path: str, emp_list: list[str]) -> pd.DataFrame:
+    """
+    ไฟล์เสีย = หยุดพร้อมบอกให้โหลดขั้นที่ 1 ใหม่ (ออดิต 26 ส.ค. 2026) — ห้ามถือเป็นตารางว่าง
+    เพราะไฟล์ "มีอยู่" กติกาไม่เคยขายจะนับทีมนั้นว่ารู้ประวัติครบ แล้วตัดทุกคนเป็นเป้า 0
+    (เดิมโยน error ดิบ → 500 กลางการกระจายรวมภาค ไม่บอกว่าไฟล์ไหน)
+    """
     if not os.path.exists(path):
         return pd.DataFrame(columns=["emp_id", "sku", "hist_boxes"])
-    with read_locked(path):
-        df = pd.read_csv(path, dtype={"sku": str, "emp_id": str})
+    try:
+        with read_locked(path):
+            df = pd.read_csv(path, dtype={"sku": str, "emp_id": str})
+        if "emp_id" not in df.columns:
+            raise ValueError("ไม่มีคอลัมน์ emp_id")
+    except (OSError, ValueError, pd.errors.ParserError, pd.errors.EmptyDataError) as e:
+        logger.error("อ่านไฟล์ประวัติขาย %s ไม่ได้: %s", path, e)
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "hist_cache_unreadable",
+                "message": f"ไฟล์ประวัติขาย {os.path.basename(path)} เสีย อ่านไม่ได้ — "
+                           "กรุณาโหลดข้อมูลขั้นที่ 1 ใหม่ (ระบบจะดึงประวัติใหม่ให้) แล้วกระจายอีกครั้ง",
+            },
+        ) from e
     df = df[df["emp_id"].isin(emp_list)]
     return collapse_hist_to_canonical(df)
 
@@ -518,7 +536,10 @@ def _fill_missing_peer_hist(
                 sid, n_months,
             )
             continue
-        existing = _read_hist_cache(cache_path, team_emps)
+        try:
+            existing = _read_hist_cache(cache_path, team_emps)
+        except HTTPException:
+            continue  # ไฟล์เสีย — ไม่เติม ปล่อยให้ตอนอ่านจริงแจ้งผู้ใช้
         already_have = set(existing["sku"]) if not existing.empty else set()
         missing = (all_skus - own_skus) - already_have
         if not missing:
@@ -1051,6 +1072,12 @@ def run_optimization_service(
     df_sku["supervisor_target_boxes"] = pd.to_numeric(
         df_sku["supervisor_target_boxes"], errors="coerce"
     ).fillna(0)
+    # ราคาเป็นตัวเลขตั้งแต่ทางเข้า — ตัวเกลี่ยเงิน (_greedy_revenue_balancer) ถูกเรียกตรงจากไฟล์นี้ด้วย
+    # ไม่ได้ผ่าน _normalize_engine_inputs เสมอไป (ออดิต 26 ส.ค. 2026)
+    df_sku["price_per_box"] = pd.to_numeric(
+        df_sku["price_per_box"] if "price_per_box" in df_sku.columns else 0.0, errors="coerce"
+    )
+    df_sku["price_per_box"] = df_sku["price_per_box"].fillna(0.0).astype(float)
     df_sku = df_sku[df_sku["supervisor_target_boxes"] > 0].copy()
     # เป้าหีบต้องเป็นจำนวนเต็ม — เดิม engine ปัดแบบ half-even เงียบ ๆ (10.5 → 10)
     # ยอดที่กระจายจึง "ตรงเป้า" ตามเลขที่ปัดแล้ว แต่ขาดจากเป้าจริงไปครึ่งหีบ
@@ -1319,6 +1346,8 @@ def run_optimization_service(
                 hist_sup_ids,
                 real_emp_list,
             )
+        except HTTPException:
+            raise  # ไฟล์เสีย — ว่างแล้วกติกาไม่เคยขายจะตัดทั้งทีมเป็น 0
         except Exception as e:
             logger.warning("hist 12-month cache read failed: %s", e)
             df_hist_12 = pd.DataFrame()
