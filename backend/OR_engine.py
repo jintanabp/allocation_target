@@ -208,6 +208,11 @@ def _normalize_engine_inputs(
             )
         except (KeyError, TypeError, ValueError):
             logger.warning("locked_edit รูปแบบไม่ถูกต้อง — ข้าม: %r", le)
+    # ช่องเดียวกันซ้ำ = ล็อกเดียว ใช้ค่าสุดท้าย (ตรงกับ locked_map) — ไม่งั้นด่าน I2 บวกซ้ำแล้วฟ้องเกินเป้า
+    _by_key = {(lk["emp_id"], lk["sku"]): lk for lk in locks}
+    if len(_by_key) < len(locks):
+        logger.warning("พบล็อกซ้ำ %d รายการ — ใช้ค่าสุดท้ายของแต่ละช่อง", len(locks) - len(_by_key))
+        locks = list(_by_key.values())
 
     # ล็อกรวมต้องไม่เกินเป้าของ SKU นั้น (I2)
     # ของเดิมใช้ max(0, total - locked_sum) กลบส่วนเกินทิ้ง แต่ยังใส่เซลล์ที่ล็อกเต็มจำนวน

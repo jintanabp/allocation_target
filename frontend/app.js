@@ -6112,116 +6112,137 @@ async function _confirmRevenueScaleBeforeRun() {
   });
 }
 
-async function runOptimization() {
-  const btn = qs("#runBtn");
-  if (_aggregateBlocksWrite()) return;
-  if (_isAllocReadOnlyView()) {
-    toast("โหมดดูอย่างเดียว — สลับกลับทีมของคุณเพื่อกระจายหีบ", "amber");
-    return;
-  }
+// กดกระจายซ้ำระหว่างรอ (ผลตรวจ 26 ส.ค. 2026) — ปุ่มถูกปิดหลังผ่าน modal ยืนยันไปแล้ว และถูกเปิดคืน
+// ก่อนบันทึกผลรวมภาคเสร็จ จึงกดซ้อนได้สองรอบ · ธงเดียวกันทุกปุ่มกระจาย (ทั้งหมด / คงที่แก้ / เฉพาะสินค้า)
+// nested=true = ถูกเรียกต่อจากปุ่มกระจายที่ถือธงอยู่แล้ว ห้ามกันตัวเอง
+let _allocRunInFlight = false;
 
-  // กันเริ่มคำนวณถ้ายังไม่ใส่เหตุผลกรณีติดลบ
-  if (_negGrowthOffenders().length > 0 && (S.negGrowthReason || "").trim().length < 8) {
-    toast("⚠️ กรุณาใส่เหตุผลในกล่อง \"พบเป้าหมายที่ตั้งให้เติบโตติดลบ\" ก่อนเริ่มคำนวณ", "red");
-    document.getElementById("negGrowthNoteWrap")?.scrollIntoView({ behavior: "smooth", block: "center" });
+async function _runAllocGuarded(nested, fn) {
+  if (nested) return fn();
+  if (_allocRunInFlight) {
+    toast("กำลังกระจายอยู่ — รอให้เสร็จก่อน", "amber");
     return;
   }
-  // กันเริ่มคำนวณถ้าเลือกหลายวิธีแต่ map แบรนด์ยังไม่ครบ
-  if (!_brandMappingComplete()) {
-    toast("⚠️ คุณเลือกวิธีกระจายหลายแบบ — กรุณากำหนดวิธีให้ครบทุกแบรนด์ก่อน", "red");
-    document.getElementById("brandStrategyPanel")?.scrollIntoView({ behavior: "smooth", block: "center" });
-    return;
+  _allocRunInFlight = true;
+  try {
+    return await fn();
+  } finally {
+    _allocRunInFlight = false;
   }
-  // เป้าเปลี่ยนหลังกระจายรอบก่อน → เด้ง modal ให้เห็น + เลือกวิธีกระจายตรงนั้นเลย
-  // (แบนเนอร์อาจถูกมองข้าม — จุดนี้ผู้ใช้ทุกคนต้องผ่านตอนกดคำนวณ)
-  if (!S.compositeAllocView && !_isAllocReadOnlyView() && (S.allocations || []).length) {
-    const pick = await _confirmTargetChangedBeforeRun();
-    if (pick === "cancel") return;
-    if (pick === "partial") {
-      await runReAllocationOnlyChanged();
+}
+
+async function runOptimization() {
+  return _runAllocGuarded(false, async () => {
+    const btn = qs("#runBtn");
+    if (_aggregateBlocksWrite()) return;
+    if (_isAllocReadOnlyView()) {
+      toast("โหมดดูอย่างเดียว — สลับกลับทีมของคุณเพื่อกระจายหีบ", "amber");
       return;
     }
-    // "full" / "none" → กระจายใหม่ทั้งหมดตาม flow เดิมด้านล่าง
-  }
-  if (_regionalAggregateWritable()) {
-    // ขอบเขต + คำเตือน "ทับผลเดิม" อยู่ในใบเดียวกัน — ผู้ใช้เห็นก่อนเริ่มคำนวณเสมอ
-    const ok = await openAllocScopeModal({ run: true });
-    if (!ok) return;
-  }
-  // เป้าเหลืองรวมไม่เท่ามูลค่าหีบรวม → เครื่องจะดันเป้าทุกคนตามสัดส่วนก่อนกระจาย
-  // ต้องถามก่อน ไม่ใช่ปล่อยให้เห็นตอนผลออกมาแล้วงงว่าเลขมาจากไหน
-  if (!(await _confirmRevenueScaleBeforeRun())) return;
 
-  btn.classList.remove("pulse-warn");
-  const lockedEdits = _collectLockedEdits();
-
-  pushGlobalBusy(UX.busyAllocate, _formatAllocateBusyHint());
-  let allocs;
-  try {
-    allocs = await _doOptimize(lockedEdits);
-    if (!allocs || !allocs.length) return;
-
-    // จำ "เลขที่เครื่องคำนวณให้" ของทุกแถว ตั้งแต่วินาทีที่ผลออกมา
-    //
-    // เดิมจำเฉพาะช่องที่ผู้ใช้ไปแตะ (ตั้งแบบขี้เกียจตอน onResultEdit) และเป็น
-    // ฟิลด์ขึ้นต้นด้วย _ ที่ถูกตัดทิ้งตอนบันทึก จึงหายทุกครั้งที่รีเฟรช
-    // ผลคือตอบไม่ได้เลยว่า "ซุปต้องแก้ที่ระบบให้มามากแค่ไหน" ซึ่งเป็นคำถามที่
-    // ผลสำรวจทั้งชุดตั้งอยู่บนนั้น (กลุ่มแก้เล็กน้อยพอใจ 100% · แก้เกินครึ่งพอใจ 27%)
-    // และ is_edited อย่างเดียวใช้แทนไม่ได้ เพราะติดธงตั้งแต่คลิกล็อกช่องเฉย ๆ
-    //
-    // ไม่เปลี่ยนตัวเลขที่ผู้ใช้เห็น ไม่เปลี่ยนสิ่งที่ส่งเข้า Target Sun — เพิ่มฟิลด์อย่างเดียว
-    // (จดใน _stampEngineRun ตอน _doOptimize จบแล้ว — ใช้ร่วมทุกปุ่มกระจาย)
-
-    let displayAllocs = _filterAllocationsEligibleOnly(allocs);
-    if (!displayAllocs.length) {
-      console.warn("[optimize] filter removed all rows — using server payload (WH split?)");
-      displayAllocs = allocs;
+    // กันเริ่มคำนวณถ้ายังไม่ใส่เหตุผลกรณีติดลบ
+    if (_negGrowthOffenders().length > 0 && (S.negGrowthReason || "").trim().length < 8) {
+      toast("⚠️ กรุณาใส่เหตุผลในกล่อง \"พบเป้าหมายที่ตั้งให้เติบโตติดลบ\" ก่อนเริ่มคำนวณ", "red");
+      document.getElementById("negGrowthNoteWrap")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
     }
-    S.allocations = displayAllocs;
-
-    const strategyLabel = _strategySummaryTh(_getSelectedStrategies());
-    _showOptimizeSuccessUi(strategyLabel);
-
-    S.activeBrand = "ALL";
-    S.histDevFilter = null;
-    buildBrandTabs(displayAllocs);
-    qs("#resultBlock").style.display = "block";
-
-    try {
-      // autoRebalance เก็บ S.rebalanceResiduals ให้เองแล้วทุกครั้งที่วิ่ง
-      autoRebalance(true, { skipRender: true });
-    } catch (e) {
-      console.error("autoRebalance:", e);
+    // กันเริ่มคำนวณถ้าเลือกหลายวิธีแต่ map แบรนด์ยังไม่ครบ
+    if (!_brandMappingComplete()) {
+      toast("⚠️ คุณเลือกวิธีกระจายหลายแบบ — กรุณากำหนดวิธีให้ครบทุกแบรนด์ก่อน", "red");
+      document.getElementById("brandStrategyPanel")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
     }
-    try {
-      renderResult(S.allocations);
-      syncLakehouseButton();
-      syncRestartAllocBtn();
-      qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
-      if (_regionalAggregateWritable()) {
-        S.compositeAllocView = true;
-        const saved = await saveRegionalAllocationSnapshots(displayAllocs, "optimized");
-        for (const supId of saved || []) {
-          S.allocSourceBySup[supId] = "snapshot";
-        }
-        syncCompositeAllocLegend();
-        _updateCompositeRegionalBanner();
-        _clearManagerRegionalDraft();
-      } else {
-        S.compositeAllocView = false;
-        S.allocSourceBySup = {};
-        saveDraft(true);
-        // อย่าฮาร์ดโค้ด "optimized": ฟังก์ชันนี้ทำทั้งกระจายสด และ「คำนวณใหม่」ที่คงการแก้ไว้
-        // (_mergeLockedEditsIntoAllocs ตั้ง is_edited=true ให้แถวที่ล็อกไว้) → อันหลังต้องเป็น draft
-        queueServerAllocationSave(_deriveAllocStatus());
+    // เป้าเปลี่ยนหลังกระจายรอบก่อน → เด้ง modal ให้เห็น + เลือกวิธีกระจายตรงนั้นเลย
+    // (แบนเนอร์อาจถูกมองข้าม — จุดนี้ผู้ใช้ทุกคนต้องผ่านตอนกดคำนวณ)
+    if (!S.compositeAllocView && !_isAllocReadOnlyView() && (S.allocations || []).length) {
+      const pick = await _confirmTargetChangedBeforeRun();
+      if (pick === "cancel") return;
+      if (pick === "partial") {
+        await runReAllocationOnlyChanged({ _nested: true });
+        return;
       }
-    } catch (e) {
-      console.error("renderResult:", e);
-      toast("กระจายหีบสำเร็จ แต่แสดงตารางไม่ครบ — ลองกดคำนวณใหม่หรือรีเฟรชหน้า", "amber");
+      // "full" / "none" → กระจายใหม่ทั้งหมดตาม flow เดิมด้านล่าง
     }
-  } finally {
-    popGlobalBusy();
-  }
+    if (_regionalAggregateWritable()) {
+      // ขอบเขต + คำเตือน "ทับผลเดิม" อยู่ในใบเดียวกัน — ผู้ใช้เห็นก่อนเริ่มคำนวณเสมอ
+      const ok = await openAllocScopeModal({ run: true });
+      if (!ok) return;
+    }
+    // เป้าเหลืองรวมไม่เท่ามูลค่าหีบรวม → เครื่องจะดันเป้าทุกคนตามสัดส่วนก่อนกระจาย
+    // ต้องถามก่อน ไม่ใช่ปล่อยให้เห็นตอนผลออกมาแล้วงงว่าเลขมาจากไหน
+    if (!(await _confirmRevenueScaleBeforeRun())) return;
+
+    btn.classList.remove("pulse-warn");
+    const lockedEdits = _collectLockedEdits();
+
+    pushGlobalBusy(UX.busyAllocate, _formatAllocateBusyHint());
+    let allocs;
+    try {
+      allocs = await _doOptimize(lockedEdits);
+      if (!allocs || !allocs.length) return;
+
+      // จำ "เลขที่เครื่องคำนวณให้" ของทุกแถว ตั้งแต่วินาทีที่ผลออกมา
+      //
+      // เดิมจำเฉพาะช่องที่ผู้ใช้ไปแตะ (ตั้งแบบขี้เกียจตอน onResultEdit) และเป็น
+      // ฟิลด์ขึ้นต้นด้วย _ ที่ถูกตัดทิ้งตอนบันทึก จึงหายทุกครั้งที่รีเฟรช
+      // ผลคือตอบไม่ได้เลยว่า "ซุปต้องแก้ที่ระบบให้มามากแค่ไหน" ซึ่งเป็นคำถามที่
+      // ผลสำรวจทั้งชุดตั้งอยู่บนนั้น (กลุ่มแก้เล็กน้อยพอใจ 100% · แก้เกินครึ่งพอใจ 27%)
+      // และ is_edited อย่างเดียวใช้แทนไม่ได้ เพราะติดธงตั้งแต่คลิกล็อกช่องเฉย ๆ
+      //
+      // ไม่เปลี่ยนตัวเลขที่ผู้ใช้เห็น ไม่เปลี่ยนสิ่งที่ส่งเข้า Target Sun — เพิ่มฟิลด์อย่างเดียว
+      // (จดใน _stampEngineRun ตอน _doOptimize จบแล้ว — ใช้ร่วมทุกปุ่มกระจาย)
+
+      let displayAllocs = _filterAllocationsEligibleOnly(allocs);
+      if (!displayAllocs.length) {
+        console.warn("[optimize] filter removed all rows — using server payload (WH split?)");
+        displayAllocs = allocs;
+      }
+      S.allocations = displayAllocs;
+
+      const strategyLabel = _strategySummaryTh(_getSelectedStrategies());
+      _showOptimizeSuccessUi(strategyLabel);
+
+      S.activeBrand = "ALL";
+      S.histDevFilter = null;
+      buildBrandTabs(displayAllocs);
+      qs("#resultBlock").style.display = "block";
+
+      try {
+        // autoRebalance เก็บ S.rebalanceResiduals ให้เองแล้วทุกครั้งที่วิ่ง
+        autoRebalance(true, { skipRender: true });
+      } catch (e) {
+        console.error("autoRebalance:", e);
+      }
+      try {
+        renderResult(S.allocations);
+        syncLakehouseButton();
+        syncRestartAllocBtn();
+        qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
+        if (_regionalAggregateWritable()) {
+          S.compositeAllocView = true;
+          const saved = await saveRegionalAllocationSnapshots(displayAllocs, "optimized");
+          for (const supId of saved || []) {
+            S.allocSourceBySup[supId] = "snapshot";
+          }
+          syncCompositeAllocLegend();
+          _updateCompositeRegionalBanner();
+          _clearManagerRegionalDraft();
+        } else {
+          S.compositeAllocView = false;
+          S.allocSourceBySup = {};
+          saveDraft(true);
+          // อย่าฮาร์ดโค้ด "optimized": ฟังก์ชันนี้ทำทั้งกระจายสด และ「คำนวณใหม่」ที่คงการแก้ไว้
+          // (_mergeLockedEditsIntoAllocs ตั้ง is_edited=true ให้แถวที่ล็อกไว้) → อันหลังต้องเป็น draft
+          queueServerAllocationSave(_deriveAllocStatus());
+        }
+      } catch (e) {
+        console.error("renderResult:", e);
+        toast("กระจายหีบสำเร็จ แต่แสดงตารางไม่ครบ — ลองกดคำนวณใหม่หรือรีเฟรชหน้า", "amber");
+      }
+    } finally {
+      popGlobalBusy();
+    }
+  });
 }
 
 /* ══════════════════════════════════════════════
@@ -13717,62 +13738,64 @@ function checkSnapshotChanges() {
 }
 
 async function runReAllocationKeepEdits() {
-  // ปิด banner button ทันที กัน double-click
-  const bannerBtn = document.querySelector(".btn-realloc");
-  if (bannerBtn) { bannerBtn.disabled = true; bannerBtn.textContent = "⏳ กำลังดำเนินการ..."; }
+  return _runAllocGuarded(false, async () => {
+    // ปิด banner button ทันที กัน double-click
+    const bannerBtn = document.querySelector(".btn-realloc");
+    if (bannerBtn) { bannerBtn.disabled = true; bannerBtn.textContent = "⏳ กำลังดำเนินการ..."; }
 
-  if (_regionalAggregateWritable()) {
-    const ok = await openAllocScopeModal({ run: true });
-    if (!ok) {
-      if (bannerBtn) { bannerBtn.disabled = false; bannerBtn.textContent = "🔄 กระจายหีบใหม่ (คงตัวเลขที่แก้เอง)"; }
-      return;
+    if (_regionalAggregateWritable()) {
+      const ok = await openAllocScopeModal({ run: true });
+      if (!ok) {
+        if (bannerBtn) { bannerBtn.disabled = false; bannerBtn.textContent = "🔄 กระจายหีบใหม่ (คงตัวเลขที่แก้เอง)"; }
+        return;
+      }
     }
-  }
 
-  // เด้งลงหา progress bar ก่อน
-  qs("#progList").scrollIntoView({ behavior: "smooth", block: "start" });
+    // เด้งลงหา progress bar ก่อน
+    qs("#progList").scrollIntoView({ behavior: "smooth", block: "start" });
 
-  const lockedEdits = _collectLockedEdits();
+    const lockedEdits = _collectLockedEdits();
 
-  const allocs = await _doOptimize(lockedEdits);
-  if (!allocs) return;
+    const allocs = await _doOptimize(lockedEdits);
+    if (!allocs) return;
 
-  const strategy = document.querySelector('[name="strategy"]:checked')?.value || "L3M";
-  S.allocations = allocs;
+    const strategy = document.querySelector('[name="strategy"]:checked')?.value || "L3M";
+    S.allocations = allocs;
 
-  qs("#runEmoji").textContent = "✅";
-  qs("#runTitle").textContent = "กระจายหีบใหม่สำเร็จ";
-  qs("#runSub").textContent = `วิธี: ${_strategySummaryTh([strategy])} — ตัวเลขที่แก้เองยังคงอยู่`;
-  qs("#runBtn").textContent = "คำนวณใหม่";
-  qs("#runBtn").disabled = false;
-  buildBrandTabs(allocs);
-  document.getElementById("changeBanner")?.remove();
-  qs("#resultBlock").style.display = "block";
+    qs("#runEmoji").textContent = "✅";
+    qs("#runTitle").textContent = "กระจายหีบใหม่สำเร็จ";
+    qs("#runSub").textContent = `วิธี: ${_strategySummaryTh([strategy])} — ตัวเลขที่แก้เองยังคงอยู่`;
+    qs("#runBtn").textContent = "คำนวณใหม่";
+    qs("#runBtn").disabled = false;
+    buildBrandTabs(allocs);
+    document.getElementById("changeBanner")?.remove();
+    qs("#resultBlock").style.display = "block";
 
-  try {
-    autoRebalance(true, { skipRender: true });
-  } catch (e) {
-    console.error("autoRebalance:", e);
-  }
-  await wait(200);
-  renderResult(allocs);
-  requestAnimationFrame(() => adjustResultStickyGap());
-  qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
-  toast("✅ กระจายหีบใหม่สำเร็จ — ตัวเลขที่แก้เองยังคงอยู่", "green");
-  if (_regionalAggregateWritable()) {
-    S.compositeAllocView = true;
-    saveRegionalAllocationSnapshots(allocs, "optimized")
-      .then((saved) => {
-        for (const supId of saved || []) {
-          S.allocSourceBySup[supId] = "snapshot";
-        }
-        syncCompositeAllocLegend();
-        _updateCompositeRegionalBanner();
-      })
-      .catch((e) => console.warn("runReAllocationKeepEdits regional save:", e));
-  } else {
-    saveDraft(true);
-  }
+    try {
+      autoRebalance(true, { skipRender: true });
+    } catch (e) {
+      console.error("autoRebalance:", e);
+    }
+    await wait(200);
+    renderResult(allocs);
+    requestAnimationFrame(() => adjustResultStickyGap());
+    qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
+    toast("✅ กระจายหีบใหม่สำเร็จ — ตัวเลขที่แก้เองยังคงอยู่", "green");
+    if (_regionalAggregateWritable()) {
+      S.compositeAllocView = true;
+      saveRegionalAllocationSnapshots(allocs, "optimized")
+        .then((saved) => {
+          for (const supId of saved || []) {
+            S.allocSourceBySup[supId] = "snapshot";
+          }
+          syncCompositeAllocLegend();
+          _updateCompositeRegionalBanner();
+        })
+        .catch((e) => console.warn("runReAllocationKeepEdits regional save:", e));
+    } else {
+      saveDraft(true);
+    }
+  });
 }
 
 /**
@@ -14336,25 +14359,28 @@ function syncTargetDriftNotice() {
  * สินค้าอื่นในตารางและตัวเลขที่แก้เองไม่ถูกแตะ (runReAllocationForSkus)
  */
 async function reloadThenReallocChanged(skus) {
-  const list = [...new Set((skus || []).map((x) => String(x).trim()).filter(Boolean))];
-  if (!list.length) return;
-  if (!_canPartialRealloc()) {
-    toast("มุมมองนี้แก้ผลกระจายไม่ได้", "amber");
-    return;
-  }
-  document.getElementById("infoModal")?.remove();
-  try {
-    // รวมภาคโหลดผ่านตัวสลับมุมมองรวมภาค (ดึงสดทุกทีม) · ทีมเดียวโหลดขั้นที่ 1 ของทีม
-    if (S.aggregateMode) await refreshManagerDashboardData({ refresh: true });
-    else await refreshDashboardData(true);
-  } catch (e) {
-    toast("❌ " + _userFacingError(e, "โหลดเป้าใหม่ไม่สำเร็จ"), "red");
-    return;
-  }
-  S.targetDrift = null;
-  syncTargetDriftNotice();
-  await runReAllocationForSkus(list, {
-    restoreLabel: `⚡ กระจายเฉพาะสินค้าที่เป้าเปลี่ยน (${list.length} SKU)`,
+  return _runAllocGuarded(false, async () => {
+    const list = [...new Set((skus || []).map((x) => String(x).trim()).filter(Boolean))];
+    if (!list.length) return;
+    if (!_canPartialRealloc()) {
+      toast("มุมมองนี้แก้ผลกระจายไม่ได้", "amber");
+      return;
+    }
+    document.getElementById("infoModal")?.remove();
+    try {
+      // รวมภาคโหลดผ่านตัวสลับมุมมองรวมภาค (ดึงสดทุกทีม) · ทีมเดียวโหลดขั้นที่ 1 ของทีม
+      if (S.aggregateMode) await refreshManagerDashboardData({ refresh: true });
+      else await refreshDashboardData(true);
+    } catch (e) {
+      toast("❌ " + _userFacingError(e, "โหลดเป้าใหม่ไม่สำเร็จ"), "red");
+      return;
+    }
+    S.targetDrift = null;
+    syncTargetDriftNotice();
+    await runReAllocationForSkus(list, {
+      _nested: true,
+      restoreLabel: `⚡ กระจายเฉพาะสินค้าที่เป้าเปลี่ยน (${list.length} SKU)`,
+    });
   });
 }
 
@@ -14499,15 +14525,18 @@ function syncAllocExtraButtons() {
   }
 }
 
-async function runReAllocationOnlyChanged() {
-  const changed = _snapshotChangedSkuList();
-  if (!changed.length) {
-    toast("ไม่พบสินค้าที่เป้าเพิ่งเปลี่ยน — ใช้「กระจายใหม่ทั้งหมด」แทนได้", "amber");
-    return;
-  }
-  await runReAllocationForSkus(changed, {
-    doneTitle: "กระจายเฉพาะสินค้าที่เป้าเปลี่ยนสำเร็จ",
-    restoreLabel: `⚡ กระจายเฉพาะสินค้าที่เป้าเพิ่ม/เปลี่ยน (${changed.length} SKU)`,
+async function runReAllocationOnlyChanged(opts = {}) {
+  return _runAllocGuarded(!!opts._nested, async () => {
+    const changed = _snapshotChangedSkuList();
+    if (!changed.length) {
+      toast("ไม่พบสินค้าที่เป้าเพิ่งเปลี่ยน — ใช้「กระจายใหม่ทั้งหมด」แทนได้", "amber");
+      return;
+    }
+    await runReAllocationForSkus(changed, {
+      _nested: true,
+      doneTitle: "กระจายเฉพาะสินค้าที่เป้าเปลี่ยนสำเร็จ",
+      restoreLabel: `⚡ กระจายเฉพาะสินค้าที่เป้าเพิ่ม/เปลี่ยน (${changed.length} SKU)`,
+    });
   });
 }
 
@@ -14532,75 +14561,79 @@ function _mergePartialAllocs(current, part, changedSet, multiTeam, teamOf) {
 }
 
 async function runReAllocationForSkus(skus, opts = {}) {
-  if (!_canPartialRealloc()) return;
-  const changed = [...new Set((skus || []).map((x) => String(x).trim()).filter(Boolean))];
-  if (!changed.length) {
-    toast("ยังไม่ได้เลือกสินค้าที่จะกระจาย", "amber");
-    return;
-  }
-  const btn = document.querySelector(".btn-realloc--partial");
-  if (btn) { btn.disabled = true; btn.textContent = "⏳ กำลังกระจาย…"; }
-
-  qs("#progList").scrollIntoView({ behavior: "smooth", block: "start" });
-
-  const changedSet = new Set(changed.map((s) => String(s).trim()));
-  const lockedEdits = _collectLockedEdits()
-    .filter((le) => changedSet.has(String(le.sku || "").trim()));
-  const prevNewSkus = Array.isArray(S.newProductSkus) ? [...S.newProductSkus] : [];
-
-  const part = await _doOptimize(lockedEdits, { onlySkus: changed });
-  if (!part || !part.length) {
-    if (btn && document.body.contains(btn)) {
-      btn.disabled = false;
-      btn.textContent =
-        opts.restoreLabel || `⚡ กระจายเฉพาะสินค้าที่เลือก (${changed.length} SKU)`;
+  return _runAllocGuarded(!!opts._nested, async () => {
+    if (!_canPartialRealloc()) return;
+    const changed = [...new Set((skus || []).map((x) => String(x).trim()).filter(Boolean))];
+    if (!changed.length) {
+      toast("ยังไม่ได้เลือกสินค้าที่จะกระจาย", "amber");
+      return;
     }
-    return;
-  }
+    const btn = document.querySelector(".btn-realloc--partial");
+    if (btn) { btn.disabled = true; btn.textContent = "⏳ กำลังกระจาย…"; }
 
-  // meta สินค้าใหม่จากรอบ partial รู้จักแค่ subset — union กลับกันป้าย "ใหม่" ของตัวอื่นหาย
-  S.newProductSkus = [...new Set([...prevNewSkus, ...(S.newProductSkus || [])])];
+    qs("#progList").scrollIntoView({ behavior: "smooth", block: "start" });
 
-  // merge: SKU ที่กระจายรอบนี้ใช้แถวใหม่ทั้งชุด · SKU อื่นคงเดิมทุกประการ (รวมสถานะล็อก)
-  // รวมภาคแบบรายทีม: ทีมที่ไม่อยู่ในผลรอบนี้ (กระจายไม่สำเร็จ หรือไม่มีสินค้าที่เลือกในเป้าทีม)
-  // ต้องคงแถวเดิมของสินค้าเหล่านั้นไว้ — ไม่งั้นแถวของทีมนั้นหายไปทั้งที่ไม่ได้กระจายใหม่เลย
-  // ทีมที่กระจายได้คืนแถวครบทุกคนอยู่แล้ว (เติมหีบ 0 ให้คนที่ไม่ได้ — I8) จึงเทียบระดับทีมได้
-  const merged = _mergePartialAllocs(
-    S.allocations || [], part, changedSet, !!(S.compositeAllocView || S.aggregateMode), _supervisorCodeForAllocRow
-  );
-  S.allocations = merged;
-  S.recentReallocSkus = [...changedSet];
+    const changedSet = new Set(changed.map((s) => String(s).trim()));
+    const lockedEdits = _collectLockedEdits()
+      .filter((le) => changedSet.has(String(le.sku || "").trim()));
+    // S.newProductSkus เป็น Set (ป้าย「ใหม่」+ ปุ่มปรับยอดอัตโนมัติใช้ .has) — เดิมเช็ค Array.isArray
+    // จึงได้ [] เสมอ แล้วยังเขียนกลับเป็น Array ทำให้ .has หายเงียบ ๆ หลังกระจายเฉพาะสินค้า
+    const prevNewSkus = S.newProductSkus ? [...S.newProductSkus] : [];
 
-  qs("#runEmoji").textContent = "✅";
-  qs("#runTitle").textContent = opts.doneTitle || "กระจายเฉพาะสินค้าที่เลือกสำเร็จ";
-  qs("#runSub").textContent = `กระจายใหม่ ${changedSet.size} SKU — สินค้าอื่นในตารางไม่ถูกแตะ`;
-  qs("#runBtn").textContent = "คำนวณใหม่";
-  qs("#runBtn").disabled = false;
-  buildBrandTabs(merged);
-  qs("#resultBlock").style.display = "block";
+    const part = await _doOptimize(lockedEdits, { onlySkus: changed });
+    if (!part || !part.length) {
+      if (btn && document.body.contains(btn)) {
+        btn.disabled = false;
+        btn.textContent =
+          opts.restoreLabel || `⚡ กระจายเฉพาะสินค้าที่เลือก (${changed.length} SKU)`;
+      }
+      return;
+    }
 
-  try {
-    autoRebalance(true, { skipRender: true });
-  } catch (e) {
-    console.error("autoRebalance:", e);
-  }
-  await wait(200);
-  renderResult(S.allocations);
-  requestAnimationFrame(() => adjustResultStickyGap());
-  qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
-  toast(`✅ กระจายใหม่เฉพาะ ${changedSet.size} สินค้า — ตารางเน้นคอลัมน์ที่เพิ่งกระจายไว้ให้`, "green");
-  // จุดเดียวกับ _persistAfterCellLock/onResultEdit — ต้องบันทึกแยกทีมในโหมดรวมภาค
-  // ไม่งั้น snapshot ของทีมเจ้าของปนแถวของเพื่อนทีม (ดูคอมเมนต์ใน autoRebalance)
-  if (S.compositeAllocView && _regionalAggregateWritable()) {
-    queueRegionalAllocationSave(_deriveAllocStatus());
-  } else {
-    saveDraft(true);
-  }
-  // พาไปดูคอลัมน์แรกที่เพิ่งกระจาย
-  const first = changed[0];
-  setTimeout(() => {
-    try { jumpToResultCell(first); } catch (e) { console.warn("jump fresh sku:", e); }
-  }, 650);
+    // meta สินค้าใหม่จากรอบ partial รู้จักแค่ subset — union กลับกันป้าย "ใหม่" ของตัวอื่นหาย
+    S.newProductSkus = new Set([...prevNewSkus, ...(S.newProductSkus || [])]);
+
+    // merge: SKU ที่กระจายรอบนี้ใช้แถวใหม่ทั้งชุด · SKU อื่นคงเดิมทุกประการ (รวมสถานะล็อก)
+    // รวมภาคแบบรายทีม: ทีมที่ไม่อยู่ในผลรอบนี้ (กระจายไม่สำเร็จ หรือไม่มีสินค้าที่เลือกในเป้าทีม)
+    // ต้องคงแถวเดิมของสินค้าเหล่านั้นไว้ — ไม่งั้นแถวของทีมนั้นหายไปทั้งที่ไม่ได้กระจายใหม่เลย
+    // ทีมที่กระจายได้คืนแถวครบทุกคนอยู่แล้ว (เติมหีบ 0 ให้คนที่ไม่ได้ — I8) จึงเทียบระดับทีมได้
+    const merged = _mergePartialAllocs(
+      S.allocations || [], part, changedSet, !!(S.compositeAllocView || S.aggregateMode), _supervisorCodeForAllocRow
+    );
+    S.allocations = merged;
+    S.recentReallocSkus = [...changedSet];
+
+    qs("#runEmoji").textContent = "✅";
+    qs("#runTitle").textContent = opts.doneTitle || "กระจายเฉพาะสินค้าที่เลือกสำเร็จ";
+    qs("#runSub").textContent = `กระจายใหม่ ${changedSet.size} SKU — สินค้าอื่นในตารางไม่ถูกแตะ`;
+    qs("#runBtn").textContent = "คำนวณใหม่";
+    qs("#runBtn").disabled = false;
+    buildBrandTabs(merged);
+    qs("#resultBlock").style.display = "block";
+
+    try {
+      autoRebalance(true, { skipRender: true });
+    } catch (e) {
+      console.error("autoRebalance:", e);
+    }
+    await wait(200);
+    renderResult(S.allocations);
+    requestAnimationFrame(() => adjustResultStickyGap());
+    qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
+    toast(`✅ กระจายใหม่เฉพาะ ${changedSet.size} สินค้า — ตารางเน้นคอลัมน์ที่เพิ่งกระจายไว้ให้`, "green");
+    // จุดเดียวกับ _persistAfterCellLock/onResultEdit — ต้องบันทึกแยกทีมในโหมดรวมภาค
+    // ไม่งั้น snapshot ของทีมเจ้าของปนแถวของเพื่อนทีม (ดูคอมเมนต์ใน autoRebalance)
+    if (S.compositeAllocView && _regionalAggregateWritable()) {
+      queueRegionalAllocationSave(_deriveAllocStatus());
+    } else {
+      saveDraft(true);
+    }
+    // พาไปดูคอลัมน์แรกที่เพิ่งกระจาย
+    const first = changed[0];
+    setTimeout(() => {
+      try { jumpToResultCell(first); } catch (e) { console.warn("jump fresh sku:", e); }
+    }, 650);
+  });
 }
 /* ════════════════════════════════════════════════════════════════════════════
    USER MANUAL MODAL — คู่มือการใช้งานทีละขั้นตอน

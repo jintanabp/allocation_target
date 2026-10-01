@@ -870,6 +870,16 @@ def _merge_partial_result(
     return merged
 
 
+def _dedupe_locks(locks: list[dict]) -> list[dict]:
+    """ยุบล็อก (emp_id, sku) ซ้ำ เหลือค่าสุดท้าย — ลำดับตามที่เจอครั้งแรก"""
+    by_key: dict[tuple[str, str], dict] = {}
+    for le in locks:
+        by_key[(str(le["emp_id"]).strip(), str(le["sku"]).strip())] = le
+    if len(by_key) < len(locks):
+        logger.warning("optimize: ล็อกซ้ำ %d รายการ — ใช้ค่าสุดท้ายของแต่ละช่อง", len(locks) - len(by_key))
+    return list(by_key.values())
+
+
 def _reject_employee_in_two_teams(df_targets: pd.DataFrame) -> None:
     """
     กระจายรวมเป้าทั้งภาค: รหัสพนักงานเดียวกันอยู่ใต้สองทีม = หยุดพร้อมบอกชื่อ (ผลตรวจ §4.1-3)
@@ -1365,6 +1375,9 @@ def run_optimization_service(
         locked_edits_data.append(
             {"emp_id": _le["emp_id"], "sku": _le["sku"], "locked_boxes": _le["locked_boxes"]}
         )
+    # ล็อกคู่เดียวกันซ้ำ (หน้าเว็บมีแถวซ้ำ) = ช่องเดียว ใช้ค่าสุดท้ายเหมือน locked_map ในเครื่องคำนวณ
+    # เดิมด่าน I2 ข้างล่างบวกซ้ำ → 400 "ล็อกเกินเป้า" ทั้งที่ผู้ใช้ล็อกไว้แค่ครั้งเดียว และแก้เองไม่ได้
+    locked_edits_data = _dedupe_locks(locked_edits_data)
     if dropped_locks:
         logger.warning(
             "optimize: ล็อก %d รายการใช้ไม่ได้ (%s)",
