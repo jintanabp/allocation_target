@@ -1181,25 +1181,38 @@ def sku_link_catalog(
             df_info = fabric.get_product_info(
                 sku_list=sku_list, target_year=year, target_month=month
             )
-            price_map: dict[str, float] = {}
-            try:
-                df_price = fabric.get_latest_price_per_box_by_sku(month, year, sku_list)
-                if df_price is not None and not df_price.empty:
-                    price_map = dict(
-                        zip(
-                            df_price["sku"].astype(str).str.strip(),
-                            df_price["price_per_box"].astype(float),
-                        )
-                    )
-            except Exception as e:
-                logger.warning("sku catalog price fetch failed: %s", e)
-
             info_by_sku: dict[str, dict[str, Any]] = {}
             if df_info is not None and not df_info.empty:
                 for _, r in df_info.iterrows():
                     k = str(r.get("sku") or r.get("ProductCode") or "").strip()
                     if k:
                         info_by_sku[k] = r.to_dict()
+
+            # ราคาตั้ง (เครดิต ณ วันที่ 1 ของงวด) แบบเดียวกับหน้าทีม (ออดิต 26 ส.ค. 2026) — เดิมใช้
+            # ราคาเฉลี่ยจากยอดขายเดือนก่อน (Amount÷Qty ปนเครดิต+เงินสด) ทั้งที่ดึงราคาตั้งมาแล้ว
+            # ตัวเลขจึงไม่ตรงหน้าทีม · ยอดขายเฉลี่ยเหลือเป็นตัวถอยเฉพาะ SKU ที่ไม่มีราคาตั้ง
+            list_price: dict[str, float] = {}
+            for k, info in info_by_sku.items():
+                try:
+                    v = float(info.get("credit_unit_price") or 0)
+                except (TypeError, ValueError):
+                    v = 0.0
+                if v > 0:
+                    list_price[k] = v
+            price_map: dict[str, float] = {}
+            need_sales = [s for s in sku_list if s not in list_price]
+            if need_sales:
+                try:
+                    df_price = fabric.get_latest_price_per_box_by_sku(month, year, need_sales)
+                    if df_price is not None and not df_price.empty:
+                        price_map = dict(
+                            zip(
+                                df_price["sku"].astype(str).str.strip(),
+                                df_price["price_per_box"].astype(float),
+                            )
+                        )
+                except Exception as e:
+                    logger.warning("sku catalog price fetch failed: %s", e)
 
             alias_map = {}
             from ..services.sku_link_store import alias_to_canonical_map, extra_aliases_for_canonical
@@ -1228,7 +1241,9 @@ def sku_link_catalog(
                         "brand": str(info.get("brand") or info.get("Brand") or "").strip(),
                         "section": str(info.get("section") or info.get("Section") or "").strip(),
                         "target_boxes": boxes,
-                        "price_per_box": float(price_map.get(sku, 0) or 0),
+                        "price_per_box": list_price.get(sku) or float(price_map.get(sku, 0) or 0),
+                        "price_from_sales_history": sku not in list_price
+                        and float(price_map.get(sku, 0) or 0) > 0,
                         "has_sku_link": canon != sku or bool(extras),
                         "linked_aliases": extras,
                     }
