@@ -137,11 +137,26 @@ def _hist_boxes(sup_id: str, emp_index: int, sku_index: int, target_boxes: int) 
     return max(1, int(round(target_boxes * weight / (12.0 * n_emp))))
 
 
-def _team_hist_boxes(sup_id: str, sku_index: int, target_boxes: int) -> int:
-    return sum(
-        _hist_boxes(sup_id, i, sku_index, target_boxes)
-        for i in range(len(_employees_of(sup_id)))
-    )
+def _target_split(sup_id: str, sku_index: int, target_boxes: int) -> list[int]:
+    """
+    เป้าหีบของ SKU นี้แบ่งรายคน — ผลรวมต้องเท่า target_boxes พอดี (เหมือน TGA จริง)
+
+    เดิมปัดเศษทีละคน (round(target × ส่วนแบ่ง)) ผลรวมจึงคลาดจากเป้าทีม แล้วยอดเงินขั้นที่ 2
+    ไม่เท่าเป้ารวม (SLDEMO1 ขาด 264 บาท, SLDEMO3 ขาด 1,092 บาท) ปุ่มกระจายกดไม่ได้เลย
+    ตอนนี้ใช้เศษมากสุดได้ก่อน (largest remainder) · เสมอกันให้คนลำดับต้นได้ก่อน — คงที่ทุกครั้ง
+    """
+    n = len(_employees_of(sup_id))
+    hist = [_hist_boxes(sup_id, i, sku_index, target_boxes) for i in range(n)]
+    tot = sum(hist)
+    if tot <= 0 or n == 0:
+        return [0] * n
+    raw = [target_boxes * h / tot for h in hist]
+    out = [int(r) for r in raw]
+    rest = target_boxes - sum(out)
+    order = sorted(range(n), key=lambda i: (-(raw[i] - out[i]), i))
+    for i in order[:rest]:
+        out[i] += 1
+    return out
 
 
 def demo_skus(sup_id: str = DEMO_SUP_ID) -> list[dict[str, Any]]:
@@ -177,8 +192,7 @@ def demo_employees(sup_id: str = DEMO_SUP_ID) -> list[dict[str, Any]]:
         for si, (_sku, _n, _b, price, base) in enumerate(_SKUS):
             target = _target_boxes(code, base)
             boxes = _hist_boxes(code, ei, si, target)
-            team = _team_hist_boxes(code, si, target) or 1
-            target_sun += round(target * boxes / team) * price
+            target_sun += _target_split(code, si, target)[ei] * price
             hist_3m += boxes * price
         out.append({
             "emp_id": emp_id,
@@ -233,7 +247,8 @@ def demo_tga_grain_rows(sup_id: str = DEMO_SUP_ID) -> list[dict[str, Any]]:
     for ei, (emp_id, _n, _ly, wh) in enumerate(_employees_of(code)):
         for si, (sku, _nm, _b, _price, base) in enumerate(_SKUS):
             target = _target_boxes(code, base)
-            boxes = _hist_boxes(code, ei, si, target)
+            # grain = แถวเป้าใน TGA → ใช้เป้าที่แบ่งแล้ว (รวมเท่าเป้าทีม) ไม่ใช่ยอดขายย้อนหลัง
+            boxes = _target_split(code, si, target)[ei]
             if boxes <= 0:
                 continue
             rows.append({

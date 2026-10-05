@@ -170,6 +170,20 @@ class TestDemoDataIsUsableLikeTheRealThing(unittest.TestCase):
                     self.assertGreater(float(s["price_per_box"]), 0)
                     self.assertFalse(s["price_missing"])
 
+    def test_money_targets_add_up_to_the_team_total(self):
+        """ผลรวมเป้าเงินรายคน = มูลค่าเป้าหีบทั้งทีม พอดี (5 ต.ค. 2026)
+        เดิมปัดเศษทีละคน ขาด/เกิน 264–1,092 บาท เกินเกณฑ์ 99 บาท ปุ่มกระจายในขั้นที่ 2 กดไม่ได้"""
+        for code in demo_data.DEMO_SUP_IDS:
+            with self.subTest(team=code):
+                skus = demo_data.demo_skus(code)
+                total = sum(s["price_per_box"] * s["supervisor_target_boxes"] for s in skus)
+                self.assertAlmostEqual(sum(e["target_sun"] for e in demo_data.demo_employees(code)), total, places=2)
+                grain: dict = {}
+                for r in demo_data.demo_tga_grain_rows(code):
+                    grain[r["sku"]] = grain.get(r["sku"], 0) + r["qty"]
+                for s in skus:
+                    self.assertEqual(grain.get(s["sku"], 0), s["supervisor_target_boxes"], s["sku"])
+
     def test_aggregate_total_equals_sum_of_teams(self):
         """หัวใจของโหมดรวมภาค — ถ้าไม่ตรงตั้งแต่ข้อมูลเดโม ก็สาธิตไม่ได้"""
         merged = emp_svc.merge_employees_payloads(
