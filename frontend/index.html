@@ -16,7 +16,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=2026100101" />
+  <link rel="stylesheet" href="style.css?v=2026100501" />
 </head>
 
 <body>
@@ -488,7 +488,19 @@
             <span class="btn-bui__label">รีเซ็ตเป็น Target Sun</span>
           </button>
           <span class="step2-toolbar__hint" id="buiHint">กดเพื่อเปิดช่องกรอกยอดบิวเทรี่ยมที่ต้องหักจาก "ยอดขายเดือนเดียวกันปีที่แล้ว"</span>
+          <div class="step2-histfill" role="group" aria-label="ตั้งเป้าเงินตามประวัติขาย">
+            <span class="step2-histfill__label">ไม่อยากตั้งเป้าเอง? ตั้งตามประวัติขาย:</span>
+            <button type="button" class="btn-bui btn-bui--hist" onclick="fillYellowFromHistory('3m')"
+              title="แบ่งเป้ารวมตามสัดส่วนยอดขายเฉลี่ย 3 เดือนของแต่ละคน">เฉลี่ย 3 เดือน</button>
+            <button type="button" class="btn-bui btn-bui--hist" onclick="fillYellowFromHistory('6m')"
+              title="แบ่งเป้ารวมตามสัดส่วนยอดขายเฉลี่ย 6 เดือนของแต่ละคน">เฉลี่ย 6 เดือน</button>
+            <button type="button" class="btn-bui btn-bui--hist" onclick="fillYellowFromHistory('12m')"
+              title="แบ่งเป้ารวมตามสัดส่วนยอดขายเฉลี่ย 1 ปีของแต่ละคน">เฉลี่ย 1 ปี</button>
+            <button type="button" class="btn-bui btn-bui--hist" onclick="fillYellowFromHistory('ly')"
+              title="แบ่งเป้ารวมตามสัดส่วนยอดขายเดือนเดียวกันปีที่แล้ว — เหมาะกับสินค้าตามฤดูกาล">เดือนเดียวกันปีที่แล้ว</button>
+          </div>
         </div>
+        <div id="step2HistFillNote" class="step2-hist-note" style="display:none;" role="status" aria-live="polite"></div>
 
         <div class="panel no-head">
           <div class="panel-scroll step2-panel-stack">
@@ -2118,8 +2130,8 @@
   <script src="vendor/msal-browser.min.js"></script>
   <!-- ตรรกะล้วน (ตัวแปลงเลข/คณิตการเกลี่ย) — ต้องมาก่อน app.js
        ไฟล์นี้มีเทสจริงด้วย node --test tests/logic.test.js -->
-  <script src="logic.js?v=2026100101"></script>
-  <script src="app.js?v=2026100101"></script>
+  <script src="logic.js?v=2026100501"></script>
+  <script src="app.js?v=2026100501"></script>
 </body>
 
 </html>

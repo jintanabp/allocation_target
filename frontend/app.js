@@ -957,6 +957,8 @@ let S = {
   buiColumnOpen: false,
   /** เหตุผลตั้งเป้าให้ติดลบ — ต้องกรอกก่อนกด "เริ่มคำนวณ" หากมีพนักงานที่เป้า custom ทำให้เติบโตติดลบ */
   negGrowthReason: "",
+  /** เป้าเงิน Step 2 ตั้งจากปุ่ม「ตั้งตามประวัติ」ช่วงไหน (คีย์ของ HIST_FILL_SOURCES) · null = Target Sun/แก้มือ */
+  yellowSource: null,
   /** brand → strategy map สำหรับโหมดเลือกหลายวิธี */
   brandStrategyMap: {},
   /** จากผล optimize ล่าสุด — ป้ายหลัก/รอง ในตารางผล */
@@ -3930,7 +3932,7 @@ function _doLogout() {
     _supervisorSet: keepLoginMeta._supervisorSet,
     _managerSet: keepLoginMeta._managerSet,
     yellowLocked: {}, skuWarnings: [],
-    buiDeductions: {}, buiColumnOpen: false, negGrowthReason: "", brandStrategyMap: {},
+    buiDeductions: {}, buiColumnOpen: false, negGrowthReason: "", yellowSource: null, brandStrategyMap: {},
     tierFlexSkus: new Set(), tierStrictSkuCount: 0,
     revenueScale: 1,
   canImportTargetSun: true,
@@ -4685,6 +4687,7 @@ function applyDataPayload(data) {
     ? data.sales_unit_by_sup
     : {};
   S.yellowLocked = {};
+  S.yellowSource = null;
   S.histWindowMonths = 3;
   S.skus = data.skus;
   _bumpSkusVersion();
@@ -5754,6 +5757,7 @@ function _yellowRowHtml(e, opts = {}) {
   const l3m = e.hist_avg_3m || 0;
   const ts = e.target_sun || 0;
   const isLocked = S.yellowLocked[akey];
+  const noHist = !opts.groupHeader && _isHistFillNoHistory(e);
   const bui = Number(S.buiDeductions[e.emp_id]) || 0;
   const lyBase = Math.max(0, ly - (opts.groupHeader ? bui : 0));
   const growth = lyBase > 0 ? ((y - lyBase) / lyBase * 100) : null;
@@ -5761,7 +5765,10 @@ function _yellowRowHtml(e, opts = {}) {
   const gTag = growth !== null
     ? `<span class="gtag ${growth >= 0 ? "gtag-up" : "gtag-down"}">${growth >= 0 ? "+" : ""}${growth.toFixed(1)}%</span>`
     : `<span class="gtag" style="background:var(--bg-main);color:var(--text-3);border:1px solid var(--border);">—</span>`;
-  const rowStyle = isLocked ? "background-color: var(--amber-bg);" : "";
+  const rowStyle = isLocked || noHist ? "background-color: var(--amber-bg);" : "";
+  const noHistTag = noHist
+    ? `<span class="step2-nohist-tag" title="ไม่มียอดขายในช่วงประวัติที่เลือก — กรอกเป้าเงินเอง ไม่งั้นคนนี้จะไม่ได้หีบ">ไม่มีประวัติ — กรอกเอง</span>`
+    : "";
   const lockIcon = isLocked && !opts.groupHeader && !readOnly
     ? `<button class="unlock-btn" title="คลิกเพื่อปลดล็อก" onclick="unlockYellow('${escH(akey)}')">🔒 ล็อก</button>`
     : "";
@@ -5790,12 +5797,13 @@ function _yellowRowHtml(e, opts = {}) {
         <span class="emp-wh-group-meta">${opts.childCount || ""} คลัง</span>
       </td>`
     : opts.child
-      ? `<td class="sticky-left-col" style="padding-left:22px;"><span class="emp-wh-badge">W/H ${escH(e.warehouse_code || "—")}</span>${lockIcon}</td>`
+      ? `<td class="sticky-left-col" style="padding-left:22px;"><span class="emp-wh-badge">W/H ${escH(e.warehouse_code || "—")}</span>${lockIcon}${noHistTag}</td>`
       : `<td class="sticky-left-col">
         <span class="emp-tag">${escH(e.emp_id)}</span>
         ${e.emp_name ? `<span style="font-size:11px;color:var(--text-3);margin-left:4px;">${escH(e.emp_name)}</span>` : ""}
         ${_empMovedBadgeHtml(e, { compact: true })}
         ${lockIcon}
+        ${noHistTag}
       </td>`;
   const yellowInput = opts.groupHeader || readOnly
     ? `<td class="r mono${readOnly && !opts.groupHeader ? " step2-yellow-readonly" : ""}">${baht(y)}</td>`
@@ -5919,6 +5927,7 @@ function renderYellowTable() {
   qs("#footTargetSum").textContent = baht(tsSum);
   qs("#footYellowSum").textContent = baht(ySum);
   qs("#footGrowth").textContent = totalG !== null ? (totalG >= 0 ? "+" : "") + totalG.toFixed(1) + "%" : "—";
+  _renderHistFillNote();
   syncStep2ReadOnlyUI();
   requestAnimationFrame(() => pinStickyLeftColumns(document.querySelector(".step2-table-scroll")));
 }
@@ -5949,7 +5958,12 @@ function onYellowChange(input) {
     /* น้ำหนักต้องเป็นบวกเสมอ — `e.ly_sales || 0.1` แทนค่าให้เฉพาะค่า falsy
        ยอดปีที่แล้วติดลบ (คืนของ/ลดหนี้) จึงเล็ดลอดเข้ามาได้ ผลคือ baseSum เป็น 0
        (share = Infinity → NaN) หรือแถวสุดท้ายได้เป้าติดลบแล้วไปตกที่ 422 ที่อ่านไม่รู้เรื่อง */
-    const weightOf = (e) => Math.max(0, Number(e.ly_sales) || 0) + 0.1;
+    const lyWeightOf = (e) => Math.max(0, Number(e.ly_sales) || 0) + 0.1;
+    // ตั้งจากปุ่ม「ตั้งตามประวัติ」ไว้ → เกลี่ยส่วนที่เหลือด้วยประวัติช่วงเดียวกัน ไม่งั้นแก้ช่องเดียว
+    // สัดส่วนทั้งตารางจะเด้งกลับไปเป็นตาม LY และคนไม่มีประวัติจะได้เป้าเล็ก ๆ ทั้งที่ควรเป็น 0
+    const src = _histFillSource();
+    const histOk = src && unlockedRows.some(e => _histFillWeight(e, src) > 0);
+    const weightOf = histOk ? (e) => _histFillWeight(e, src) : lyWeightOf;
     const baseSum = unlockedRows.reduce((acc, e) => acc + weightOf(e), 0);
     let distributed = 0;
     unlockedRows.forEach((e, i) => {
@@ -6007,6 +6021,9 @@ async function resetYellowToTargetSun() {
   );
   if (!ok) return;
   S.yellowLocked = {};
+  S.yellowSource = null;
+  // เหตุผลที่ปุ่ม「ตั้งตามประวัติ」เติมไว้ไม่จริงแล้วเมื่อกลับเป็น Target Sun
+  if ((S.negGrowthReason || "").trim().startsWith(HIST_FILL_REASON_PREFIX)) S.negGrowthReason = "";
   _allocEligibleEmployees().forEach(e => {
     const base = Number(e.target_sun);
     S.yellow[_allocKey(e)] = Number.isFinite(base) ? Math.max(0, base) : 0;
@@ -6026,6 +6043,132 @@ async function resetYellowToTargetSun() {
     S._hasUnsaved = true;
   } else {
     toast("รีเซ็ตเป้าเป็น Target Sun แล้ว — ยอดรวมควรตรงเป้ารวม", "green");
+  }
+}
+
+/* ── ปุ่ม「ตั้งเป้าตามประวัติ」 ─────────────────────────────────────────
+ * สำหรับผู้ใช้ที่ไม่อยากตั้งเป้าเงินเอง: เป้ารวมยังเท่าเดิม (ล็อกกับเป้าหีบ × ราคา)
+ * แต่ส่วนแบ่งรายคนเปลี่ยนเป็นตามยอดขายในช่วงที่เลือก แล้ว Step 3 กระจายหีบตามปกติ
+ * คนไม่มีประวัติได้ 0 + ป้ายเตือน + ถามก่อนกระจาย (ไม่เติมให้เอง — ผู้ใช้เลือก 5 ต.ค. 2026)
+ */
+const HIST_FILL_SOURCES = {
+  "3m": { field: "hist_avg_3m", label: "ยอดขายเฉลี่ย 3 เดือน" },
+  "6m": { field: "hist_avg_6m", label: "ยอดขายเฉลี่ย 6 เดือน" },
+  "12m": { field: "hist_avg_12m", label: "ยอดขายเฉลี่ย 1 ปี" },
+  "ly": { field: "ly_sales", label: "ยอดขายเดือนเดียวกันปีที่แล้ว" },
+};
+
+const HIST_FILL_REASON_PREFIX = "ตั้งเป้าเงินตามสัดส่วน";
+
+function _histFillSource() {
+  return HIST_FILL_SOURCES[S.yellowSource] || null;
+}
+
+function _histFillWeight(e, src) {
+  const v = Number(e?.[src.field]);
+  return Number.isFinite(v) && v > 0 ? v : 0;
+}
+
+/** แถวนี้ตั้งจากประวัติแล้วได้ 0 เพราะไม่มียอดขาย และผู้ใช้ยังไม่ได้กรอกเอง */
+function _isHistFillNoHistory(e) {
+  const src = _histFillSource();
+  if (!src || !_isAllocEligible(e)) return false;
+  const k = _allocKey(e);
+  if (S.yellowLocked[k]) return false;
+  return _histFillWeight(e, src) <= 0 && (Number(S.yellow[k]) || 0) <= 0.005;
+}
+
+function _histFillNoHistoryNames() {
+  const seen = new Set();
+  const out = [];
+  for (const e of _allocEligibleEmployees()) {
+    if (!_isHistFillNoHistory(e) || seen.has(e.emp_id)) continue;
+    seen.add(e.emp_id);
+    out.push(`${e.emp_id}${e.emp_name ? ` (${e.emp_name})` : ""}`);
+  }
+  return out;
+}
+
+function _renderHistFillNote() {
+  const box = qs("#step2HistFillNote");
+  if (!box) return;
+  const src = _histFillSource();
+  if (!src) {
+    box.style.display = "none";
+    box.innerHTML = "";
+    return;
+  }
+  const bits = [
+    `<div>เป้าเงินตั้งตามสัดส่วน<strong>${escH(src.label)}</strong> — ยอดรวมยังเท่ากับเป้ารวมของระบบ · กด「รีเซ็ตเป็น Target Sun」เพื่อกลับค่าเดิม</div>`,
+  ];
+  const noHist = _histFillNoHistoryNames();
+  if (noHist.length) {
+    bits.push(
+      `<div class="step2-hist-note__warn">⚠️ ไม่มีประวัติขาย ${noHist.length.toLocaleString("th-TH")} คน — เป้าเงินเป็น 0 `
+      + `กรุณากรอกเอง ไม่งั้นคนนี้จะไม่ได้หีบ: ${escH(noHist.join(", "))}</div>`
+    );
+  }
+  const moved = [];
+  const seen = new Set();
+  for (const e of _allocEligibleEmployees()) {
+    if (!String(e.reassigned_from || "").trim() || seen.has(e.emp_id)) continue;
+    seen.add(e.emp_id);
+    moved.push(`${e.emp_id} (จาก ${e.reassigned_from})`);
+  }
+  if (moved.length) {
+    bits.push(
+      `<div class="step2-hist-note__warn">⚠️ ย้ายเขตมา ${moved.length.toLocaleString("th-TH")} คน — ประวัติขายอาจเป็นของเขตเดิม ตรวจเป้า: ${escH(moved.join(", "))}</div>`
+    );
+  }
+  box.innerHTML = bits.join("");
+  box.style.display = "";
+}
+
+async function fillYellowFromHistory(key) {
+  if (_isStep2ReadOnlyView()) return;
+  const src = HIST_FILL_SOURCES[key];
+  if (!src) return;
+  if (!S.employees || S.employees.length === 0) {
+    toast("ยังไม่มีรายชื่อพนักงาน — โหลดข้อมูล Step 1 ก่อน", "red");
+    return;
+  }
+  const rows = _allocEligibleEmployees();
+  const amounts = AppLogic.shareTotalByWeights(S.totalTarget, rows.map(e => _histFillWeight(e, src)));
+  if (!amounts) {
+    toast(`ไม่มี${src.label}ของทีมนี้เลย — ใช้เป้า Target Sun ตามเดิม`, "amber");
+    return;
+  }
+  const noHistN = new Set(rows.filter(e => _histFillWeight(e, src) <= 0).map(e => e.emp_id)).size;
+  const ok = await _confirmDialog(
+    `จะตั้งเป้าเงิน ${rows.length.toLocaleString("th-TH")} แถว ตามสัดส่วน${src.label}\n`
+    + `ยอดรวมยังเท่ากับเป้ารวมของระบบ · การล็อกเป้าทั้งหมดจะถูกยกเลิก`
+    + (noHistN ? `\n\n⚠️ ${noHistN.toLocaleString("th-TH")} คนไม่มีประวัติขายในช่วงนี้ — จะได้เป้า 0 ต้องกรอกเอง` : ""),
+    { title: `ตั้งเป้าตาม${src.label}`, okLabel: "ตั้งเป้าเลย", cancelLabel: "ยกเลิก" }
+  );
+  if (!ok) return;
+  S.yellowLocked = {};
+  S.yellowSource = key;
+  rows.forEach((e, i) => { S.yellow[_allocKey(e)] = amounts[i]; });
+  S._step2Dirty = true;
+  // เป้าต่ำกว่าปีที่แล้วต้องมีเหตุผล — ที่มาของตัวเลขคือเหตุผลจริง เติมให้ถ้ายังว่าง
+  // (หรือยังเป็นข้อความที่ปุ่มนี้เติมไว้รอบก่อน) ถ้าผู้ใช้พิมพ์เองแล้วไม่ทับ
+  const reasonNow = (S.negGrowthReason || "").trim();
+  if (!reasonNow || reasonNow.startsWith(HIST_FILL_REASON_PREFIX)) {
+    S.negGrowthReason = `${HIST_FILL_REASON_PREFIX}${src.label}`;
+  }
+  renderYellowTable();
+  updateValidation();
+  _updateNegGrowthReasonState();
+  if (S.allocations && S.allocations.length > 0) {
+    toast("⚠️ มีการปรับเป้าเงิน! กรุณากดปุ่ม «คำนวณใหม่» ด้านล่างเพื่อกระจายหีบให้ตรงกับเป้าเงินล่าสุด", "red");
+    const btn = qs("#runBtn");
+    if (btn) {
+      btn.classList.add("pulse-warn");
+      btn.textContent = "คำนวณใหม่ (เป้าเงินเปลี่ยน)";
+    }
+    S._hasUnsaved = true;
+  } else {
+    toast(`ตั้งเป้าตาม${src.label}แล้ว`, "green");
   }
 }
 
@@ -6216,6 +6359,20 @@ async function runOptimization() {
       toast("⚠️ กรุณาใส่เหตุผลในกล่อง \"พบเป้าหมายที่ตั้งให้เติบโตติดลบ\" ก่อนเริ่มคำนวณ", "red");
       document.getElementById("negGrowthNoteWrap")?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
+    }
+    // ตั้งเป้าตามประวัติแล้วยังมีคนเป้า 0 ค้าง → คนนั้นจะไม่ได้หีบเลย ต้องให้ผู้ใช้ตัดสินเอง
+    // (ผู้ใช้เลือกไว้ 5 ต.ค. 2026: ไม่เติมให้อัตโนมัติ ไม่บล็อก แต่ต้องถามก่อน)
+    const noHistLeft = _histFillNoHistoryNames();
+    if (noHistLeft.length) {
+      const ok = await _confirmDialog(
+        `พนักงาน ${noHistLeft.length.toLocaleString("th-TH")} คนต่อไปนี้ยังมีเป้าเงิน 0 เพราะไม่มีประวัติขายในช่วงที่เลือก:\n`
+        + `${noHistLeft.join(", ")}\n\nคนเหล่านี้จะไม่ได้หีบเลย — ดำเนินการต่อไหม?`,
+        { title: "มีพนักงานเป้าเงิน 0", okLabel: "กระจายต่อ", cancelLabel: "กลับไปกรอกเป้า" }
+      );
+      if (!ok) {
+        document.getElementById("step2Section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
     }
     // กันเริ่มคำนวณถ้าเลือกหลายวิธีแต่ map แบรนด์ยังไม่ครบ
     if (!_brandMappingComplete()) {
@@ -11765,6 +11922,7 @@ function _discardDraftStartFresh() {
   _removeDraftKeysBothLocals();
   S.allocations = [];
   S.yellowLocked = {};
+  S.yellowSource = null;
   S._hasUnsaved = false;
   if (S.employees && S.employees.length) {
     _allocEligibleEmployees().forEach(e => {
@@ -13075,6 +13233,7 @@ async function _applyServerAllocationSnapshot(supId, opts = {}) {
   }
   if (snap.yellow && typeof snap.yellow === "object" && !opts.readOnly) {
     Object.assign(S.yellow, snap.yellow);
+    S.yellowSource = null;
   }
   if (snap.yellow_locked && typeof snap.yellow_locked === "object" && !opts.readOnly) {
     S.yellowLocked = { ...snap.yellow_locked };
@@ -13280,6 +13439,7 @@ function checkAndLoadDraft() {
 
       S.yellow = draftData.yellow || S.yellow;
       S.yellowLocked = draftData.yellowLocked || {};
+      S.yellowSource = null;
       S.neverSoldZeroKeys = new Set(Array.isArray(draftData.neverSoldZeroKeys) ? draftData.neverSoldZeroKeys : []);
       S.recentReallocSkus = [];
       S.lastForceMinOne = !!draftData.lastForceMinOne;

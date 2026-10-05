@@ -170,6 +170,10 @@ def expand_employee_rows(
         )
         ly_parts = _split_amount(ly_total, ly_weights)
         avg_parts = _split_amount(avg_total, avg_weights)
+        # 6/12 เดือนไม่มีตัวเลขแยกคลังจาก Fabric — แบ่งตามน้ำหนักเดียวกับ 3 เดือน
+        # (ใช้แค่เป็นสัดส่วนของปุ่ม「ตั้งตามประวัติ」 ผลรวมต่อคนยังตรง)
+        avg6_parts = _split_amount(float(row.get("hist_avg_6m") or 0.0), avg_weights)
+        avg12_parts = _split_amount(float(row.get("hist_avg_12m") or 0.0), avg_weights)
 
         for w in unique_whs:
             nr = dict(row)
@@ -179,6 +183,8 @@ def expand_employee_rows(
             nr["target_sun"] = ts_parts.get(w, 0.0)
             nr["ly_sales"] = ly_parts.get(w, 0.0)
             nr["hist_avg_3m"] = avg_parts.get(w, 0.0)
+            nr["hist_avg_6m"] = avg6_parts.get(w, 0.0)
+            nr["hist_avg_12m"] = avg12_parts.get(w, 0.0)
             nr["alloc_key"] = alloc_key(emp, w, wh_split=True)
             out.append(nr)
 

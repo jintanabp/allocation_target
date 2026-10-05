@@ -246,7 +246,33 @@
     return { sup: m[1], year: Number(m[2]), month: Number(m[3]) };
   }
 
+  /**
+   * แบ่งยอดเงินรวมตามสัดส่วนน้ำหนัก — ใช้กับปุ่ม「ตั้งเป้าตามประวัติ」ใน Step 2
+   *
+   * คิดเป็นสตางค์ทั้งหมด แล้วยกเศษที่ปัดลงให้คนน้ำหนักสูงสุด ผลรวมจึงเท่ากับ total
+   * พอดี (ยอดรวม Step 2 ถูกล็อกกับเป้าระบบ ถ้าคลาดเกิน 99 บาทปุ่มกระจายจะกดไม่ได้)
+   *
+   * น้ำหนัก 0 / ติดลบ / ไม่ใช่ตัวเลข = ได้ 0 — **ไม่** แบ่งเท่าให้ เพราะผู้ใช้เลือกแล้วว่า
+   * คนไม่มีประวัติต้องให้ผู้ใช้กรอกเอง · ทุกคนน้ำหนัก 0 = คืน null ให้ผู้เรียกตัดสินเอง
+   */
+  function shareTotalByWeights(total, weights) {
+    const n = weights.length;
+    const w = weights.map((v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : 0));
+    const wSum = w.reduce((a, b) => a + b, 0);
+    if (n === 0 || wSum <= 0) return null;
+    const totalC = Math.max(0, Math.round((Number(total) || 0) * 100));
+    const partC = w.map((v) => Math.floor((totalC * v) / wSum));
+    const restC = totalC - partC.reduce((a, b) => a + b, 0);
+    if (restC > 0) {
+      let top = 0;
+      for (let i = 1; i < n; i++) if (w[i] > w[top]) top = i;
+      partC[top] += restC;
+    }
+    return partC.map((c) => c / 100);
+  }
+
   const AppLogic = {
+    shareTotalByWeights,
     allocRulePushMultipleError,
     nightlyReasonText,
     nightlyResultText,

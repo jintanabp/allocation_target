@@ -287,6 +287,17 @@ def _read_hist_cache_file(path: str) -> pd.DataFrame:
     return df if not df.empty else pd.DataFrame(columns=_HIST_COLS)
 
 
+def avg_monthly_amount_by_emp(df_hist: pd.DataFrame | None, n_months: int) -> dict[str, float]:
+    """ยอดขายเฉลี่ยต่อเดือน (บาท) รายพนักงาน จากแคชประวัติ N เดือน — ไม่มีข้อมูล = {}"""
+    if df_hist is None or df_hist.empty or n_months <= 0:
+        return {}
+    if "emp_id" not in df_hist.columns or "hist_amount" not in df_hist.columns:
+        return {}
+    amt = pd.to_numeric(df_hist["hist_amount"], errors="coerce").fillna(0.0)
+    emp = df_hist["emp_id"].astype(str).str.strip()
+    return (amt.groupby(emp).sum().astype(float) / float(n_months)).to_dict()
+
+
 def _load_history(
     label: str,
     path: str,
@@ -1120,6 +1131,20 @@ def load_employees_payload(
             df_emp["hist_avg_3m"] = pd.to_numeric(df_emp["hist_avg_3m"], errors="coerce").fillna(0.0)
     except Exception as e:
         logger.warning("compute hist_avg_3m failed: %s", e)
+
+    # เฉลี่ย 6/12 เดือน (บาทต่อเดือน) — ใช้กับปุ่ม「ตั้งตามประวัติ」ใน Step 2 เท่านั้น
+    # หน้าจอใช้เป็น "สัดส่วน" ของเป้ารวม ไม่ใช่ตัวเลขเป้าตรง ๆ (ยอดรวมถูกล็อกกับ TGA × ราคา)
+    # แคช 12 เดือนเก็บเฉพาะคู่ที่ขายจริง (hist_boxes > 0) — ผลรวมบาทต่อคนจึงไม่ต่างกัน
+    for _col, _df, _n in (("hist_avg_6m", df_hist6, 6), ("hist_avg_12m", df_hist12, 12)):
+        df_emp[_col] = 0.0
+        try:
+            _avg = avg_monthly_amount_by_emp(_df, _n)
+            if _avg:
+                df_emp[_col] = pd.to_numeric(
+                    df_emp["emp_id"].astype(str).str.strip().map(_avg), errors="coerce"
+                ).fillna(0.0)
+        except Exception as e:
+            logger.warning("compute %s failed: %s", _col, e)
 
     # ── ยอดขายย้อนหลังเป็น 0 ทั้งทีม = ต้องบอก ไม่ใช่ปล่อยให้เดาเอง ──────────
     #

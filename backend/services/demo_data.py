@@ -189,6 +189,10 @@ def demo_employees(sup_id: str = DEMO_SUP_ID) -> list[dict[str, Any]]:
             "allocation_eligible": True,
             "ly_sales": float(ly),
             "hist_avg_3m": round(hist_3m, 2),
+            # 6/12 เดือน — สูตรคงที่ให้สัดส่วนต่างจาก 3 เดือนนิดหน่อย จะได้เห็นว่าปุ่ม
+            # 「ตั้งตามประวัติ」แต่ละช่วงให้ผลไม่เหมือนกัน
+            "hist_avg_6m": round(hist_3m * (0.94 + 0.04 * (ei % 4)), 2),
+            "hist_avg_12m": round(hist_3m * (1.08 - 0.05 * (ei % 3)), 2),
             "warehouse_code": wh,
             "wh_split": False,
             "alloc_key": emp_id,

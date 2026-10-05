@@ -8245,6 +8245,50 @@ body.is-admin-login-only #msLogoutBtn {
   color: var(--text-3);
   line-height: 1.55;
 }
+/* ปุ่ม「ตั้งตามประวัติ」— แถวของตัวเองใต้ปุ่มเดิม ไม่ย้ายของเดิม */
+.step2-histfill {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.step2-histfill__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.btn-bui--hist {
+  padding: 6px 12px;
+  font-size: 12.5px;
+}
+.step2-hist-note {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-2);
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-brd);
+  border-radius: 8px;
+}
+.step2-hist-note__warn {
+  margin-top: 4px;
+  color: var(--amber);
+  font-weight: 600;
+}
+.step2-nohist-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--amber);
+  border: 1px solid var(--amber-brd);
+  border-radius: 6px;
+  background: var(--white);
+  white-space: nowrap;
+}
 
 /* วิธีแบ่งหีบ — กดขยายอ่าน */
 .tiered-how {

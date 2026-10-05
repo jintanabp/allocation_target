@@ -196,3 +196,24 @@ test("parseNightlyTeamTag — แยกทีมกับงวด", () => {
   assert.deepEqual(L.parseNightlyTeamTag("SL123|2026-10"), { sup: "SL123", year: 2026, month: 10 });
   assert.equal(L.parseNightlyTeamTag("junk"), null);
 });
+
+test("shareTotalByWeights — ผลรวมตรงเป้าพอดีเป็นสตางค์", () => {
+  const out = L.shareTotalByWeights(1000, [1, 1, 1]);
+  assert.equal(Math.round(out.reduce((a, b) => a + b, 0) * 100), 100000);
+  // เศษสตางค์ยกให้คนน้ำหนักสูงสุด (เท่ากันหมด = คนแรก)
+  assert.deepEqual(out, [333.34, 333.33, 333.33]);
+});
+
+test("shareTotalByWeights — ตามสัดส่วน", () => {
+  assert.deepEqual(L.shareTotalByWeights(900, [200, 100]), [600, 300]);
+});
+
+test("shareTotalByWeights — ไม่มีประวัติได้ 0 ไม่แบ่งเท่าให้", () => {
+  const out = L.shareTotalByWeights(500, [100, 0, -5, "x", null]);
+  assert.deepEqual(out, [500, 0, 0, 0, 0]);
+});
+
+test("shareTotalByWeights — ทุกคนไม่มีประวัติ = null ให้ผู้เรียกตัดสิน", () => {
+  assert.equal(L.shareTotalByWeights(500, [0, 0]), null);
+  assert.equal(L.shareTotalByWeights(500, []), null);
+});
