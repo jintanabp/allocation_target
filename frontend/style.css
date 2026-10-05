@@ -10486,6 +10486,8 @@ tr.emp-row--no-target .emp-tag {
   color: var(--text-2);
 }
 #adminView .alloc-rules-field input { display: block; margin-top: 6px; width: 120px; }
+/* ช่องกรอกหลายช่องในกล่องเดียว (เช่นแท็บตรวจรายคืน) เคยติดกันจนช่องกรอกชนป้ายของช่องถัดไป */
+#adminView .alloc-rules-field + .alloc-rules-field { margin-top: 14px; }
 #adminView .alloc-rules-note {
   margin: 8px 0 0;
   font-size: 12px;
@@ -10703,6 +10705,22 @@ tr.emp-row--no-target .emp-tag {
   align-items: center;
   flex-wrap: wrap;
   margin-top: 4px;
+}
+/* แถวปุ่มบันทึกต้องมีระยะกับกล่องผลด้านล่าง ไม่ติดกัน */
+#adminView .alloc-rules-actions + .alloc-rules-block { margin-top: 16px; }
+
+/* ── ระยะห่างปุ่ม (ผู้ใช้แจ้ง 5 ต.ค. 2026 ว่าปุ่มชนกันเยอะ) ─────────────────
+   1) ป้ายข้อความ (meta) ที่ยังว่างโผล่เป็นกล่องเปล่าข้างปุ่ม — ซ่อนจนกว่าจะมีข้อความ
+   2) ช่อง「จัดการ」ในตาราง: เซลล์ถูกตั้งกลับเป็น table-cell (กันตารางยุบ) gap จึงหาย
+      ปุ่มแบบกรอบ (ghost/primary) ที่วางต่อกันเลยชิดติดกัน — เว้นด้วย margin แทน
+      (.admin-action แบบมีเส้นคั่นไม่โดน เพราะมีระยะของตัวเองอยู่แล้ว) */
+#adminView .admin-period-bar__meta:empty { display: none; }
+#adminView td.admin-td-actions > :is(.admin-btn-ghost, .admin-btn-primary) + :is(.admin-btn-ghost, .admin-btn-primary) {
+  margin-left: 6px;
+}
+#adminView td.admin-td-actions > :is(.admin-btn-ghost, .admin-btn-primary) {
+  margin-top: 2px;
+  margin-bottom: 2px;
 }
 
 /* ══════════════════════════════════════════════
