@@ -392,6 +392,43 @@ def ensure_row_in_admin_scope(user: dict, row: dict | None) -> None:
     )
 
 
+def ensure_userpl_in_admin_scope(user: dict, userpl: str | None) -> None:
+    """
+    รหัสทีม (USERPL) ของแถวที่จะสร้าง/แก้ ต้องเป็นทีมที่ผู้ดูแลคนนี้ดูแลอยู่แล้ว
+
+    ensure_row_in_admin_scope ดูแค่ภาค/ดิวิชันของแถว — ค่าพวกนั้นผู้ดูแลพิมพ์เองได้
+    เดิมจึงสร้างแถว「ภาคของตัวเอง + รหัสทีมจริงของภาคอื่น」ได้ แล้วขอบเขตของผู้ดูแล
+    ก็ขยายตามไปครอบทีมนั้นเอง (sl_codes คิดจากแถวในภาค) พร้อมสิทธิ์ส่ง Target Sun
+    (ผลตรวจ 5 ต.ค. 2026 ข้อ 1 — เจอทั้งบัญชีสาธิตและแอดมินรายภาค)
+
+    เกณฑ์: รหัสทีมที่มีแถวของคนนอกขอบเขตใช้อยู่ = ทีมของคนอื่น → ห้าม · รหัสที่ยังไม่มีใครใช้
+    (เพิ่มซุปทีมใหม่ในภาคตัวเอง) ทำได้เหมือนเดิม · บัญชีสาธิตได้เฉพาะรหัสทีมสาธิตเท่านั้น
+    """
+    if user.get("auth_disabled") or user.get("role") == ROLE_DEV:
+        return
+    upl = str(userpl or "").strip().upper()
+    if not upl:
+        return
+    scope = user.get("admin_scope") or {}
+    codes = {str(c).strip().upper() for c in (scope.get("sl_codes") or set())}
+    if upl in codes:
+        return
+    from .services.demo_data import is_demo_email
+    from .services.user_access_store import read_rows
+
+    if not is_demo_email(user.get("email")):
+        owned_elsewhere = any(
+            str(r.get("userpl") or "").strip().upper() == upl and not row_is_in_admin_scope(r, scope)
+            for r in read_rows()
+        )
+        if not owned_elsewhere:
+            return
+    raise HTTPException(
+        status_code=403,
+        detail=f"รหัสทีม {upl} อยู่นอกทีมที่บัญชีนี้ดูแล — ให้ dev หรือผู้ดูแลทีมนั้นเพิ่มให้",
+    )
+
+
 def ensure_sup_in_admin_scope(user: dict, sup_id: str) -> None:
     """รหัส Supervisor นี้อยู่ในภาคที่คนนี้ดูแลไหม"""
     if user.get("auth_disabled") or user.get("role") == ROLE_DEV:

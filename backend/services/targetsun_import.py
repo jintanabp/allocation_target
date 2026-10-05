@@ -928,6 +928,45 @@ def _attach_readback(
     return out
 
 
+def _assert_resend_file_still_matches_targets(sup_id: str, month: int, year: int, rows: list[dict]) -> None:
+    """
+    ยอดหีบต่อ SKU ของไฟล์ที่จะส่งซ้ำ ต้องยังเท่าเป้าที่โหลดอยู่ตอนนี้ (กติกา: เป้ารับเข้า = ส่งออก)
+
+    ไฟล์เก่าตรวจผ่านกับเป้า ณ วันที่ส่ง — ถ้าหลังจากนั้นเป้าเปลี่ยนแล้วโหลดขั้นที่ 1 ใหม่
+    การส่งซ้ำจะเอาตัวเลขที่ไม่ตรงเป้าใหม่ลง Target Sun · อ่านเป้าไม่ได้ = ไม่บล็อกด้วยเหตุนี้
+    (เหมือนด่านเป้าเปลี่ยนของการส่งปกติ) · ดูเฉพาะ SKU ที่อยู่ในไฟล์ (ส่งแยกแบรนด์ได้)
+    """
+    from .lakehouse import _sup_target_boxes_by_sku
+
+    target = _sup_target_boxes_by_sku(sup_id, month, year)
+    if not target:
+        return
+    by_sku: dict[str, int] = {}
+    for r in rows:
+        sku = str(r.get("PRODUCTCODE") or "").strip()
+        if not sku:
+            continue
+        try:
+            q = int(float(r.get("QUANTITYCASE") or 0))
+        except (TypeError, ValueError):
+            q = 0
+        by_sku[sku] = by_sku.get(sku, 0) + q
+    diff = [
+        {"sku": k, "file_boxes": v, "target_boxes": int(target.get(k, 0))}
+        for k, v in sorted(by_sku.items())
+        if int(target.get(k, 0)) != v
+    ]
+    if diff:
+        raise HTTPException(409, detail={
+            "code": "RESEND_TARGET_CHANGED",
+            "message": (
+                f"เป้าของทีม {sup_id} เปลี่ยนหลังส่งไฟล์นี้ ({len(diff)} สินค้า) — ส่งซ้ำไม่ได้ "
+                "ให้กระจายใหม่แล้วกดส่งตามปกติ"
+            ),
+            "skus": diff[:50],
+        })
+
+
 def resend_unlanded_rows(sup_id: str, token: str) -> dict:
     """
     ส่งซ้ำเฉพาะแถวที่ยังไม่ลง/ลงไม่ตรงของไฟล์ที่ส่งไปแล้ว (ผู้ใช้ขอ 29 ก.ย. 2026)
@@ -954,9 +993,14 @@ def resend_unlanded_rows(sup_id: str, token: str) -> dict:
             "ทีมนี้มีการส่งรอบใหม่กว่าไฟล์นี้แล้ว — ส่งซ้ำจากไฟล์เก่าจะเอาตัวเลขเก่าไปทับ "
             "ให้ใช้ปุ่มส่งซ้ำของรอบล่าสุด หรือกดส่งทีมนี้ใหม่ตามปกติ"
         ))
+    # รอบที่ Target Sun ตอบว่าไม่สำเร็จ ทุกแถวจะดูเหมือน "ไม่ลง" — ส่งซ้ำ = ส่งทั้งไฟล์ใหม่โดยไม่ผ่าน
+    # ด่านของการส่งปกติ (ผลตรวจ 5 ต.ค. 2026 ข้อ 3)
+    if str(rec.get("send_status") or "").strip().lower() == "failed":
+        raise HTTPException(409, detail="รอบนั้นส่งไม่สำเร็จ — ส่งซ้ำไม่ได้ ให้กดส่งทีมนี้ใหม่ตามปกติ")
     month, year = int(rec["target_month"]), int(rec["target_year"])
     rows = rec.get("rows") or []
     file_qty = _file_qty_by_key(rows)
+    _assert_resend_file_still_matches_targets(sup_id, month, year, rows)
     emp_codes = sorted({str(r.get("SALESMANCODE") or "").strip() for r in rows} - {""})
     team_key = _claim_team_send(sup_id, month, year)
     try:
@@ -968,6 +1012,24 @@ def resend_unlanded_rows(sup_id: str, token: str) -> dict:
         missing = {u["key"] for u in unlanded_rows(file_qty, live.get("qty_by_key") or {})}
         if not missing:
             return {"resent_rows": 0, "remaining_unlanded": 0, "message": "ทุกแถวลงครบแล้ว ไม่มีอะไรต้องส่งซ้ำ"}
+        # ด่านคลังเดียวกับการส่งปกติ: คู่ที่ "ไม่ลง" อาจมีแถวใน Target Sun อยู่แล้วคนละคลัง
+        # (คนคีย์เพิ่มเอง / แถวซ้อนเดิม) ส่งซ้ำไปจะเป็นแถวที่สอง เป้าเบิ้ล — แบบเคส SL380
+        # เทียบเฉพาะคู่ที่จะส่ง แต่ใช้ทุกแถวของคู่นั้นในไฟล์ แถวที่ลงแล้วจึงไม่นับเป็นแถวค้าง
+        from .lakehouse import _pair_of_key, warehouse_conflicts
+
+        pairs = {_pair_of_key(k) for k in missing}
+        conflicts = warehouse_conflicts(
+            live.get("qty_by_key") or {},
+            {k: q for k, q in file_qty.items() if _pair_of_key(k) in pairs},
+        )
+        if conflicts:
+            err = _warehouse_conflict_error(sup_id, conflicts, resolvable=False)
+            err.detail["message"] = (
+                f"ทีม {sup_id}: {len(conflicts)} คู่พนักงาน×สินค้าที่ยังไม่ลง มีแถวใน Target Sun คนละคลังอยู่แล้ว "
+                "ส่งซ้ำไปเป้าจะเบิ้ล จึงไม่ส่ง"
+            )
+            err.detail["hint_th"] = "กดส่งทีมนี้ใหม่ตามปกติ ระบบจะถามว่าจะใช้คลังตาม Target Sun ไหม"
+            raise err
         df = pd.DataFrame(rows)
         sub = df[import_row_key_series(df).isin(missing)].copy()
         content = _build_xlsx_bytes(sub)

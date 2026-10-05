@@ -24,7 +24,10 @@ _META_KEYS = frozenset({"data_from_cache", "data_cached_at"})
 # ทีมรถเงินสดจึงยังได้เป้าที่คิดด้วยราคาเครดิตอยู่
 #   1 = ก่อนแยกราคาตามหน่วยขาย
 #   2 = แยกราคาตามหน่วยขาย + ประทับ sales_unit ลง payload
-PRICE_LOGIC_VERSION = 2
+#   3 = พนักงานมี hist_avg_6m / hist_avg_12m (ปุ่ม「ตั้งตามประวัติขาย」5 ต.ค. 2026) — ก้อนเก่า
+#       ไม่มีสองฟิลด์นี้ ปุ่ม 6 เดือน/1 ปี จะขึ้น「ไม่มียอดขาย…」จนกว่า TTL หมด
+#       (ชื่อตัวแปรยังเป็น PRICE_ เพราะผูกกับเทส/ไฟล์ที่เขียนไปแล้ว — ความหมายจริงคือ "รูปร่าง payload")
+PRICE_LOGIC_VERSION = 3
 
 
 def employee_payload_cache_ttl_sec() -> int:

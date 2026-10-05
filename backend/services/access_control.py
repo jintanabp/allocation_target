@@ -258,12 +258,10 @@ def admin_scope_for_email(email: str | None) -> dict[str, Any]:
         out["breadth"] = ADMIN_SCOPE_DIVISION_REGION
         out["regions"] = {DEMO_REGION}
         out["divisions"] = {DEMO_DIVISION}
-        out["sl_codes"] = {
-            str(r.get("userpl") or "").strip().upper()
-            for r in rows
-            if str(r.get("acc_region") or "").strip() == DEMO_REGION
-            and str(r.get("userpl") or "").strip()
-        } | set(DEMO_SUP_IDS)
+        # เฉพาะรหัสทีมสาธิตเท่านั้น — เดิมรวมรหัสของ "แถวที่ใส่ภาคสาธิต" ด้วย ซึ่งใครก็พิมพ์
+        # ภาคนั้นลงแถวได้ → แถวภาคสาธิต + รหัสทีมจริง ทำให้บัญชีสาธิตดูแลทีมจริงได้
+        # (ผลตรวจ 5 ต.ค. 2026 ข้อ 1)
+        out["sl_codes"] = {str(c).strip().upper() for c in DEMO_SUP_IDS}
         return out
 
     own = [r for r in rows if normalized_email(r.get("email")) == ne]
@@ -551,6 +549,13 @@ def compute_allowed_supervisor_codes(
     # ไม่มีรหัสขาย ต้องไม่ได้ทีมติดมาด้วย
     if any_demo_supervisor(userpls):
         allowed.update(DEMO_SUP_IDS)
+
+    # ชั้นกันสุดท้าย: บัญชีสาธิตเห็น/ส่งได้เฉพาะทีมสาธิต ต่อให้มีแถวที่ผูกรหัสทีมจริงไว้
+    # (เช่นแถวที่ถูกสร้างก่อนมีด่านรหัสทีม) — ตัวกันส่งของบัญชีสาธิตเดิมกันแค่ทีมสาธิต
+    # ทีมจริงที่หลุดมาจึงส่งเข้า Target Sun จริงได้ (ผลตรวจ 5 ต.ค. 2026 ข้อ 1)
+    if is_demo_email(ne):
+        demo = {str(c).strip().upper() for c in DEMO_SUP_IDS}
+        return {c for c in expand_sl_codes(allowed, sl_links) if str(c).strip().upper() in demo}
 
     return expand_sl_codes(allowed, sl_links)
 

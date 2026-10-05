@@ -33,6 +33,7 @@ from ..deps import (
     ensure_can_edit_user_rows,
     ensure_row_in_admin_scope,
     ensure_sup_in_admin_scope,
+    ensure_userpl_in_admin_scope,
     require_admin_or_marketing_team,
     require_admin_scoped,
     require_admin_user,
@@ -364,6 +365,7 @@ def create_user_access(
     _patch_row_meta(new_row, body)
     # ผู้ดูแลสร้างคนนอกขอบเขตไม่ได้ — ตรวจ "ค่าที่จะบันทึก" ไม่ใช่แค่ตัวผู้เรียก
     ensure_row_in_admin_scope(admin, new_row)
+    ensure_userpl_in_admin_scope(admin, upl)
     _ensure_can_grant_wide_visibility(admin, None, new_row)
 
     # ตรวจซ้ำ + เขียน ใต้ล็อกเดียว (mutate_rows) — เดิม read_rows() แล้ว write_rows()
@@ -428,6 +430,7 @@ def update_user_access(
         _patch_row_meta(updated_row, body)
         # ตรวจปลายทางด้วย ไม่งั้นย้ายคนออกนอกภาคตัวเองได้
         ensure_row_in_admin_scope(admin, updated_row)
+        ensure_userpl_in_admin_scope(admin, new_upl)
         _ensure_can_grant_wide_visibility(admin, existing, updated_row)
         captured["existing"], captured["updated"] = existing, updated_row
         return [
@@ -495,6 +498,8 @@ def set_targetsun_for_email(
             raise HTTPException(status_code=404, detail="ไม่พบอีเมลนี้")
         for r in mine:
             ensure_row_in_admin_scope(admin, r)
+            # แถวที่ถูกสร้างก่อนมีด่านรหัสทีม อาจใส่ทีมนอกขอบเขตไว้ — ห้ามเปิดสิทธิ์ส่งให้
+            ensure_userpl_in_admin_scope(admin, r.get("userpl"))
         ensure_can_edit_user_rows(admin, em, rows)
         for r in mine:
             r["can_import_targetsun"] = bool(body.enabled)

@@ -287,6 +287,33 @@ def _read_hist_cache_file(path: str) -> pd.DataFrame:
     return df if not df.empty else pd.DataFrame(columns=_HIST_COLS)
 
 
+def _merge_calendar_year_cache(path: str, df_new: pd.DataFrame, fetched_skus: set[str]) -> pd.DataFrame:
+    """
+    รวมยอดรายปีปฏิทินที่เพิ่งดึง (เฉพาะสินค้าใน fetched_skus) เข้ากับไฟล์เดิม
+
+    สินค้าที่เพิ่งดึง: ใช้ของใหม่ทั้งหมด (ไม่มีแถว = ไม่มียอดจริง ต้องไม่เหลือของเก่าค้าง)
+    สินค้าอื่น: เก็บแถวเดิมไว้ · อ่านไฟล์เดิมไม่ได้ = ใช้ของใหม่อย่างเดียว (เหมือนพฤติกรรมเดิม)
+    """
+    cols = ["emp_id", "sku", "hist_boxes", "hist_amount"]
+    new = df_new.copy()
+    for c in cols:
+        if c not in new.columns:
+            new[c] = 0.0 if c.startswith("hist_") else ""
+    if not os.path.exists(path):
+        return new
+    try:
+        old = pd.read_csv(path, dtype={"sku": str, "emp_id": str})
+    except Exception as e:
+        logger.warning("อ่านแคชยอดรายปีเดิมไม่ได้ (%s) — ใช้ของที่เพิ่งดึงอย่างเดียว: %s", path, e)
+        return new
+    if old.empty or "sku" not in old.columns:
+        return new
+    keep = old[~old["sku"].astype(str).str.strip().isin(fetched_skus)]
+    if keep.empty:
+        return new
+    return pd.concat([keep, new], ignore_index=True)
+
+
 def avg_monthly_amount_by_emp(df_hist: pd.DataFrame | None, n_months: int) -> dict[str, float]:
     """ยอดขายเฉลี่ยต่อเดือน (บาท) รายพนักงาน จากแคชประวัติ N เดือน — ไม่มีข้อมูล = {}"""
     if df_hist is None or df_hist.empty or n_months <= 0:
@@ -1067,20 +1094,16 @@ def load_employees_payload(
             pcy = hist_calendar_year_cache_path(sup_id, cy)
             if df_cy is not None and not df_cy.empty:
                 df_cy = collapse_hist_to_canonical(df_cy, sku_links)
-                atomic_write_csv(pcy, df_cy, index=False)
-                logger.info(
-                    "historical calendar-year %d cache: %d rows → %s",
-                    cy,
-                    len(df_cy),
-                    pcy,
-                )
             else:
-                atomic_write_csv(
-                    pcy,
-                    pd.DataFrame(columns=["emp_id", "sku", "hist_boxes", "hist_amount"]),
-                    index=False,
-                )
-                logger.info("historical calendar-year %d: empty → %s", cy, pcy)
+                df_cy = pd.DataFrame(columns=["emp_id", "sku", "hist_boxes", "hist_amount"])
+            # ไฟล์นี้คีย์แค่ ทีม × ปี แต่คิวรีดึงเฉพาะสินค้าของงวดที่กำลังโหลด — เดิมเขียนทับทั้งไฟล์
+            # โหลดงวด 11 แล้วกลับไปทำงวด 10 สินค้าที่มีแต่ในงวด 10 จึงหายจากไฟล์ แล้วถูกนับเป็น
+            # 「สินค้าใหม่」(ถ้าติ๊กแบ่งเท่าสินค้าใหม่ = แบ่งเท่าแทนตามประวัติ) — ผลตรวจ 5 ต.ค. 2026 ข้อ 7
+            # ตอนนี้แทนเฉพาะสินค้าที่เพิ่งดึง แถวของสินค้าอื่นในไฟล์เดิมเก็บไว้
+            fetched = {str(x).strip() for x in sku_list}  # รหัสหลัก (แคชถูกยุบเป็นรหัสหลักแล้ว)
+            df_cy = _merge_calendar_year_cache(pcy, df_cy, fetched)
+            atomic_write_csv(pcy, df_cy, index=False)
+            logger.info("historical calendar-year %d cache: %d rows → %s", cy, len(df_cy), pcy)
     except Exception as e:
         logger.warning("historical calendar-year caches skipped: %s", e)
 

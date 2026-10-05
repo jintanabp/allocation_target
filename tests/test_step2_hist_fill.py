@@ -109,8 +109,82 @@ class TestFrontendRules(unittest.TestCase):
         self.assertIn("_confirmDialog", body)
 
     def test_every_reset_path_clears_the_source(self):
-        # รีเซ็ต Target Sun / โหลดข้อมูลใหม่ / เริ่มใหม่ / กู้ snapshot / กู้ร่าง
-        self.assertGreaterEqual(self.js.count("S.yellowSource = null;"), 5)
+        # รีเซ็ต Target Sun / โหลดข้อมูลใหม่ / เริ่มใหม่ / กู้ snapshot / กู้ร่าง / โหลดเป้าสด
+        self.assertGreaterEqual(self.js.count("_clearHistFillMode();"), 6)
+        for fn in ("_syncStateAfterLiveTargets", "resetYellowToTargetSun"):
+            i = self.js.index(f"function {fn}(")
+            self.assertIn("_clearHistFillMode();", self.js[i: i + 2500], fn)
+
+    def test_reset_clears_mode_even_when_values_already_equal(self):
+        """ผลตรวจ 5 ต.ค.: เดิม early return「ตรงอยู่แล้ว」ก่อนล้างโหมด ป้ายค้าง"""
+        i = self.js.index("async function resetYellowToTargetSun")
+        body = self.js[i: i + 1500]
+        self.assertLess(body.index("_clearHistFillMode();"), body.index("ตรงกับ Target Sun อยู่แล้ว"))
+
+    def test_reason_and_bui_reset_when_team_or_period_changes(self):
+        self.assertIn("S._step2CtxKey !== _step2Ctx", self.js)
+        i = self.js.index("S._step2CtxKey !== _step2Ctx")
+        self.assertIn('S.negGrowthReason = "";', self.js[i: i + 200])
+        self.assertIn("S.buiDeductions = {};", self.js[i: i + 200])
+
+    def test_blur_without_change_does_not_lock(self):
+        i = self.js.index("function onYellowChange(")
+        body = self.js[i: i + 1500]
+        self.assertLess(body.index("< 0.005"), body.index("S.yellowLocked[akey] = true;"))
+
+    def test_multi_team_split_stays_inside_each_team(self):
+        i = self.js.index("async function fillYellowFromHistory")
+        body = self.js[i: i + 3500]
+        self.assertIn("_supervisorCodeForAllocRow(e)", body)
+        self.assertIn("teams.length > 1", body)
+
+    def test_stale_drift_reply_is_dropped(self):
+        i = self.js.index("async function checkTargetSunDrift")
+        body = self.js[i: i + 1500]
+        self.assertIn("if (ctx !== _allocContextKey()) return null;", body)
+
+
+
+class TestCalendarYearCacheMerge(unittest.TestCase):
+    """ผลตรวจ 5 ต.ค. 2026 ข้อ 7: โหลดงวดอื่นต้องไม่ลบสินค้าของงวดก่อนออกจากแคชยอดรายปี"""
+
+    def test_other_period_skus_survive_and_fetched_skus_are_replaced(self):
+        import tempfile
+
+        from backend.core.allocation_checks import skus_no_sales_cy_ly
+        from backend.services.employees import _merge_calendar_year_cache
+
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "hist_cy.csv")
+            # งวด 10 โหลดก่อน: A ขายได้, B ขายได้
+            pd.DataFrame([
+                {"emp_id": "E1", "sku": "A", "hist_boxes": 5, "hist_amount": 500},
+                {"emp_id": "E1", "sku": "B", "hist_boxes": 2, "hist_amount": 200},
+            ]).to_csv(path, index=False)
+            # งวด 11 ดึงแค่ B กับ C — B ไม่มียอดแล้ว, C มียอด
+            fresh = pd.DataFrame([{"emp_id": "E1", "sku": "C", "hist_boxes": 1, "hist_amount": 100}])
+            out = _merge_calendar_year_cache(path, fresh, {"B", "C"})
+            self.assertEqual(sorted(out["sku"].astype(str)), ["A", "C"])
+            out.to_csv(path, index=False)
+
+            from unittest.mock import patch
+
+            with patch("backend.core.allocation_checks.hist_calendar_year_cache_path", return_value=path):
+                # กลับไปทำงวด 10: A ต้องไม่กลายเป็น "สินค้าใหม่"
+                self.assertEqual(skus_no_sales_cy_ly("SLX", 2026, ["A", "B"]), {"B"})
+
+    def test_unreadable_old_file_uses_fresh_only(self):
+        import tempfile
+
+        from backend.services.employees import _merge_calendar_year_cache
+
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "hist_cy.csv")
+            with open(path, "wb") as f:
+                f.write(b"\xff\xfe\x00broken")
+            fresh = pd.DataFrame([{"emp_id": "E1", "sku": "C", "hist_boxes": 1, "hist_amount": 100}])
+            out = _merge_calendar_year_cache(path, fresh, {"C"})
+            self.assertEqual(list(out["sku"]), ["C"])
 
 
 if __name__ == "__main__":

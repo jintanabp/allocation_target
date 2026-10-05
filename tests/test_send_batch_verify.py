@@ -69,6 +69,17 @@ class TestVerifySendBatch(unittest.TestCase):
         self.assertTrue(res["verified"])
         self.assertEqual(res["scope"], "batch")
 
+    def test_same_team_twice_is_refused(self):
+        """ผลตรวจ 5 ต.ค. 2026 ข้อ 4: ทีมซ้ำ = เป้าถูกนับสองรอบ ไฟล์ 200+0 ผ่านเป้า 100 ได้"""
+        self._targets("SLA", {"X": 10})
+        with self.assertRaises(HTTPException) as ctx:
+            lh.verify_send_batch([
+                _meta("SLA", {"X": 20}),
+                _meta("sla", {"X": 0}),
+            ])
+        self.assertEqual(ctx.exception.status_code, 409)
+        self.assertEqual(ctx.exception.detail["code"], "send_batch_duplicate_team")
+
     def test_batch_total_short_blocks(self):
         with self.assertRaises(HTTPException) as ctx:
             lh.verify_send_batch([

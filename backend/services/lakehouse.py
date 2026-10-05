@@ -1962,6 +1962,28 @@ def verify_send_batch(metas: list[dict]) -> dict:
             detail="ไฟล์ที่เตรียมไว้เป็นคนละงวดกัน — กรุณากดส่งใหม่อีกครั้ง",
         )
 
+    # ทีมเดียวกันมีไฟล์ได้ใบเดียวต่อชุด — เดิมทีมซ้ำทำให้เป้าทีมนั้นถูกบวกสองรอบ ไฟล์คู่
+    # 「200 + 0」จึงผ่าน "ยอดรวมเท่าเป้า" ได้ แล้วส่งแค่ใบแรก = เป้าเบิ้ลลง Target Sun
+    # (ผลตรวจ 5 ต.ค. 2026 ข้อ 4) · หน้าเว็บสร้างใบละทีมอยู่แล้ว ทางปกติจึงไม่โดนด่านนี้
+    seen_sup: set[str] = set()
+    dup_sup: set[str] = set()
+    for m in metas:
+        sid = str(m.get("sup_id") or "").strip().upper()
+        (dup_sup if sid in seen_sup else seen_sup).add(sid)
+    if dup_sup:
+        logger.error("ชุดส่งมีทีมซ้ำ: %s", sorted(dup_sup))
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "send_batch_duplicate_team",
+                "message": (
+                    f"ยังไม่ได้ส่ง — ทีม {', '.join(sorted(dup_sup))} มีไฟล์มากกว่าหนึ่งใบในชุดเดียวกัน"
+                ),
+                "hint_th": "กดส่งใหม่อีกครั้งเพื่อให้ระบบเตรียมไฟล์ใหม่ทีมละหนึ่งใบ",
+                "sup_ids": sorted(dup_sup),
+            },
+        )
+
     per_team: list[tuple[str, dict[str, int]]] = []
     file_by_sku: dict[str, int] = {}
     excluded: set[str] = set()

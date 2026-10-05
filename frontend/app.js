@@ -2900,24 +2900,11 @@ function _pushUndoState(reason = "") {
   const snap = {
     ts: Date.now(),
     reason,
-    allocations: S.allocations.map(a => ({
-      emp_id: a.emp_id,
-      sku: a.sku,
-      allocated_boxes: Number(a.allocated_boxes) || 0,
-      is_edited: !!a.is_edited,
-      engine_boxes: a.engine_boxes == null ? null : Number(a.engine_boxes) || 0,
-      // เก็บ metadata ที่ใช้ render (กัน header/brand หายเมื่อ restore)
-      price_per_box: Number(a.price_per_box) || 0,
-      brand_name_thai: a.brand_name_thai || "",
-      brand_name_english: a.brand_name_english || "",
-      product_name_thai: a.product_name_thai || "",
-      hist_avg: Number(a.hist_avg) || 0,
-      hist_ly_same_month: Number(a.hist_ly_same_month) || 0,
-      hist_prev_month: Number(a.hist_prev_month) || 0,
-      baseline_boxes: Number(a.baseline_boxes) || 0,
-      hist_dev_pct: a.hist_dev_pct == null ? null : Number(a.hist_dev_pct),
-      hist_dev_status: a.hist_dev_status || "",
-    })),
+    // สำเนาทั้งแถว ไม่ใช่เลือกเก็บบางฟิลด์ — เดิมเก็บแค่ emp/sku/หีบ + ข้อมูลแสดงผล
+    // รหัสคลัง/รหัสทีม/ที่มาของแถวจึงหายหลัง Undo แล้วตอนส่ง หีบของคนที่มี 2 คลัง
+    // ไปรวมอยู่คลังแรก (5+3 → 8/0) ยอดต่อ SKU ยังตรงจึงไม่มีด่านไหนจับได้
+    // (ผลตรวจ 5 ต.ค. 2026 ข้อ 2) · สำเนาตื้นพอ เพราะการแก้ช่องคือแทนค่าหีบใหม่ ไม่ได้แก้ข้างในอ็อบเจกต์ซ้อน
+    allocations: S.allocations.map(a => ({ ...a })),
   };
   _undoStack.push(snap);
   if (_undoStack.length > _UNDO_MAX) _undoStack.shift();
@@ -2927,7 +2914,7 @@ function _pushUndoState(reason = "") {
 function undoLastEdit() {
   if (_undoStack.length === 0) return;
   const last = _undoStack.pop();
-  S.allocations = last.allocations || [];
+  S.allocations = (last.allocations || []).map(a => ({ ...a }));
   S._hasUnsaved = true;
   buildBrandTabs(S.allocations);
   renderResult(S.allocations);
@@ -4687,7 +4674,16 @@ function applyDataPayload(data) {
     ? data.sales_unit_by_sup
     : {};
   S.yellowLocked = {};
-  S.yellowSource = null;
+  _clearHistFillMode();
+  // เหตุผลเติบโตติดลบ + ยอดหักบิวเทรี่ยม เป็นของทีม×งวดนั้น — เดิมติดข้ามไปทีม/เดือนถัดไป
+  // แล้วปลดล็อกปุ่มกระจายของอีกทีมด้วยเหตุผลที่ไม่ได้เขียน (ผลตรวจ 5 ต.ค. 2026)
+  // โหลดซ้ำทีม×งวดเดิมไม่ล้าง จะได้ไม่เสียของที่ผู้ใช้พิมพ์ไว้
+  const _step2Ctx = `${S.supId || ""}|${S.targetYear || ""}|${S.targetMonth || ""}`;
+  if (S._step2CtxKey !== _step2Ctx) {
+    S.negGrowthReason = "";
+    S.buiDeductions = {};
+    S._step2CtxKey = _step2Ctx;
+  }
   S.histWindowMonths = 3;
   S.skus = data.skus;
   _bumpSkusVersion();
@@ -5941,6 +5937,12 @@ function onYellowChange(input) {
     toast(`「${String(input.value).trim()}」ไม่ใช่จำนวนเงินที่ถูกต้อง — ปรับเป็น ${val.toLocaleString("th-TH")}`, "amber");
   }
 
+  // คลิกเข้าช่องแล้วออกโดยไม่แก้เลข ต้องไม่นับเป็นการ "ล็อก" — เดิมล็อกทุกครั้งที่ออกจากช่อง
+  // แถวคนไม่มีประวัติที่ผู้ใช้แค่คลิกดู จึงหลุดป้ายเตือน + กล่องถามก่อนกระจาย ทั้งที่ยังเป็น 0
+  if (!parsed.invalid && Math.abs((Number(S.yellow[akey]) || 0) - val) < 0.005) {
+    input.value = fmt(val);
+    return;
+  }
   S.yellow[akey] = val;
   S.yellowLocked[akey] = true;
   S._step2Dirty = true;
@@ -6011,6 +6013,11 @@ async function resetYellowToTargetSun() {
     return Math.abs(y - ts) > 0.01;
   });
   if (differs.length === 0) {
+    if (S.yellowSource) {
+      _clearHistFillMode();
+      renderYellowTable();
+      _updateNegGrowthReasonState();
+    }
     toast("เป้าหมายที่กำหนดเองตรงกับ Target Sun อยู่แล้ว", "green");
     return;
   }
@@ -6021,9 +6028,7 @@ async function resetYellowToTargetSun() {
   );
   if (!ok) return;
   S.yellowLocked = {};
-  S.yellowSource = null;
-  // เหตุผลที่ปุ่ม「ตั้งตามประวัติ」เติมไว้ไม่จริงแล้วเมื่อกลับเป็น Target Sun
-  if ((S.negGrowthReason || "").trim().startsWith(HIST_FILL_REASON_PREFIX)) S.negGrowthReason = "";
+  _clearHistFillMode();
   _allocEligibleEmployees().forEach(e => {
     const base = Number(e.target_sun);
     S.yellow[_allocKey(e)] = Number.isFinite(base) ? Math.max(0, base) : 0;
@@ -6059,6 +6064,16 @@ const HIST_FILL_SOURCES = {
 };
 
 const HIST_FILL_REASON_PREFIX = "ตั้งเป้าเงินตามสัดส่วน";
+
+/**
+ * ออกจากโหมด「ตั้งตามประวัติ」— ทุกทางที่ S.yellow ถูกแทนด้วยค่าชุดอื่นต้องเรียก
+ * ล้างเหตุผลที่ปุ่มเติมให้อัตโนมัติด้วย (ไม่จริงแล้ว) แต่ไม่แตะเหตุผลที่ผู้ใช้พิมพ์เอง
+ * (ผลตรวจ 5 ต.ค. 2026 — ค่าค้างหลังโหลดเป้าจาก Target Sun / สลับทีม)
+ */
+function _clearHistFillMode() {
+  S.yellowSource = null;
+  if ((S.negGrowthReason || "").trim().startsWith(HIST_FILL_REASON_PREFIX)) S.negGrowthReason = "";
+}
 
 function _histFillSource() {
   return HIST_FILL_SOURCES[S.yellowSource] || null;
@@ -6133,8 +6148,28 @@ async function fillYellowFromHistory(key) {
     return;
   }
   const rows = _allocEligibleEmployees();
-  const amounts = AppLogic.shareTotalByWeights(S.totalTarget, rows.map(e => _histFillWeight(e, src)));
-  if (!amounts) {
+  // รวมภาค: แบ่งภายในทีมใครทีมมัน ยอดเงินรวมของแต่ละทีมเท่าเดิม — เดิมแบ่งเป้ารวมทั้งภาค
+  // ข้ามทีม แล้วตอนกระจายรายทีม backend ปรับเงินกลับให้เท่าเป้าหีบของทีมเงียบ ๆ ส่วนต่าง
+  // กับเป้าที่เห็นในขั้นที่ 2 จึงเป็นหลักแสนต่อทีม (ผลตรวจ 5 ต.ค. 2026)
+  const teamOf = (e) => String(_supervisorCodeForAllocRow(e) || "");
+  const teams = [...new Set(rows.map(teamOf))];
+  const amounts = new Array(rows.length).fill(0);
+  let anyHist = false;
+  for (const t of teams) {
+    const idx = rows.map((e, i) => (teamOf(e) === t ? i : -1)).filter(i => i >= 0);
+    const teamTotal = teams.length > 1
+      ? idx.reduce((a, i) => a + (Number(S.yellow[_allocKey(rows[i])]) || 0), 0)
+      : S.totalTarget;
+    const part = AppLogic.shareTotalByWeights(teamTotal, idx.map(i => _histFillWeight(rows[i], src)));
+    if (!part) {
+      // ทีมนี้ไม่มีประวัติเลย — คงค่าเดิมของทีมไว้ ไม่ให้เงินของทีมหายไปทั้งก้อน
+      idx.forEach(i => { amounts[i] = Number(S.yellow[_allocKey(rows[i])]) || 0; });
+      continue;
+    }
+    anyHist = true;
+    idx.forEach((i, j) => { amounts[i] = part[j]; });
+  }
+  if (!anyHist) {
     toast(`ไม่มี${src.label}ของทีมนี้เลย — ใช้เป้า Target Sun ตามเดิม`, "amber");
     return;
   }
@@ -11922,7 +11957,7 @@ function _discardDraftStartFresh() {
   _removeDraftKeysBothLocals();
   S.allocations = [];
   S.yellowLocked = {};
-  S.yellowSource = null;
+  _clearHistFillMode();
   S._hasUnsaved = false;
   if (S.employees && S.employees.length) {
     _allocEligibleEmployees().forEach(e => {
@@ -12694,6 +12729,9 @@ function _syncStateAfterLiveTargets() {
   // เป้าสดเขียนทับค่าที่เกลี่ยไว้ — ต้องเกลี่ยใหม่ ไม่งั้นรีเฟรชเป้าทีเดียวยอดก็ขาดอีก
   _redistributeNoTargetShare(S.yellow);
   _sanitizeYellowForEligibleOnly();
+  // ตัวเลขกลับเป็น Target Sun แล้ว — ป้าย「ตั้งตามประวัติ」/เหตุผลอัตโนมัติไม่จริงอีกต่อไป
+  _clearHistFillMode();
+  if (typeof _updateNegGrowthReasonState === "function") _updateNegGrowthReasonState();
   renderStep1();
   renderYellowTable();
   updateValidation();
@@ -13233,7 +13271,7 @@ async function _applyServerAllocationSnapshot(supId, opts = {}) {
   }
   if (snap.yellow && typeof snap.yellow === "object" && !opts.readOnly) {
     Object.assign(S.yellow, snap.yellow);
-    S.yellowSource = null;
+    _clearHistFillMode();
   }
   if (snap.yellow_locked && typeof snap.yellow_locked === "object" && !opts.readOnly) {
     S.yellowLocked = { ...snap.yellow_locked };
@@ -13439,7 +13477,7 @@ function checkAndLoadDraft() {
 
       S.yellow = draftData.yellow || S.yellow;
       S.yellowLocked = draftData.yellowLocked || {};
-      S.yellowSource = null;
+      _clearHistFillMode();
       S.neverSoldZeroKeys = new Set(Array.isArray(draftData.neverSoldZeroKeys) ? draftData.neverSoldZeroKeys : []);
       S.recentReallocSkus = [];
       S.lastForceMinOne = !!draftData.lastForceMinOne;
@@ -14526,6 +14564,9 @@ async function checkTargetSunDrift(opts = {}) {
   _lastDriftCheckAt = Date.now();
   const btn = document.getElementById("targetDriftBtn");
   if (btn && !silent) { btn.disabled = true; btn.textContent = "กำลังตรวจ…"; }
+  // คำตอบที่มาช้าของทีม/งวดก่อนหน้า ห้ามมาทับแบนเนอร์ของทีมที่สลับไปแล้ว — เดิมทีมใหม่
+  // เห็นสินค้าที่เปลี่ยนของทีมเก่า แล้วปุ่ม ⚡ กระจายสินค้าชุดนั้นในทีมใหม่ (ผลตรวจ 5 ต.ค. 2026)
+  const ctx = _allocContextKey();
   try {
     const res = await fetchWithTimeout(
       `${API_BASE_URL}/data/targets/drift?sup_ids=${encodeURIComponent(ids.join(","))}` +
@@ -14535,6 +14576,7 @@ async function checkTargetSunDrift(opts = {}) {
     );
     if (!res.ok) throw new Error(_userFacingError(null, "ตรวจเป้าล่าสุดไม่สำเร็จ"));
     const j = await res.json();
+    if (ctx !== _allocContextKey()) return null;
     S.targetDrift = j;
     syncTargetDriftNotice();
     if (!silent) {

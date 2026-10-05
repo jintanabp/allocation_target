@@ -190,6 +190,51 @@ def _list_log_paths(
     return [_log_path_for_date(date or _today_str())]
 
 
+def _file_period(path: str) -> tuple[int, int] | None:
+    stamp = os.path.basename(path)[len("usage_"):-len(".jsonl")]
+    parts = stamp.split("-")
+    try:
+        return int(parts[0]), int(parts[1])
+    except (IndexError, ValueError):
+        return None
+
+
+def _row_period(row: dict[str, Any], path: str) -> tuple[int, int] | None:
+    """งวดของรายการ — ใช้งวดที่ติดมากับรายการก่อน ไม่มีค่อยใช้เดือนของไฟล์"""
+    try:
+        ty, tm = row.get("target_year"), row.get("target_month")
+        if ty not in (None, "") and tm not in (None, ""):
+            return int(ty), int(tm)
+    except (TypeError, ValueError):
+        pass
+    return _file_period(path)
+
+
+# งวดหนึ่งถูกส่งได้ตั้งแต่ราววันที่ 15 ของเดือนก่อนหน้า (เป้าเข้า) ไปจนหลังจบงวด (แก้ย้อนหลัง)
+_PERIOD_WINDOW_MONTHS_BEFORE = 3
+_PERIOD_WINDOW_MONTHS_AFTER = 3
+
+
+def _log_paths_around_period(year: int, month: int) -> list[str]:
+    d = logs_dir()
+    if not os.path.isdir(d):
+        return []
+    center = year * 12 + (month - 1)
+    lo, hi = center - _PERIOD_WINDOW_MONTHS_BEFORE, center + _PERIOD_WINDOW_MONTHS_AFTER
+    out = []
+    for fn in os.listdir(d):
+        if not (fn.startswith("usage_") and fn.endswith(".jsonl")):
+            continue
+        p = os.path.join(d, fn)
+        fp = _file_period(p)
+        if fp is None:
+            continue
+        if lo <= fp[0] * 12 + (fp[1] - 1) <= hi:
+            out.append(p)
+    out.sort(reverse=True)
+    return out
+
+
 def read_logs(
     date: str | None = None,
     level: str | None = None,
@@ -204,12 +249,23 @@ def read_logs(
     want_level = str(level or "").strip().lower()
     want_action = str(action or "").strip().lower()
     want_sup = str(sup_id or "").strip().upper()
-    paths = _list_log_paths(
-        date=date,
-        target_year=target_year,
-        target_month=target_month,
-        scan_all=scan_all,
-    )
+    # ระบุทั้งปีและเดือน = "งวดของเป้า" ไม่ใช่ "วันที่เขียน log" (ผลตรวจ 5 ต.ค. 2026 ข้อ 6)
+    # เดิมคัดไฟล์จากชื่อไฟล์ (วันที่เขียน) อย่างเดียว ส่งงวด 11 ในวันที่ 5 ต.ค. แล้วหน้างวด 11
+    # ขึ้น「ยังไม่เคยส่ง」ส่วนหน้างวด 10 กลับเห็นการส่งของงวด 11 · ตอนนี้อ่านไฟล์ช่วงกว้าง
+    # รอบงวดนั้น แล้วคัดตามงวดที่ติดมากับแต่ละรายการ · รายการที่ไม่มีงวดติดมา (log เก่า/
+    # เหตุการณ์ที่ไม่ผูกงวด) ใช้เดือนของไฟล์แบบเดิม จะได้ไม่หายจากจอ
+    by_period = target_year is not None and target_month is not None and not date
+    if by_period:
+        want_period = (int(target_year), int(target_month))
+        paths = _log_paths_around_period(*want_period)
+    else:
+        want_period = None
+        paths = _list_log_paths(
+            date=date,
+            target_year=target_year,
+            target_month=target_month,
+            scan_all=scan_all,
+        )
 
     out: list[dict[str, Any]] = []
     for path in paths:
@@ -232,6 +288,8 @@ def read_logs(
                     if want_sup and str(row.get("sup_id") or "").strip().upper() != want_sup:
                         continue
                     if not isinstance(row, dict):
+                        continue
+                    if want_period is not None and _row_period(row, path) != want_period:
                         continue
                     row = dict(row)
                     row["entry_id"] = entry_id(row)

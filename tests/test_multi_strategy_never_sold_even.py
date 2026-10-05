@@ -30,6 +30,14 @@ class TestMultiStrategyNeverSoldEven(unittest.TestCase):
         self.assertIn("never_sold_summary_all", block)
         self.assertIn('("no_seller", "push_target")', block)
 
+    def test_brands_set_to_even_or_push_join_the_post_merge_even_set(self):
+        """ผลตรวจ 5 ต.ค. 2026 ข้อ 5: แบรนด์ที่เลือก EVEN/PUSH ต้องไม่ถูกตัวเกลี่ยเงินย้ายหีบ"""
+        src = inspect.getsource(opt)
+        i = src.index("df_allocation = _post_merge_revenue_balance(")
+        block = src[i - 1400:i]
+        self.assertIn("sku_strategy_map.items()", block)
+        self.assertIn('("EVEN", "PUSH")', block)
+
     def test_base_map_respects_zero_pairs(self):
         df_emp = pd.DataFrame({"emp_id": EMPS, "yellow_target": [1000.0] * 4})
         df_sku = pd.DataFrame([{"sku": "A", "supervisor_target_boxes": 8, "price_per_box": 100.0}])

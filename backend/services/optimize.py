@@ -1651,6 +1651,13 @@ def run_optimization_service(
                 _norm_sku(k) for k, v in never_sold_summary_all.items()
                 if (v or {}).get("reason") in ("no_seller", "push_target")
             )
+            # แบรนด์ที่ผู้ใช้เลือก EVEN/PUSH ก็ต้องกันไว้เหมือนกัน — โหมดวิธีเดียว EVEN/PUSH จบที่
+            # ขั้นแบ่งตามสัดส่วน ไม่มีตัวเกลี่ยเงิน (ALLOCATION_INVARIANTS ขั้น 3) แต่โหมดหลายวิธี
+            # ตัวเกลี่ยหลังรวมผลเคยดึงหีบของแบรนด์พวกนี้ไปตามเงิน 50/50/50/50 → 100/33/33/34
+            # (ผลตรวจ 5 ต.ค. 2026 ข้อ 5) · ยอดต่อ SKU ไม่เปลี่ยน แค่ไม่ย้ายหีบในแบรนด์นั้น
+            even_skus_global = even_skus_global | frozenset(
+                _norm_sku(k) for k, st in sku_strategy_map.items() if st in ("EVEN", "PUSH")
+            )
             df_allocation = _post_merge_revenue_balance(
                 df_allocation,
                 df_emp_targets,
