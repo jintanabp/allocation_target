@@ -10833,3 +10833,81 @@ tr.emp-row--no-target .emp-tag {
   max-width: 100%;
   box-sizing: border-box;
 }
+
+/* ── ดูภาพรวมตารางผล (ผู้ใช้ขอ 6 ต.ค. 2026) ──────────────────────────────────
+   ซ่อนบรรทัดประวัติในช่อง: เหลือตัวเลขหีบ (+ ป้าย ±20% ถ้ามี) แถวเตี้ยลง */
+.result-block.is-hist-compact .hist-sub {
+  display: none;
+}
+/* ขยายเต็มจอ: ตารางเดิมทั้งก้อน (แถบเครื่องมือ + ตาราง) ทับหน้าจอ — ใต้กล่อง modal (200) */
+.result-block.is-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  margin: 0;
+  padding: 12px 16px;
+  overflow: auto;
+  background: var(--bg-main);
+  border-radius: 0;
+}
+.result-block.is-fullscreen .tbl-scroll {
+  max-height: calc(100dvh - 56px);
+}
+/* เต็มจอจริง: แถบเครื่องมือเดิมซ่อน เหลือแถบเล็ก · ตารางย่อตามที่ผู้ใช้ตั้ง (ค่าเริ่มต้น 80%) */
+.result-fs-bar { display: none; }
+.result-block.is-fullscreen .result-fs-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.result-fs-bar__title { font-weight: 700; color: var(--text-1); margin-right: auto; }
+.result-fs-bar__zoom { min-width: 3em; text-align: center; font-weight: 700; color: var(--text-2); }
+#resultFsFitBtn[aria-pressed="true"] { color: var(--accent); border-color: var(--accent-brd); background: var(--accent-bg); }
+.btn-dl--fs-exit { color: var(--accent); border-color: var(--accent-brd); background: var(--accent-bg); }
+.result-block.is-fullscreen .result-head,
+.result-block.is-fullscreen #brandSummary,
+.result-block.is-fullscreen #step3TopupBanner,
+.result-block.is-fullscreen #step3ResultTargetNote,
+.result-block.is-fullscreen #targetDriftNotice {
+  display: none !important;
+}
+.result-block.is-fullscreen .result-tbl {
+  zoom: var(--fs-zoom, 0.8);
+}
+/* เต็มจอของเบราว์เซอร์: พื้นหลังของ element ที่เต็มจอต้องตั้งเอง ไม่งั้นเป็นสีดำ */
+.result-block:fullscreen { background: var(--bg-main); }
+/* เต็มจอ = ดูภาพรวมตาราง: แถบคำอธิบาย/สรุปด้านบนซ่อนไว้ก่อน (ยังเห็นครบตอนออกจากเต็มจอ) */
+.result-block.is-fullscreen #histDevSummary,
+.result-block.is-fullscreen #step3SnapshotBadge,
+.result-block.is-fullscreen #compositeAllocLegend,
+.result-block.is-fullscreen #rebalanceExplain,
+.result-block.is-fullscreen #step3TieredNote,
+.result-block.is-fullscreen #step3RevenueScaleNote,
+.result-block.is-fullscreen #step3ReviewNotes,
+.result-block.is-fullscreen .edit-note {
+  display: none !important;
+}
+body.has-result-fullscreen {
+  overflow: hidden;
+}
+/* กรอบขั้นที่ 3 มี transform ค้างจากแอนิเมชันตอนเปิดหน้า — ทำให้ position:fixed ยึดกรอบแทนหน้าจอ
+   (ตารางเลยไม่เต็มจอ) · ปิดเฉพาะตอนเต็มจอ */
+body.has-result-fullscreen .step-section {
+  transform: none !important;
+  animation: none !important;
+  opacity: 1 !important;      /* ค่าเริ่มต้นของกรอบคือ 0 แล้วแอนิเมชันค่อยทำให้เห็น — ปิดแอนิเมชันต้องตั้งเอง */
+}
+/* ปุ่มลอยไม่บังตารางตอนเต็มจอ */
+body.has-result-fullscreen .btn-manual--floating,
+body.has-result-fullscreen .btn-feedback--floating {
+  display: none !important;
+}
+
+/* ปุ่มลอย「คู่มือ」: ย้ายจากมุมขวาบน (เคยทับหัวตาราง/ป้ายส่วนต่าง) มาไว้มุมขวาล่าง
+   เหนือปุ่ม「ส่งความเห็น」 (ผู้ใช้เลือก 6 ต.ค. 2026 — ผลตรวจ ง3) */
+.btn-manual--floating {
+  top: auto;
+  bottom: calc(max(16px, env(safe-area-inset-bottom, 0px)) + 58px);
+}

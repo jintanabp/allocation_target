@@ -16,7 +16,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=2026100601" />
+  <link rel="stylesheet" href="style.css?v=2026100604" />
 </head>
 
 <body>
@@ -864,6 +864,15 @@
                 onclick="toggleSkuProductNames()"
                 aria-pressed="true"
                 title="แสดง/ซ่อนแถวชื่อสินค้าในหัวตาราง">ชื่อสินค้า ▼</button>
+              <!-- ดูภาพรวมง่ายขึ้น (ผู้ใช้ขอ 6 ต.ค. 2026): ซ่อนบรรทัดประวัติในช่อง / ขยายตารางเต็มจอ -->
+              <button type="button" id="toggleHistDetailBtn" class="btn-dl btn-dl--toggle btn-dl--toggle-on"
+                style="color:var(--text-2); border-color:var(--border-md); background:var(--bg-main);"
+                onclick="toggleResultHistDetail()" aria-pressed="true"
+                title="แสดง/ซ่อนบรรทัดประวัติ (เฉลี่ยย้อนหลัง / เดือนที่แล้ว / ปีก่อน) ในแต่ละช่อง">รายละเอียดประวัติ ▼</button>
+              <button type="button" id="resultFullscreenBtn" class="btn-dl"
+                style="color:var(--accent); border-color:var(--accent-brd); background:var(--accent-bg);"
+                onclick="toggleResultFullscreen()" aria-pressed="false"
+                title="ขยายตารางผลเต็มหน้าจอ ตัวอักษรเล็กลง เห็นพนักงานและสินค้าได้มากขึ้น (กด Esc เพื่อกลับ)">⛶ ขยายเต็มจอ</button>
 
               <select id="brandSelect" class="field-select"
                 style="min-width: 180px; padding: 6px 30px 6px 12px; height: auto; border-radius: 6px; font-weight: 600; color: var(--accent); border-color: var(--accent-brd); background-color: var(--accent-bg);"
@@ -892,6 +901,17 @@
             </div>
           </div>
 
+          <!-- แถบเล็กตอนเต็มจอ (แถบเครื่องมือเดิมซ่อนไว้ให้ตารางได้พื้นที่) -->
+          <div class="result-fs-bar" id="resultFsBar">
+            <span class="result-fs-bar__title">ผลลัพธ์การกระจายหีบ</span>
+            <button type="button" class="btn-dl" onclick="resultFsZoom(-1)" title="ย่อตัวอักษร">ย่อ −</button>
+            <span class="result-fs-bar__zoom" id="resultFsZoomLabel">80%</span>
+            <button type="button" class="btn-dl" onclick="resultFsZoom(1)" title="ขยายตัวอักษร">ขยาย +</button>
+            <button type="button" class="btn-dl" id="resultFsFitBtn" onclick="resultFsFit()" aria-pressed="false"
+              title="ย่อให้ตารางทั้งตารางพอดีจอเอง (ปรับใหม่เมื่อขนาดหน้าต่างเปลี่ยน)">⤢ พอดีจอ</button>
+            <button type="button" class="btn-dl" onclick="toggleResultHistDetail()">รายละเอียดประวัติ</button>
+            <button type="button" class="btn-dl btn-dl--fs-exit" onclick="toggleResultFullscreen(false)">✕ ออกจากเต็มจอ (Esc)</button>
+          </div>
           <div id="histDevSummary" class="hist-dev-bar" style="display:none;" aria-live="polite"></div>
 
           <div id="step3SnapshotBadge" class="alloc-snapshot-badge" style="display:none;" aria-live="polite"></div>
@@ -2130,8 +2150,8 @@
   <script src="vendor/msal-browser.min.js"></script>
   <!-- ตรรกะล้วน (ตัวแปลงเลข/คณิตการเกลี่ย) — ต้องมาก่อน app.js
        ไฟล์นี้มีเทสจริงด้วย node --test tests/logic.test.js -->
-  <script src="logic.js?v=2026100601"></script>
-  <script src="app.js?v=2026100601"></script>
+  <script src="logic.js?v=2026100604"></script>
+  <script src="app.js?v=2026100604"></script>
 </body>
 
 </html>

@@ -314,6 +314,44 @@ def _merge_calendar_year_cache(path: str, df_new: pd.DataFrame, fetched_skus: se
     return pd.concat([keep, new], ignore_index=True)
 
 
+def emp_in_two_teams_warning(sup_id: str, target_month: int, target_year: int,
+                             emp_records: list[dict]) -> dict | None:
+    """
+    พนักงานที่มีชื่ออยู่ทีมอื่นด้วยในงวดนี้ (ไม่ใช่คนที่ตั้งย้ายทีมไว้) — เป้าของเขาอาจถูกนับทั้งสองทีม
+
+    ผู้ใช้เลือกให้ "เตือน" ไม่บล็อก (6 ต.ค. 2026 ผลตรวจ ก5) · ดูได้เฉพาะทีมที่เคยโหลดขั้นที่ 1 ในเครื่องนี้
+    (อ่านจาก data/tga_lines_* / emp_cache_*) · ผิดพลาดอะไร = ไม่เตือน ห้ามทำให้หน้าจอพัง
+    """
+    try:
+        from . import emp_assignment_store
+        from .lakehouse import employee_teams_in_period, norm_emp_code
+
+        sid = str(sup_id or "").strip().upper()
+        ids = [r.get("emp_id") for r in emp_records or [] if str(r.get("emp_id") or "").strip()]
+        moved = {norm_emp_code(r.get("emp_id")) for r in emp_assignment_store.read_rows()}
+        teams = employee_teams_in_period(int(target_month), int(target_year), ids)
+        dup = {e: sorted(ts - {sid}) for e, ts in teams.items() if e not in moved and (ts - {sid})}
+        if not dup:
+            return None
+        names = {norm_emp_code(r.get("emp_id")): str(r.get("emp_name") or "").strip() for r in emp_records}
+        listing = ", ".join(
+            f"{e}{f' ({names[e]})' if names.get(e) else ''} → {'/'.join(o)}"
+            for e, o in sorted(dup.items())[:20]
+        )
+        return {
+            "type": "emp_in_two_teams",
+            "sku": "",
+            "brand": "",
+            "message": (
+                f"⚠️ พนักงาน {len(dup)} คนมีชื่ออยู่ทีมอื่นด้วยในงวดนี้ — เป้าของเขาอาจถูกนับทั้งสองทีม: {listing} "
+                "· ให้แอดมินตรวจว่าเขาอยู่ทีมไหนจริง แล้วตั้งย้ายพนักงานให้ถูกทีม (หน้าแอดมิน > ย้ายพนักงาน)"
+            ),
+        }
+    except Exception as e:
+        logger.warning("ตรวจพนักงานที่อยู่หลายทีมไม่สำเร็จ: %s", e)
+        return None
+
+
 def avg_monthly_amount_by_emp(df_hist: pd.DataFrame | None, n_months: int) -> dict[str, float]:
     """ยอดขายเฉลี่ยต่อเดือน (บาท) รายพนักงาน จากแคชประวัติ N เดือน — ไม่มีข้อมูล = {}"""
     if df_hist is None or df_hist.empty or n_months <= 0:
@@ -1439,6 +1477,9 @@ def load_employees_payload(
                 + " (ตั้งได้ที่หน้าแอดมิน > ย้ายพนักงาน)"
             ),
         })
+    _w = emp_in_two_teams_warning(sup_id, target_month, target_year, emp_records)
+    if _w:
+        sku_warnings.append(_w)
     if price_credit_only and str(sales_unit or "").strip().upper()[:1] == "C":
         sku_warnings.append(
             {

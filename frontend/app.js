@@ -427,6 +427,10 @@ function _dismissInfoModal() {
 
 function _showInfoModal({ title, bodyHtml, primaryLabel, onPrimary, secondaryLabel = "ปิด", onSecondary } = {}) {
   _dismissInfoModal();
+  // ตารางผลเปิดเต็มจออยู่ → กล่องนี้ (ต่อกับ body) จะมองไม่เห็น ต้องออกจากเต็มจอก่อน
+  if (document.body.classList.contains("has-result-fullscreen") && typeof toggleResultFullscreen === "function") {
+    toggleResultFullscreen(false);
+  }
 
   const modal = document.createElement("div");
   modal.id = "infoModal";
@@ -2913,6 +2917,153 @@ function _pushUndoState(reason = "") {
   _setUndoEnabled();
 }
 
+/* ── ดูภาพรวมตารางผล (ผู้ใช้ขอ 6 ต.ค. 2026) ─────────────────────────────────────
+ * 1) ซ่อน/แสดงบรรทัดประวัติในแต่ละช่อง — แถวเตี้ยลง เห็นพนักงานได้มากขึ้น (จำค่าในเครื่อง)
+ * 2) ขยายตารางเต็มจอ — ตารางเดิม แก้ตัวเลขได้เหมือนเดิม กด Esc / ปุ่มเดิมเพื่อกลับ
+ * ไม่ย้ายหรือซ่อนของเดิม ขั้นตอนเหมือนเดิมทุกอย่าง */
+const _HIST_DETAIL_KEY = "ta_result_hist_detail";
+
+function _applyResultHistDetail(show) {
+  const block = document.getElementById("resultBlock");
+  if (block) block.classList.toggle("is-hist-compact", !show);
+  const btn = document.getElementById("toggleHistDetailBtn");
+  if (btn) {
+    btn.setAttribute("aria-pressed", show ? "true" : "false");
+    btn.classList.toggle("btn-dl--toggle-on", show);
+    btn.textContent = show ? "รายละเอียดประวัติ ▼" : "รายละเอียดประวัติ ▶";
+  }
+}
+
+function toggleResultHistDetail() {
+  const block = document.getElementById("resultBlock");
+  const show = !!block && block.classList.contains("is-hist-compact");
+  _applyResultHistDetail(show);
+  try { localStorage.setItem(_HIST_DETAIL_KEY, show ? "1" : "0"); } catch (_) { /* ไม่มีที่เก็บก็ไม่เป็นไร */ }
+}
+
+function initResultHistDetail() {
+  let show = true;
+  try { show = localStorage.getItem(_HIST_DETAIL_KEY) !== "0"; } catch (_) { show = true; }
+  _applyResultHistDetail(show);
+}
+
+/* เต็มจอจริง (ผู้ใช้ขอ 6 ต.ค. 2026 รอบสอง): ใช้โหมดเต็มจอของเบราว์เซอร์ ไม่มีแถบเบราว์เซอร์/แถบเครื่องมือกินที่
+ * + ย่อตัวอักษรได้ (ค่าเริ่มต้น 80%) · แถบเครื่องมือเดิมซ่อนตอนเต็มจอ เหลือแถบเล็ก: ย่อ/ขยาย/รายละเอียดประวัติ/ออก
+ * กล่องแจ้งเตือน (_showInfoModal) สั่งออกจากเต็มจอให้เอง ไม่งั้นผู้ใช้มองไม่เห็นกล่องแล้วค้าง */
+const _FS_ZOOM_KEY = "ta_result_fs_zoom";
+const _FS_ZOOM_STEPS = [0.6, 0.7, 0.8, 0.9, 1];
+
+// ย่อพอดีจอ (ผู้ใช้ขอ 6 ต.ค. 2026): ไม่เล็กกว่านี้ — เล็กกว่านี้อ่านไม่ออกแล้ว ตารางใหญ่มากยังเลื่อนได้
+const _FS_FIT_MIN = 0.35;
+let _fsFitZoom = null;   // ค่าที่คำนวณได้ล่าสุดตอนอยู่โหมดพอดีจอ
+
+function _fsZoomSetting() {
+  let v = "0.8";
+  try { v = localStorage.getItem(_FS_ZOOM_KEY) || "0.8"; } catch (_) { v = "0.8"; }
+  return v;
+}
+
+function _fsZoom() {
+  const v = _fsZoomSetting();
+  if (v === "fit") return _fsFitZoom || 0.8;
+  const z = Number(v) || 0.8;
+  return _FS_ZOOM_STEPS.includes(z) ? z : 0.8;
+}
+
+/** ขนาดที่ทำให้ตารางทั้งตาราง (กว้าง+สูง) พอดีกรอบ — วัดตอนขนาด 100% แล้วหาร */
+function _computeFsFitZoom() {
+  const block = document.getElementById("resultBlock");
+  const sc = block?.querySelector(".tbl-scroll");
+  const tbl = sc?.querySelector(".result-tbl");
+  if (!sc || !tbl) return 0.8;
+  block.style.setProperty("--fs-zoom", "1");
+  const r = tbl.getBoundingClientRect();
+  const z = Math.min(sc.clientWidth / Math.max(1, r.width), sc.clientHeight / Math.max(1, r.height), 1);
+  return Math.max(_FS_FIT_MIN, Math.floor(z * 100) / 100);
+}
+
+function _applyFsZoom(z) {
+  const block = document.getElementById("resultBlock");
+  const fit = _fsZoomSetting() === "fit";
+  if (fit && block?.classList.contains("is-fullscreen")) {
+    _fsFitZoom = _computeFsFitZoom();
+    z = _fsFitZoom;
+  }
+  if (block) block.style.setProperty("--fs-zoom", String(z));
+  const lbl = document.getElementById("resultFsZoomLabel");
+  if (lbl) lbl.textContent = fit ? `พอดีจอ ${Math.round(z * 100)}%` : `${Math.round(z * 100)}%`;
+  const fitBtn = document.getElementById("resultFsFitBtn");
+  if (fitBtn) fitBtn.setAttribute("aria-pressed", fit ? "true" : "false");
+}
+
+function resultFsFit() {
+  try { localStorage.setItem(_FS_ZOOM_KEY, "fit"); } catch (_) { /* ไม่มีที่เก็บก็ไม่เป็นไร */ }
+  _applyFsZoom(0.8);
+  const block = document.getElementById("resultBlock");
+  requestAnimationFrame(() => pinStickyLeftColumns(block?.querySelector(".tbl-scroll")));
+}
+
+window.addEventListener("resize", () => {
+  if (_fsZoomSetting() === "fit" && document.body.classList.contains("has-result-fullscreen")) _applyFsZoom(0.8);
+});
+
+function resultFsZoom(dir) {
+  const cur = _fsZoom();
+  // จากโหมดพอดีจอ: ขยับจากขนาดปัจจุบันไปขั้นถัดไป
+  const steps = _FS_ZOOM_STEPS;
+  let next;
+  if (dir > 0) next = steps.find((x) => x > cur + 0.001) ?? steps[steps.length - 1];
+  else next = [...steps].reverse().find((x) => x < cur - 0.001) ?? steps[0];
+  try { localStorage.setItem(_FS_ZOOM_KEY, String(next)); } catch (_) { /* ไม่มีที่เก็บก็ไม่เป็นไร */ }
+  _applyFsZoom(next);
+  const block = document.getElementById("resultBlock");
+  requestAnimationFrame(() => pinStickyLeftColumns(block?.querySelector(".tbl-scroll")));
+}
+
+function _onResultFullscreenKey(e) {
+  if (e.key === "Escape" && !document.querySelector(".modal-overlay[style*='flex'], .info-modal")) {
+    toggleResultFullscreen(false);
+  }
+}
+
+function _setResultFullscreenUi(on) {
+  const block = document.getElementById("resultBlock");
+  if (!block) return;
+  block.classList.toggle("is-fullscreen", on);
+  document.body.classList.toggle("has-result-fullscreen", on);
+  const btn = document.getElementById("resultFullscreenBtn");
+  if (btn) btn.setAttribute("aria-pressed", on ? "true" : "false");
+  // ข้อความแจ้งเตือนมุมจอต้องอยู่ "ในกรอบเต็มจอ" ไม่งั้นมองไม่เห็นตอนใช้โหมดเต็มจอของเบราว์เซอร์
+  const stack = document.getElementById("appToastStack");
+  if (stack) (on ? block : document.body).appendChild(stack);
+  document.removeEventListener("keydown", _onResultFullscreenKey);
+  if (on) document.addEventListener("keydown", _onResultFullscreenKey);
+  if (on) requestAnimationFrame(() => _applyFsZoom(_fsZoom()));
+  requestAnimationFrame(() => pinStickyLeftColumns(block.querySelector(".tbl-scroll")));
+}
+
+document.addEventListener("fullscreenchange", () => {
+  // ออกด้วย Esc / ปุ่มของเบราว์เซอร์ → คืนหน้าตาเดิม
+  const block = document.getElementById("resultBlock");
+  if (!document.fullscreenElement && block?.classList.contains("is-fullscreen")) _setResultFullscreenUi(false);
+});
+
+function toggleResultFullscreen(force) {
+  const block = document.getElementById("resultBlock");
+  if (!block) return;
+  const on = typeof force === "boolean" ? force : !block.classList.contains("is-fullscreen");
+  if (on) {
+    _setResultFullscreenUi(true);
+    // เบราว์เซอร์ที่ไม่ยอมเต็มจอ (บางเครื่องปิดไว้) ยังได้แบบเต็มหน้าต่างแทน
+    if (block.requestFullscreen && !document.fullscreenElement) {
+      block.requestFullscreen().catch(() => {});
+    }
+  } else {
+    if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+    _setResultFullscreenUi(false);
+  }
+}
+
 function undoLastEdit() {
   if (_undoStack.length === 0) return;
   const last = _undoStack.pop();
@@ -2997,6 +3148,7 @@ function setBusyStatus(state, msg) {
 document.addEventListener("DOMContentLoaded", async () => {
   initTheme();
   initSkuProductNames();
+  initResultHistDetail();
   _primeMsAuthBlock();
 
   // ปุ่ม login อย่าใส่ onclick ใน HTML ด้วย — ถ้ามีซ้ำจะเรียก handleLogin สองครั้งต่อคลิก
