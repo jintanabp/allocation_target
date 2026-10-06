@@ -970,6 +970,45 @@ def _reject_employee_in_two_teams(df_targets: pd.DataFrame) -> None:
     )
 
 
+def _reject_duplicate_employee_rows(df_targets: pd.DataFrame) -> None:
+    """
+    รหัสพนักงาน(+คลัง) ซ้ำในรายการเป้า = หยุดพร้อมบอกรหัส (ผลตรวจ 5 ต.ค. 2026 ข้อ 7.14)
+
+    เดิมกันเฉพาะโหมดรวมภาค (_reject_employee_in_two_teams) — ทีมเดียวที่มีแถวซ้ำ LP นับคนนั้น
+    สองเท่า แล้วด่าน I1 ตีกลับเป็น 409 "allocation_mismatch" ที่ผู้ใช้อ่านไม่รู้เรื่อง
+    ไม่มีอะไรผิดถูกบันทึก (I1 กันอยู่) แค่ข้อความไม่บอกสาเหตุ — ตอนนี้บอกตรง ๆ
+    """
+    if df_targets is None or df_targets.empty:
+        return
+    has_wh = "warehouse_code" in df_targets.columns
+    keys = pd.DataFrame({
+        "emp": df_targets["emp_id"].astype(str).str.strip(),
+        "wh": df_targets["warehouse_code"].map(_norm_wh) if has_wh else "",
+    })
+    keys = keys[keys["emp"] != ""]
+    dup = keys[keys.duplicated(keep=False)].drop_duplicates()
+    if dup.empty:
+        return
+    shown = [
+        {"emp_id": r.emp, "warehouse_code": r.wh or None}
+        for r in dup.itertuples(index=False)
+    ][:20]
+    raise HTTPException(
+        status_code=400,
+        detail={
+            "code": "duplicate_employee_rows",
+            "message": (
+                f"กระจายไม่ได้ — มีพนักงาน {len(dup)} รหัสที่ซ้ำกันในรายการเป้า "
+                "(รหัสเดียวกัน คลังเดียวกัน มากกว่า 1 แถว): "
+                + ", ".join(e["emp_id"] + (f" (คลัง {e['warehouse_code']})" if e["warehouse_code"] else "")
+                            for e in shown[:5])
+            ),
+            "hint_th": "กดโหลดข้อมูลขั้นที่ 1 ใหม่ ถ้ายังซ้ำอยู่ แจ้ง dev ให้ตรวจรายชื่อทีมใน Target Sun",
+            "employees": shown,
+        },
+    )
+
+
 def reject_mixed_sales_units(
     target_sup_ids: list[str], target_month: int, target_year: int
 ) -> None:
@@ -1174,6 +1213,8 @@ def run_optimization_service(
     ).fillna(0.0)
     if summed_target:
         _reject_employee_in_two_teams(df_all_targets)
+    # ทุกโหมด (หลังด่านสองทีม เพื่อให้กรณีข้ามทีมได้ข้อความเฉพาะของมัน) — 7.14
+    _reject_duplicate_employee_rows(df_all_targets)
     # ตัดพนักงานที่ "ไม่ต้องตั้งเป้า" ออกก่อนทุกอย่าง — /optimize ไม่เคยกรองพนักงานเลย
     # เชื่อรายชื่อจากหน้าเว็บล้วน หน้าเว็บรุ่นเก่าที่ค้างในเบราว์เซอร์จึงส่งคนเหล่านี้มาได้
     # ต้องตัดก่อน _requested_alloc_keys ด้วย ไม่งั้นด่าน I8 จะเติมแถว 0 พาเขากลับเข้ามา
@@ -1483,7 +1524,8 @@ def run_optimization_service(
 
     sku_ids_opt = df_sku["sku"].astype(str).str.strip().tolist()
     new_product_skus_used, detection_mode = detect_new_product_skus(
-        sup_id, target_year, sku_ids_opt, df_hist_3 if not df_hist_3.empty else df_hist_6
+        sup_id, target_year, sku_ids_opt, df_hist_3 if not df_hist_3.empty else df_hist_6,
+        peer_sup_ids=hist_sup_ids[1:],  # รวมภาค: ทีมใดในกลุ่มขายแล้ว = ไม่ใช่สินค้าใหม่ (7.7)
     )
     new_products_even_mode = detection_mode if new_product_skus_used else "off"
     new_skus_cy_ly: set[str] | None = set()

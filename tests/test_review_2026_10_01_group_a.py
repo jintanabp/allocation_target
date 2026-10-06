@@ -158,7 +158,9 @@ class TestCashPriceNaN(unittest.TestCase):
         df = conn.get_product_info(sku_list=["B"], target_year=2026, target_month=10)
         self.assertTrue(df.attrs.get("credit_only"))
         src = _src("backend", "services", "employees.py")
-        self.assertIn("if not price_credit_only:\n                            fc.write_product_info_df", src)
+        # 7.4 (6 ต.ค. 2026): เขียนผ่าน merge_product_info_df (อ่านรวม+เขียนใต้ล็อก) แต่ยังอยู่ใต้เงื่อนไขเดิม
+        self.assertRegex(src, r"if not price_credit_only:\n(?:\s*#[^\n]*\n)*\s*merged = fc\.merge_product_info_df")
+        self.assertNotIn("fc.write_product_info_df", src)
         self.assertIn('"type": "cash_price_unavailable"', src)
         self.assertIn('w.type === "cash_price_unavailable"', APP)
 

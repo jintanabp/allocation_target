@@ -1,7 +1,10 @@
+import logging
 import os
 import pandas as pd
 
 from .paths import hist_calendar_year_cache_path
+
+logger = logging.getLogger(__name__)
 
 
 def skus_no_sales_cy_ly(sup_id: str, target_year: int, sku_list: list[str]) -> set[str]:
@@ -15,7 +18,10 @@ def skus_no_sales_cy_ly(sup_id: str, target_year: int, sku_list: list[str]) -> s
     try:
         df_cy = pd.read_csv(cy_path, dtype={"sku": str, "emp_id": str})
         df_ly = pd.read_csv(ly_path, dtype={"sku": str, "emp_id": str})
-    except Exception:
+    except Exception as e:
+        # อ่านไม่ได้ = ไม่ตัดสินว่าอะไรเป็นสินค้าใหม่ (ปลอดภัยกว่า: กระจายตามประวัติตามปกติ)
+        # แต่ต้องมีร่องรอย — เดิมเงียบ ผู้ใช้ติ๊กแบ่งเท่าสินค้าใหม่แล้วไม่เกิดอะไรโดยไม่มีใครรู้
+        logger.warning("อ่านไฟล์ยอดรายปี (hist_cy_) ของ %s ไม่ได้ — ไม่ตัดสินสินค้าใหม่: %s", sup_id, e)
         return set()
     for df in (df_cy, df_ly):
         if "hist_boxes" not in df.columns:
@@ -32,23 +38,47 @@ def skus_no_sales_cy_ly(sup_id: str, target_year: int, sku_list: list[str]) -> s
     return out
 
 
+def _has_cy_ly(sup_id: str, target_year: int) -> bool:
+    return os.path.exists(hist_calendar_year_cache_path(sup_id, target_year)) and os.path.exists(
+        hist_calendar_year_cache_path(sup_id, target_year - 1)
+    )
+
+
 def detect_new_product_skus(
     sup_id: str,
     target_year: int,
     sku_list: list[str],
     df_hist: pd.DataFrame | None = None,
+    peer_sup_ids: list[str] | None = None,
 ) -> tuple[list[str], str]:
     """
     ระบุ SKU สินค้าใหม่สำหรับแสดงป้าย UI (ไม่ขึ้นกับว่าติ๊กแบ่งเท่าหรือไม่)
     คืน (รายการ sku เรียงแล้ว, โหมด: cy_ly | fallback_hist_window | off)
+
+    peer_sup_ids (กระจายรวมภาค/หน่วย — ผลตรวจ 5 ต.ค. 2026 ข้อ 7.7): เดิมดูไฟล์ยอดรายปีของ
+    ทีมเจ้าของเป้าอย่างเดียว สินค้าที่ทีมอื่นในภาคขายอยู่แต่ทีมเจ้าของไม่เคยขาย จึงถูกนับเป็น
+    「ใหม่」แล้วแบ่งเท่าทั้งภาค · ตอนนี้ SKU ที่ทีมใดในกลุ่มมียอด (ไฟล์รายปีของทีมนั้น หรือ
+    ประวัติช่วงที่ใช้กระจาย df_hist ซึ่งอ่านข้ามทีม + เติมช่องว่างแล้ว) = ไม่ใช่สินค้าใหม่
     """
     sku_list = [str(s or "").strip() for s in (sku_list or []) if str(s or "").strip()]
     if not sku_list:
         return [], "off"
-    cy_ok = os.path.exists(hist_calendar_year_cache_path(sup_id, target_year))
-    ly_ok = os.path.exists(hist_calendar_year_cache_path(sup_id, target_year - 1))
-    if cy_ok and ly_ok:
+    if _has_cy_ly(sup_id, target_year):
         found = skus_no_sales_cy_ly(sup_id, target_year, sku_list)
+        peers = [
+            str(p).strip() for p in (peer_sup_ids or [])
+            if str(p).strip() and str(p).strip().upper() != str(sup_id).strip().upper()
+        ]
+        if found and peers:
+            for pid in peers:
+                if not found:
+                    break
+                if _has_cy_ly(pid, target_year):
+                    # ไฟล์ของ peer มีเฉพาะ SKU ที่ peer มีเป้า — SKU ที่ไม่อยู่ในไฟล์ = ไม่รู้ ไม่ใช่ "ไม่เคยขาย"
+                    # จึงใช้เพื่อ "ตัดออก" อย่างเดียว (ขายแล้ว = ไม่ใหม่)
+                    found &= skus_no_sales_cy_ly(pid, target_year, sorted(found))
+            if found and df_hist is not None and not df_hist.empty:
+                found &= skus_zero_team_hist_window(df_hist, sorted(found))
         return sorted(found), "cy_ly" if found else "off"
     if df_hist is not None and not df_hist.empty:
         found = skus_zero_team_hist_window(df_hist, sku_list)

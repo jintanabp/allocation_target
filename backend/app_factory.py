@@ -3,6 +3,7 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import auth_entra
@@ -98,6 +99,26 @@ def create_app() -> FastAPI:
             "ALLOCATION_ADMIN_EMAILS=%d entry สำหรับแอดมิน",
             n_admin,
         )
+
+    @app.middleware("http")
+    async def _local_only_when_login_off(request, call_next):
+        # ล็อกอินปิด = ทุกคนเป็น dev → รับเฉพาะคำขอจากเครื่องนี้โดยตรง (7.9)
+        # server ที่ตั้ง Entra ครบ (auth_enabled) ไม่ผ่านเงื่อนไขนี้เลย — ไม่กระทบ ไม่ต้องแก้ .env
+        if not auth_entra.auth_enabled() and not auth_entra.request_allowed_without_login(
+            request.client.host if request.client else None, request.headers
+        ):
+            logger.error(
+                "ปฏิเสธคำขอจาก %s: ล็อกอินปิดอยู่ ใช้ได้เฉพาะจากเครื่องนี้โดยตรง (ไม่ผ่าน proxy)",
+                request.client.host if request.client else "?",
+            )
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "detail": "ระบบนี้ปิดการล็อกอินอยู่ (โหมดเครื่องพัฒนา) — เปิดได้เฉพาะจากเครื่อง server เอง "
+                    "ถ้าเห็นข้อความนี้บน server จริง แจ้ง dev ให้ตั้งค่าล็อกอิน Entra"
+                },
+            )
+        return await call_next(request)
 
     app.add_middleware(
         CORSMiddleware,

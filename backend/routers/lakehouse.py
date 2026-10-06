@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 
 from ..deps import (
+    _is_dev_actor,
     ensure_own_supervisor_write,
     ensure_supervisor_allowed,
     ensure_demo_team_not_sent,
@@ -493,6 +494,9 @@ def resend_unlanded(
             detail=str(e.detail)[:500],
             context={"ok": False, "prepare_token": req.prepare_token[:8], "explain": explain_http(e)},
         )
+        red = _redacted_http(user, e)
+        if red is not e:
+            raise red from e
         raise
     remaining = result.get("remaining_unlanded")
     log_from_user(
@@ -519,7 +523,7 @@ def resend_unlanded(
                if remaining else {}),
         },
     )
-    return result
+    return _redact_send_detail(user, result)
 
 
 @router.post("/lakehouse/verify-send-batch")
@@ -593,6 +597,10 @@ def import_targetsun_from_allocations(
                 ),
             },
         )
+        if isinstance(e, HTTPException):
+            red = _redacted_http(user, e)
+            if red is not e:
+                raise red from e
         raise
     # log/แจ้งเตือนใช้งวดที่ส่งจริง (งวดของไฟล์ที่เตรียมไว้) ไม่ใช่ค่าในคำขอ (ผลตรวจ §2.9)
     res = result if isinstance(result, dict) else {}
@@ -605,7 +613,37 @@ def import_targetsun_from_allocations(
         )
     _log_targetsun_send(user, log_req, result)
     _alert_row_count(user, log_req, result)
-    return result
+    return _redact_send_detail(user, result)
+
+
+# ผลตรวจ 5 ต.ค. 2026 ข้อ 7.11: ข้อความ error ตอนส่งเคยมี URL เต็มของ Target Sun + คำตอบดิบ
+# (หน้า error ของ IIS/proxy) ให้ทุกคนที่กดส่งเห็น · URL เต็มเป็นของ dev (/admin/settings) ตามหลักเดิม
+# ผู้ใช้ทั่วไปได้ข้อความไทย + ป้ายชื่อ host จาก /lakehouse/send-env อยู่แล้ว · log บน server เก็บครบเหมือนเดิม
+_DEV_ONLY_SEND_FIELDS = ("import_url", "body_preview")
+_NETWORK_ERROR_KINDS = {
+    "ssl": "ยืนยันใบรับรอง HTTPS ของ Target Sun ไม่ผ่าน",
+    "timeout": "รอคำตอบจาก Target Sun นานเกินกำหนด",
+    "connection": "เชื่อมต่อ Target Sun ไม่ได้",
+    "request": "ส่งคำขอไป Target Sun ไม่สำเร็จ",
+}
+
+
+def _redact_send_detail(user: dict, obj: Any) -> Any:
+    """ตัด URL เต็ม/คำตอบดิบออกจากผลส่งสำหรับคนที่ไม่ใช่ dev"""
+    if _is_dev_actor(user) or not isinstance(obj, dict):
+        return obj
+    out = {k: v for k, v in obj.items() if k not in _DEV_ONLY_SEND_FIELDS}
+    kind = str(out.get("error_kind") or "")
+    if kind in _NETWORK_ERROR_KINDS:
+        # str(e) ของ requests มี URL เต็ม (host/path/port) — แทนด้วยข้อความไทยที่ไม่มี URL
+        out["message"] = _NETWORK_ERROR_KINDS[kind] + " — รายละเอียดอยู่ใน log ของ server (แจ้ง dev)"
+    return out
+
+
+def _redacted_http(user: dict, e: HTTPException) -> HTTPException:
+    if _is_dev_actor(user) or not isinstance(e.detail, dict):
+        return e
+    return HTTPException(e.status_code, detail=_redact_send_detail(user, e.detail), headers=e.headers)
 
 
 def _alert_row_count(user: dict, req: LakehouseUploadRequest, result: Any) -> None:

@@ -117,6 +117,10 @@ def _validate_body(body: dict[str, Any]) -> dict[str, Any]:
         out["never_sold_zero_keys"] = [str(k) for k in zero_keys]
     if body.get("force_min_one") is not None:
         out["force_min_one"] = bool(body.get("force_min_one"))
+    # โหมด「ตั้งตามประวัติ」(7.15) — รับเฉพาะค่าที่รู้จัก
+    ysrc = str(body.get("yellow_source") or "").strip()
+    if ysrc in ("3m", "6m", "12m", "ly"):
+        out["yellow_source"] = ysrc
     sent_at = body.get("target_sun_sent_at")
     if sent_at:
         out["target_sun_sent_at"] = str(sent_at)

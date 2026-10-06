@@ -26,7 +26,7 @@
 | – | ปุ่ม「ตั้งตามประวัติขาย」: ล้างโหมด/เหตุผลอัตโนมัติทุกทางที่แทนตาราง (`_clearHistFillMode`) รวมโหลดเป้าสดและรีเซ็ตตอนค่าตรงอยู่แล้ว · เหตุผลติดลบ + หักบิวเทรี่ยมล้างเมื่อเปลี่ยนทีม/งวด · คลิกช่องแล้วออกโดยไม่แก้ = ไม่ล็อก · หลายทีม (รวมภาค) แบ่งภายในทีม ยอดทีมเท่าเดิม · เลื่อน `PRICE_LOGIC_VERSION` 2→3 (แคช payload เก่าไม่มี 6/12 เดือน) | `app.js`, `employee_payload_cache.py` | `test_step2_hist_fill.py` |
 | – | ผลตรวจเป้าเปลี่ยนที่มาช้าของทีมก่อนหน้าไม่ทับแบนเนอร์ทีมใหม่ | `app.js` `checkTargetSunDrift` | `test_step2_hist_fill.py` |
 
-## แก้เพิ่ม 6 ต.ค. 2026 (ดึก) — OPEN_ITEMS 7.2 / 7.3 / 7.5 / 7.6 / 7.8
+## แก้เพิ่ม 6 ต.ค. 2026 (ดึก) — OPEN_ITEMS 7.2–7.15 ครบทุกข้อ
 
 | ข้อ | แก้ | ไฟล์ | เทส (โค้ดเก่าล้ม) |
 |---|---|---|---|
@@ -35,8 +35,17 @@
 | 7.8 | Excel export แอดมิน: `strings_to_formulas=False` + ใส่ `'` นำหน้าตอนใช้ openpyxl | `admin.py` | `test_admin_excel_no_formula.py` |
 | 7.5 | สินค้าราคา 0: น้ำหนัก anchor ขั้นต่ำ 1 บาท/หีบ → หีบอยู่กับคนที่เคยขาย (เดิม E3 ไม่เคยขายได้ 13–20 จาก 100) | `OR_engine.py` | `test_zero_price_sku_follows_history.py` |
 | 7.6 | tiered LP ลองซ้ำเฉพาะ Infeasible · หมดเวลา → fallback ทันที (รอ ~1 นาที แทน ~2) | `OR_engine.py` | `test_lp_timeout_no_retry.py` |
+| 7.4 | แคชสินค้า/ราคากลางของงวด: อ่านรวม (แม้หมดอายุ) + เขียนใต้ล็อกเดียว | `fabric_cache.py`, `employees.py` | `test_shared_product_cache_merge.py` |
+| 7.7 | รวมภาค: SKU ที่ทีมใดในกลุ่มขายแล้ว (ไฟล์รายปีของทีมนั้น/ประวัติข้ามทีม) ไม่ใช่สินค้าใหม่ | `allocation_checks.py`, `optimize.py` | `test_new_product_regional_peers.py` |
+| 7.9 | ล็อกอินปิด = รับเฉพาะคำขอจาก loopback ที่ไม่มี header ของ proxy (ทุกคำขอ ไม่ขึ้นกับวิธีรัน) | `auth_entra.py`, `app_factory.py` | `test_auth_fail_closed.py` |
+| 7.10 | ทางส่งรวดเดียวจด ledger `unknown` ตอน 504 (จดไม่ได้ไม่กลบ 504) | `targetsun_import.py` | `test_one_shot_504_ledger.py` |
+| 7.11 | ซ่อน `import_url`/`body_preview` + ข้อความเครือข่ายที่มี URL จากคนที่ไม่ใช่ dev | `routers/lakehouse.py` | `test_send_error_redaction.py` |
+| 7.12 | `RotatingFileHandler` 20 MB × 5 · บันทึกการใช้งานเก็บ 400 วัน | `main.py`, `usage_log_store.py` | `test_log_retention.py` |
+| 7.13 | ล้างแคช payload: ลบใต้ล็อก + ลองซ้ำ · ลบไม่ได้ = จำเวลาในหน่วยความจำ ตัวอ่านทิ้งไฟล์ก่อนเวลานั้น | `employee_payload_cache.py` | `test_payload_cache_invalidate_locked.py` |
+| 7.14 | รหัสพนักงาน(+คลัง) ซ้ำ = 400 `duplicate_employee_rows` ทุกโหมด | `optimize.py`, `error_explain.py` | `test_duplicate_employee_rows.py` |
+| 7.15 | ร่าง/ผลบน server จำ `yellow_source` · 6/12 เดือนแบ่งคลังด้วยยอดแยกคลังช่วงเดียวกัน | `app.js`, `allocation_store.py`, `wh_split.py`, `employees.py` | `test_step2_hist_fill.py` |
 
-## ยังไม่แก้ (รายละเอียดใน OPEN_ITEMS หมวด 7) — ข้อที่ขีดฆ่าในย่อหน้านี้แก้แล้วตามตารางข้างบน
+## เดิมยังไม่แก้ — แก้ครบแล้วทุกข้อตามตารางข้างบน (เก็บไว้เป็นประวัติ)
 
 ข้อมูล: ดึงเป้าล้มชั่วคราวแล้วล้าง grain ดี + ข้อความผิด · ไฟล์ความเห็นผู้ใช้หายเมื่ออ่านพลาดครั้งเดียว · snapshot เสียเวอร์ชัน/สถานะส่งเมื่ออ่านพลาด ·
 แคชสินค้ารวมถูกตัดเหลือทีมเดียว + race ตอนโหลดรวมภาค · log ไม่หมุน/ไม่ลบ · ล้างแคช payload บน Windows ล้มเงียบ

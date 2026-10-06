@@ -127,6 +127,8 @@ def expand_employee_rows(
     *,
     ly_amount_by_emp_wh: dict[tuple[str, str], float] | None = None,
     avg3_amount_by_emp_wh: dict[tuple[str, str], float] | None = None,
+    avg6_amount_by_emp_wh: dict[tuple[str, str], float] | None = None,
+    avg12_amount_by_emp_wh: dict[tuple[str, str], float] | None = None,
 ) -> list[dict[str, Any]]:
     """
     ขยายแถวพนักงานตาม WH จาก TGA — พนักงานที่มีคลังเดียวไม่เปลี่ยนหน้าตา (wh_split=False)
@@ -170,10 +172,18 @@ def expand_employee_rows(
         )
         ly_parts = _split_amount(ly_total, ly_weights)
         avg_parts = _split_amount(avg_total, avg_weights)
-        # 6/12 เดือนไม่มีตัวเลขแยกคลังจาก Fabric — แบ่งตามน้ำหนักเดียวกับ 3 เดือน
+        # 6/12 เดือนแบ่งคลังด้วยยอดแยกคลังช่วงเดียวกัน (ผลตรวจ 5 ต.ค. 2026 ข้อ 7.15) — เดิมใช้น้ำหนัก
+        # 3 เดือน คลังที่ 3 เดือนหลังไม่มียอดจึงได้ 0 = "ไม่มีประวัติ" ทั้งที่ 6/12 เดือนมี
+        # ไม่มีตัวเลขแยกคลัง (ดึงไม่ได้/คนนี้ไม่มียอดเลย) → ถอยไปใช้น้ำหนัก 3 เดือนแบบเดิม
         # (ใช้แค่เป็นสัดส่วนของปุ่ม「ตั้งตามประวัติ」 ผลรวมต่อคนยังตรง)
-        avg6_parts = _split_amount(float(row.get("hist_avg_6m") or 0.0), avg_weights)
-        avg12_parts = _split_amount(float(row.get("hist_avg_12m") or 0.0), avg_weights)
+        def _weights_or_3m(m):
+            if not m:
+                return avg_weights
+            w_ = {w: float(m.get((emp, w), 0.0)) for w in unique_whs}
+            return w_ if sum(max(0.0, v) for v in w_.values()) > 0 else avg_weights
+
+        avg6_parts = _split_amount(float(row.get("hist_avg_6m") or 0.0), _weights_or_3m(avg6_amount_by_emp_wh))
+        avg12_parts = _split_amount(float(row.get("hist_avg_12m") or 0.0), _weights_or_3m(avg12_amount_by_emp_wh))
 
         for w in unique_whs:
             nr = dict(row)

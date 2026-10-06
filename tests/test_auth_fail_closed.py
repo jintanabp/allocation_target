@@ -66,5 +66,44 @@ class TestStartupCheck(unittest.TestCase):
         )
 
 
+class TestLocalOnlyWhenLoginOff(unittest.TestCase):
+    """ตัวกันตอนสตาร์ทดูแค่ --host ของ uvicorn — gunicorn/proxy หลุด (ผลตรวจ 5 ต.ค. 2026 ข้อ 7.9)"""
+
+    def test_helper(self):
+        ok = auth_entra.request_allowed_without_login
+        self.assertTrue(ok("127.0.0.1", {}))
+        self.assertTrue(ok("::1", {}))
+        self.assertTrue(ok("testclient", {}))
+        self.assertFalse(ok("10.1.2.3", {}))
+        self.assertFalse(ok(None, {}))
+        self.assertFalse(ok("127.0.0.1", {"x-forwarded-for": "10.9.9.9"}))
+        self.assertFalse(ok("127.0.0.1", {"forwarded": "for=10.9.9.9"}))
+        self.assertFalse(ok("127.0.0.1", {"x-real-ip": "10.9.9.9"}))
+
+    def _client(self, env):
+        from fastapi.testclient import TestClient
+        from backend.app_factory import create_app
+
+        with patch.dict(os.environ, env):
+            app = create_app()
+        return TestClient(app)
+
+    def test_proxy_request_refused_when_login_off(self):
+        env = {"AZURE_AUTH_DISABLED": "1", "AZURE_AUTH_CLIENT_ID": "", "AZURE_AUTH_TENANT_ID": ""}
+        c = self._client(env)
+        with patch.dict(os.environ, env):
+            r = c.get("/auth/config", headers={"X-Forwarded-For": "10.9.9.9"})
+            self.assertEqual(r.status_code, 403)
+            self.assertIn("ปิดการล็อกอิน", r.json()["detail"])
+            self.assertNotEqual(c.get("/auth/config").status_code, 403)
+
+    def test_login_on_not_affected(self):
+        env = dict(_FULL)
+        c = self._client(env)
+        with patch.dict(os.environ, env):
+            r = c.get("/auth/config", headers={"X-Forwarded-For": "10.9.9.9"})
+            self.assertNotEqual(r.status_code, 403)
+
+
 if __name__ == "__main__":
     unittest.main()

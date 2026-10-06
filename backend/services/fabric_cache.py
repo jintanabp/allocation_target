@@ -175,9 +175,9 @@ def product_price_asof(year: int, month: int) -> str:
 
 
 def read_product_info_df(
-    year: int, month: int, *, allow_stale: bool = False
+    year: int, month: int, *, allow_stale: bool = False, quiet: bool = False
 ) -> pd.DataFrame | None:
-    doc = _read_meta(_product_path(year, month), allow_stale=allow_stale)
+    doc = _read_meta(_product_path(year, month), allow_stale=allow_stale, quiet=quiet)
     if not doc:
         return None
     # แคชที่เขียนไว้ก่อนแก้บั๊กราคา (ไม่มี price_asof) ถือราคา ณ "วันที่ดึง"
@@ -228,9 +228,9 @@ def write_product_info_df(year: int, month: int, df: pd.DataFrame) -> None:
 
 
 def read_price_map(
-    year: int, month: int, *, allow_stale: bool = False
+    year: int, month: int, *, allow_stale: bool = False, quiet: bool = False
 ) -> dict[str, float] | None:
-    doc = _read_meta(_price_path(year, month), allow_stale=allow_stale)
+    doc = _read_meta(_price_path(year, month), allow_stale=allow_stale, quiet=quiet)
     if not doc:
         return None
     prices = doc.get("prices")
@@ -246,6 +246,37 @@ def write_price_map(year: int, month: int, price_map: dict[str, float]) -> None:
         _price_path(year, month),
         {"prices": price_map, "row_count": len(price_map)},
     )
+
+
+# ── แคชสินค้า/ราคาเป็นไฟล์เดียวของทั้งงวด ใช้ร่วมกันทุกทีม (ผลตรวจ 5 ต.ค. 2026 ข้อ 7.4) ──
+# เดิมแต่ละทีม "อ่าน (เฉพาะที่ยังไม่หมดอายุ) → รวม → เขียนทับ" เอง:
+#   - แคชหมดอายุแล้ว = อ่านได้ None → เขียนทับด้วย SKU ของทีมเดียว ทีมอื่นหายหมด
+#   - โหลดรวมภาครัน 6 เธรดพร้อมกัน ไม่มีล็อก → คนเขียนทีหลังลบ SKU ที่คนก่อนเพิ่งเติม
+# ตัวถอย "ใช้แคชหมดอายุ" ตอน Fabric ล่มของทีมอื่นจึงไม่เหลืออะไรให้ใช้ (ราคาเป็น 0/ราคาจากประวัติ)
+# ทางแก้: อ่านรวมของเก่า (แม้หมดอายุ) + เขียน ภายใต้ _LOCK เดียว
+
+
+def merge_product_info_df(year: int, month: int, df_fresh: pd.DataFrame) -> pd.DataFrame:
+    """รวมแถวสินค้าที่เพิ่งดึงเข้าแคชกลางของงวด (ของใหม่ชนะ) แล้วคืนผลรวมทั้งไฟล์"""
+    with _LOCK:
+        prev = read_product_info_df(year, month, allow_stale=True, quiet=True)
+        # แคชรุ่นเก่าที่ไม่มีราคารถเงินสด ห้ามเอามารวม — แถวเก่าจะได้ราคาเงินสด NaN
+        # แล้วด่านตอนอ่านดูแค่แถวแรก (ของเก่า) จะปล่อยผ่าน
+        if prev is not None and not prev.empty and "cash_unit_price" in prev.columns:
+            merged = pd.concat([prev, df_fresh]).drop_duplicates(subset=["sku"], keep="last")
+        else:
+            merged = df_fresh
+        write_product_info_df(year, month, merged)
+        return merged
+
+
+def merge_price_map(year: int, month: int, fetched: dict[str, float]) -> dict[str, float]:
+    """รวมราคาที่เพิ่งดึงเข้าแคชราคากลางของงวด (ของใหม่ชนะ) แล้วคืนแมพรวม"""
+    with _LOCK:
+        prev = read_price_map(year, month, allow_stale=True, quiet=True) or {}
+        merged = {**prev, **{str(k): float(v) for k, v in fetched.items()}}
+        write_price_map(year, month, merged)
+        return merged
 
 
 def read_tga_skus_csv(year: int, month: int) -> pd.DataFrame | None:

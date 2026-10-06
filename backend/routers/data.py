@@ -321,6 +321,8 @@ class AllocationSnapshotBody(BaseModel):
     # กฎของปุ่มปรับยอดอัตโนมัติในหน้าเว็บ ณ รอบกระจายล่าสุด (§4.1-7) — ไปกับ engine_yellow
     never_sold_zero_keys: list[str] | None = None
     force_min_one: bool | None = None
+    # โหมด「ตั้งตามประวัติ」ของเป้าเงิน (3m/6m/12m/ly) — โหลดกลับแล้วป้ายเตือนคนไม่มีประวัติยังอยู่ (7.15)
+    yellow_source: str | None = None
     # version ที่ client เห็นตอนโหลด — ไม่ส่งมา = เขียนทับแบบเดิม (tab เก่าจึงไม่พัง)
     # ใช้ field ใน body ไม่ใช่ header If-Match เพื่อเลี่ยงปัญหา preflight/proxy ตัด header
     if_match_version: int | None = None

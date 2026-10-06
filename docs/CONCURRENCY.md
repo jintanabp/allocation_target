@@ -95,6 +95,13 @@ read-modify-write ใต้ `_STORE_LOCK` ของตัวเองเช่�
 ถ้ายังติด OSError (ไฟล์ถูกล็อกบน Windows ฯลฯ) → raise `FeedbackUnreadable` / `SnapshotUnreadable` → 503 ไม่เขียนทับ ·
 JSON เสีย → ย้ายไป `*.corrupt-<เวลา>` เก็บไว้ แล้วเริ่มใหม่ · ห้ามกลับไปใช้ "อ่านไม่ได้ = เริ่มจากว่าง" ในทางที่เขียนกลับ
 
+**แคชกลางที่ทุกทีมเขียนร่วมกัน** (7.4): แคชสินค้า `dim_product_*` และราคา `price_per_box_*` เป็นไฟล์เดียวต่องวด
+ต้องเขียนผ่าน `fabric_cache.merge_product_info_df` / `merge_price_map` เท่านั้น (อ่านของเก่าแม้หมดอายุ + รวม + เขียน
+ใต้ `fabric_cache._LOCK`) — โหลดรวมภาครัน 6 เธรด ถ้าอ่าน-รวม-เขียนเองนอกล็อก คนเขียนทีหลังลบ SKU ทีมอื่น
+
+**ล้างแคช payload** (7.13): ลบใต้ล็อกต่อ path + ลองซ้ำ · ลบไม่ได้ (Windows ถือไฟล์) → `_INVALIDATED_AT` จำเวลาไว้
+ในหน่วยความจำ ตัวอ่านทิ้งไฟล์ที่ `cached_at` ก่อนเวลานั้น (ใช้ได้เพราะ server เป็น worker เดียว)
+
 ## บันทึกผลกระจาย — optimistic concurrency
 
 `PUT /data/allocations` ใช้ **compare-and-swap** ด้วย `version` (int เพิ่มทีละ 1)

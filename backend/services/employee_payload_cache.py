@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -28,6 +30,36 @@ _META_KEYS = frozenset({"data_from_cache", "data_cached_at"})
 #       ไม่มีสองฟิลด์นี้ ปุ่ม 6 เดือน/1 ปี จะขึ้น「ไม่มียอดขาย…」จนกว่า TTL หมด
 #       (ชื่อตัวแปรยังเป็น PRICE_ เพราะผูกกับเทส/ไฟล์ที่เขียนไปแล้ว — ความหมายจริงคือ "รูปร่าง payload")
 PRICE_LOGIC_VERSION = 3
+
+
+# ล้างแคชแล้วลบไฟล์ไม่ได้ (Windows: มีคนอ่านอยู่ / antivirus ถือไฟล์) — ผลตรวจ 5 ต.ค. 2026 ข้อ 7.13
+# เดิมเตือนใน log เฉย ๆ แคชเก่าใช้ต่ออีก ≤1 ชม. → พนักงานที่เพิ่งย้ายโผล่ 2 ทีม (เป้านับซ้ำ)
+# ตอนนี้: ลบใต้ล็อกต่อ path + ลองซ้ำ · ยังลบไม่ได้ก็จำเวลาไว้ในหน่วยความจำ แล้วตอนอ่าน
+# ไฟล์ที่เขียนก่อนเวลานั้นถือว่าหมดอายุ (server เป็น worker เดียว — ดู _warn_if_multi_worker)
+_DELETE_RETRIES = 5
+_DELETE_BACKOFF_SEC = 0.05
+_INVALIDATED_AT: dict[str, float] = {}
+_INVALIDATED_GUARD = threading.Lock()
+
+
+def _path_key(path: str) -> str:
+    return os.path.normcase(os.path.abspath(path))
+
+
+def _remove_with_retry(path: str) -> None:
+    last: OSError | None = None
+    for i in range(_DELETE_RETRIES):
+        try:
+            with read_locked(path):
+                os.remove(path)
+            return
+        except FileNotFoundError:
+            return
+        except OSError as e:
+            last = e
+            time.sleep(_DELETE_BACKOFF_SEC * (i + 1))
+    assert last is not None
+    raise last
 
 
 def employee_payload_cache_ttl_sec() -> int:
@@ -72,6 +104,20 @@ def read_cached_employee_payload(
     except (OSError, json.JSONDecodeError) as e:
         logger.warning("payload cache read failed %s: %s", path, e)
         return None
+
+    with _INVALIDATED_GUARD:
+        inv_at = _INVALIDATED_AT.get(_path_key(path))
+    if inv_at is not None:
+        try:
+            _ca = datetime.fromisoformat(str(doc.get("cached_at") or "").replace("Z", "+00:00"))
+            if _ca.tzinfo is None:
+                _ca = _ca.replace(tzinfo=timezone.utc)
+            stale = _ca.timestamp() <= inv_at
+        except ValueError:
+            stale = True
+        if stale:
+            logger.info("payload cache ทิ้ง %s — ถูกสั่งล้างแล้วแต่ลบไฟล์ไม่ได้", path)
+            return None
 
     doc_version = int(doc.get("price_logic_version") or 0)
     if doc_version != PRICE_LOGIC_VERSION:
@@ -176,11 +222,18 @@ def invalidate_employee_payload_cache(
             suffix = f"_{int(target_year)}_{int(target_month):02d}.json"
             if not name.endswith(suffix):
                 continue
+        fpath = os.path.join(data_dir, name)
+        with _INVALIDATED_GUARD:
+            _INVALIDATED_AT[_path_key(fpath)] = time.time()
         try:
-            os.remove(os.path.join(data_dir, name))
+            _remove_with_retry(fpath)
             removed += 1
         except OSError as e:
-            logger.warning("payload cache delete failed %s: %s", name, e)
+            # ยังนับเป็น "ล้างแล้ว" — ตัวอ่านจะไม่ใช้ไฟล์นี้อีก (ดู _INVALIDATED_AT)
+            removed += 1
+            logger.warning(
+                "payload cache ลบไฟล์ไม่ได้ %s: %s — ทำเครื่องหมายว่าหมดอายุแทน", name, e
+            )
     if removed:
         logger.info("payload cache invalidated: %d file(s)", removed)
     return removed

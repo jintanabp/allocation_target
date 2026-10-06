@@ -1315,16 +1315,31 @@ def _import_allocations_one_shot(req: LakehouseUploadRequest) -> dict:
         req.sup_id, int(req.target_month), int(req.target_year), emp_codes
     )
 
-    out = _post_targetsun_multipart(
-        content,
-        fname,
-        nrow=nrow,
-        zero_rows=zero_rows,
-        dropped_dims=int(dropped_dims),
-        not_in_ts=not_in_ts,
-        import_url=url,
-        shortfall=shortfall,
-    )
+    try:
+        out = _post_targetsun_multipart(
+            content,
+            fname,
+            nrow=nrow,
+            zero_rows=zero_rows,
+            dropped_dims=int(dropped_dims),
+            not_in_ts=not_in_ts,
+            import_url=url,
+            shortfall=shortfall,
+        )
+    except HTTPException as e:
+        # หมดเวลารอ (504) = ของอาจลงแล้ว ต้องจด ledger เป็น "unknown" เหมือนทาง prepare
+        # (ผลตรวจ 5 ต.ค. 2026 ข้อ 7.10) — ไม่จด = ตรวจรายคืนนับแถวที่ลงเป็นการแก้มือ
+        # จดไม่สำเร็จห้ามกลบ 504 ตัวจริงที่ผู้ใช้ต้องเห็น
+        if e.status_code == 504:
+            try:
+                sent_ledger.record_send(
+                    req.sup_id, int(req.target_month), int(req.target_year), _file_rows(df),
+                    user=str(req.upload_user_code or ""), send_status="unknown",
+                    import_url=_current_import_url(),
+                )
+            except Exception:
+                logger.exception("จด sent ledger หลัง 504 (ทางส่งรวดเดียว) ไม่สำเร็จ — %s", req.sup_id)
+        raise
     # F2: ทางส่งรวดเดียว (หน้าเว็บรุ่นเก่า) ก็ต้องลง sent ledger เหมือนทาง prepare
     sent_ledger.record_send(
         req.sup_id, int(req.target_month), int(req.target_year), _file_rows(df),

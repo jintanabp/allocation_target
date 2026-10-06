@@ -24,7 +24,7 @@
 
 | ตัวแปร | ค่าแนะนำ |
 |--------|----------|
-| `AZURE_AUTH_DISABLED` | `0` (production ต้องเปิด login) |
+| `AZURE_AUTH_DISABLED` | `0` (production ต้องเปิด login) — ถ้าเผลอตั้ง `1` บน server ผู้ใช้จะได้ 403 ทุกคำขอที่ไม่ได้มาจากเครื่อง server เอง (ตั้งแต่ 6 ต.ค. 2026) |
 | `TARGETSUN_READ_ENABLED` | `1` |
 | `TARGETSUN_READ_FALLBACK_FABRIC` | ~~`1`~~ **ไม่มีผลแล้ว** (6 ต.ค. 2026) — ไม่ดึงเป้าจาก Fabric อีก ค่าใน `.env` ถูกเมิน ไม่ต้องแก้/ลบ |
 | `EMPLOYEE_PAYLOAD_CACHE_TTL_SEC` | `3600` |

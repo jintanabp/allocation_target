@@ -325,6 +325,28 @@ def _bind_host_from_argv(argv: list[str] | None = None) -> str | None:
     return "127.0.0.1"  # ค่าเริ่มต้นของ uvicorn
 
 
+# header ที่ reverse proxy ใส่มา — มีอย่างใดอย่างหนึ่ง = คำขอไม่ได้มาจากเครื่องนี้โดยตรง
+_PROXY_HEADERS = ("x-forwarded-for", "x-real-ip", "forwarded", "x-forwarded-host")
+
+
+def request_allowed_without_login(client_host: str | None, headers) -> bool:
+    """
+    ตอนล็อกอินปิดอยู่ (ไม่มี Entra) รับเฉพาะคำขอจากเครื่องนี้เองโดยตรง (ผลตรวจ 5 ต.ค. 2026 ข้อ 7.9)
+
+    ตัวกันตอนสตาร์ทดูได้แค่ `--host` ของ uvicorn — รันผ่าน gunicorn/hypercorn ที่ 0.0.0.0
+    หรือมี proxy อยู่หน้า 127.0.0.1 ก็หลุด แล้วทุกคนที่เข้า URL ได้เป็น dev
+    ตัวนี้ตรวจทุกคำขอจากที่อยู่จริงของ socket + header ของ proxy จึงไม่ขึ้นกับวิธีรัน
+    "testclient" = Starlette TestClient (ที่อยู่ IP จริงจากเครือข่ายเป็นค่านี้ไม่ได้)
+    """
+    host = str(client_host or "").strip().lower()
+    if host not in _LOOPBACK_HOSTS and host != "testclient":
+        return False
+    try:
+        return not any(headers.get(h) for h in _PROXY_HEADERS)
+    except Exception:
+        return False
+
+
 def check_auth_config_at_startup(argv: list[str] | None = None) -> None:
     """
     ล็อกอินต้องไม่ถูกปิดเองโดยไม่มีใครตั้งใจ (ผลตรวจ 28 ก.ย. 2026 §1.4)

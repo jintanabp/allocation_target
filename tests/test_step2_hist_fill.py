@@ -66,6 +66,52 @@ class TestWarehouseSplitKeepsTotals(unittest.TestCase):
         by_wh = {r["warehouse_code"]: r for r in out}
         self.assertAlmostEqual(by_wh["W1"]["hist_avg_6m"], 450.0, places=2)
 
+    def test_6m_split_uses_own_warehouse_weights(self):
+        """7.15: คลังที่ 3 เดือนหลังไม่มียอด แต่ 6/12 เดือนมี ต้องไม่ได้ 0 (เดิม = "ไม่มีประวัติ")"""
+        tga = pd.DataFrame({"emp_id": ["E1", "E1"], "sku": ["A", "A"], "qty": [30, 10],
+                            "warehouse_code": ["W1", "W2"]})
+        rows = [{"emp_id": "E1", "target_sun": 4000.0, "ly_sales": 0.0,
+                 "hist_avg_3m": 400.0, "hist_avg_6m": 600.0, "hist_avg_12m": 1200.0}]
+        avg3 = {("E1", "W1"): 400.0, ("E1", "W2"): 0.0}
+        avg6 = {("E1", "W1"): 300.0, ("E1", "W2"): 100.0}
+        old = {r["warehouse_code"]: r for r in expand_employee_rows(
+            rows, tga, {"A": 100.0}, avg3_amount_by_emp_wh=avg3)}
+        self.assertEqual(old["W2"]["hist_avg_6m"], 0.0)  # พฤติกรรมเดิมเมื่อไม่มีตัวเลขแยกคลัง 6 เดือน
+        new = {r["warehouse_code"]: r for r in expand_employee_rows(
+            rows, tga, {"A": 100.0}, avg3_amount_by_emp_wh=avg3,
+            avg6_amount_by_emp_wh=avg6, avg12_amount_by_emp_wh={})}
+        self.assertAlmostEqual(new["W1"]["hist_avg_6m"], 450.0, places=2)
+        self.assertAlmostEqual(new["W2"]["hist_avg_6m"], 150.0, places=2)
+        # 12 เดือนไม่มีตัวเลขแยกคลัง → ถอยไปใช้น้ำหนัก 3 เดือน ผลรวมยังตรง
+        self.assertAlmostEqual(new["W1"]["hist_avg_12m"] + new["W2"]["hist_avg_12m"], 1200.0, places=2)
+        self.assertAlmostEqual(new["W1"]["hist_avg_12m"], 1200.0, places=2)
+
+
+class TestHistFillModeSurvivesReload(unittest.TestCase):
+    """7.15: ร่าง/ผลบน server จำโหมด「ตั้งตามประวัติ」 — โหลดกลับแล้วป้ายเตือนไม่หาย"""
+
+    def test_store_keeps_known_source_only(self):
+        from backend.services import allocation_store as st
+
+        base = {"sup_id": "SLX", "target_month": 11, "target_year": 2026, "allocations": []}
+        norm = st._validate_body
+        self.assertEqual(norm({**base, "yellow_source": "6m"}).get("yellow_source"), "6m")
+        self.assertNotIn("yellow_source", norm({**base, "yellow_source": "evil"}))
+        self.assertNotIn("yellow_source", norm(base))
+
+    def test_frontend_saves_and_restores(self):
+        with open(os.path.join(REPO, "frontend", "app.js"), encoding="utf-8") as fh:
+            js = fh.read()
+        self.assertIn("yellowSource: S.yellowSource || null", js)
+        self.assertIn("_restoreHistFillMode(draftData.yellowSource)", js)
+        self.assertIn("_restoreHistFillMode(snap.yellow_source)", js)
+        self.assertIn("body.yellow_source = S.yellowSource || null", js)
+        # ต้องคืนหลังล้างเสมอ (ล้างเหตุผลอัตโนมัติก่อน แล้วค่อยคืนโหมด)
+        for tag in ("draftData.yellowSource", "snap.yellow_source"):
+            i = js.index(f"_restoreHistFillMode({tag})")
+            self.assertGreater(i, js.rindex("_clearHistFillMode();", 0, i))
+            self.assertLess(i - js.rindex("_clearHistFillMode();", 0, i), 60)
+
 
 class TestDemoHasHistoryWindows(unittest.TestCase):
     def test_demo_rows_carry_6m_12m(self):

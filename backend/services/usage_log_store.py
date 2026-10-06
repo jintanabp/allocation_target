@@ -8,7 +8,7 @@ import logging
 import os
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 logger = logging.getLogger("target_allocation")
@@ -104,7 +104,57 @@ def append_log(
     with _LOCK:
         with open(path, "a", encoding="utf-8") as f:
             f.write(line + "\n")
+    _prune_once_per_day()
     return row
+
+
+# เก็บบันทึกการใช้งานย้อนหลัง ~13 เดือน (ผลตรวจ 5 ต.ค. 2026 ข้อ 7.12) — เดิมไม่ลบเลย data/ โตไม่หยุด
+# และหน้าแอดมินที่ไม่กรองงวดอ่านทุกไฟล์ทุกครั้ง · 13 เดือน = เทียบงวดเดียวกันปีก่อนได้ + ประวัติส่ง (±3 เดือน) ครบ
+USAGE_LOG_KEEP_DAYS = 400
+_last_prune_day: str | None = None
+
+
+def prune_old_logs(keep_days: int = USAGE_LOG_KEEP_DAYS, *, today: datetime | None = None) -> int:
+    """ลบ usage_YYYY-MM-DD.jsonl ที่เก่ากว่า keep_days (ดูจากวันที่ในชื่อไฟล์) — คืนจำนวนที่ลบ ห้ามทำให้งานหลักพัง"""
+    d = logs_dir()
+    if keep_days <= 0 or not os.path.isdir(d):
+        return 0
+    cutoff = ((today or datetime.now(timezone.utc)) - timedelta(days=int(keep_days))).strftime("%Y-%m-%d")
+    removed = 0
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return 0
+    for fn in names:
+        if not (fn.startswith("usage_") and fn.endswith(".jsonl")):
+            continue
+        stamp = fn[len("usage_"):-len(".jsonl")]
+        try:
+            datetime.strptime(stamp, "%Y-%m-%d")
+        except ValueError:
+            continue  # ชื่อไม่ตรงรูปแบบ — ไม่ใช่ของเรา ไม่แตะ
+        if stamp < cutoff:
+            try:
+                os.remove(os.path.join(d, fn))
+                removed += 1
+            except OSError as e:
+                logger.warning("ลบบันทึกการใช้งานเก่า %s ไม่สำเร็จ: %s", fn, e)
+    if removed:
+        logger.info("ลบบันทึกการใช้งานเก่ากว่า %d วัน: %d ไฟล์", keep_days, removed)
+    return removed
+
+
+def _prune_once_per_day() -> None:
+    """server เปิดค้างเป็นเดือน — ลบของเก่าวันละครั้งตอนเขียน ไม่ต้องรอ restart"""
+    global _last_prune_day
+    day = _today_str()
+    if _last_prune_day == day:
+        return
+    _last_prune_day = day
+    try:
+        prune_old_logs()
+    except Exception as e:  # pragma: no cover
+        logger.warning("ลบบันทึกการใช้งานเก่าไม่สำเร็จ: %s", e)
 
 
 def _infer_role(user: dict[str, Any] | None) -> str:

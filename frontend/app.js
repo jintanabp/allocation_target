@@ -6291,6 +6291,18 @@ function _clearHistFillMode() {
   if ((S.negGrowthReason || "").trim().startsWith(HIST_FILL_REASON_PREFIX)) S.negGrowthReason = "";
 }
 
+/**
+ * คืนโหมด「ตั้งตามประวัติ」ตอนโหลดร่าง/ผลที่บันทึกบน server กลับมา (ผลตรวจ 5 ต.ค. 2026 ข้อ 7.15)
+ * เดิมโหลดกลับแล้วโหมดหาย → ป้าย「ไม่มีประวัติ — กรอกเอง」และกล่องถามก่อนกระจายหายไปด้วย
+ * เรียกหลัง _clearHistFillMode() เสมอ · ค่าที่ไม่รู้จัก (ร่างรุ่นเก่า) = ไม่ทำอะไร
+ */
+function _restoreHistFillMode(key) {
+  const src = HIST_FILL_SOURCES[key];
+  if (!src) return;
+  S.yellowSource = key;
+  if (!(S.negGrowthReason || "").trim()) S.negGrowthReason = `${HIST_FILL_REASON_PREFIX}${src.label}`;
+}
+
 function _histFillSource() {
   return HIST_FILL_SOURCES[S.yellowSource] || null;
 }
@@ -12641,6 +12653,8 @@ async function saveServerAllocationSnapshot(status = "draft", opts = {}) {
       yellow_locked: opts.yellow_locked || S.yellowLocked,
       strategy: opts.strategy != null ? opts.strategy : _strategySummaryTh(_getSelectedStrategies()),
     };
+    // โหมด「ตั้งตามประวัติ」ของเป้าเงินชุดนี้ (7.15) — ส่งเฉพาะตอน yellow คือชุดบนจอ
+    if (!opts.yellow) body.yellow_source = S.yellowSource || null;
     // เป้าเงินที่ตัวกระจายเห็นตอนกระจาย — ส่งเฉพาะตอนหน้าจอ/งวดยังเป็นชุดที่กระจาย
     // (ไม่ส่ง = server คงค่าเดิมไว้) · โหมดรวมภาค/รวมทีมส่งชุดเดียวกันทุกทีม server ตัด
     // ของพนักงานทีมอื่นออกเอง และไม่เขียนทับด้วยชุดว่าง
@@ -13509,6 +13523,7 @@ async function _applyServerAllocationSnapshot(supId, opts = {}) {
   if (snap.yellow && typeof snap.yellow === "object" && !opts.readOnly) {
     Object.assign(S.yellow, snap.yellow);
     _clearHistFillMode();
+    _restoreHistFillMode(snap.yellow_source);
   }
   if (snap.yellow_locked && typeof snap.yellow_locked === "object" && !opts.readOnly) {
     S.yellowLocked = { ...snap.yellow_locked };
@@ -13621,6 +13636,7 @@ function saveDraft(silent = false) {
     histWindowMonths: S.histWindowMonths,
     neverSoldZeroKeys: [...(S.neverSoldZeroKeys || [])],
     lastForceMinOne: !!S.lastForceMinOne,
+    yellowSource: S.yellowSource || null,
   };
   try {
     _persistDraftToLocal(draftKey, draftData);
@@ -13715,6 +13731,7 @@ function checkAndLoadDraft() {
       S.yellow = draftData.yellow || S.yellow;
       S.yellowLocked = draftData.yellowLocked || {};
       _clearHistFillMode();
+      _restoreHistFillMode(draftData.yellowSource);
       S.neverSoldZeroKeys = new Set(Array.isArray(draftData.neverSoldZeroKeys) ? draftData.neverSoldZeroKeys : []);
       S.recentReallocSkus = [];
       S.lastForceMinOne = !!draftData.lastForceMinOne;

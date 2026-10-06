@@ -5,6 +5,7 @@ Uvicorn entrypoint: `uvicorn backend.main:app`
 """
 
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 from pathlib import Path
 
@@ -34,7 +35,9 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("data/app.log", encoding="utf-8"),
+        # หมุนไฟล์ 20 MB × 5 รุ่น (ผลตรวจ 5 ต.ค. 2026 ข้อ 7.12) — เดิม FileHandler โตไม่หยุด
+        # และทำให้ขั้น "สำรอง data/ ทั้งโฟลเดอร์ก่อน deploy" ใหญ่ขึ้นเรื่อย ๆ
+        RotatingFileHandler("data/app.log", maxBytes=20 * 1024 * 1024, backupCount=5, encoding="utf-8"),
     ],
 )
 

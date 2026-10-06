@@ -857,14 +857,15 @@ def load_employees_payload(
                         # ชั้นถอย「เครดิตอย่างเดียว」(ผลตรวจ 1 ต.ค. 2026 ก2): ห้ามเขียนลงแคชกลาง — เดิม merge
                         # กับแคชเดิมแล้ว SKU ใหม่ได้ราคารถเงินสด NaN ค้าง 24 ชม. (ด่านแคชดูแค่แถวแรก)
                         price_credit_only = bool(df_fresh.attrs.get("credit_only"))
-                        if cached_product is not None and not cached_product.empty:
+                        if not price_credit_only:
+                            # อ่านรวม (แม้หมดอายุ) + เขียน ใต้ล็อกเดียว — ไม่ตัดแคชกลางเหลือทีมเดียว (7.4)
+                            merged = fc.merge_product_info_df(target_year, target_month, df_fresh)
+                        elif cached_product is not None and not cached_product.empty:
                             merged = pd.concat([cached_product, df_fresh]).drop_duplicates(
                                 subset=["sku"], keep="last"
                             )
                         else:
                             merged = df_fresh
-                        if not price_credit_only:
-                            fc.write_product_info_df(target_year, target_month, merged)
                         df_sku_base = merged[merged["sku"].astype(str).isin(sku_union)].copy()
                 except Exception as e:
                     logger.warning("get_product_info error: %s", e)
@@ -910,12 +911,8 @@ def load_employees_payload(
                     # หมดอายุไปแล้ว price_latest จะมีแต่ SKU ของทีมนี้ การเขียนทับ
                     # จึงลบราคาของทีมอื่นทิ้งหมด แล้วตัวถอย "ใช้แคชหมดอายุ" ที่ทีมอื่น
                     # ต้องพึ่งตอน Fabric ล่มก็ไม่เหลืออะไรให้ถอยไปใช้
-                    _prev = fc.read_price_map(
-                        target_year, target_month, allow_stale=True
-                    ) or {}
-                    fc.write_price_map(
-                        target_year, target_month, {**_prev, **price_latest}
-                    )
+                    # อ่าน-รวม-เขียนใต้ล็อกเดียว (โหลดรวมภาคหลายเธรด — 7.4)
+                    fc.merge_price_map(target_year, target_month, price_latest)
             except Exception as e:
                 logger.warning(
                     "get_latest_price_per_box_by_sku error: %s — จะลองใช้แคชที่หมดอายุแทน",
@@ -1419,6 +1416,10 @@ def load_employees_payload(
     )
     ly_amount_by_emp_wh: dict[tuple[str, str], float] | None = None
     avg3_amount_by_emp_wh: dict[tuple[str, str], float] | None = None
+    # 6/12 เดือนแยกคลัง (ผลตรวจ 5 ต.ค. 2026 ข้อ 7.15) — เดิมแบ่งด้วยน้ำหนัก 3 เดือน คลังที่ 3 เดือนหลัง
+    # ไม่มียอดจึงขึ้น "ไม่มีประวัติ" ในปุ่มตั้งตามประวัติ 6 เดือน/1 ปี ทั้งที่มียอดในช่วงนั้น
+    # ใช้เป็นน้ำหนักแบ่งคลังอย่างเดียว (ยอดรวมต่อคนยังมาจาก hist_avg_6m/12m เดิม) · ดึงเฉพาะคนหลายคลัง
+    avg_by_emp_wh_n: dict[int, dict[tuple[str, str], float]] = {}
     wh_split_emps = [
         e
         for e, whs in warehouses_per_emp_from_tga(df_tga_granular).items()
@@ -1452,6 +1453,21 @@ def load_employees_payload(
                 }
         except Exception as e:
             logger.warning("3M amount by emp×wh skipped: %s", e)
+        for _n in (6, 12):
+            try:
+                _df_n = fabric.get_sales_amount_by_emp_wh(
+                    target_month, target_year, wh_split_emps, n_months=_n
+                )
+                if not _df_n.empty:
+                    avg_by_emp_wh_n[_n] = {
+                        (str(r["emp_id"]).strip(), str(r.get("warehouse_code") or "").strip()): float(
+                            r.get("hist_amount") or 0.0
+                        )
+                        / float(_n)
+                        for _, r in _df_n.iterrows()
+                    }
+            except Exception as e:
+                logger.warning("%dM amount by emp×wh skipped (ใช้น้ำหนัก 3 เดือนแทน): %s", _n, e)
 
     emp_records = expand_employee_rows(
         _clean(df_emp),
@@ -1459,6 +1475,8 @@ def load_employees_payload(
         price_by_sku,
         ly_amount_by_emp_wh=ly_amount_by_emp_wh,
         avg3_amount_by_emp_wh=avg3_amount_by_emp_wh,
+        avg6_amount_by_emp_wh=avg_by_emp_wh_n.get(6),
+        avg12_amount_by_emp_wh=avg_by_emp_wh_n.get(12),
     )
     emp_records = _enrich_employee_allocation_flags(emp_records, sup_id)
     if emp_moves.get("removed") or emp_moves.get("added"):
