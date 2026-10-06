@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import threading
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -116,6 +117,48 @@ def read_doc() -> dict[str, Any]:
     return {"version": int(data.get("version") or 0), "items": [r for r in items if isinstance(r, dict)]}
 
 
+class FeedbackUnreadable(RuntimeError):
+    """ไฟล์ข้อเสนอแนะมีอยู่แต่อ่านไม่ได้ตอนนี้ — ห้ามเขียนทับ (จะลบข้อความทุกข้อที่เก็บไว้)"""
+
+
+def _read_doc_for_update() -> dict[str, Any]:
+    """
+    อ่านก่อนเขียน — แยก "ไม่มีไฟล์" ออกจาก "อ่านไม่ได้" (ผลตรวจ 5 ต.ค. 2026 ข้อ 7.2)
+
+    เดิมใช้ read_doc ที่คืนก้อนว่างทุกครั้งที่อ่านพลาด แล้วตัวเขียนก็เขียนก้อนนั้นทับ —
+    แค่ antivirus/backup เปิดไฟล์ค้างครั้งเดียว ข้อเสนอแนะทั้งหมดหายเหลือข้อเดียว
+      - ไม่มีไฟล์ → ก้อนว่าง (เริ่มใหม่ได้)
+      - อ่านไม่ได้ชั่วคราว (OSError) → ลองใหม่ 3 ครั้ง ยังไม่ได้ → FeedbackUnreadable (ไม่เขียน)
+      - JSON เสีย → เก็บสำเนาไว้ข้าง ๆ (.corrupt-<เวลา>) แล้วเริ่มใหม่ (ไฟล์เสียอ่านต่อไม่ได้อยู่ดี)
+    แบบเดียวกับ sent_ledger._read_for_update
+    """
+    path = feedback_json_path()
+    last: Exception | None = None
+    for attempt in range(3):
+        if not os.path.isfile(path):
+            return {"version": 0, "items": []}
+        try:
+            with read_locked(path), open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                raise json.JSONDecodeError("ไม่ใช่ object", "", 0)
+            items = data.get("items")
+            items = [r for r in items if isinstance(r, dict)] if isinstance(items, list) else []
+            return {"version": int(data.get("version") or 0), "items": items}
+        except json.JSONDecodeError as e:
+            aside = f"{path}.corrupt-{int(time.time())}"
+            try:
+                os.replace(path, aside)
+            except OSError as e2:
+                raise FeedbackUnreadable(f"ไฟล์ข้อเสนอแนะเสียและย้ายออกไม่ได้: {e2}") from e
+            logger.error("ไฟล์ข้อเสนอแนะเสีย (%s) — เก็บสำเนาไว้ที่ %s แล้วเริ่มใหม่", e, aside)
+            return {"version": 0, "items": []}
+        except OSError as e:
+            last = e
+            time.sleep(0.2 * (attempt + 1))
+    raise FeedbackUnreadable(f"อ่านไฟล์ข้อเสนอแนะไม่ได้: {last}")
+
+
 def _write_doc(doc: dict[str, Any]) -> None:
     path = feedback_json_path()
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -206,7 +249,7 @@ def append_entry(
         "rev": 0,
     }
     with _STORE_LOCK:
-        doc = read_doc()
+        doc = _read_doc_for_update()
         items = doc["items"]
         if _recent_count(items, row["email"]) >= RATE_LIMIT_PER_EMAIL:
             raise FeedbackRateLimited()
@@ -269,7 +312,7 @@ def set_status(
     fid = str(feedback_id or "").strip()
     new_status = norm_status(status)
     with _STORE_LOCK:
-        doc = read_doc()
+        doc = _read_doc_for_update()
         target = next((r for r in doc["items"] if str(r.get("id")) == fid), None)
         if target is None:
             raise ValueError(f"ไม่พบข้อเสนอแนะรหัส {fid}")

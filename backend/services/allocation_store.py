@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import threading
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -137,6 +138,45 @@ def _read_snapshot_unlocked(path: str) -> dict[str, Any] | None:
     return None
 
 
+class SnapshotUnreadable(RuntimeError):
+    """ไฟล์ผลกระจายมีอยู่แต่อ่านไม่ได้ตอนนี้ — ห้ามเขียนทับ (version/สถานะส่งแล้วจะหาย)"""
+
+
+def _read_snapshot_for_update(path: str) -> dict[str, Any] | None:
+    """
+    อ่านก่อนเขียน — แยก "ไม่มีไฟล์" ออกจาก "อ่านไม่ได้" (ผลตรวจ 5 ต.ค. 2026 ข้อ 7.3)
+
+    เดิมใช้ _read_snapshot_unlocked ที่คืน None ทุกครั้งที่อ่านพลาด แล้ว write_snapshot ถือว่า
+    "ยังไม่มีไฟล์" → version กลับเป็น 1 (ด่านกันบันทึกทับของแท็บเก่าพัง) และ target_sun_sent_at หาย
+    (สรุปการใช้งานไม่นับว่าส่งแล้ว)
+      - ไม่มีไฟล์ → None
+      - อ่านไม่ได้ชั่วคราว → ลองใหม่ 3 ครั้ง ยังไม่ได้ → SnapshotUnreadable (ไม่เขียน)
+      - JSON เสีย → เก็บสำเนา .corrupt-<เวลา> แล้วถือว่าไม่มีไฟล์ (ไฟล์เสียอ่านต่อไม่ได้อยู่ดี)
+    """
+    last: Exception | None = None
+    for attempt in range(3):
+        if not os.path.isfile(path):
+            return None
+        try:
+            with read_locked(path), open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                raise json.JSONDecodeError("ไม่ใช่ object", "", 0)
+            return data
+        except json.JSONDecodeError as e:
+            aside = f"{path}.corrupt-{int(time.time())}"
+            try:
+                os.replace(path, aside)
+            except OSError as e2:
+                raise SnapshotUnreadable(f"ไฟล์ผลกระจายเสียและย้ายออกไม่ได้: {e2}") from e
+            logger.error("ไฟล์ผลกระจายเสีย (%s) — เก็บสำเนาไว้ที่ %s", e, aside)
+            return None
+        except OSError as e:
+            last = e
+            time.sleep(0.2 * (attempt + 1))
+    raise SnapshotUnreadable(f"อ่านไฟล์ผลกระจายไม่ได้: {last}")
+
+
 def read_snapshot(sup_id: str, month: int, year: int) -> dict[str, Any] | None:
     with _STORE_LOCK:
         return _read_snapshot_unlocked(allocation_snapshot_path(sup_id, month, year))
@@ -170,7 +210,7 @@ def write_snapshot(
     path = allocation_snapshot_path(row["sup_id"], row["target_month"], row["target_year"])
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with _STORE_LOCK:
-        current = _read_snapshot_unlocked(path)
+        current = _read_snapshot_for_update(path)
         cur_ver = _version_of(current)
         if expected_version is not None:
             if cur_ver != int(expected_version):
@@ -199,7 +239,7 @@ def mark_sent_targetsun(
 ) -> dict[str, Any]:
     # อ่าน+เขียนต้องอยู่ใน lock เดียวกัน ไม่งั้นมีคน save คั่นกลางแล้ว allocations เดิมหาย
     with _STORE_LOCK:
-        existing = _read_snapshot_unlocked(allocation_snapshot_path(sup_id, month, year)) or {}
+        existing = _read_snapshot_for_update(allocation_snapshot_path(sup_id, month, year)) or {}
         # ต้องส่ง expected_version เสมอ ไม่ใช่ None:
         # ถ้าเปิด ALLOC_REQUIRE_IF_MATCH=1 แล้วส่ง None + มี snapshot เดิมอยู่
         # write_snapshot จะโยน SnapshotPreconditionRequired → "ส่ง Target Sun" พังทุกครั้ง

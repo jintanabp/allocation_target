@@ -90,6 +90,11 @@ allocations/{SUP}_{YYYY}_{MM}.json
 read-modify-write ใต้ `_STORE_LOCK` ของตัวเองเช่นกัน — แอดมิน 2 คนกดบันทึกกติกาพร้อมกัน
 คนที่ `rev` ไม่ตรงจะได้ 409 ไม่ใช่ข้อมูลหาย
 
+**อ่านเพื่อแก้ ต้องแยก「ไม่มีไฟล์」กับ「อ่านไม่ได้」** (6 ต.ค. 2026, ผลตรวจ 5 ต.ค. 7.2/7.3):
+`feedback_store._read_doc_for_update` และ `allocation_store._read_snapshot_for_update` ลองอ่าน 3 ครั้ง
+ถ้ายังติด OSError (ไฟล์ถูกล็อกบน Windows ฯลฯ) → raise `FeedbackUnreadable` / `SnapshotUnreadable` → 503 ไม่เขียนทับ ·
+JSON เสีย → ย้ายไป `*.corrupt-<เวลา>` เก็บไว้ แล้วเริ่มใหม่ · ห้ามกลับไปใช้ "อ่านไม่ได้ = เริ่มจากว่าง" ในทางที่เขียนกลับ
+
 ## บันทึกผลกระจาย — optimistic concurrency
 
 `PUT /data/allocations` ใช้ **compare-and-swap** ด้วย `version` (int เพิ่มทีละ 1)

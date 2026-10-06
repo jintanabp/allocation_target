@@ -1693,6 +1693,20 @@ def _fmt_ts_th(ts: Any) -> str:
         return s
 
 
+# Excel ที่ export จากหน้าแอดมินมีข้อความที่ผู้ใช้พิมพ์เอง (บันทึกการใช้งาน ข้อเสนอแนะ ฯลฯ) — ข้อความ
+# ขึ้นต้น = + - @ ห้ามถูกตีความเป็นสูตร (เช่น =HYPERLINK(...) ส่งข้อมูลออกนอกเครื่องตอนเปิดไฟล์)
+# ผลตรวจ 5 ต.ค. 2026 ข้อ 7.8 · xlsxwriter: ปิดการแปลงข้อความเป็นสูตร · openpyxl (สำรอง): เติม ' นำหน้า
+_XLSXWRITER_SAFE = {"options": {"strings_to_formulas": False}}
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _excel_safe_df(df):
+    """สำหรับ openpyxl ที่ไม่มีตัวเลือกปิดสูตร — ข้อความที่ขึ้นต้นเหมือนสูตรเติม ' นำหน้า"""
+    def _fix(v):
+        return "'" + v if isinstance(v, str) and v.startswith(_FORMULA_PREFIXES) else v
+    return df.map(_fix) if hasattr(df, "map") else df.applymap(_fix)
+
+
 def _xlsx_response(rows: list[dict], columns: list[tuple[str, str]], basename: str) -> Response:
     """สร้าง .xlsx จาก rows ตามลำดับ columns (key, หัวตาราง) — ตอบกลับเป็นไฟล์แนบ"""
     import io
@@ -1703,12 +1717,12 @@ def _xlsx_response(rows: list[dict], columns: list[tuple[str, str]], basename: s
     df = pd.DataFrame(data)
     buf = io.BytesIO()
     try:
-        with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+        with pd.ExcelWriter(buf, engine="xlsxwriter", engine_kwargs=_XLSXWRITER_SAFE) as writer:
             df.to_excel(writer, sheet_name="report", index=False)
     except ImportError:
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-            df.to_excel(writer, sheet_name="report", index=False)
+            _excel_safe_df(df).to_excel(writer, sheet_name="report", index=False)
     return Response(
         content=buf.getvalue(),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1879,19 +1893,20 @@ def _xlsx_response_multi(
 
     import pandas as pd
 
-    def _write(writer):
+    def _write(writer, safe=False):
         for name, rows, cols in sheets:
             data = {header: [row.get(key, "") for row in rows] for key, header in cols}
-            pd.DataFrame(data).to_excel(writer, sheet_name=name[:31], index=False)
+            df = pd.DataFrame(data)
+            (_excel_safe_df(df) if safe else df).to_excel(writer, sheet_name=name[:31], index=False)
 
     buf = _io.BytesIO()
     try:
-        with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+        with pd.ExcelWriter(buf, engine="xlsxwriter", engine_kwargs=_XLSXWRITER_SAFE) as writer:
             _write(writer)
     except ImportError:
         buf = _io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-            _write(writer)
+            _write(writer, safe=True)
     total = sum(len(rows) for _, rows, _ in sheets)
     return Response(
         content=buf.getvalue(),
@@ -2497,6 +2512,8 @@ def admin_submit_feedback_from_user(
             app_version=f"{body.app_version} · server {_server_build_version()}".strip(" ·"),
             user_agent=user_agent or "",
         )
+    except feedback_store.FeedbackUnreadable:
+        raise HTTPException(status_code=503, detail="ระบบบันทึกข้อเสนอแนะไม่ว่างชั่วคราว — ลองส่งอีกครั้งในอีกสักครู่")
     except feedback_store.FeedbackRateLimited:
         raise HTTPException(
             status_code=429,
@@ -2557,6 +2574,8 @@ def admin_set_feedback_status(
             handled_by=who,
             expected_rev=body.expected_rev,
         )
+    except feedback_store.FeedbackUnreadable:
+        raise HTTPException(status_code=503, detail="อ่านไฟล์ข้อเสนอแนะไม่ได้ชั่วคราว — ยังไม่ได้บันทึก ลองใหม่อีกครั้ง")
     except feedback_store.FeedbackConflict as e:
         raise HTTPException(
             status_code=409,

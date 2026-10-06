@@ -1791,9 +1791,12 @@ def _lp_optimize(
 
         anchor_term = 0
         if lp_anchor > 0 and dpos:
+            # สินค้าราคา 0 (หาราคาไม่ได้): เทอม "อยู่ใกล้ประวัติ" เคยถูกคูณด้วย 0 จน LP ไม่สนว่าหีบไปตกที่ใคร
+            # → ไปตกคนที่ไม่เคยขายได้ (ผลตรวจ 5 ต.ค. 2026 ข้อ 7.5) · ใช้น้ำหนักขั้นต่ำ 1 บาท/หีบแทน
+            # ไม่กระทบเงิน (ราคาจริงยังเป็น 0 ในเทอมเป้าเงิน) แค่ให้หีบอยู่ตามสัดส่วนประวัติ
             anchor_term = pulp.lpSum(
                 (dpos[(e, s)] + dneg[(e, s)])
-                * float(sku_prices.get(s, 0) or 0)
+                * max(float(sku_prices.get(s, 0) or 0), 1.0)
                 * lp_anchor
                 * _tier_cell_anchor_mult(
                     _norm_sku(s),
@@ -1833,6 +1836,10 @@ def _lp_optimize(
 
         last_status = pulp.LpStatus[prob.status]
         if last_status == "Optimal":
+            break
+        # ลองรอบถัดไป (ขยายกรอบ) เฉพาะตอนโจทย์ "เป็นไปไม่ได้" เท่านั้น — ถ้าหมดเวลา (Not Solved)
+        # รอบใหม่ใหญ่กว่าเดิมก็จะหมดเวลาอีก ผู้ใช้รอ 2 เท่าฟรี → ไป fallback เลย (ผลตรวจ 5 ต.ค. 2026 ข้อ 7.6)
+        if last_status != "Infeasible":
             break
 
     if last_status != "Optimal":

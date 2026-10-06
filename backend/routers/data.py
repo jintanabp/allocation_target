@@ -10,6 +10,7 @@ from ..deps import (
 )
 from ..services.allocation_store import (
     SnapshotConflict,
+    SnapshotUnreadable,
     SnapshotPreconditionRequired,
     delete_snapshot,
     list_summaries,
@@ -508,6 +509,11 @@ def put_allocation_snapshot(
     prev = read_snapshot(sid, body.target_month, body.target_year)
     try:
         saved = write_snapshot(payload, expected_version=expected_version)
+    except SnapshotUnreadable:
+        raise HTTPException(
+            status_code=503,
+            detail="อ่านไฟล์ผลกระจายบน server ไม่ได้ชั่วคราว — ยังไม่ได้บันทึก ลองกดบันทึกอีกครั้งในอีกสักครู่",
+        )
     except SnapshotConflict as e:
         log_from_user(
             user,
