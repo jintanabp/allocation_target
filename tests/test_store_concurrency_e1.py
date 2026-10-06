@@ -381,12 +381,12 @@ class TestStoresAtomicWithRetry(_EnvTmp):
         os.environ["APP_RUNTIME_SETTINGS_PATH"] = p
         flaky = _FlakyReplace(p)
         with mock.patch("os.replace", flaky):
-            data = app_runtime_settings.set_target_read_source("fabric")
+            data = app_runtime_settings.set_target_read_source("targetsun")
         self.assertEqual(flaky.failed, 1)
         want = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
         with open(p, "rb") as f:
             self.assertEqual(f.read(), _text_mode_bytes(want))
-        self.assertEqual(app_runtime_settings.read_settings()["target_read_source"], "fabric")
+        self.assertEqual(app_runtime_settings.read_settings()["target_read_source"], "targetsun")
 
     def test_emp_assignment_reads_locked_and_concurrent_sets_survive(self):
         p = os.path.join(self.d, "emp_assignments.json")

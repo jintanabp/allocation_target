@@ -16,7 +16,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=2026100604" />
+  <link rel="stylesheet" href="style.css?v=2026100605" />
 </head>
 
 <body>
@@ -1496,13 +1496,11 @@
           <div class="admin-card-header">
             <div>
               <h2 class="admin-card__title">แหล่งเป้าหีบ (TGA)</h2>
-              <p class="admin-card__hint">ค่าเริ่มต้น = Target Sun (Oracle) — สลับเป็น Fabric ชั่วคราวได้เมื่อทดสอบ</p>
+              <p class="admin-card__hint">อ่านเป้าจาก Target Sun (Oracle) เท่านั้น — เลิกใช้ Fabric อ่านเป้าแล้ว (ยอดขายย้อนหลัง/ราคายังมาจาก Fabric)</p>
             </div>
           </div>
           <div class="admin-target-source-row">
-            <label class="admin-radio-pill"><input type="radio" name="adminTargetSource" value="targetsun" checked /> Target Sun (Oracle)</label>
-            <label class="admin-radio-pill"><input type="radio" name="adminTargetSource" value="fabric" /> Fabric semantic model</label>
-            <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="adminSaveTargetReadSource()">บันทึก</button>
+            <span class="admin-radio-pill">Target Sun (Oracle)</span>
             <span id="adminTargetSourceHint" class="admin-target-source-hint"></span>
           </div>
           <div class="admin-target-periods-head">
@@ -2150,8 +2148,8 @@
   <script src="vendor/msal-browser.min.js"></script>
   <!-- ตรรกะล้วน (ตัวแปลงเลข/คณิตการเกลี่ย) — ต้องมาก่อน app.js
        ไฟล์นี้มีเทสจริงด้วย node --test tests/logic.test.js -->
-  <script src="logic.js?v=2026100604"></script>
-  <script src="app.js?v=2026100604"></script>
+  <script src="logic.js?v=2026100605"></script>
+  <script src="app.js?v=2026100605"></script>
 </body>
 
 </html>

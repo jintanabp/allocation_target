@@ -121,9 +121,12 @@ def _write_settings_unlocked(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_target_read_source() -> TargetReadSource:
-    src = str(read_settings().get("target_read_source") or "targetsun").strip().lower()
-    if src == "fabric":
-        return "fabric"
+    """
+    เป้าอ่านจาก Target Sun อย่างเดียว (ผู้ใช้ตัดสิน 6 ต.ค. 2026 — ไม่ใช้ Fabric อ่านเป้าแล้ว)
+
+    ไฟล์ app_runtime.json บน server อาจยังจด "fabric" ไว้จากการสลับทดสอบครั้งก่อน — เมินค่านั้น
+    (ไม่ต้องไปแก้ไฟล์บน server) · ยอดขายย้อนหลัง/ราคายังดึงจาก Fabric ตามเดิม ไม่เกี่ยวกับค่านี้
+    """
     return "targetsun"
 
 
@@ -142,8 +145,9 @@ def get_target_endpoint_config() -> dict[str, Any]:
 
 def set_target_read_source(source: str) -> dict[str, Any]:
     src = str(source or "").strip().lower()
-    if src not in _VALID_SOURCES:
-        raise ValueError("target_read_source ต้องเป็น targetsun หรือ fabric")
+    if src != "targetsun":
+        # ตัวเลือก Fabric ถูกเอาออกแล้ว (6 ต.ค. 2026)
+        raise ValueError("อ่านเป้าได้จาก Target Sun เท่านั้น — เลิกใช้ Fabric อ่านเป้าแล้ว")
     with _LOCK:
         data = read_settings_unlocked()
         data["target_read_source"] = src

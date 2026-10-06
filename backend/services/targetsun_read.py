@@ -58,13 +58,25 @@ def get_target_read_source() -> str:
     return _src()
 
 
+_FALLBACK_ENV_WARNED = False
+
+
 def fallback_to_fabric() -> bool:
-    return os.environ.get("TARGETSUN_READ_FALLBACK_FABRIC", "1").strip().lower() not in (
-        "0",
-        "false",
-        "no",
-        "off",
-    )
+    """
+    อ่านเป้าจาก Target Sun ไม่ได้ → หันไปดึงเป้าจาก Fabric แทน? — **ปิดถาวรแล้ว** (ผู้ใช้ตัดสิน 6 ต.ค. 2026)
+
+    ไม่ใช้ Fabric อ่านเป้าแล้ว (ยอดขายย้อนหลัง/ราคายังมาจาก Fabric ตามเดิม) · เดิมค่าเริ่มต้นเปิด และ
+    เอกสาร IT ให้ตั้ง TARGETSUN_READ_FALLBACK_FABRIC=1 ไว้ใน .env — Target Sun ล่มชั่วคราวเมื่อไร
+    ระบบเอาเป้าจาก Fabric (ที่ไม่ได้ดูแลแล้ว) มาใช้เงียบ ๆ ผู้ใช้ไม่รู้ว่าตัวเลขมาจากไหน
+    ตอนนี้: อ่าน Target Sun ไม่ได้ = บอกผู้ใช้ให้ลองใหม่ · ค่าใน .env ถูกเมิน (ไม่ต้องไปแก้ .env)
+    """
+    global _FALLBACK_ENV_WARNED
+    if not _FALLBACK_ENV_WARNED and os.environ.get("TARGETSUN_READ_FALLBACK_FABRIC", "").strip().lower() in (
+        "1", "true", "yes", "on",
+    ):
+        _FALLBACK_ENV_WARNED = True
+        logger.info("TARGETSUN_READ_FALLBACK_FABRIC ใน .env ถูกเมินแล้ว — ไม่ดึงเป้าจาก Fabric อีก (6 ต.ค. 2026)")
+    return False
 
 
 def _read_base_url() -> str:

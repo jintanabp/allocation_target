@@ -16892,51 +16892,21 @@ async function adminLoadTargetReadSource() {
       if (hint) hint.textContent = data.detail || "โหลดการตั้งค่าไม่สำเร็จ";
       return;
     }
-    const src = data.source === "fabric" ? "fabric" : "targetsun";
-    document.querySelectorAll('input[name="adminTargetSource"]').forEach((el) => {
-      el.checked = el.value === src;
-    });
+    // อ่านเป้าจาก Target Sun อย่างเดียวแล้ว (6 ต.ค. 2026) — ตัวเลือก Fabric เอาออก
+    const src = "targetsun";
     S.targetReadSource = src;
-    S.targetsunReadEnabled = src === "targetsun";
+    S.targetsunReadEnabled = data.targetsun_read_enabled !== false;
     syncStep3LiveTargetsBtn();
     if (hint) {
-      hint.textContent = src === "targetsun"
-        ? "ใช้งานอยู่: Target Sun"
-        : "ใช้งานอยู่: Fabric semantic model";
+      hint.textContent = S.targetsunReadEnabled
+        ? "ใช้งานอยู่"
+        : "ปิดการอ่าน Target Sun อยู่ (TARGETSUN_READ_ENABLED) — แจ้ง IT";
     }
     adminRenderTargetPeriods(data.target_periods);
     adminRenderTargetEndpoints(data);
   } catch (e) {
     if (hint) hint.textContent = e.message || "โหลดการตั้งค่าไม่สำเร็จ";
     if (periodsBox) periodsBox.innerHTML = `<span class="admin-inv-muted">${escapeHtml(e.message || "โหลดงวดไม่สำเร็จ")}</span>`;
-  }
-}
-
-async function adminSaveTargetReadSource() {
-  const picked = document.querySelector('input[name="adminTargetSource"]:checked');
-  const source = picked?.value === "fabric" ? "fabric" : "targetsun";
-  const hint = document.getElementById("adminTargetSourceHint");
-  try {
-    const res = await fetchWithTimeout(`${API_BASE_URL}/admin/settings/target-source`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source }),
-    }, 15000);
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || "บันทึกไม่สำเร็จ");
-    S.targetReadSource = source;
-    S.targetsunReadEnabled = source === "targetsun";
-    syncStep3LiveTargetsBtn();
-    if (hint) {
-      hint.textContent = source === "targetsun"
-        ? "บันทึกแล้ว — ใช้ Target Sun"
-        : "บันทึกแล้ว — ใช้ Fabric";
-    }
-    toast("บันทึกแหล่งเป้าหีบแล้ว", "green");
-    adminLoadTargetReadSource();
-  } catch (e) {
-    toast(e.message || "บันทึกไม่สำเร็จ", "red");
-    if (hint) hint.textContent = e.message || "";
   }
 }
 

@@ -3027,7 +3027,7 @@ def admin_cache_refresh(
 
 
 class TargetReadSourceBody(BaseModel):
-    source: Literal["targetsun", "fabric"]
+    source: Literal["targetsun"]  # ตัวเลือก fabric เอาออกแล้ว (6 ต.ค. 2026)
 
 
 @router.get("/settings/target-source")

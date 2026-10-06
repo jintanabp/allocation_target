@@ -1,7 +1,7 @@
 # 📦 Target Allocation Dashboard
 
 ระบบกระจายเป้ายอดขาย (หีบ) ให้พนักงานขายรายคน  
-ดึงข้อมูลจาก **Microsoft Fabric** · เป้าจาก **TGA (semantic model)** · คำนวณด้วย OR Engine · **ส่งผลเข้าระบบเป้า TargetSun (SPC)** หรือดาวน์โหลด Excel
+ดึงยอดขายย้อนหลัง/ราคาจาก **Microsoft Fabric** · เป้าอ่านจาก **Target Sun** อย่างเดียว (เลิกอ่านเป้าจาก Fabric 6 ต.ค. 2026) · คำนวณด้วย OR Engine · **ส่งผลเข้าระบบเป้า TargetSun (SPC)** หรือดาวน์โหลด Excel
 
 **การใช้งานจริง:** พัฒนาแล้ว **push ขึ้น GitHub** → server บริษัท deploy อัตโนมัติ — ผู้ใช้เปิด URL บน server (ไม่ต้องติดตั้งแอปบนเครื่องตัวเอง) · ดู [Deploy ผ่าน GitHub → Server บริษัท](#deploy-ผ่าน-github--server-บริษัท-แนวทางหลัก)
 
@@ -599,7 +599,7 @@ git จึงเป็นช่องทางเดียวที่จะส�
 | ล็อกอิน Microsoft ไม่ได้ (redirect) | Redirect URI ใน Entra ไม่ตรง URL จริง | เพิ่ม URL แอปบน server ใน App registration (SPA) |
 | Fabric / ดึงข้อมูลไม่ได้ | secret / workspace / dataset ผิดบน server | ตรวจ `config/.env`; รัน `python scripts/dev/test_powerbi_access.py` บน server |
 | Dashboard ขึ้น error เชื่อมต่อ | แอปไม่รันหรือ reverse proxy ผิด | เช็ค `/health`; ตรวจพอร์ตและ service |
-| Step 1 โหลดไม่ได้ / เป้าว่าง | Fabric ไม่ตอบหรือไม่มีเป้า TGA งวดนั้น | ตรวจ dataset / งวด; ดู `data/app.log` และ `GET /debug/fabric` (ถ้าเปิด) |
+| Step 1 โหลดไม่ได้ / เป้าว่าง | Target Sun ไม่ตอบ (ไม่หันไป Fabric แล้ว) หรือไม่มีเป้างวดนั้น (วันที่ 1–14 ตารางว่างเป็นปกติ) · Fabric ไม่ตอบ = ไม่มียอดขายย้อนหลัง/ราคา | ตรวจ dataset / งวด; ดู `data/app.log` และ `GET /debug/fabric` (ถ้าเปิด) |
 | Dropdown Supervisor ว่าง | ไม่มีสิทธิ / hierarchy ไม่ตรง / รหัสใหม่ยังไม่มีทีม | ตรวจ `user_access.json`, `access_hierarchy.json`; ใช้ **ผูกรหัส SL** ถ้าเป็นรหัสใหม่แทนเก่า |
 | ล็อกอินรหัส SL ใหม่แล้วไม่มีทีม | ยังไม่ผูกกับรหัสเก่า หรือ Fabric ไม่มีพนักงานใต้ SuperCode นั้น | แอดมิน → **ผูกรหัส SL** (เช่น SL524 → SL508) · เลือก Supervisor ที่มีพนักงานจริง (เช่น SL532) |
 | แท็บสินค้าในแอดมินว่าง / 422 | server เก่าหรือยังไม่มีเป้างวด | **รีสตาร์ท server** หลัง deploy; แท็บ SKU ใช้งวดปัจจุบันอัตโนมัติ |
