@@ -349,11 +349,19 @@ class TellsTheUserWhatHappened(unittest.TestCase):
         self.assertIn('"never_sold_summary": never_sold_summary_all', self.py)
 
     def test_both_paths_read_it(self):
-        """ทีมเดียวกับรวมภาคเป็นคนละเส้นทาง — พลาดเส้นไหนเส้นนั้นจะเงียบ"""
-        self.assertIn("S.neverSoldSummary =", self.js)
-        i = self.js.index("const neverSold = {}")
-        self.assertIn("never_sold_summary", self.js[i : i + 500], "เส้นรวมภาคต้องรวมทุกทีม")
-        self.assertIn("S.neverSoldSummary = neverSold;", self.js)
+        """
+        ทีมเดียวกับรวมภาคเป็นคนละเส้นทาง — พลาดเส้นไหนเส้นนั้นจะเงียบ
+        เดิมค้นข้อความใน 500 ตัวอักษร (พังเมื่อมีคนเพิ่มบรรทัดข้างบน) — ตอนนี้รันฟังก์ชันจริง
+        ทั้งสองเส้นทางใน tests/js/optimize_meta.test.js (OPEN_ITEMS 8.5)
+        """
+        import shutil
+        import subprocess
+
+        if not shutil.which("node"):
+            self.skipTest("ไม่มี node ในเครื่องนี้")
+        js = os.path.join(os.path.dirname(os.path.abspath(__file__)), "js", "optimize_meta.test.js")
+        r = subprocess.run(["node", js], capture_output=True, text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
     def test_the_panel_actually_shows_it(self):
         """บทเรียน 8 ก.ย. — มีฟังก์ชันแต่ไม่มีใครเรียก = ฟีเจอร์ตายเงียบ"""

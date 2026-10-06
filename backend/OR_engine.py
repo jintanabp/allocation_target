@@ -353,7 +353,7 @@ def allocate_boxes(
 
     _LP_STRATEGIES = frozenset({"L3M", "L6M", "LY", "LP"})
     base_map: dict[tuple[str, str], int] = {}
-    opt_meta: dict[str, bool] = {"optimization_fallback": False}
+    opt_meta: dict[str, bool] = {"optimization_fallback": False, "lp_time_limited": False}
     # history_only=True: ข้ามชั้นเงินทั้งหมด (LP + greedy revenue balancer ด้านล่าง —
     # ตัวนั้นถูก gate ด้วย "if ... base_map" อยู่แล้ว จึงข้ามอัตโนมัติเมื่อ base_map
     # ไม่ถูกตั้งตรงนี้) กระจายด้วย _proportional ตรง ๆ ตามสัดส่วนประวัติล้วน ๆ
@@ -472,6 +472,7 @@ def allocate_boxes(
             even_skus=even_skus,
         )
     df_expanded.attrs["optimization_fallback"] = opt_meta.get("optimization_fallback", False)
+    df_expanded.attrs["lp_time_limited"] = opt_meta.get("lp_time_limited", False)
     # ส่งแผนกติกาไม่เคยขายกลับไปด้วย — โหมดหลายกลยุทธ์มีรอบเกลี่ยเงินอีกรอบหลังรวมผล
     # (`_post_merge_revenue_balance`) ถ้าไม่บอกมัน มันจะยกหีบกลับเข้าช่องที่เพิ่งตัดไป
     df_expanded.attrs["never_sold_zero_pairs"] = never_sold_zero_pairs
@@ -1841,6 +1842,14 @@ def _lp_optimize(
         # รอบใหม่ใหญ่กว่าเดิมก็จะหมดเวลาอีก ผู้ใช้รอ 2 เท่าฟรี → ไป fallback เลย (ผลตรวจ 5 ต.ค. 2026 ข้อ 7.6)
         if last_status != "Infeasible":
             break
+
+    # PuLP ติดป้าย "Optimal" ให้ผลที่ CBC หยุดเพราะหมดเวลาด้วย (sol_status = 2 "Solution Found")
+    # ผลใช้ได้ (ผ่านทุกเงื่อนไข ยอดหีบตรงเป้า) แต่ยังไม่ใช่คำตอบที่ดีที่สุด กดใหม่อาจได้ตัวเลขต่างเล็กน้อย
+    # — บอกผู้ใช้ (แบบสำรวจ R9 / OPEN_ITEMS 6.2) แทนที่จะเงียบแล้วให้เข้าใจว่าระบบสุ่ม
+    if last_status == "Optimal" and getattr(prob, "sol_status", None) == pulp.LpSolutionIntegerFeasible:
+        logger.warning("LP หยุดที่เวลา %ds — ใช้คำตอบที่ดีที่สุดที่หาได้ (ยังไม่พิสูจน์ว่าดีที่สุด)", time_limit)
+        if _meta is not None:
+            _meta["lp_time_limited"] = True
 
     if last_status != "Optimal":
         logger.warning(

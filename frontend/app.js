@@ -977,6 +977,7 @@ let S = {
   salesUnitBySup: {},
   /** รหัสทีมที่ตก fallback (โหมดรวมภาค) — ว่างแปลว่าไม่มี */
   optimizationFallbackSups: [],
+  lpTimeLimitedSups: [],
   /** ทีมที่กระจายไม่สำเร็จรอบล่าสุด (โหมดรวมภาค) */
   regionalFailedSups: [],
   // ล็อกที่ server ตัดทิ้งรอบล่าสุด — ห้ามยัดกลับเข้าผลลัพธ์ ต้องบอกผู้ใช้แทน
@@ -5197,6 +5198,7 @@ const _SKU_WARNING_TYPES_WITH_SECTION = new Set([
   "emp_mismatch", "employees_excluded_no_tga", "employees_excluded_van_code", "employees_hidden_no_target",
   "employees_shown_ly_no_target", "history_all_zero", "no_history", "no_target", "no_tga_employee",
   "sold_only_skus_excluded", "tga_period_no_data", "tga_period_not_updated", "wh_split_active", "zero_total",
+  "new_sku_maybe_recoded",
 ]);
 
 function _showSkuWarnings() {
@@ -5400,6 +5402,14 @@ function _showSkuWarnings() {
     if (genericMsg.length > 0) {
       html += `<div style="margin-top:6px;color:var(--text-3);font-size:11px;">${genericMsg.map(w => escH(_friendlyMsg(w.message))).join(" ")}</div>`;
     }
+    html += `</li>`;
+  }
+
+  // สินค้ามีเป้าแต่ทีมไม่เคยขายเลย 2 ปี — อาจเป็นรหัสใหม่แทนรหัสเก่า (แบบสำรวจ D5 / OPEN_ITEMS 6.4)
+  const maybeRecoded = warnings.filter(w => w.type === "new_sku_maybe_recoded");
+  if (maybeRecoded.length > 0) {
+    html += `<li><strong>สินค้าที่ไม่เคยขายเลย — อาจเป็นรหัสใหม่แทนรหัสเก่า?</strong><br>`;
+    html += _warningLinesHtml(maybeRecoded);
     html += `</li>`;
   }
 
@@ -6825,6 +6835,7 @@ function _applyOptimizeMetaFromJson(json) {
   const rs = Number(json.revenue_scale);
   S.revenueScale = Number.isFinite(rs) && rs > 0 ? rs : 1;
   S.optimizationFallback = !!json.optimization_fallback;
+  S.lpTimeLimitedSups = json.lp_time_limited ? [""] : [];
   S.droppedLocks = Array.isArray(json.dropped_locks) ? json.dropped_locks : [];
   S.histFallbacks = Array.isArray(json.hist_fallbacks) ? json.hist_fallbacks : [];
   S.neverSoldSummary =
@@ -6858,6 +6869,7 @@ function _applyOptimizeMetaFromSups(metaBySup) {
   const flexSkus = new Set();
   const newSkus = new Set();
   const fallbackSups = [];
+  const timeLimitedSups = [];
   const scales = [];
   let months = 0;
   let strictCount = 0;
@@ -6871,6 +6883,7 @@ function _applyOptimizeMetaFromSups(metaBySup) {
   for (const [supId, json] of entries) {
     if (!json) continue;
     if (json.optimization_fallback) fallbackSups.push(supId);
+    if (json.lp_time_limited) timeLimitedSups.push(supId);
     // แต่ละทีมปิดกติกาด้วยเหตุผลคนละอย่างได้ (ถูกสั่งปิด / ไม่มีประวัติ 12 เดือน)
     // เก็บไว้ทั้งหมดแล้วค่อยยุบตอนขึ้นข้อความ — ยุบตรงนี้จะเหลือทีมเดียวเหมือนบั๊ก R3 เดิม
     if (json.never_sold_off_reason) {
@@ -6933,6 +6946,7 @@ function _applyOptimizeMetaFromSups(metaBySup) {
   // ทีมไหนก็ได้ที่ตก fallback ต้องยังเตือน
   S.optimizationFallback = fallbackSups.length > 0;
   S.optimizationFallbackSups = fallbackSups;
+  S.lpTimeLimitedSups = timeLimitedSups;
   S.droppedLocks = droppedLocks;
   S.histFallbacks = [...histFallbacks];
 }
@@ -7992,6 +8006,15 @@ function syncStep3ReviewNotes() {
     const where = fbSups.length ? ` (ทีม: ${fbSups.join(", ")})` : "";
     lines.push(
       `ระบบใช้การเกลี่ยสัดส่วนแทนการปรับแบบ LP${where} — ตรวจผล SKU ที่มี ⚠ หรือเป้าหีบไม่ตรง`
+    );
+  }
+  // CBC หยุดที่เวลา (OPEN_ITEMS 6.2 / แบบสำรวจ R9): ผลถูกต้องครบ แต่กดใหม่อาจได้ตัวเลขต่างเล็กน้อย
+  const tlSups = Array.isArray(S.lpTimeLimitedSups) ? S.lpTimeLimitedSups : [];
+  if (tlSups.length) {
+    const named = tlSups.filter(Boolean);
+    lines.push(
+      `ระบบคำนวณไม่ทันเวลาที่กำหนด${named.length ? ` (ทีม: ${named.join(", ")})` : ""}`
+      + " — ใช้คำตอบที่ดีที่สุดที่หาได้ ยอดหีบรวมตรงเป้า แต่ถ้ากดคำนวณใหม่ ตัวเลขรายคนอาจต่างเล็กน้อย"
     );
   }
   const failedSups = Array.isArray(S.regionalFailedSups) ? S.regionalFailedSups : [];

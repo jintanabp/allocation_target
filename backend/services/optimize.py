@@ -1628,6 +1628,7 @@ def run_optimization_service(
     distinct_strategies = {s for s in brand_map.values() if s}
     multi_strategy_run = False
     optimization_fallback = False
+    lp_time_limited = False  # CBC หยุดที่เวลาแต่ได้คำตอบ (OPEN_ITEMS 6.2)
     # แผนกติกาไม่เคยขายของทุกกลุ่มกลยุทธ์รวมกัน — ใช้กันรอบเกลี่ยเงินหลังรวมผล
     # ยกหีบกลับเข้าช่องที่เพิ่งตัดไป
     never_sold_pairs_all: set = set()
@@ -1735,6 +1736,8 @@ def run_optimization_service(
             )
             if df_alloc_grp.attrs.get("optimization_fallback"):
                 optimization_fallback = True
+            if df_alloc_grp.attrs.get("lp_time_limited"):
+                lp_time_limited = True
             never_sold_pairs_all |= set(df_alloc_grp.attrs.get("never_sold_zero_pairs") or ())
             never_sold_summary_all.update(df_alloc_grp.attrs.get("never_sold_summary") or {})
             alloc_parts.append(df_alloc_grp)
@@ -1786,6 +1789,7 @@ def run_optimization_service(
             never_sold_known_emps=never_sold_known_emps,
         )
         optimization_fallback = bool(df_allocation.attrs.get("optimization_fallback"))
+        lp_time_limited = bool(df_allocation.attrs.get("lp_time_limited"))
         never_sold_pairs_all |= set(df_allocation.attrs.get("never_sold_zero_pairs") or ())
         never_sold_summary_all.update(df_allocation.attrs.get("never_sold_summary") or {})
 
@@ -2057,6 +2061,7 @@ def run_optimization_service(
         "tier_strict_sku_count": max(0, len(df_sku) - len(tier_flex_skus)) if req.tiered_allocation else 0,
         "revenue_scale": round(_revenue_scale_factor(df_emp_targets, df_sku), 6),
         "optimization_fallback": optimization_fallback,
+        "lp_time_limited": lp_time_limited,
         # ใครถูกตัดเพราะอยู่ในรายชื่อ「ไม่ต้องตั้งเป้า」— หน้าเว็บเอาไปบอกผู้ใช้
         # ไม่งั้นจะเห็นแค่ว่าคนหายไปจากตาราง แล้วเข้าใจว่าเป็นบั๊กแบบเดียวกับ C442
         "no_target_excluded": dropped_no_target,

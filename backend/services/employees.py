@@ -31,6 +31,54 @@ from ..core.tga_period import (
     enforce_tga_selection_matches_effective_window,
 )
 
+def maybe_recoded_sku_warning(
+    new_skus: list[str],
+    detection_mode: str,
+    df_sku: pd.DataFrame,
+    linked_canon_skus: set[str],
+    *,
+    max_list: int = 12,
+) -> dict | None:
+    """
+    เตือนในขั้นที่ 1: สินค้ามีเป้าแต่ทั้งทีมไม่เคยขายเลยทั้งปีนี้และปีที่แล้ว (แบบสำรวจ D5 / OPEN_ITEMS 6.4)
+
+    ถ้าเป็น "รหัสใหม่ที่มาแทนรหัสเก่า" ระบบมองไม่เห็นประวัติของรหัสเก่า → กระจายแบบเฉลี่ย/ตามกติกาไม่เคยขาย
+    ซึ่งผู้ใช้เห็นเป็น "คำนวณไม่ได้" · ทางแก้มีอยู่แล้ว (แอดมินผูกรหัสในหน้าแอดมิน) แต่ผู้ใช้ไม่รู้
+    ผู้ใช้เลือก (6 ต.ค. 2026): แค่เตือน + บอกทางแก้ ไม่เพิ่มขั้นตอน/ปุ่มใหม่
+
+    - ใช้เฉพาะผลจากไฟล์ยอดรายปี (cy_ly) — ผลสำรอง (ยอด 3/6 เดือน = 0) จับสินค้าตามฤดูกาลผิดเยอะ
+    - ข้าม SKU ที่ผูกรหัสเก่าไว้แล้ว (แจ้งในหัวข้อ sku_linked_history อยู่แล้ว)
+    """
+    if detection_mode != "cy_ly" or not new_skus:
+        return None
+    linked = {str(s).strip() for s in (linked_canon_skus or set())}
+    skus = [str(s).strip() for s in new_skus if str(s).strip() and str(s).strip() not in linked]
+    if not skus:
+        return None
+    names: dict[str, str] = {}
+    if df_sku is not None and not df_sku.empty and "sku" in df_sku.columns:
+        for col in ("product_name_thai", "product_name_english"):
+            if col in df_sku.columns:
+                for s, n in zip(df_sku["sku"].astype(str).str.strip(), df_sku[col]):
+                    n = str(n or "").strip()
+                    if n and n.lower() != "nan" and s not in names:
+                        names[s] = n
+    shown = [f"{s} {names[s]}" if s in names else s for s in skus[:max_list]]
+    more = f" และอีก {len(skus) - max_list} รายการ" if len(skus) > max_list else ""
+    return {
+        "type": "new_sku_maybe_recoded",
+        "sku": "",
+        "brand": "",
+        "skus": skus,
+        "message": (
+            f"สินค้า {len(skus)} รายการมีเป้า แต่ทั้งทีมไม่มียอดขายเลยทั้งปีนี้และปีที่แล้ว: "
+            + ", ".join(shown) + more
+            + " — ถ้าเป็นรหัสใหม่ที่มาแทนรหัสเก่า ให้แจ้งแอดมินผูกรหัสเก่า (หน้าแอดมิน → แท็บ「ผูกรหัส SKU」) "
+            "แล้วโหลดขั้นที่ 1 ใหม่ ระบบจะใช้ยอดขายของรหัสเก่ากระจายให้ · ถ้าเป็นสินค้าใหม่จริง ไม่ต้องทำอะไร"
+        ),
+    }
+
+
 _SKU_OUTPUT_COLUMNS = [
     "sku",
     "price_per_box",
@@ -1407,6 +1455,11 @@ def load_employees_payload(
     new_product_skus, new_products_detection_mode = detect_new_product_skus(
         sup_id, target_year, sku_ids_list, df_hist
     )
+    _w = maybe_recoded_sku_warning(
+        new_product_skus, new_products_detection_mode, df_sku, set(linked_skus)
+    )
+    if _w:
+        sku_warnings.append(_w)
 
     price_by_sku = dict(
         zip(
