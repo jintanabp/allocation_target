@@ -262,6 +262,21 @@ def _scope_rows(admin: dict, rows: list[dict[str, Any]]) -> list[dict[str, Any]]
     return [r for r in rows if row_is_in_admin_scope(r, scope)]
 
 
+def _editor_label(admin: dict) -> str:
+    """
+    ค่า「แก้โดย」(updated_by) ที่จดลงไฟล์ตั้งค่าฝั่งแอดมิน (OPEN_ITEMS 8.4 — ผลตรวจ 6 ต.ค. 2026 ค3)
+
+    ระหว่าง「ดูแทน」 admin["email"] คือคนที่ถูกจำลอง — เดิมจดแค่อีเมลนั้น ย้อนดูทีหลังจะเข้าใจว่า
+    เจ้าของบัญชีแก้เอง · ตอนนี้จด "คนกดจริง (ดูแทน คนที่ถูกจำลอง)" · ไม่ได้ดูแทน = อีเมลตัวเองเหมือนเดิม
+    updated_by ในไฟล์พวกนี้ใช้แสดงผลอย่างเดียว ไม่มีที่ไหนเอาไปเทียบสิทธิ์
+    """
+    email = str(admin.get("email") or admin.get("preferred_username") or "").strip()
+    acting = str(admin.get("acting_admin_email") or "").strip()
+    if acting and acting.lower() != email.lower():
+        return f"{acting} (ดูแทน {email})" if email else acting
+    return email
+
+
 def _audit_admin(
     admin: dict,
     action: str,
@@ -835,7 +850,7 @@ def create_sku_link(
             alias_skus=body.alias_skus or [canon],
             product_name=body.product_name,
             note=body.note,
-            updated_by=email,
+            updated_by=_editor_label(admin),
         ), None
 
     saved, _ = mutate_links(_apply)
@@ -871,7 +886,7 @@ def update_sku_link(
                 nr["product_name"] = str(body.product_name or nr.get("product_name") or "").strip()
                 nr["note"] = str(body.note if body.note is not None else nr.get("note") or "").strip()
                 if email:
-                    nr["updated_by"] = email
+                    nr["updated_by"] = _editor_label(admin)
                 out.append(nr)
             else:
                 out.append(dict(row))
@@ -1060,7 +1075,7 @@ def create_sl_link(
             canonical_sl=old,
             alias_sls=[old, *new_sls],
             note=body.note,
-            updated_by=email,
+            updated_by=_editor_label(admin),
         ), None
 
     saved, _ = mutate_sl_links(_apply)
@@ -1106,7 +1121,7 @@ def update_sl_link(
                 nr["alias_sls"] = [new_old, *new_sls]
                 nr["note"] = str(body.note if body.note is not None else nr.get("note") or "").strip()
                 if email:
-                    nr["updated_by"] = email
+                    nr["updated_by"] = _editor_label(admin)
                 out.append(nr)
             else:
                 out.append(dict(row))
@@ -1534,7 +1549,7 @@ def admin_set_no_target_employees(
     rows = no_target_store.set_for_supervisor(
         sup,
         body.emp_ids,
-        updated_by=admin.get("email") or "",
+        updated_by=_editor_label(admin),
         notes=body.notes,
         names=body.names,
     )
@@ -2784,7 +2799,7 @@ def admin_put_permissions(
     try:
         saved = admin_permissions_store.write_roles(
             body.roles,
-            updated_by=str(admin.get("email") or ""),
+            updated_by=_editor_label(admin),
             updated_at=_now_iso_utc(),
         )
     except ValueError as e:
@@ -2872,7 +2887,7 @@ def admin_set_emp_assignment(
             from_sup=from_sup,
             emp_name=body.emp_name,
             note=body.note,
-            updated_by=str(admin.get("email") or ""),
+            updated_by=_editor_label(admin),
         )
     except ValueError as e:
         raise HTTPException(400, detail=str(e)) from e
@@ -3209,7 +3224,7 @@ def admin_put_alloc_rules(
             enabled=body.enabled,
             push_multiple=body.push_multiple,
             disabled_sups=body.disabled_sups,
-            updated_by=str(admin.get("email") or ""),
+            updated_by=_editor_label(admin),
             expected_rev=body.expected_rev,
         )
     except alloc_rules_store.AllocRulesConflict:
@@ -3310,7 +3325,7 @@ def admin_put_warehouse_pin_rules(
     try:
         after = warehouse_pin_rules_store.write_rules(
             [r.model_dump() for r in body.rules],
-            updated_by=str(admin.get("email") or ""),
+            updated_by=_editor_label(admin),
             expected_rev=body.expected_rev,
         )
     except warehouse_pin_rules_store.WarehousePinRulesConflict:
@@ -3411,7 +3426,7 @@ def put_nightly_check(body: NightlyCheckBody, admin: dict = Depends(require_admi
     email = str(admin.get("email") or "").strip()
     saved = nightly_check.write_settings(enabled=body.enabled, hour=body.hour,
                                          keep_months=body.keep_months, closing_hour=body.closing_hour,
-                                         updated_by=email)
+                                         updated_by=_editor_label(admin))
     _audit_admin(admin, "admin_nightly_check_settings",
                  f"ตั้งค่าตรวจ Target Sun รายคืน: {'เปิด' if saved['enabled'] else 'ปิด'} เวลา {saved['hour']:02d}:00"
                  f" · รอบปิดงวด {saved['closing_hour']:02d}:00",

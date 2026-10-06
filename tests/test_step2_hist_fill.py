@@ -132,6 +132,9 @@ class TestFrontendRules(unittest.TestCase):
         with open(os.path.join(REPO, "frontend", "index.html"), encoding="utf-8") as fh:
             cls.html = fh.read()
 
+    # ตรรกะการแบ่ง/คนไม่มีประวัติ/คลิกไม่ล็อก/รวมภาค ย้ายไปรันจริงที่ tests/js/hist_fill.test.js (8.5)
+    # ที่เหลือข้างล่างคือสิ่งที่ตรวจด้วยการรันไม่ได้ง่าย ๆ (ปุ่มใน HTML, ชื่อฟิลด์, ลำดับใน runOptimization)
+
     def test_four_buttons_exist(self):
         for key in ("3m", "6m", "12m", "ly"):
             self.assertIn(f"fillYellowFromHistory('{key}')", self.html)
@@ -140,13 +143,6 @@ class TestFrontendRules(unittest.TestCase):
     def test_sources_map_to_backend_fields(self):
         for field in ("hist_avg_3m", "hist_avg_6m", "hist_avg_12m", "ly_sales"):
             self.assertIn(f'field: "{field}"', self.js)
-
-    def test_no_history_is_not_auto_filled(self):
-        """ผู้ใช้เลือก (5 ต.ค. 2026): คนไม่มีประวัติได้ 0 แล้วกรอกเอง — ห้ามแบ่งเท่าให้"""
-        i = self.js.index("async function fillYellowFromHistory")
-        body = self.js[i: i + 3000]
-        self.assertIn("AppLogic.shareTotalByWeights", body)
-        self.assertNotIn("spreadIncrease", body)
 
     def test_run_asks_before_allocating_with_zero_rows(self):
         i = self.js.index("async function runOptimization")
@@ -172,17 +168,6 @@ class TestFrontendRules(unittest.TestCase):
         i = self.js.index("S._step2CtxKey !== _step2Ctx")
         self.assertIn('S.negGrowthReason = "";', self.js[i: i + 200])
         self.assertIn("S.buiDeductions = {};", self.js[i: i + 200])
-
-    def test_blur_without_change_does_not_lock(self):
-        i = self.js.index("function onYellowChange(")
-        body = self.js[i: i + 4000]
-        self.assertLess(body.index("< 0.005"), body.index("S.yellowLocked[akey] = true;"))
-
-    def test_multi_team_split_stays_inside_each_team(self):
-        i = self.js.index("async function fillYellowFromHistory")
-        body = self.js[i: i + 3500]
-        self.assertIn("_supervisorCodeForAllocRow(e)", body)
-        self.assertIn("teams.length > 1", body)
 
     def test_stale_drift_reply_is_dropped(self):
         i = self.js.index("async function checkTargetSunDrift")

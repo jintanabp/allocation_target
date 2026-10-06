@@ -10,6 +10,7 @@ from ..OR_engine import (
     _CAP_MULTIPLIER,
     _DEFAULT_HIST_BAND_PCT,
     _TIER_FLEX_BAND_PCT,
+    _annotate_hist_deviation,
     _TIER_STRICT_BAND_PCT,
     _baseline_map_from_df,
     _flex_skus_by_target_value,
@@ -859,7 +860,37 @@ def _post_merge_revenue_balance(
         ),
         axis=1,
     )
-    return df_out
+    return _refresh_hist_deviation_after_move(df_allocation, df_out)
+
+
+def _refresh_hist_deviation_after_move(df_before: pd.DataFrame, df_after: pd.DataFrame) -> pd.DataFrame:
+    """
+    ป้าย ±% เทียบประวัติต้องคิดจากหีบสุดท้าย (OPEN_ITEMS 8.6 — ผลตรวจ 6 ต.ค. 2026)
+
+    โหมดหลายวิธี: ป้าย (hist_dev_pct/status) ถูกคิดในแต่ละกลุ่มวิธีก่อนรวมผล แล้วตัวเกลี่ยเงินหลังรวมผล
+    ย้ายหีบต่อ ป้ายจึงค้างค่าก่อนย้าย — จอโชว์ "ok" ทั้งที่ช่องนั้นห่างประวัติเกินกรอบแล้ว (หรือกลับกัน)
+    คิดใหม่เฉพาะช่องที่หีบเปลี่ยน ด้วย baseline เดิมของช่องนั้น (ของกลุ่มวิธีที่ช่องนั้นสังกัด)
+    ช่องที่ไม่ถูกย้าย (รวม SKU แบ่งเท่า/EVEN/PUSH ที่ตัวเกลี่ยไม่แตะ) คงป้ายเดิมทุกตัว
+    """
+    if "baseline_boxes" not in df_after.columns or "hist_dev_status" not in df_after.columns:
+        return df_after
+    changed = (
+        pd.to_numeric(df_before["allocated_boxes"], errors="coerce").fillna(0).astype(int).values
+        != pd.to_numeric(df_after["allocated_boxes"], errors="coerce").fillna(0).astype(int).values
+    )
+    if not changed.any():
+        return df_after
+    sub = df_after.loc[changed]
+    base_map = {
+        (str(r["emp_id"]).strip(), _norm_sku(r["sku"])): int(pd.to_numeric(r["baseline_boxes"], errors="coerce") or 0)
+        for _, r in sub.iterrows()
+    }
+    redone = _annotate_hist_deviation(sub, base_map, band_pct=_DEFAULT_HIST_BAND_PCT)
+    out = df_after.copy()
+    out["hist_dev_pct"] = out["hist_dev_pct"].astype(object)
+    for col in ("hist_dev_pct", "hist_dev_status"):
+        out.loc[changed, col] = redone[col].values
+    return out
 
 
 def _merge_partial_result(
