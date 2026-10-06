@@ -217,3 +217,9 @@ test("shareTotalByWeights — ทุกคนไม่มีประวัต�
   assert.equal(L.shareTotalByWeights(500, [0, 0]), null);
   assert.equal(L.shareTotalByWeights(500, []), null);
 });
+
+test("shareTotalByWeights — wholeBaht ปัดบาทเต็ม ผลรวมยังตรง", () => {
+  const out = L.shareTotalByWeights(1000.5, [1, 1, 1], { wholeBaht: true });
+  assert.deepEqual(out.slice(1), [333, 333]);
+  assert.equal(Math.round(out.reduce((a, b) => a + b, 0) * 100), 100050);
+});

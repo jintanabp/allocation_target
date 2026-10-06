@@ -60,5 +60,20 @@ class TestLogTargetPeriod(unittest.TestCase):
         self.assertEqual(len(uls.read_logs(target_year=2026, target_month=1, action="send_targetsun")), 1)
 
 
+
+class TestAdminLogScreenUsesWriteDate(TestLogTargetPeriod):
+    """ผลตรวจ 6 ต.ค. 2026 ข2: หน้าบันทึกการใช้งานทั่วไปกรองตามวันที่เขียนเหมือนเดิม"""
+
+    def test_admin_action_for_old_period_shows_in_the_month_it_happened(self):
+        self._write("2026-10-03", [{"ts": "2026-10-03T01:00:00Z", "action": "admin_baseline_restore",
+                                    "sup_id": "SL1", "target_month": 5, "target_year": 2026}])
+        self.assertEqual(len(uls.read_logs(target_year=2026, target_month=10)), 1)
+
+    def test_non_object_json_line_is_skipped(self):
+        with open(os.path.join(self._tmp.name, "usage_2026-10-03.jsonl"), "w", encoding="utf-8") as f:
+            f.write("[1, 2]\n42\n" + json.dumps({"ts": "x", "action": "login", "level": "info"}) + "\n")
+        self.assertEqual(len(uls.read_logs(date="2026-10-03", level="info")), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

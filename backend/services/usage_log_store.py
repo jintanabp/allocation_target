@@ -254,7 +254,12 @@ def read_logs(
     # ขึ้น「ยังไม่เคยส่ง」ส่วนหน้างวด 10 กลับเห็นการส่งของงวด 11 · ตอนนี้อ่านไฟล์ช่วงกว้าง
     # รอบงวดนั้น แล้วคัดตามงวดที่ติดมากับแต่ละรายการ · รายการที่ไม่มีงวดติดมา (log เก่า/
     # เหตุการณ์ที่ไม่ผูกงวด) ใช้เดือนของไฟล์แบบเดิม จะได้ไม่หายจากจอ
-    by_period = target_year is not None and target_month is not None and not date
+    # ใช้กับประวัติการส่ง Target Sun เท่านั้น — หน้า「บันทึกการใช้งาน」ทั่วไปของแอดมินยังกรองตามวันที่
+    # เขียน (เดิมกรองตามงวดทั้งหมด รายการที่งวดห่างจากวันที่เขียนเกิน 3 เดือนหายจากทุกเดือน — ผลตรวจ 6 ต.ค. ข2)
+    by_period = (
+        target_year is not None and target_month is not None and not date
+        and want_action.startswith("send_targetsun")
+    )
     if by_period:
         want_period = (int(target_year), int(target_month))
         paths = _log_paths_around_period(*want_period)
@@ -280,6 +285,9 @@ def read_logs(
                     try:
                         row = json.loads(line)
                     except json.JSONDecodeError:
+                        continue
+                    # บรรทัดที่เป็น JSON แต่ไม่ใช่ object (เช่น list/ตัวเลข) — เดิมล้มที่ row.get ทั้งหน้าจอ
+                    if not isinstance(row, dict):
                         continue
                     if want_level and str(row.get("level") or "").lower() != want_level:
                         continue

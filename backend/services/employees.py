@@ -1493,7 +1493,10 @@ def load_employees_payload(
         "data_from_cache": False,
         "data_cached_at": None,
     }
-    write_cached_employee_payload(sup_id, target_month, target_year, payload)
+    # ผลที่คิดด้วยราคาเครดิตแทนราคาเงินสด (ดึงราคาเงินสดไม่ได้รอบนี้) ห้ามจำไว้ 1 ชม.
+    # ไม่งั้นทีมรถเงินสดกดโหลดใหม่ตามที่ป้ายบอกก็ยังได้เป้าเงินจากราคาเครดิตเดิม (ผลตรวจ 6 ต.ค. 2026 ค4)
+    if not (price_credit_only and str(sales_unit or "").strip().upper()[:1] == "C"):
+        write_cached_employee_payload(sup_id, target_month, target_year, payload)
     return payload
 
 

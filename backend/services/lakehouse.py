@@ -1115,6 +1115,94 @@ def _clear_no_target_employees_in_tga(
     return pd.concat([df, pd.DataFrame(extra)], ignore_index=True), sorted(cleared)
 
 
+def _key_of_row(emp, sku, salestype, division, area, province, warehouse) -> str:
+    """คีย์เต็มแบบเดียวกับ import_row_key_series — ใช้เทียบแถวในไฟล์กับแถวที่ต้องล้าง"""
+    return "|".join([
+        str(sku or "").strip(), str(emp or "").strip(), _cell_str(salestype), _cell_str(division),
+        _areacode_str(area), _cell_str(province), _cell_str(warehouse),
+    ])
+
+
+def _clear_leftover_rows_outside_round(
+    df: pd.DataFrame, sup_id: str, month: int, year: int,
+) -> tuple[pd.DataFrame, int]:
+    """
+    ส่ง 0 ไปทับทุกแถวของทีมที่ Target Sun จะ "ค้าง" ไว้หลังส่งรอบนี้ (ผลตรวจ 6 ต.ค. 2026 ก1/ก2)
+
+    ด่านทุกด่านตรวจว่า "ไฟล์ที่ส่ง = เป้า" แต่ Target Sun เก็บแถวเก่าที่ไฟล์ไม่ได้ทับไว้เสมอ
+    ยอดในระบบปลายทางจึงเป็น "ไฟล์ + แถวค้าง" — สองทางที่เคยหลุด:
+      ก1 พนักงานที่มีแถวเป้าเดิมแต่ไม่ได้อยู่ในรอบนี้เลย (เช่นเป้าเงิน 0 เพราะสินค้าไม่มีราคา)
+         ตัวล้างเดิม (_clear_stale_employee_sku_rows_in_tga) ดูเฉพาะคนที่อยู่ในไฟล์
+         จำลอง: เป้า A=10 → หลังส่ง A=14
+      ก2 แถวที่ "เราสร้างเอง" ตอนส่งรอบก่อน (ไม่อยู่ใน grain ขั้นที่ 1) แล้วรอบนี้คู่นั้นได้ 0
+         ถูกตัดทิ้งเป็น "แถวใหม่เปล่า" — จำลอง: เป้า B=4 → หลังส่งรอบสอง B=7
+
+    แหล่งแถวที่อาจค้าง: grain ของทีมนี้เอง (แถวเป้าตอนโหลดขั้นที่ 1) + sent ledger (ทุกคีย์ที่เคยส่ง
+    ของทีม×งวดนี้) · ดูเฉพาะสินค้าที่อยู่ในรอบนี้ (ส่งแยกแบรนด์ = ไม่แตะสินค้าแบรนด์อื่น)
+    **ไม่แตะ** คู่พนักงาน×สินค้าที่อยู่ในไฟล์แล้ว (คนละคลัง = ด่านคลังซ้ำถามผู้ใช้เอง) และ
+    พนักงานที่อยู่หลายทีมในงวดนี้ (แถวของเขาอาจเป็นของอีกทีม) · แถว 0 ไม่เปลี่ยนยอดในไฟล์
+    """
+    if df is None or df.empty:
+        return df, 0
+    sid = str(sup_id or "").strip().upper()
+    round_skus = set(df["sku"].astype(str).str.strip()) - {""}
+    if not round_skus:
+        return df, 0
+    present_pairs = set(zip(df["emp_id"].astype(str).str.strip(), df["sku"].astype(str).str.strip()))
+
+    cands: dict[str, dict] = {}
+
+    def _add(emp, sku, st, dv, ar, pv, wh):
+        emp, sku = str(emp or "").strip(), str(sku or "").strip()
+        if not emp or not sku or sku not in round_skus or (emp, sku) in present_pairs:
+            return
+        k = _key_of_row(emp, sku, st, dv, ar, pv, wh)
+        cands.setdefault(k, {
+            "emp_id": emp, "sku": sku, "allocated_boxes": 0,
+            "salestype": _cell_str(st), "divisioncode": _cell_str(dv), "areacode": _areacode_str(ar),
+            "provincecode": _cell_str(pv), "warehouse_code": _cell_str(wh),
+        })
+
+    try:
+        dg = _read_tga_grain_cache(sid, int(month), int(year))
+    except Exception:
+        dg = pd.DataFrame()
+    if dg is not None and not dg.empty and {"emp_id", "sku"} <= set(dg.columns):
+        for r in dg.to_dict("records"):
+            _add(r.get("emp_id"), r.get("sku"), r.get("salestype", ""), r.get("divisioncode", ""),
+                 r.get("areacode", ""), r.get("provincecode", ""), r.get("warehouse_code", ""))
+    try:
+        from . import sent_ledger
+
+        led = sent_ledger.read_ledger(sid, int(month), int(year)) or {}
+    except Exception:
+        led = {}
+    for k, v in (led.get("rows") or {}).items():
+        try:
+            if int((v or {}).get("qty") or 0) <= 0:
+                continue
+        except (TypeError, ValueError):
+            continue
+        parts = (str(k).split("|") + [""] * 7)[:7]
+        sku, emp, st, dv, ar, pv, wh = parts
+        _add(emp, sku, st, dv, ar, pv, wh)
+
+    if not cands:
+        return df, 0
+    teams = employee_teams_in_period(int(month), int(year), {c["emp_id"] for c in cands.values()})
+    shared = {e for e, ts in teams.items() if len(ts) > 1}
+    rows = [c for c in cands.values() if norm_emp_code(c["emp_id"]) not in shared]
+    if shared:
+        logger.warning("ไม่ล้างแถวค้างของพนักงานที่อยู่หลายทีม %s: %s", sid, sorted(shared)[:20])
+    if not rows:
+        return df, 0
+    logger.info(
+        "ล้างแถวค้างนอกรอบนี้ %s: %d แถว %d คน (ส่งหีบ 0 ไปทับ — กันยอดใน Target Sun เกินเป้า)",
+        sid, len(rows), len({r["emp_id"] for r in rows}),
+    )
+    return pd.concat([df, pd.DataFrame(rows)], ignore_index=True), len(rows)
+
+
 def _clear_stale_employee_sku_rows_in_tga(
     df: pd.DataFrame,
     sup_id: str,
@@ -1529,6 +1617,9 @@ def _own_sent_boxes_by_sku(sup_id: str, month: int, year: int) -> dict[str, int]
     """
     ยอดหีบต่อ SKU ที่ระบบเราส่งเข้า Target Sun ครั้งล่าสุดของทีม×งวด (จาก sent ledger) — ใช้แยก
     "Target Sun เปลี่ยนเพราะเราส่งเอง" ออกจาก "เป้าต้นทางเปลี่ยน" · ledger ของปลายทางอื่น = ไม่นับ
+
+    ใช้ได้เฉพาะเมื่อการส่งครั้งล่าสุดของทีมนี้เป็น "ส่งรวมหลายทีม" (มี send_batch_id) — ข้อยกเว้นนี้มีไว้
+    ให้ส่งชุดรวมภาคซ้ำหลังล้มกลางทาง (ผลตรวจ 1 ต.ค. ข1) ถ้าครั้งล่าสุดเป็นการส่งทีมเดียว คืนว่าง
     """
     from . import sent_ledger
     from .targetsun_endpoints import targetsun_endpoints_summary
@@ -1539,6 +1630,9 @@ def _own_sent_boxes_by_sku(sup_id: str, month: int, year: int) -> dict[str, int]
     except Exception:
         return {}
     if not led.get("rows") or not led.get("import_url") or led.get("import_url") != url:
+        return {}
+    sends = led.get("sends") or []
+    if not sends or not str((sends[-1] or {}).get("send_batch_id") or "").strip():
         return {}
     out: dict[str, int] = {}
     for k, v in (led.get("rows") or {}).items():
@@ -1555,6 +1649,7 @@ def assert_target_snapshot_is_fresh(
     *,
     emp_codes: list[str] | None = None,
     live_by_sku: dict[str, int] | None = _UNSET,  # type: ignore[assignment]
+    send_batch_id: str | None = None,
 ) -> None:
     """
     บล็อกเมื่อเป้าใน Target Sun เปลี่ยนไปหลังจากผู้ใช้โหลดข้อมูลขั้นที่ 1
@@ -1609,7 +1704,10 @@ def assert_target_snapshot_is_fresh(
         # ทีมที่ลงแล้วถือยอดหลังย้ายหีบข้ามทีม (เช่น 60 → 70) ส่งทั้งชุดซ้ำต้องผ่าน ไม่งั้นผู้ใช้ค้าง
         # และถ้าหันไปโหลดขั้นที่ 1 ใหม่ เป้ารวมภาคจะกลายเป็นยอดที่ผิด (ทีมที่ลงแล้ว + ทีมที่ยังค้างค่าเก่า)
         # ยอมรับเฉพาะ SKU ที่ยอดสดเท่ากับที่ ledger จดว่าเราส่งครั้งล่าสุดพอดี — คนอื่นแก้เป้า = ยังบล็อก
-        own = _own_sent_boxes_by_sku(sup_id, month, year)
+        #
+        # ต้องเป็น "ส่งรวมหลายทีมซ้ำ" ทั้งสองฝั่งเท่านั้น (ผลตรวจ 6 ต.ค. 2026 ก3) — เดิมไม่ดูว่ามาจากรอบไหน
+        # หลังส่งรวมภาค A=70/B=30 ใครเปิดจอเก่าแล้วส่งทีม A เดี่ยว 60 ผ่านด่านนี้ ภาคเหลือ 90 จาก 100
+        own = _own_sent_boxes_by_sku(sup_id, month, year) if str(send_batch_id or "").strip() else {}
         if own:
             drifts = [d for d in drifts if int(own.get(d["sku"], -1)) != int(d["current_boxes"])]
     if not drifts:
@@ -3104,6 +3202,15 @@ def _build_tga_upload_dataframe(
 
     if df.empty:
         raise HTTPException(400, detail="ไม่มีข้อมูล allocations สำหรับส่งออก")
+
+    # เฉพาะเส้นทางส่งจริง (เหมือนตัวล้างแถวค้างอื่น) — ทำหลังตัดแถวใหม่เปล่า/ตัด SKU ที่ส่งไม่ครบแล้ว
+    # จึงเห็น "คู่ที่หายไปจากไฟล์" จริง ๆ (ผลตรวจ 6 ต.ค. 2026 ก1/ก2)
+    leftover_cleared = 0
+    if drop_incomplete_rows:
+        df, leftover_cleared = _clear_leftover_rows_outside_round(
+            df, req.sup_id, int(req.target_month), int(req.target_year)
+        )
+        stale_rows_cleared += leftover_cleared
 
     df, merged_dupes = _merge_duplicate_import_keys(df)
     if merged_dupes:

@@ -42,3 +42,19 @@ if (key(out) !== "SLA|X|9,SLA|Y|1") fails.push("ทีมเดียว: ได
 
 if (fails.length) { console.error(fails.join("\n")); process.exit(1); }
 console.log("ok");
+
+// ผลตรวจ 6 ต.ค. 2026 ก4: ทีมที่ถูกข้ามเพราะเป้าสินค้านั้นเป็น 0 แล้ว ต้องไม่เก็บหีบเก่าไว้
+{
+  const fails2 = [];
+  const tgt = { SLA: { X: 10 }, SLB: { X: 0 } };
+  const targetOf = (t, sku) => (tgt[t] ? Number(tgt[t][sku]) || 0 : null);
+  const out2 = ctx.merge(cur, [{ team: "SLA", emp_id: "A1", sku: "X", allocated_boxes: 10 }],
+    new Set(["X"]), true, teamOf, targetOf);
+  if (key(out2) !== "SLA|X|10,SLA|Y|1,SLB|X|0,SLB|Y|2") fails2.push("เป้า 0 ต้องได้ 0 ได้ " + key(out2));
+  // ทีมที่ไม่รู้เป้า (กระจายไม่สำเร็จ / ไม่มีข้อมูล) คงค่าเดิม
+  const out3 = ctx.merge(cur, [{ team: "SLA", emp_id: "A1", sku: "X", allocated_boxes: 10 }],
+    new Set(["X"]), true, teamOf, () => null);
+  if (key(out3) !== "SLA|X|10,SLA|Y|1,SLB|X|4,SLB|Y|2") fails2.push("ไม่รู้เป้าต้องคงค่าเดิม ได้ " + key(out3));
+  if (fails2.length) { console.error(fails2.join("\n")); process.exit(1); }
+  console.log("ok (ก4)");
+}

@@ -150,9 +150,13 @@ class TestEmployeeMovedBetweenSupervisors(_TempData):
                 drop_incomplete_rows=True,
             )
         self.assertEqual(dropped, 0)
-        self.assertEqual(len(out), 1, "ต้องได้แถวเดียว ไม่ใช่แบ่งครึ่งไปเขตเก่ากับเขตใหม่")
-        self.assertEqual(int(out["QUANTITYCASE"].iloc[0]), 10)
-        self.assertEqual(out["AREACODE"].iloc[0], "20")
+        # แถวของ E1 (มีเป้าเดิมในทีมเจ้าของ แต่รอบนี้ไม่ได้หีบ) ถูกส่ง 0 ไปล้าง — ผลตรวจ 6 ต.ค. 2026 ก1
+        e1 = out[out["SALESMANCODE"] == "E1"]
+        self.assertEqual(list(e1["QUANTITYCASE"].astype(int)), [0])
+        e9 = out[out["SALESMANCODE"] == "E9"]
+        self.assertEqual(len(e9), 1, "ต้องได้แถวเดียว ไม่ใช่แบ่งครึ่งไปเขตเก่ากับเขตใหม่")
+        self.assertEqual(int(e9["QUANTITYCASE"].iloc[0]), 10)
+        self.assertEqual(e9["AREACODE"].iloc[0], "20")
 
     def test_the_owning_teams_own_grain_always_wins(self):
         """ทีมเจ้าของก้อนรู้จักคนนี้อยู่แล้ว = ไม่ต้องไปถามไฟล์ทีมอื่นเลย"""

@@ -201,7 +201,9 @@ def demo_employees(sup_id: str = DEMO_SUP_ID) -> list[dict[str, Any]]:
             "target_sun": round(target_sun, 2),
             "has_tga_rows": True,
             "allocation_eligible": True,
-            "ly_sales": float(ly),
+            # ยอดปีที่แล้วเดิมเป็นเลขลอยหลักล้าน เทียบเป้าเดือน ~5 หมื่น ทุกคนเติบโต −90% ต้องกรอกเหตุผลทุกครั้ง
+            # เดโมดูน่าตกใจ (ผลตรวจ 6 ต.ค. 2026 ง10) — อิงเป้าเงินของคนนั้น ±10% ให้ใกล้ความจริง
+            "ly_sales": round(target_sun * (0.9 + 0.05 * (ei % 5)), 2) if target_sun else float(ly),
             "hist_avg_3m": round(hist_3m, 2),
             # 6/12 เดือน — สูตรคงที่ให้สัดส่วนต่างจาก 3 เดือนนิดหน่อย จะได้เห็นว่าปุ่ม
             # 「ตั้งตามประวัติ」แต่ละช่วงให้ผลไม่เหมือนกัน

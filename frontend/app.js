@@ -1218,6 +1218,8 @@ function _logTiming(step, ms, detail = "") {
 }
 
 function _formatAllocateDurationRange(lowSec, highSec) {
+  // ทีมเล็กเสร็จในไม่กี่วินาที — เดิมขึ้น "1–2 นาที" เสมอ ผู้ใช้นึกว่าค้าง (ผลตรวจ 6 ต.ค. 2026 ง11)
+  if (Number(highSec) <= 45) return "ไม่กี่วินาที";
   const loMin = Math.max(1, Math.ceil(Number(lowSec) / 60));
   const hiMin = Math.max(loMin + 1, Math.ceil(Number(highSec) / 60));
   return `ประมาณ ${loMin}–${hiMin} นาที`;
@@ -4511,16 +4513,44 @@ function _noTargetEmployees() {
  * เพื่อไม่ให้ทศนิยมลอย และเศษที่ปัดลงยกให้คนเป้าสูงสุด ผลรวมจึงตรงเป๊ะ ไม่ใช่ "เกือบตรง"
  */
 function _redistributeNoTargetShare(yellowMap) {
-  const spareC = Math.round(
-    _noTargetEmployees().reduce((a, e) => a + (Number(e.target_sun) || 0), 0) * 100
-  );
+  // รวมภาค: เงินของคนไม่ต้องตั้งเป้าต้องเกลี่ยให้ "คนในทีมเดียวกัน" ก่อน (ผลตรวจ 6 ต.ค. 2026 ข3)
+  // เดิมเกลี่ยทั้งภาค ยอดเงินทีมที่มีคนไม่ต้องตั้งเป้าไหลไปทีมอื่น ทั้งที่เป้าหีบของทีมยังเท่าเดิม
+  // ทีมที่ไม่มีใครรับได้ (ทุกคนล็อก/ไม่มีคนมีสิทธิ์) → เกลี่ยทั้งภาคแบบเดิม ยอดรวมจะได้ไม่หาย
+  const noTarget = _noTargetEmployees();
+  const eligible = _allocEligibleEmployees();
+  const teamOf = (e) => String(_supervisorCodeForAllocRow(e) || "");
+  const teams = new Set(eligible.map(teamOf));
+  if (teams.size > 1) {
+    let leftoverC = 0;
+    for (const t of new Set(noTarget.map(teamOf))) {
+      const spareT = noTarget.filter(e => teamOf(e) === t)
+        .reduce((a, e) => a + (Number(e.target_sun) || 0), 0);
+      const keysT = eligible.filter(e => teamOf(e) === t)
+        .map(e => _allocKey(e)).filter(k => !(S.yellowLocked || {})[k]);
+      if (!keysT.length) { leftoverC += Math.round(spareT * 100); continue; }
+      _spreadCentsByShare(yellowMap, keysT, Math.round(spareT * 100));
+    }
+    if (leftoverC > 0) {
+      const keysAll = eligible.map(e => _allocKey(e)).filter(k => !(S.yellowLocked || {})[k]);
+      if (keysAll.length) _spreadCentsByShare(yellowMap, keysAll, leftoverC);
+    }
+    return yellowMap;
+  }
+  const spareC = Math.round(noTarget.reduce((a, e) => a + (Number(e.target_sun) || 0), 0) * 100);
   if (spareC <= 0) return yellowMap;
   // ช่องที่ผู้ใช้ล็อกไว้คือเจตนาที่ชัดเจน ห้ามเอาเงินไปโปะทับ (หลักเดียวกับ I2)
   // ถ้าล็อกไว้หมดก็ไม่ทำอะไร แล้วปล่อยให้แถบ "ยอดรวมยังไม่ตรง" บอกผู้ใช้ตามปกติ
-  const keys = _allocEligibleEmployees()
+  const keys = eligible
     .map(e => _allocKey(e))
     .filter(k => !(S.yellowLocked || {})[k]);
   if (!keys.length) return yellowMap;
+  _spreadCentsByShare(yellowMap, keys, spareC);
+  return yellowMap;
+}
+
+/** บวกเงิน spareC (สตางค์) ให้ keys ตามสัดส่วนเป้าเดิม · เศษให้คนเป้าสูงสุด · ทุกคน 0 = แบ่งเท่า */
+function _spreadCentsByShare(yellowMap, keys, spareC) {
+  if (spareC <= 0 || !keys.length) return yellowMap;
 
   const baseC = keys.map(k => Math.round((Number(yellowMap[k]) || 0) * 100));
   const totalC = baseC.reduce((a, b) => a + b, 0);
@@ -4678,7 +4708,7 @@ function applyDataPayload(data) {
   // เหตุผลเติบโตติดลบ + ยอดหักบิวเทรี่ยม เป็นของทีม×งวดนั้น — เดิมติดข้ามไปทีม/เดือนถัดไป
   // แล้วปลดล็อกปุ่มกระจายของอีกทีมด้วยเหตุผลที่ไม่ได้เขียน (ผลตรวจ 5 ต.ค. 2026)
   // โหลดซ้ำทีม×งวดเดิมไม่ล้าง จะได้ไม่เสียของที่ผู้ใช้พิมพ์ไว้
-  const _step2Ctx = `${S.supId || ""}|${S.targetYear || ""}|${S.targetMonth || ""}`;
+  const _step2Ctx = _allocContextKey();
   if (S._step2CtxKey !== _step2Ctx) {
     S.negGrowthReason = "";
     S.buiDeductions = {};
@@ -5009,6 +5039,14 @@ function _warningLinesHtml(warnings) {
   return warnings.map((w) => escH(_friendlyMsg(w.message))).join("<br>");
 }
 
+/** ประเภทคำเตือนที่มีหัวข้อเฉพาะในกล่อง — ที่เหลือไปรวมใน「ข้อมูลเพิ่มเติม」 */
+const _SKU_WARNING_TYPES_WITH_SECTION = new Set([
+  "aggregate_mixed_sales_unit", "aggregate_team_skipped", "cash_price_unavailable", "emp_list_stale",
+  "emp_mismatch", "employees_excluded_no_tga", "employees_excluded_van_code", "employees_hidden_no_target",
+  "employees_shown_ly_no_target", "history_all_zero", "no_history", "no_target", "no_tga_employee",
+  "sold_only_skus_excluded", "tga_period_no_data", "tga_period_not_updated", "wh_split_active", "zero_total",
+]);
+
 function _showSkuWarnings() {
   const warnings = S.skuWarnings || [];
   if (warnings.length === 0) return;
@@ -5217,6 +5255,15 @@ function _showSkuWarnings() {
     html += `<li><strong>เคยขายแต่ไม่มีเป้าเดือนนี้</strong> — ถูกยกเว้นจากการกระจายหีบ:<br>`;
     html += noTarget.map(w => `<code>${escH(w.sku)}</code>`).join(" · ");
     html += `</li>`;
+  }
+
+  // ประเภทที่ไม่มีหัวข้อเฉพาะด้านบน ต้องไม่หายเงียบ (ผลตรวจ 6 ต.ค. 2026 ง1) — เดิมกล่องขึ้นแต่หัวข้อ
+  // ไม่มีเนื้อหา เช่น「รับพนักงานย้ายมา X คน」, โหมดสาธิต, ผูกประวัติรหัสสินค้าเก่า
+  const otherWarnings = warnings.filter(w =>
+    !_SKU_WARNING_TYPES_WITH_SECTION.has(w.type) && w.type !== "aggregate_price_conflict"
+    && String(w.message || "").trim());
+  if (otherWarnings.length > 0) {
+    html += `<li><strong>ข้อมูลเพิ่มเติม</strong><br>${_warningLinesHtml(otherWarnings)}</li>`;
   }
 
   html += `</ul>
@@ -5943,17 +5990,34 @@ function onYellowChange(input) {
     input.value = fmt(val);
     return;
   }
+  // เรียก _allocEligibleEmployees() ครั้งเดียว (เดิมเรียกซ้ำ) — แบ่ง locked/unlocked จากชุดเดียวกัน
+  const allEligible = _allocEligibleEmployees();
+  // รวมภาค: แก้เป้าคนหนึ่ง ส่วนต่างต้องเกลี่ยในทีมเดียวกัน ยอดเงินทีมอื่นไม่ขยับ (ผลตรวจ 6 ต.ค. 2026 ข3)
+  // ทีมนั้นไม่เหลือคนที่ยังไม่ล็อก → เกลี่ยทั้งภาคแบบเดิม (ไม่งั้นยอดรวมไม่ตรงแล้วปุ่มกระจายปิด)
+  const teamOf = (e) => String(_supervisorCodeForAllocRow(e) || "");
+  const editedRow = allEligible.find(e => _allocKey(e) === akey);
+  const multiTeam = new Set(allEligible.map(teamOf)).size > 1;
+  let eligible = allEligible;
+  let scopeTarget = S.totalTarget;
+  if (multiTeam && editedRow) {
+    const team = teamOf(editedRow);
+    const teamRows = allEligible.filter(e => teamOf(e) === team);
+    const teamHasFree = teamRows.some(e => _allocKey(e) !== akey && !S.yellowLocked[_allocKey(e)]);
+    if (teamHasFree) {
+      eligible = teamRows;
+      scopeTarget = teamRows.reduce((acc, e) => acc + (Number(S.yellow[_allocKey(e)]) || 0), 0);
+    }
+  }
+
   S.yellow[akey] = val;
   S.yellowLocked[akey] = true;
   S._step2Dirty = true;
 
-  // เรียก _allocEligibleEmployees() ครั้งเดียว (เดิมเรียกซ้ำ) — แบ่ง locked/unlocked จากชุดเดียวกัน
-  const eligible = _allocEligibleEmployees();
   const lockedRows = eligible.filter(e => S.yellowLocked[_allocKey(e)]);
   const unlockedRows = eligible.filter(e => !S.yellowLocked[_allocKey(e)]);
 
   const lockedSum = lockedRows.reduce((acc, e) => acc + (S.yellow[_allocKey(e)] || 0), 0);
-  let remainingTarget = S.totalTarget - lockedSum;
+  let remainingTarget = scopeTarget - lockedSum;
   if (remainingTarget < 0) remainingTarget = 0;
 
   if (unlockedRows.length > 0) {
@@ -6160,7 +6224,7 @@ async function fillYellowFromHistory(key) {
     const teamTotal = teams.length > 1
       ? idx.reduce((a, i) => a + (Number(S.yellow[_allocKey(rows[i])]) || 0), 0)
       : S.totalTarget;
-    const part = AppLogic.shareTotalByWeights(teamTotal, idx.map(i => _histFillWeight(rows[i], src)));
+    const part = AppLogic.shareTotalByWeights(teamTotal, idx.map(i => _histFillWeight(rows[i], src)), { wholeBaht: true });
     if (!part) {
       // ทีมนี้ไม่มีประวัติเลย — คงค่าเดิมของทีมไว้ ไม่ให้เงินของทีมหายไปทั้งก้อน
       idx.forEach(i => { amounts[i] = Number(S.yellow[_allocKey(rows[i])]) || 0; });
@@ -6175,7 +6239,7 @@ async function fillYellowFromHistory(key) {
   }
   const noHistN = new Set(rows.filter(e => _histFillWeight(e, src) <= 0).map(e => e.emp_id)).size;
   const ok = await _confirmDialog(
-    `จะตั้งเป้าเงิน ${rows.length.toLocaleString("th-TH")} แถว ตามสัดส่วน${src.label}\n`
+    `จะตั้งเป้าเงิน ${new Set(rows.map(e => e.emp_id)).size.toLocaleString("th-TH")} คน ตามสัดส่วน${src.label}\n`
     + `ยอดรวมยังเท่ากับเป้ารวมของระบบ · การล็อกเป้าทั้งหมดจะถูกยกเลิก`
     + (noHistN ? `\n\n⚠️ ${noHistN.toLocaleString("th-TH")} คนไม่มีประวัติขายในช่วงนี้ — จะได้เป้า 0 ต้องกรอกเอง` : ""),
     { title: `ตั้งเป้าตาม${src.label}`, okLabel: "ตั้งเป้าเลย", cancelLabel: "ยกเลิก" }
@@ -6265,7 +6329,17 @@ function updateValidation() {
 /* ══════════════════════════════════════════════
    STEP 3 — RUN AI
 ══════════════════════════════════════════════ */
+/**
+ * ล้างประวัติ Undo เมื่อชุดผลกระจายถูกแทนด้วยชุดใหม่ทั้งชุด (กระจายใหม่ / โหลดเป้าใหม่ / โหลดผลจาก server)
+ * ไม่งั้นกด Undo แล้วได้ผลของเป้าชุดเก่ากลับมา ยอดต่อสินค้าไม่เท่าเป้าปัจจุบัน (ผลตรวจ 6 ต.ค. 2026 ก8)
+ */
+function _resetUndoHistory() {
+  _undoStack = [];
+  _setUndoEnabled();
+}
+
 function _showOptimizeSuccessUi(strategyLabel) {
+  _resetUndoHistory();
   S.targetSunPreviewMode = false;
   syncTargetSunPreviewUi();
   const btn = qs("#runBtn");
@@ -6356,7 +6430,11 @@ let _allocRunInFlight = false;
 
 /** บริบทที่ผลกระจายผูกอยู่ — เปลี่ยนระหว่างรอผล = ทิ้งผลนั้น ห้ามเอาไปลงตาราง/บันทึกของบริบทใหม่ */
 function _allocContextKey() {
-  return [S.supId, S.targetMonth, S.targetYear, S.loginRole === "manager" ? S.managerViewMode : "", S.aggregateMode ? 1 : 0]
+  // ภาค/หน่วยของผู้จัดการต้องอยู่ในคีย์ด้วย (ผลตรวจ 6 ต.ค. 2026 ข4) — เดิมสลับภาค NORTH → SOUTH
+  // ได้คีย์เดียวกัน ผลตรวจเป้าเปลี่ยน/ผลกระจายที่มาช้าของภาคเก่าจึงลงภาคใหม่ได้
+  const mgr = S.loginRole === "manager";
+  return [S.supId, S.targetMonth, S.targetYear, mgr ? S.managerViewMode : "",
+    mgr ? S.managerViewRegion : "", mgr ? S.managerViewUnit : "", S.aggregateMode ? 1 : 0]
     .map((x) => String(x ?? "")).join("|");
 }
 
@@ -7656,8 +7734,12 @@ function _neverSoldOffLines() {
   }
 
   const partial = rows.filter((r) => r?.reason === "hist_missing");
-  if (partial.length) {
-    const sups = [...new Set(partial.flatMap((r) => r.sups || []))];
+  // ทีมที่บอกไปแล้วในบรรทัดบน ไม่ต้องบอกซ้ำ (ผลตรวจ 6 ต.ค. 2026 ง8 — เดิมขึ้นสองบรรทัดเรื่องเดียวกัน)
+  const _toldNoHist = new Set(noHist.map((x) => String(x).toUpperCase()));
+  const partialSups = [...new Set(partial.flatMap((r) => r.sups || []))]
+    .filter((x) => !_toldNoHist.has(String(x).toUpperCase()));
+  if (partial.length && partialSups.length) {
+    const sups = partialSups;
     lines.push(
       `กติกา「ไม่เคยขาย = เป้า 0」ไม่ได้ใช้กับทีม ${sups.join(", ") || "—"} เพราะยังไม่มีประวัติ 12 เดือน`
       + ` (ไม่มีข้อมูลไม่ได้แปลว่าไม่เคยขาย จึงไม่ตัดใครในทีมนั้น) — โหลดข้อมูลขั้นที่ 1 ของทีมนั้นใหม่`
@@ -12697,6 +12779,7 @@ async function refreshDashboardData(forceRefresh = true) {
     toast("สลับเป็นมุมมองรายคนก่อนดึงข้อมูลใหม่", "amber");
     return false;
   }
+  _resetUndoHistory();
   pushGlobalBusy(UX.busyRefreshTeam);
   _setStep1Skeleton(true);
   const gen = _bumpDashboardLoadGen();
@@ -12713,6 +12796,7 @@ async function refreshDashboardData(forceRefresh = true) {
 }
 
 function _syncStateAfterLiveTargets() {
+  _resetUndoHistory();
   S.totalTarget = (S.skus || []).reduce(
     (a, s) => a + (Number(s.price_per_box) || 0) * (Number(s.supervisor_target_boxes) || 0),
     0
@@ -13238,6 +13322,7 @@ async function _fetchServerAllocationSnapshot(supId, opts = {}) {
 }
 
 async function _applyServerAllocationSnapshot(supId, opts = {}) {
+  _resetUndoHistory();
   const snap = opts.snap || await _fetchServerAllocationSnapshot(supId, opts);
   if (!snap) return false;
   S.compositeAllocView = false;
@@ -14875,12 +14960,28 @@ async function runReAllocationOnlyChanged(opts = {}) {
  *
  * SKU ที่กระจายรอบนี้ใช้แถวใหม่ · SKU อื่นคงเดิม · รวมภาค: ทีมที่ไม่อยู่ในผลรอบนี้คงแถวเดิม
  */
-function _mergePartialAllocs(current, part, changedSet, multiTeam, teamOf) {
+function _mergePartialAllocs(current, part, changedSet, multiTeam, teamOf, teamTargetOf) {
   const teamsInPart = new Set((part || []).map((a) => teamOf(a)));
   const keep = (current || []).filter((a) =>
     !changedSet.has(String(a.sku || "").trim())
     || (multiTeam && !teamsInPart.has(teamOf(a))));
-  return [...keep, ...(part || [])];
+  // ทีมที่ถูกข้ามเพราะ "เป้าสินค้านี้ของทีมเป็น 0 แล้ว" ต้องไม่เก็บหีบเก่าไว้ (ผลตรวจ 6 ต.ค. 2026 ก4)
+  // เดิมแถวเก่ายังมีหีบ ปุ่มปรับยอดจึงดึงหีบจากทีมอื่นมาทดให้ยอดภาคตรง — ทีมนี้ได้หีบของสินค้าที่
+  // ไม่มีเป้า อีกทีมขาดเป้า · ทีมที่กระจายไม่สำเร็จ (ไม่รู้เป้าเป็น 0 ไหม) ยังคงค่าเดิมตามเดิม
+  const zeroed = keep.map((a) => {
+    const sku = String(a.sku || "").trim();
+    if (!multiTeam || !changedSet.has(sku) || typeof teamTargetOf !== "function") return a;
+    const t = teamTargetOf(teamOf(a), sku);
+    return t === 0 && Number(a.allocated_boxes) ? { ...a, allocated_boxes: 0 } : a;
+  });
+  return [...zeroed, ...(part || [])];
+}
+
+/** เป้าหีบของทีม×สินค้าจากขั้นที่ 1 — ไม่รู้ (ไม่มีข้อมูลทีมนั้น) คืน null */
+function _teamTargetBoxesOf(supId, sku) {
+  const t = (S.targetBoxesBySup || {})[String(supId || "").toUpperCase()];
+  if (!t) return null;
+  return Number(t[String(sku || "").trim()]) || 0;
 }
 
 async function runReAllocationForSkus(skus, opts = {}) {
@@ -14938,7 +15039,8 @@ async function runReAllocationForSkus(skus, opts = {}) {
     let partKept = _filterAllocationsEligibleOnly(part);
     if (!partKept.length) partKept = part;
     const merged = _mergePartialAllocs(
-      S.allocations || [], partKept, changedSet, !!(S.compositeAllocView || S.aggregateMode), _supervisorCodeForAllocRow
+      S.allocations || [], partKept, changedSet, !!(S.compositeAllocView || S.aggregateMode), _supervisorCodeForAllocRow,
+      _teamTargetBoxesOf
     );
     S.allocations = merged;
     S.recentReallocSkus = [...changedSet];
@@ -19843,13 +19945,11 @@ function _adminFmtTime(iso) {
  */
 async function adminOpenDoc(name) {
   const base = API_BASE_URL.replace(/\/$/, "");
+  // เส้นสาธารณะ /doc/... ถูกปิดแล้ว (ผลตรวจ 6 ต.ค. 2026 ค1 — เอกสารมีรายการจุดอ่อน) เหลือเส้นใต้ /admin
   const pretty = `${base}/doc/${encodeURIComponent(name)}`;
+  const res = null;
   try {
-    // 1) เส้นสวย /doc/... — ใช้ได้เมื่อแอปรับ request ที่รากเอง (เช่นตอนรันในเครื่อง)
-    const res = await fetchWithTimeout(pretty, {}, 15000).catch(() => null);
-    if (res && res.ok) { window.open(pretty, "_blank", "noopener"); return; }
-
-    // 2) เส้นสำรองใต้ /admin ซึ่ง proxy หน้าเซิร์ฟเวอร์ forward ให้อยู่แล้วแน่นอน
+    // เส้นใต้ /admin ซึ่ง proxy หน้าเซิร์ฟเวอร์ forward ให้อยู่แล้วแน่นอน (dev เท่านั้น)
     //    ต้องดึงเองแล้วเปิดเป็น blob เพราะแท็บใหม่ไม่พก Authorization ไปให้
     const viaAdmin = `${base}/admin/doc/${encodeURIComponent(name)}`;
     const res2 = await fetchWithTimeout(viaAdmin, {}, 20000).catch(() => null);
@@ -20885,6 +20985,11 @@ function _adminCanEditRoleRow(r) {
   return cur === "admin";
 }
 
+/** ต้องตรงกับ backend/services/demo_data.py DEMO_EMAILS */
+const _DEMO_ACCOUNT_EMAILS = new Set([
+  "demosuper@sahapat.co.th", "demoadmin@sahapat.co.th", "demosuperwithadmin@sahapat.co.th",
+]);
+
 function adminRenderRolesPanel() {
   const body = document.getElementById("adminRolesBody");
   if (!body) return;
@@ -20940,7 +21045,11 @@ function adminRenderRolesPanel() {
         }
       </td>
       <td class="roles-td-scope">${
-        noScope
+        _DEMO_ACCOUNT_EMAILS.has(String(r.email || "").trim().toLowerCase())
+          // ขอบเขตจริงของบัญชีสาธิตถูกตรึงในโค้ดไว้ที่ทีมสาธิตเสมอ — เดิมจอโชว์「ทุกคนในระบบ」ตามค่าในไฟล์
+          // ทำให้เข้าใจผิด (ผลตรวจ 6 ต.ค. 2026 ง5)
+          ? '<span class="roles-scope-na">บัญชีสาธิต — ดูแลได้เฉพาะทีมสาธิต (ตรึงไว้ในระบบ)</span>'
+          : noScope
           ? '<span class="roles-scope-na">ทั้งระบบ — ไม่มีขอบเขตให้จำกัด</span>'
           : `<select class="roles-select roles-select--scope" aria-label="ขอบเขตของ ${escapeHtml(r.email)}"${canEditThisRow ? "" : " disabled"}>
               ${ADMIN_SCOPE_OPTS.map(

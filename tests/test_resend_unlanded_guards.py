@@ -89,5 +89,69 @@ class TestResendGuards(unittest.TestCase):
         self.assertEqual(out["resent_rows"], 0)
 
 
+
+class TestResendBatchFile(unittest.TestCase):
+    """ผลตรวจ 6 ต.ค. 2026 ก7: ไฟล์จากการส่งรวมภาค (ย้ายหีบข้ามทีม) ต้องส่งซ้ำได้ — เทียบยอดรวมชุด"""
+
+    def _check(self, a_qty, b_qty, targets):
+        import json
+        import tempfile
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        from pathlib import Path
+
+        d = Path(tmp.name)
+        recs = {
+            "SLA": {"sup_id": "SLA", "target_month": 11, "target_year": 2026, "send_batch_id": "B1",
+                    "sent_at": 1, "rows": [_row("W1", a_qty, emp="E1")]},
+            "SLB": {"sup_id": "SLB", "target_month": 11, "target_year": 2026, "send_batch_id": "B1",
+                    "sent_at": 1, "rows": [_row("W1", b_qty, emp="E2")]},
+        }
+        for sid, r in recs.items():
+            (d / f"{sid}.json").write_text(json.dumps(r), encoding="utf-8")
+        with patch.object(ti, "_SENT_DIR", d), \
+             patch("backend.services.lakehouse._sup_target_boxes_by_sku", side_effect=lambda s, m, y: targets[s]):
+            ti._assert_resend_file_still_matches_targets("SLA", 11, 2026, recs["SLA"]["rows"], recs["SLA"])
+
+    def test_boxes_moved_between_teams_still_resendable(self):
+        self._check(70, 30, {"SLA": {"P1": 60}, "SLB": {"P1": 40}})
+
+    def test_batch_total_changed_is_refused(self):
+        with self.assertRaises(HTTPException) as cm:
+            self._check(70, 30, {"SLA": {"P1": 60}, "SLB": {"P1": 45}})
+        self.assertIn("ชุดส่ง 2 ทีม", cm.exception.detail["message"])
+
+
+
+class TestGatewayJsonIsUnknown(unittest.TestCase):
+    """ผลตรวจ 6 ต.ค. 2026 ก9: gateway 502/503/504 ที่ตอบเป็น JSON = ยังไม่รู้ผล (504) ไม่ใช่ "ไม่สำเร็จ" """
+
+    def _post(self, status, body):
+        from unittest.mock import MagicMock
+
+        resp = MagicMock()
+        resp.status_code = status
+        resp.headers = {"Content-Type": "application/json"}
+        resp.text = "{}"
+        resp.json.return_value = body
+        with patch.object(ti.requests, "post", return_value=resp):
+            return ti._post_targetsun_multipart(b"x", "f.xlsx", nrow=1, zero_rows=0, dropped_dims=0,
+                                                not_in_ts=[], import_url="https://uat.x.test/import")
+
+    def test_json_504_is_unknown(self):
+        for status in (502, 503, 504):
+            with self.subTest(status=status):
+                with self.assertRaises(HTTPException) as cm:
+                    self._post(status, {"message": "Gateway Timeout"})
+                self.assertEqual(cm.exception.status_code, 504)
+                self.assertEqual(cm.exception.detail["error_kind"], "gateway_unknown")
+
+    def test_json_400_is_still_failed(self):
+        with self.assertRaises(HTTPException) as cm:
+            self._post(400, {"success": False, "resultMsg": "bad"})
+        self.assertEqual(cm.exception.status_code, 502)
+
+
 if __name__ == "__main__":
     unittest.main()

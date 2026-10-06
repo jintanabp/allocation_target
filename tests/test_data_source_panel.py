@@ -168,3 +168,27 @@ class TestCssLivesAtTheEnd(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDocsAreNotPublic(unittest.TestCase):
+    """ผลตรวจ 6 ต.ค. 2026 ค1: /docs และ /doc/{name} อ่านได้โดยไม่ล็อกอิน — ในนั้นมีรายการจุดอ่อน"""
+
+    def test_public_routes_are_gone(self):
+        from fastapi.testclient import TestClient
+
+        import sys as _sys
+        import os as _os
+
+        _sys.path.insert(0, _os.path.join(REPO, "tests"))
+        import _netguard
+
+        _netguard.install()
+        from backend.main import app
+
+        c = TestClient(app)
+        for path in ("/docs/OPEN_ITEMS.md", "/doc/OPEN_ITEMS", "/docs/system-review-2026-10-06.md"):
+            with self.subTest(path=path):
+                r = c.get(path)
+                self.assertNotIn("งานค้าง", r.text)
+                self.assertNotIn("ผลตรวจ", r.text[:2000] if r.status_code == 200 and "text/markdown" in r.headers.get("content-type", "") else "")
+                self.assertNotEqual(r.headers.get("content-type", "").split(";")[0], "text/markdown")

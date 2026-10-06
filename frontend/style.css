@@ -10800,3 +10800,36 @@ tr.emp-row--no-target .emp-tag {
     transform: none;
   }
 }
+
+/* ── โหมดมืด: ส่วนที่ใช้สีอ่อนตายตัว (ผลตรวจ 6 ต.ค. 2026 ง2) ───────────────────
+   เฉพาะโหมดมืดเท่านั้น — โหมดสว่างที่ผู้ใช้ส่วนใหญ่ใช้หน้าตาเหมือนเดิมทุกอย่าง
+   1) ช่องที่แก้มือในตารางผล: ตัวอักษรสีอ่อนบนพื้นเหลืองอ่อน (คอนทราสต์ ~1.1:1 อ่านไม่ออก)
+   2) กล่อง「เติบโตติดลบ」: พื้นครีมกลางหน้ามืด + ตัวหนังสือน้ำตาลเข้ม/เหลือง */
+:root[data-theme="dark"] .result-box-num.is-edited {
+  background-color: rgba(251, 191, 36, 0.22) !important;
+  color: var(--text-1) !important;
+}
+:root[data-theme="dark"] .neg-growth-card,
+:root[data-theme="dark"] .neg-growth-card__unlock {
+  background: var(--amber-bg);
+}
+:root[data-theme="dark"] .neg-growth-card__title,
+:root[data-theme="dark"] .neg-growth-card__desc,
+:root[data-theme="dark"] .neg-growth-card__label {
+  color: var(--text-1);
+}
+
+/* ปุ่มข้างปุ่มเริ่มคำนวณเคยห่างกันแค่ช่องว่างตัวอักษร (~4px) — เว้นให้กดถูกง่ายขึ้น (ผลตรวจ 6 ต.ค. 2026 ง9) */
+.run-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* หน้า「ผู้ดูแลระบบ」: ดรอปดาวน์สิทธิ์กว้างกว่าช่อง เลยทับคอลัมน์ขอบเขตข้าง ๆ (ผลตรวจ 6 ต.ค. 2026 ง4) */
+#adminView .roles-select {
+  max-width: 100%;
+  box-sizing: border-box;
+}

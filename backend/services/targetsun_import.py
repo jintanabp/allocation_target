@@ -558,7 +558,10 @@ def prepare_targetsun_import(req: LakehouseUploadRequest) -> dict:
 
     # อ่านของจริงมาเทียบว่าเป้ายังไม่ขยับ — ทำที่นี่ไม่ใช่ในตัวสร้างไฟล์
     # เพราะตัวสร้างไฟล์ต้องออฟไลน์ล้วน (ดาวน์โหลด Excel ห้ามยิงเน็ต)
-    assert_target_snapshot_is_fresh(req.sup_id, int(req.target_month), int(req.target_year))
+    assert_target_snapshot_is_fresh(
+        req.sup_id, int(req.target_month), int(req.target_year),
+        send_batch_id=getattr(req, "send_batch_id", None),
+    )
 
     t0 = time.perf_counter()
     content, fname, df, dropped_dims, not_in_ts, shortfall, warehouse_adjusted_pairs = (
@@ -807,6 +810,22 @@ def _post_targetsun_multipart(
         "step": "import",
     }
 
+    if int(r.status_code) in (502, 503, 504):
+        # ตัวกลาง (gateway) ตอบ 502/503/504 แบบ JSON ก็ยังแปลว่า "ไม่รู้ผล" เหมือนแบบ HTML (ผลตรวจ 6 ต.ค. 2026 ก9)
+        # เดิมกลายเป็น 502 "ไม่สำเร็จ" → ลบไฟล์ที่ส่ง ไม่จด ledger ทั้งที่ข้อมูลอาจลงไปแล้ว
+        raise HTTPException(
+            504,
+            detail={
+                "message": (
+                    f"ระบบเป้าหมายตอบกลับช้าจนตัวกลางตัดการเชื่อมต่อ (HTTP {r.status_code}) — "
+                    "ข้อมูลอาจลงไปแล้ว ยังยืนยันผลไม่ได้"
+                ),
+                "error_kind": "gateway_unknown",
+                "upstream_status": int(r.status_code),
+                "import_url": url,
+                "hint_th": "ตรวจยอดใน Target Sun ก่อนส่งซ้ำ (แท็บตรวจจำนวนแถวหลังส่ง)",
+            },
+        )
     if r.status_code >= 400:
         msg = None
         if isinstance(body, dict):
@@ -928,21 +947,9 @@ def _attach_readback(
     return out
 
 
-def _assert_resend_file_still_matches_targets(sup_id: str, month: int, year: int, rows: list[dict]) -> None:
-    """
-    ยอดหีบต่อ SKU ของไฟล์ที่จะส่งซ้ำ ต้องยังเท่าเป้าที่โหลดอยู่ตอนนี้ (กติกา: เป้ารับเข้า = ส่งออก)
-
-    ไฟล์เก่าตรวจผ่านกับเป้า ณ วันที่ส่ง — ถ้าหลังจากนั้นเป้าเปลี่ยนแล้วโหลดขั้นที่ 1 ใหม่
-    การส่งซ้ำจะเอาตัวเลขที่ไม่ตรงเป้าใหม่ลง Target Sun · อ่านเป้าไม่ได้ = ไม่บล็อกด้วยเหตุนี้
-    (เหมือนด่านเป้าเปลี่ยนของการส่งปกติ) · ดูเฉพาะ SKU ที่อยู่ในไฟล์ (ส่งแยกแบรนด์ได้)
-    """
-    from .lakehouse import _sup_target_boxes_by_sku
-
-    target = _sup_target_boxes_by_sku(sup_id, month, year)
-    if not target:
-        return
+def _rows_boxes_by_sku(rows: list[dict]) -> dict[str, int]:
     by_sku: dict[str, int] = {}
-    for r in rows:
+    for r in rows or []:
         sku = str(r.get("PRODUCTCODE") or "").strip()
         if not sku:
             continue
@@ -951,16 +958,76 @@ def _assert_resend_file_still_matches_targets(sup_id: str, month: int, year: int
         except (TypeError, ValueError):
             q = 0
         by_sku[sku] = by_sku.get(sku, 0) + q
+    return by_sku
+
+
+def _batch_records(rec: dict) -> list[dict]:
+    """ไฟล์ทุกทีมในชุดส่งเดียวกัน (send_batch_id + งวดเดียวกัน) ที่ยังเก็บไว้ใน ts_sent"""
+    bid = str(rec.get("send_batch_id") or "").strip()
+    m, y = int(rec.get("target_month") or 0), int(rec.get("target_year") or 0)
+    by_team: dict[str, dict] = {}
+    for p in _SENT_DIR.glob("*.json"):
+        try:
+            other = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if (str(other.get("send_batch_id") or "").strip() != bid
+                or int(other.get("target_month") or 0) != m or int(other.get("target_year") or 0) != y):
+            continue
+        sid = str(other.get("sup_id") or "").strip().upper()
+        # ทีมเดียวกันมีหลายไฟล์ในชุด (ส่งซ้ำ) — ใช้ไฟล์ล่าสุด
+        if sid not in by_team or float(other.get("sent_at") or 0) > float(by_team[sid].get("sent_at") or 0):
+            by_team[sid] = other
+    by_team.setdefault(str(rec.get("sup_id") or "").strip().upper(), rec)
+    return list(by_team.values())
+
+
+def _assert_resend_file_still_matches_targets(sup_id: str, month: int, year: int, rows: list[dict],
+                                              rec: dict | None = None) -> None:
+    """
+    ยอดหีบต่อ SKU ของไฟล์ที่จะส่งซ้ำ ต้องยังเท่าเป้าที่โหลดอยู่ตอนนี้ (กติกา: เป้ารับเข้า = ส่งออก)
+
+    ไฟล์เก่าตรวจผ่านกับเป้า ณ วันที่ส่ง — ถ้าหลังจากนั้นเป้าเปลี่ยนแล้วโหลดขั้นที่ 1 ใหม่
+    การส่งซ้ำจะเอาตัวเลขที่ไม่ตรงเป้าใหม่ลง Target Sun · อ่านเป้าไม่ได้ = ไม่บล็อกด้วยเหตุนี้
+    (เหมือนด่านเป้าเปลี่ยนของการส่งปกติ) · ดูเฉพาะ SKU ที่อยู่ในไฟล์ (ส่งแยกแบรนด์ได้)
+
+    ไฟล์จากการส่งรวมหลายทีม (มี send_batch_id): รายทีมไม่เท่าเป้าทีมเป็นเรื่องปกติ (ย้ายหีบข้ามทีม I7)
+    เดิมเทียบรายทีมจึงบล็อกทุกครั้งด้วยข้อความผิดว่า「เป้าเปลี่ยน」(ผลตรวจ 6 ต.ค. 2026 ก7)
+    → เทียบ "ยอดรวมทุกทีมในชุด" กับ "เป้ารวมของทีมเหล่านั้น" แบบเดียวกับด่านตอนส่งชุด
+    """
+    from .lakehouse import _sup_target_boxes_by_sku
+
+    is_batch = bool(rec) and bool(str(rec.get("send_batch_id") or "").strip())
+    if is_batch:
+        records = _batch_records(rec)
+        file_by_sku: dict[str, int] = {}
+        target: dict[str, int] = {}
+        for r in records:
+            sid = str(r.get("sup_id") or "").strip().upper()
+            t = _sup_target_boxes_by_sku(sid, month, year)
+            if not t:
+                return  # อ่านเป้าบางทีมไม่ได้ = ตรวจไม่ได้ ไม่บล็อกด้วยเหตุนี้ (เหมือนทีมเดียว)
+            for k, v in _rows_boxes_by_sku(r.get("rows") or []).items():
+                file_by_sku[k] = file_by_sku.get(k, 0) + v
+            for k, v in t.items():
+                target[str(k).strip()] = target.get(str(k).strip(), 0) + int(v)
+        scope = f"ชุดส่ง {len(records)} ทีม"
+    else:
+        target = _sup_target_boxes_by_sku(sup_id, month, year)
+        if not target:
+            return
+        file_by_sku = _rows_boxes_by_sku(rows)
+        scope = f"ทีม {sup_id}"
     diff = [
         {"sku": k, "file_boxes": v, "target_boxes": int(target.get(k, 0))}
-        for k, v in sorted(by_sku.items())
+        for k, v in sorted(file_by_sku.items())
         if int(target.get(k, 0)) != v
     ]
     if diff:
         raise HTTPException(409, detail={
             "code": "RESEND_TARGET_CHANGED",
             "message": (
-                f"เป้าของทีม {sup_id} เปลี่ยนหลังส่งไฟล์นี้ ({len(diff)} สินค้า) — ส่งซ้ำไม่ได้ "
+                f"เป้าของ{scope} เปลี่ยนหลังส่งไฟล์นี้ ({len(diff)} สินค้า) — ส่งซ้ำไม่ได้ "
                 "ให้กระจายใหม่แล้วกดส่งตามปกติ"
             ),
             "skus": diff[:50],
@@ -1000,7 +1067,7 @@ def resend_unlanded_rows(sup_id: str, token: str) -> dict:
     month, year = int(rec["target_month"]), int(rec["target_year"])
     rows = rec.get("rows") or []
     file_qty = _file_qty_by_key(rows)
-    _assert_resend_file_still_matches_targets(sup_id, month, year, rows)
+    _assert_resend_file_still_matches_targets(sup_id, month, year, rows, rec)
     emp_codes = sorted({str(r.get("SALESMANCODE") or "").strip() for r in rows} - {""})
     team_key = _claim_team_send(sup_id, month, year)
     try:
@@ -1140,7 +1207,10 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
             fresh_kwargs["live_by_sku"] = (
                 before_row_snapshot["by_sku"] if before_row_snapshot else None
             )
-        assert_target_snapshot_is_fresh(req.sup_id, bundle_month, bundle_year, **fresh_kwargs)
+        assert_target_snapshot_is_fresh(
+            req.sup_id, bundle_month, bundle_year,
+            send_batch_id=meta.get("send_batch_id"), **fresh_kwargs,
+        )
 
         try:
             out = _post_targetsun_multipart(

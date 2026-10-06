@@ -430,7 +430,10 @@ def update_user_access(
         _patch_row_meta(updated_row, body)
         # ตรวจปลายทางด้วย ไม่งั้นย้ายคนออกนอกภาคตัวเองได้
         ensure_row_in_admin_scope(admin, updated_row)
-        ensure_userpl_in_admin_scope(admin, new_upl)
+        # ตรวจรหัสทีมเฉพาะตอน "เปลี่ยน" รหัสทีม — แถวเดิมที่อยู่ในขอบเขตแล้ว แก้หมายเหตุ/ตำแหน่งได้เสมอ
+        # (รหัสทีมเดียวกันมีแถวหลายภาคได้ เช่น SL532 — เดิมแอดมินภาคที่ดูแลแถวนั้นแก้อะไรไม่ได้เลย)
+        if new_upl != upl:
+            ensure_userpl_in_admin_scope(admin, new_upl)
         _ensure_can_grant_wide_visibility(admin, existing, updated_row)
         captured["existing"], captured["updated"] = existing, updated_row
         return [
@@ -498,8 +501,10 @@ def set_targetsun_for_email(
             raise HTTPException(status_code=404, detail="ไม่พบอีเมลนี้")
         for r in mine:
             ensure_row_in_admin_scope(admin, r)
-            # แถวที่ถูกสร้างก่อนมีด่านรหัสทีม อาจใส่ทีมนอกขอบเขตไว้ — ห้ามเปิดสิทธิ์ส่งให้
-            ensure_userpl_in_admin_scope(admin, r.get("userpl"))
+            # แถวที่ถูกสร้างก่อนมีด่านรหัสทีม อาจใส่ทีมนอกขอบเขตไว้ — ห้าม "เปิด" สิทธิ์ส่งให้
+            # ส่วนการ "ปิด" ต้องทำได้เสมอ (เป็นทางเก็บกวาดแถวพวกนั้น)
+            if body.enabled:
+                ensure_userpl_in_admin_scope(admin, r.get("userpl"))
         ensure_can_edit_user_rows(admin, em, rows)
         for r in mine:
             r["can_import_targetsun"] = bool(body.enabled)

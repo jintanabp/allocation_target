@@ -129,7 +129,7 @@ class TestFrontendRules(unittest.TestCase):
 
     def test_blur_without_change_does_not_lock(self):
         i = self.js.index("function onYellowChange(")
-        body = self.js[i: i + 1500]
+        body = self.js[i: i + 4000]
         self.assertLess(body.index("< 0.005"), body.index("S.yellowLocked[akey] = true;"))
 
     def test_multi_team_split_stays_inside_each_team(self):

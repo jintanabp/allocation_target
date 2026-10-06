@@ -218,16 +218,29 @@ class TestResendWholeBatchAfterPartialFailure(_Tmp):
     """
     URL = "https://uat.x.test/import"
 
-    def _check(self, live, *, ledger_url=URL, current_url=URL, sent_qty=70):
+    def _check(self, live, *, ledger_url=URL, current_url=URL, sent_qty=70,
+               ledger_batch="B1", request_batch="B2"):
         from backend.services import lakehouse as lh
 
-        sl.record_send("SLA", 10, 2026, [_row("X", "E1", sent_qty)], send_status="ok", import_url=ledger_url)
+        sl.record_send("SLA", 10, 2026, [_row("X", "E1", sent_qty)], send_status="ok", import_url=ledger_url,
+                       send_batch_id=ledger_batch)
         with patch.object(lh, "_sup_target_boxes_by_sku", return_value={"X": 60}),              patch("backend.services.targetsun_endpoints.targetsun_endpoints_summary",
                    return_value={"cross_env": "0", "import_url": current_url}):
-            lh.assert_target_snapshot_is_fresh("SLA", 10, 2026, live_by_sku=live)
+            lh.assert_target_snapshot_is_fresh("SLA", 10, 2026, live_by_sku=live, send_batch_id=request_batch)
 
     def test_change_made_by_our_own_send_passes(self):
         self._check({"X": 70})
+
+    def test_single_team_send_from_stale_screen_blocks(self):
+        """ผลตรวจ 6 ต.ค. 2026 ก3: หลังส่งรวมภาค ใครเปิดจอเก่าแล้วส่งทีมเดียว ต้องถูกบล็อก"""
+        with self.assertRaises(HTTPException) as cm:
+            self._check({"X": 70}, request_batch=None)
+        self.assertEqual(cm.exception.detail["code"], "send_target_stale")
+
+    def test_ledger_from_single_team_send_does_not_count(self):
+        """ข้อยกเว้นนี้มีไว้ให้ส่งชุดรวมภาคซ้ำเท่านั้น — ครั้งล่าสุดเป็นส่งทีมเดียว = ไม่ยกเว้น"""
+        with self.assertRaises(HTTPException):
+            self._check({"X": 70}, ledger_batch=None)
 
     def test_change_by_someone_else_still_blocks(self):
         with self.assertRaises(HTTPException) as cm:

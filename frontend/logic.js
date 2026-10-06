@@ -255,13 +255,15 @@
    * น้ำหนัก 0 / ติดลบ / ไม่ใช่ตัวเลข = ได้ 0 — **ไม่** แบ่งเท่าให้ เพราะผู้ใช้เลือกแล้วว่า
    * คนไม่มีประวัติต้องให้ผู้ใช้กรอกเอง · ทุกคนน้ำหนัก 0 = คืน null ให้ผู้เรียกตัดสินเอง
    */
-  function shareTotalByWeights(total, weights) {
+  function shareTotalByWeights(total, weights, opts = {}) {
     const n = weights.length;
     const w = weights.map((v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : 0));
     const wSum = w.reduce((a, b) => a + b, 0);
     if (n === 0 || wSum <= 0) return null;
     const totalC = Math.max(0, Math.round((Number(total) || 0) * 100));
-    const partC = w.map((v) => Math.floor((totalC * v) / wSum));
+    // wholeBaht: ปัดแต่ละคนเป็นบาทเต็ม (ผู้ใช้คุ้นกับเป้าบาทเต็มแบบ Target Sun) เศษทั้งหมดไปที่คนน้ำหนักสูงสุด
+    const step = opts.wholeBaht ? 100 : 1;
+    const partC = w.map((v) => Math.floor((totalC * v) / wSum / step) * step);
     const restC = totalC - partC.reduce((a, b) => a + b, 0);
     if (restC > 0) {
       let top = 0;

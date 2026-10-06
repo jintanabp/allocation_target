@@ -108,5 +108,65 @@ class TestUserplScope(unittest.TestCase):
                 self.assertIn("ensure_userpl_in_admin_scope(", inspect.getsource(fn))
 
 
+
+class TestSharedTeamCodeStillEditable(unittest.TestCase):
+    """ผลตรวจ 6 ต.ค. 2026 ข1: แถวในขอบเขตที่ใช้รหัสทีมเดียวกับภาคอื่น ต้องแก้หมายเหตุ/ปิดสิทธิ์ส่งได้"""
+
+    ROWS = [
+        {"email": "north.sup@example.test", "userpl": "SL532", "login_kind": "supervisor_acc",
+         "acc_division": "Div.E", "acc_region": "ภาคเหนือ"},
+        {"email": "south.mgr@example.test", "userpl": "SL532", "login_kind": "manager_acc",
+         "acc_division": "Div.S", "acc_region": "ภาคใต้", "can_import_targetsun": True},
+        {"email": "southadmin@example.test", "userpl": "", "role": "admin", "admin_scope": "division_region",
+         "acc_division": "Div.S", "acc_region": "ภาคใต้"},
+    ]
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self._tmp.name, "user_access.json")
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump(self.ROWS, f)
+        self._env = patch.dict(os.environ, {"USER_ACCESS_JSON_PATH": self.path})
+        self._env.start()
+        ac.invalidate_user_access_cache()
+
+    def tearDown(self):
+        self._env.stop()
+        ac.invalidate_user_access_cache()
+        self._tmp.cleanup()
+
+    def _call(self, fn, body):
+        from backend.routers import admin as ar
+
+        with patch.object(ar, "_sync_access_hierarchy"), patch.object(ar, "_audit_admin"), \
+             patch.object(ar, "enrich_user_access_rows", return_value=[]):
+            return fn(body, admin=_ctx("southadmin@example.test"))
+
+    def _rows(self):
+        with open(self.path, encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_revoking_send_right_works(self):
+        from backend.routers import admin as ar
+
+        self._call(ar.set_targetsun_for_email, ar.TargetSunEmailBody(email="south.mgr@example.test", enabled=False))
+        row = next(r for r in self._rows() if r["email"] == "south.mgr@example.test")
+        self.assertFalse(row["can_import_targetsun"])
+
+    def test_granting_send_right_is_still_blocked(self):
+        from backend.routers import admin as ar
+
+        with self.assertRaises(HTTPException):
+            self._call(ar.set_targetsun_for_email, ar.TargetSunEmailBody(email="south.mgr@example.test", enabled=True))
+
+    def test_editing_note_without_changing_team_works(self):
+        from backend.routers import admin as ar
+
+        self._call(ar.update_user_access, ar.UserAccessUpdateBody(
+            email="south.mgr@example.test", userpl="SL532", note="ตรวจแล้ว"))
+        row = next(r for r in self._rows() if r["email"] == "south.mgr@example.test")
+        self.assertEqual(row["note"], "ตรวจแล้ว")
+
+
 if __name__ == "__main__":
     unittest.main()
