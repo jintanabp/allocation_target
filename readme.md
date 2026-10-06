@@ -121,7 +121,7 @@ allocation_target/
 | **Python 3.11+** + `pip install -r requirements.txt` | ตามมาตรฐานที่ทีม infra ใช้ (venv / service account) |
 | **รันแอป** | เช่น `uvicorn backend.main:app --host 0.0.0.0 --port <port>` หรือ service ที่บริษัทกำหนด |
 | **URL จริงของแอป** | ผู้ใช้เปิดผ่านโดเมน/พอร์ตบริษัท — ตั้ง **Redirect URI** ใน Entra ให้ตรง URL นี้ (ไม่ใช่แค่ `localhost`) |
-| **`data/`** | สร้างอัตโนมัติเมื่อรัน — เก็บ cache (`target_boxes.csv`, `tga_lines_*`, …), `app.log` |
+| **`data/`** | สร้างอัตโนมัติเมื่อรัน — เก็บ cache (`target_boxes.csv`, `tga_lines_*`, …), `app.log` (หมุนไฟล์ 20 MB × 5 → `app.log.1`…`.5`) · บันทึกการใช้งาน `data/logs/usage_*.jsonl` เก็บ 400 วัน |
 
 ### หลัง push โค้ดใหม่
 
@@ -219,7 +219,7 @@ allocation_target/
 | `SKU_LINKS_JSON_PATH` | ทางเลือก — path แทน `config/sku_links.json` (ผูกรหัส SKU) |
 | `ALLOCATION_ALLOW_ACC_DEV_JSON` + `ACC_USER_CONTROL_DEV_JSON` | ทางเลือก **dev เท่านั้น** — legacy dev JSON (สิทธิจริงใช้ `user_access.json`) |
 | `can_import_targetsun` ใน `user_access.json` | กำหนดใครกด **ส่งเข้า Target Sun** ได้ (แอดมินแก้ผ่าน UI หรือ import script) |
-| `AZURE_AUTH_DISABLED=1` | ปิดการบังคับล็อกอิน (ใช้ตอนพัฒนา) |
+| `AZURE_AUTH_DISABLED=1` | ปิดการบังคับล็อกอิน (ใช้ตอนพัฒนา) — รับเฉพาะคำขอจากเครื่องนี้โดยตรง (`127.0.0.1`/`localhost` ไม่ผ่าน proxy) เปิดผ่าน IP เครื่อง/proxy ได้ 403 |
 
 **ถ้า Sign-in ขึ้น `AADSTS50011` (redirect URI mismatch):** ใน Entra ให้ใส่ Redirect URI ให้ตรงกับที่แอปส่ง — ค่าเริ่มต้นคือ **`http://localhost:8000/`** (มี `/` ท้าย) ภายใต้ **Single-page application**
 
@@ -615,7 +615,7 @@ git จึงเป็นช่องทางเดียวที่จะส�
 | ตอนส่งขึ้น **«ยอดหีบไม่ตรงเป้าของทีม»** | ยอดต่อ SKU ของทีมนั้นไม่เท่าเป้า — มักจากย้ายหีบข้ามทีมในโหมดรวมภาค หรือเป้า TGA เปลี่ยนหลังกระจาย | ดูรายการใน modal ว่าทีมไหน SKU ไหนต่างเท่าไร · ตั้งใจก็กด **ยืนยันส่ง** · ไม่ตั้งใจก็กด **คำนวณใหม่** ให้ทุกทีมกลับไปตรงเป้า |
 | แก้ตัวเลขแล้วยอดคนอื่นขยับ | ระบบเกลี่ยให้ยอดรวมต่อ SKU คงเดิม | ดูแผง **「ผลจากการแก้ล่าสุด」** ใต้ตาราง — บอกว่าดึง/เติมจากใคร และเตือนถ้าดึงข้ามทีม |
 
-Log: **`data/app.log`** บน server (path ตาม working directory ของ service)
+Log: **`data/app.log`** บน server (path ตาม working directory ของ service) — หมุนไฟล์ที่ 20 MB เก็บ 5 รุ่น (`app.log.1` = รุ่นก่อนหน้าล่าสุด)
 
 ---
 
