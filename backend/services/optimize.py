@@ -768,6 +768,33 @@ def _build_multi_strategy_base_map(
     return combined
 
 
+def _post_merge_even_skus(
+    even_skus: frozenset[str],
+    never_sold_summary: dict,
+    sku_strategy: dict[str, str],
+) -> frozenset[str]:
+    """
+    SKU ที่ตัวเกลี่ยเงินหลังรวมผล (โหมดหลายวิธี) ห้ามย้ายหีบ — ต่อจากสินค้าใหม่ที่ได้มา (even_skus)
+
+    - SKU ที่กติกาไม่เคยขายสั่งให้แบ่งเท่า (no_seller/push_target) (ผลตรวจ 28 ก.ย. 2026 §4.1-2)
+      เดิมใส่แค่สินค้าใหม่ ตัวเกลี่ยจึงย้ายหีบใน SKU พวกนี้จนไม่เท่ากันอีก
+    - แบรนด์ที่ผู้ใช้เลือก EVEN/PUSH (ผลตรวจ 5 ต.ค. 2026 ข้อ 5) — โหมดวิธีเดียว EVEN/PUSH จบที่ขั้น
+      แบ่งตามสัดส่วน ไม่มีตัวเกลี่ยเงิน (ALLOCATION_INVARIANTS ขั้น 3) แต่โหมดหลายวิธีตัวเกลี่ยหลังรวมผล
+      เคยดึงหีบของแบรนด์พวกนี้ไปตามเงิน 50/50/50/50 → 100/33/33/34 · ยอดต่อ SKU ไม่เปลี่ยน
+    แยกเป็นฟังก์ชันเพื่อให้เทสรันจริงได้ (OPEN_ITEMS 8.5) — เดิมเทสค้นข้อความในโค้ด
+    """
+    out = frozenset(even_skus or frozenset())
+    out |= frozenset(
+        _norm_sku(k) for k, v in (never_sold_summary or {}).items()
+        if (v or {}).get("reason") in ("no_seller", "push_target")
+    )
+    out |= frozenset(
+        _norm_sku(k) for k, st in (sku_strategy or {}).items()
+        if str(st or "").upper() in ("EVEN", "PUSH")
+    )
+    return out
+
+
 def _post_merge_revenue_balance(
     df_allocation: pd.DataFrame,
     df_emp_targets: pd.DataFrame,
@@ -1717,19 +1744,8 @@ def run_optimization_service(
             else pd.DataFrame(columns=["emp_id", "sku", "allocated_boxes"])
         )
         if not df_allocation.empty and req.tiered_allocation and not req.history_only:
-            # SKU ที่กติกาไม่เคยขายสั่งให้แบ่งเท่า (no_seller/push_target) ต้องถูกกันไว้
-            # จากตัวเกลี่ยเงินหลังรวมผลเหมือนสินค้าใหม่ (ผลตรวจ 28 ก.ย. 2026 §4.1-2)
-            # เดิมใส่แค่สินค้าใหม่ ตัวเกลี่ยจึงย้ายหีบใน SKU พวกนี้จนไม่เท่ากันอีก
-            even_skus_global = even_skus_global | frozenset(
-                _norm_sku(k) for k, v in never_sold_summary_all.items()
-                if (v or {}).get("reason") in ("no_seller", "push_target")
-            )
-            # แบรนด์ที่ผู้ใช้เลือก EVEN/PUSH ก็ต้องกันไว้เหมือนกัน — โหมดวิธีเดียว EVEN/PUSH จบที่
-            # ขั้นแบ่งตามสัดส่วน ไม่มีตัวเกลี่ยเงิน (ALLOCATION_INVARIANTS ขั้น 3) แต่โหมดหลายวิธี
-            # ตัวเกลี่ยหลังรวมผลเคยดึงหีบของแบรนด์พวกนี้ไปตามเงิน 50/50/50/50 → 100/33/33/34
-            # (ผลตรวจ 5 ต.ค. 2026 ข้อ 5) · ยอดต่อ SKU ไม่เปลี่ยน แค่ไม่ย้ายหีบในแบรนด์นั้น
-            even_skus_global = even_skus_global | frozenset(
-                _norm_sku(k) for k, st in sku_strategy_map.items() if st in ("EVEN", "PUSH")
+            even_skus_global = _post_merge_even_skus(
+                even_skus_global, never_sold_summary_all, sku_strategy_map
             )
             df_allocation = _post_merge_revenue_balance(
                 df_allocation,

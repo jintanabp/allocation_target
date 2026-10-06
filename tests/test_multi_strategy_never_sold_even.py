@@ -23,20 +23,52 @@ EMPS = ["E1", "E2", "E3", "E4"]
 
 
 class TestMultiStrategyNeverSoldEven(unittest.TestCase):
+    # 8.5 (6 ต.ค. 2026): สองข้อนี้เคยค้นข้อความในโค้ด — ตอนนี้รันฟังก์ชันจริง + ตัวเกลี่ยจริง
     def test_never_sold_even_skus_join_the_post_merge_even_set(self):
-        src = inspect.getsource(opt)
-        i = src.index("df_allocation = _post_merge_revenue_balance(")
-        block = src[i - 700:i]
-        self.assertIn("never_sold_summary_all", block)
-        self.assertIn('("no_seller", "push_target")', block)
+        got = opt._post_merge_even_skus(
+            frozenset({"NEW"}),
+            {"N1": {"reason": "no_seller"}, "N2": {"reason": "push_target"},
+             "N3": {"reason": "zeroed"}, "N4": None},
+            {},
+        )
+        self.assertEqual(got, frozenset({"NEW", "N1", "N2"}))
 
     def test_brands_set_to_even_or_push_join_the_post_merge_even_set(self):
         """ผลตรวจ 5 ต.ค. 2026 ข้อ 5: แบรนด์ที่เลือก EVEN/PUSH ต้องไม่ถูกตัวเกลี่ยเงินย้ายหีบ"""
+        got = opt._post_merge_even_skus(
+            frozenset(), {}, {" X1 ": "EVEN", "X2": "push", "X3": "L3M", "X4": "LY"},
+        )
+        self.assertEqual(got, frozenset({"X1", "X2"}))
+
+    def test_even_brand_survives_post_merge_balance_end_to_end(self):
+        """ตัวอย่างจากผลตรวจ 5 ต.ค.: EVEN 50/50/50/50 ต้องไม่กลายเป็น 100/33/33/34 หลังเกลี่ยเงิน"""
+        df_emp = pd.DataFrame({"emp_id": EMPS, "yellow_target": [90000.0, 30000.0, 30000.0, 30000.0]})
+        df_sku = pd.DataFrame([
+            {"sku": "X1", "supervisor_target_boxes": 200, "price_per_box": 800.0},
+            {"sku": "Y1", "supervisor_target_boxes": 40, "price_per_box": 100.0},
+        ])
+        hist = pd.DataFrame([{"emp_id": e, "sku": s, "hist_boxes": 10.0} for e in EMPS for s in ("X1", "Y1")])
+        alloc = pd.DataFrame(
+            [{"emp_id": e, "sku": "X1", "allocated_boxes": 50} for e in EMPS]
+            + [{"emp_id": e, "sku": "Y1", "allocated_boxes": 10} for e in EMPS]
+        )
+        strat = {"X1": "EVEN", "Y1": "L3M"}
+        kw = dict(sku_strategy=strat, hist_by_strategy={"EVEN": hist, "L3M": hist}, locked_edits_data=[],
+                  force_min_one=False, cap_multiplier=None, tiered_allocation=True, tier_pct=0.8,
+                  revenue_tolerance_baht=1000.0, zero_pairs=set())
+        protected = opt._post_merge_revenue_balance(
+            alloc, df_emp, df_sku, even_skus=opt._post_merge_even_skus(frozenset(), {}, strat), **kw)
+        self.assertEqual(protected[protected["sku"] == "X1"]["allocated_boxes"].tolist(), [50, 50, 50, 50])
+        # ถ้าไม่กันไว้ ตัวเกลี่ยย้ายหีบ X1 ตามเงินจริง (พิสูจน์ว่าเทสนี้จับได้)
+        unprotected = opt._post_merge_revenue_balance(alloc, df_emp, df_sku, even_skus=frozenset(), **kw)
+        self.assertNotEqual(unprotected[unprotected["sku"] == "X1"]["allocated_boxes"].tolist(), [50, 50, 50, 50])
+        for df in (protected, unprotected):
+            self.assertEqual(int(df[df["sku"] == "X1"]["allocated_boxes"].sum()), 200)
+
+    def test_run_optimize_uses_the_helper(self):
         src = inspect.getsource(opt)
         i = src.index("df_allocation = _post_merge_revenue_balance(")
-        block = src[i - 1400:i]
-        self.assertIn("sku_strategy_map.items()", block)
-        self.assertIn('("EVEN", "PUSH")', block)
+        self.assertIn("_post_merge_even_skus(", src[i - 400:i])
 
     def test_base_map_respects_zero_pairs(self):
         df_emp = pd.DataFrame({"emp_id": EMPS, "yellow_target": [1000.0] * 4})

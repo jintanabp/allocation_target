@@ -132,7 +132,8 @@ class TestFrontendRules(unittest.TestCase):
         with open(os.path.join(REPO, "frontend", "index.html"), encoding="utf-8") as fh:
             cls.html = fh.read()
 
-    # ตรรกะการแบ่ง/คนไม่มีประวัติ/คลิกไม่ล็อก/รวมภาค ย้ายไปรันจริงที่ tests/js/hist_fill.test.js (8.5)
+    # ตรรกะการแบ่ง/คนไม่มีประวัติ/คลิกไม่ล็อก/รวมภาค → tests/js/hist_fill.test.js · ทางรีเซ็ต/เป้าสด/ผลตรวจเป้าที่มาช้า
+    # → tests/js/step2_reset_and_drift.test.js — รันฟังก์ชันจริงทั้งคู่ (8.5)
     # ที่เหลือข้างล่างคือสิ่งที่ตรวจด้วยการรันไม่ได้ง่าย ๆ (ปุ่มใน HTML, ชื่อฟิลด์, ลำดับใน runOptimization)
 
     def test_four_buttons_exist(self):
@@ -150,30 +151,11 @@ class TestFrontendRules(unittest.TestCase):
         self.assertIn("_histFillNoHistoryNames()", body)
         self.assertIn("_confirmDialog", body)
 
-    def test_every_reset_path_clears_the_source(self):
-        # รีเซ็ต Target Sun / โหลดข้อมูลใหม่ / เริ่มใหม่ / กู้ snapshot / กู้ร่าง / โหลดเป้าสด
-        self.assertGreaterEqual(self.js.count("_clearHistFillMode();"), 6)
-        for fn in ("_syncStateAfterLiveTargets", "resetYellowToTargetSun"):
-            i = self.js.index(f"function {fn}(")
-            self.assertIn("_clearHistFillMode();", self.js[i: i + 2500], fn)
-
-    def test_reset_clears_mode_even_when_values_already_equal(self):
-        """ผลตรวจ 5 ต.ค.: เดิม early return「ตรงอยู่แล้ว」ก่อนล้างโหมด ป้ายค้าง"""
-        i = self.js.index("async function resetYellowToTargetSun")
-        body = self.js[i: i + 1500]
-        self.assertLess(body.index("_clearHistFillMode();"), body.index("ตรงกับ Target Sun อยู่แล้ว"))
-
     def test_reason_and_bui_reset_when_team_or_period_changes(self):
         self.assertIn("S._step2CtxKey !== _step2Ctx", self.js)
         i = self.js.index("S._step2CtxKey !== _step2Ctx")
         self.assertIn('S.negGrowthReason = "";', self.js[i: i + 200])
         self.assertIn("S.buiDeductions = {};", self.js[i: i + 200])
-
-    def test_stale_drift_reply_is_dropped(self):
-        i = self.js.index("async function checkTargetSunDrift")
-        body = self.js[i: i + 1500]
-        self.assertIn("if (ctx !== _allocContextKey()) return null;", body)
-
 
 
 class TestCalendarYearCacheMerge(unittest.TestCase):
