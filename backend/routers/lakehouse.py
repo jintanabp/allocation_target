@@ -100,6 +100,21 @@ def _send_result_explain(send_status: str, ts: dict, rb: dict, rc: dict) -> dict
     return out
 
 
+def _send_summary_note(res: dict, rb: dict) -> str:
+    """หีบรวมในไฟล์ · ยอดใน Target Sun ก่อน→หลัง (SKU ในไฟล์) · ปลายทาง — บรรทัดเดียวอ่านเข้าใจ"""
+    sm = res.get("send_summary") or {}
+    bits = []
+    if sm.get("file_boxes_total") is not None:
+        bits.append(f"หีบในไฟล์ {int(sm['file_boxes_total']):,}")
+    before, after = sm.get("ts_boxes_before_total"), (rb or {}).get("landed_boxes_total")
+    if before is not None or after is not None:
+        f = lambda v: "-" if v is None else f"{int(v):,}"
+        bits.append(f"ยอดใน Target Sun ก่อน {f(before)} → หลัง {f(after)}")
+    if sm.get("destination_host"):
+        bits.append(f"ปลายทาง {sm['destination_host']}")
+    return (" · " + " · ".join(bits)) if bits else ""
+
+
 def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) -> None:
     """
     บันทึกทุกครั้งที่กดส่ง Target Sun — สำเร็จหรือไม่ก็ตาม
@@ -230,6 +245,7 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
                 + rc_note
                 + new_rows_note
                 + stale_cleared_note
+                + _send_summary_note(res, rb)
             ),
             target_month=int(req.target_month),
             target_year=int(req.target_year),
@@ -265,6 +281,13 @@ def _log_targetsun_send(user: dict, req: LakehouseUploadRequest, result: Any) ->
                 "acting_admin_email": user.get("acting_admin_email"),
                 "send_status": send_status,
                 "ok": ok,
+                # ข้อมูลไล่ปัญหาเพิ่ม (ผลตรวจ 7 ต.ค. 2026 ง)
+                "prepare_token": str(res.get("prepare_token") or "")[:8] or None,
+                "brand_filter": getattr(req, "brand_filter", None),
+                "sku_filter_count": len(getattr(req, "sku_filter", None) or []),
+                **{f"summary_{k}": v for k, v in (res.get("send_summary") or {}).items()},
+                "ts_boxes_after_total": rb.get("landed_boxes_total"),
+                "readback_diffs_sample": (rb.get("diffs") or [])[:10],
                 **_send_result_explain(send_status, ts, rb, rc),
             },
         )

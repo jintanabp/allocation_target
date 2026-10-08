@@ -16,7 +16,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=2026100814" />
+  <link rel="stylesheet" href="style.css?v=2026100815" />
 </head>
 
 <body>
@@ -1565,6 +1565,29 @@
                   <option value="info">info</option>
                 </select>
               </label>
+              <label class="admin-period-bar__field">เรื่อง
+                <select id="adminUsageLogAction" class="admin-select admin-select--sm" onchange="adminLoadUsageLogs()">
+                  <option value="">ทุกเรื่อง</option>
+                  <option value="send_targetsun">ส่งเข้า Target Sun</option>
+                  <option value="prepare_targetsun">เตรียม/ตรวจไฟล์ก่อนส่ง</option>
+                  <option value="optimize">กระจายหีบ</option>
+                  <option value="save_allocation">บันทึกผลกระจาย</option>
+                  <option value="admin_">แอดมินแก้ค่า</option>
+                  <option value="server_error">ระบบขัดข้อง</option>
+                  <option value="client_">ข้อผิดพลาดหน้าเว็บ</option>
+                </select>
+              </label>
+              <label class="admin-period-bar__field">ทีม
+                <input type="text" id="adminUsageLogSup" class="field-input field-input--sm" placeholder="เช่น SL509" style="width:7em;"
+                       onkeydown="if(event.key==='Enter')adminLoadUsageLogs()" />
+              </label>
+              <label class="admin-period-bar__field">ค้นหา
+                <input type="text" id="adminUsageLogQ" class="field-input field-input--sm" placeholder="ข้อความ/อีเมล" style="width:9em;"
+                       onkeydown="if(event.key==='Enter')adminLoadUsageLogs()" />
+              </label>
+              <label class="admin-period-bar__field" style="flex-direction:row;align-items:center;gap:4px;">
+                <input type="checkbox" id="adminUsageLogProblems" onchange="adminLoadUsageLogs()" /> เฉพาะปัญหา
+              </label>
               <button type="button" class="admin-btn-refresh admin-btn-refresh--sm" onclick="adminLoadUsageLogs()" title="โหลดรายการล่าสุด">
                 <span class="admin-btn-refresh__icon" aria-hidden="true">↻</span>
                 <span>โหลดใหม่</span>
@@ -1577,7 +1600,7 @@
             </div>
           </div>
           <div class="admin-help-strip admin-help-strip--compact">
-            <p>บันทึกถาวร ไม่มีการลบ — ใช้ตรวจย้อนหลังว่าใคร/ทีมไหนทำอะไรเมื่อไหร่ เช่น <strong>send_targetsun</strong> = กดส่งเข้า Target Sun · ช่อง「ระดับ」กรองได้เฉพาะ error / warn / info — ถ้าจะหาการกระทำใดการกระทำหนึ่ง ให้ใช้ Ctrl+F ของเบราว์เซอร์</p>
+            <p>เก็บย้อนหลัง 400 วัน — ใช้ตรวจย้อนหลังว่าใคร/ทีมไหนทำอะไรเมื่อไหร่ · 「เดือน/ปี」คือวันที่เกิดเหตุการณ์ (ไม่ใช่งวดเป้า) · กรองตาม「เรื่อง」「ทีม」หรือพิมพ์「ค้นหา」แล้วกด Enter · ติ๊ก「เฉพาะปัญหา」เพื่อดูแค่ warn/error · 「ระบบขัดข้อง」มีรหัสอ้างอิง (ref) ตรงกับที่ผู้ใช้เห็นบนจอ</p>
           </div>
           <div id="adminUsageLogsBody" class="admin-table-wrap admin-table-wrap--panel">
             <table class="admin-table admin-table--zebra admin-table--log">
@@ -1871,6 +1894,10 @@
             <div>
               <h2 class="admin-card__title">ผลการกระจาย (server)</h2>
               <p class="admin-card__hint">snapshot ของงวดที่เลือกในแถบด้านขวา (เลือก「ทุกเดือน」เพื่อดูทั้งปี) — กดหัวคอลัมน์เพื่อเรียงลำดับ</p>
+              <p class="admin-card__hint">เปิด「เป้าตั้งต้น / ไฟล์คืนค่า / ประวัติการส่ง」ของทีมที่ไม่มีในตาราง:
+                <input type="text" id="adminBaselineSup" class="field-input field-input--sm" placeholder="เช่น SL509" style="width:7em;"
+                       onkeydown="if(event.key==='Enter')adminOpenBaselineByCode()" />
+                <button type="button" class="admin-action" onclick="adminOpenBaselineByCode()">เปิด</button></p>
             </div>
             <div class="admin-period-bar">
               <label class="admin-period-bar__field">เดือน
@@ -2148,8 +2175,8 @@
   <script src="vendor/msal-browser.min.js"></script>
   <!-- ตรรกะล้วน (ตัวแปลงเลข/คณิตการเกลี่ย) — ต้องมาก่อน app.js
        ไฟล์นี้มีเทสจริงด้วย node --test tests/logic.test.js -->
-  <script src="logic.js?v=2026100814"></script>
-  <script src="app.js?v=2026100814"></script>
+  <script src="logic.js?v=2026100815"></script>
+  <script src="app.js?v=2026100815"></script>
 </body>
 
 </html>

@@ -1917,7 +1917,9 @@ def verify_after_send(
                     {"sku": sku, "sent_boxes": sent, "landed_boxes": got, "diff": got - sent}
                 )
         if not diffs:
-            return {"checked": True, "ok": True, "skus_checked": len(sent_by_sku)}
+            return {"checked": True, "ok": True, "skus_checked": len(sent_by_sku),
+                    # ยอดใน Target Sun หลังส่ง (เฉพาะ SKU ในไฟล์) — ไว้ใน log การส่ง (ผลตรวจ 7 ต.ค. 2026 ง)
+                    "landed_boxes_total": int(sum(int(live.get(s, 0)) for s in sent_by_sku))}
 
         diff_boxes = sum(int(d["diff"]) for d in diffs)
         logger.error(
@@ -1935,6 +1937,7 @@ def verify_after_send(
             "diffs": diffs[:20],
             "diff_count": len(diffs),
             "diff_boxes": diff_boxes,
+            "landed_boxes_total": int(sum(int(live.get(s, 0)) for s in sent_by_sku)),
         }
     except Exception as e:
         logger.warning("ตรวจยอดหลังส่งไม่สำเร็จ (%s): %s", sup_id, e)

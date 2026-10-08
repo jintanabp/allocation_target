@@ -1361,6 +1361,9 @@ class UsageLogBody(BaseModel):
     message: str = ""
     detail: str = ""
     sup_id: str = ""
+    # งวดเป้าที่หน้าเว็บกำลังทำ — ให้บันทึกจากหน้าเว็บผูกงวดได้ (ผลตรวจ 7 ต.ค. 2026 ง)
+    target_month: int | None = Field(None, ge=1, le=12)
+    target_year: int | None = Field(None, ge=2020, le=2100)
 
 
 def _supervisor_meta_index() -> dict[str, dict[str, str]]:
@@ -1719,6 +1722,80 @@ def admin_download_restore_file(
             "Access-Control-Expose-Headers": "Content-Disposition, X-Restore-Uncovered-Emps",
         },
     )
+
+
+@router.get("/sent-ledger")
+def admin_get_sent_ledger(
+    admin: dict = Depends(require_admin_scoped),
+    sup_id: str = Query(..., min_length=1),
+    target_month: int = Query(..., ge=1, le=12),
+    target_year: int = Query(..., ge=2020, le=2100),
+) -> dict[str, Any]:
+    """
+    สิ่งที่ระบบนี้ส่งเข้า Target Sun จริงของทีม×งวด (sent ledger) — สรุปทุกครั้งที่ส่ง (ผลตรวจ 7 ต.ค. 2026 ง)
+    เดิมแอดมินดูไม่ได้เลย (มีแค่ในแท็บตรวจรายคืนของ dev)
+    """
+    from ..services import sent_ledger
+
+    sid = sup_id.strip().upper()
+    ensure_sup_in_admin_scope(admin, sid)
+    led = sent_ledger.read_ledger(sid, target_month, target_year) or {}
+    rows = led.get("rows") or {}
+    return {
+        "sup_id": sid,
+        "import_url_host": _host_of(led.get("import_url")),
+        "sends": [
+            {k: v for k, v in (s or {}).items() if k in (
+                "sent_at", "user", "rows", "boxes", "send_status", "send_batch_id", "token")}
+            | {"token": str((s or {}).get("token") or "")[:8]}
+            for s in (led.get("sends") or [])
+        ][::-1],
+        "row_count": len(rows),
+        "boxes_total": int(sum(int((v or {}).get("qty") or 0) for v in rows.values())),
+    }
+
+
+@router.get("/sent-ledger/export")
+def admin_export_sent_ledger(
+    admin: dict = Depends(require_admin_scoped),
+    sup_id: str = Query(..., min_length=1),
+    target_month: int = Query(..., ge=1, le=12),
+    target_year: int = Query(..., ge=2020, le=2100),
+) -> Response:
+    """แถวล่าสุดที่ระบบส่งของทีม×งวด เป็น Excel — คีย์เต็ม 7 ช่อง + จำนวน + เวลาส่ง"""
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo
+
+    from ..services import sent_ledger
+
+    sid = sup_id.strip().upper()
+    ensure_sup_in_admin_scope(admin, sid)
+    led = sent_ledger.read_ledger(sid, target_month, target_year) or {}
+    out = []
+    for k, v in sorted((led.get("rows") or {}).items()):
+        sku, emp, st, dv, ar, pv, wh = (str(k).split("|") + [""] * 7)[:7]
+        try:
+            when = _dt.fromtimestamp(float((v or {}).get("sent_at") or 0), ZoneInfo("Asia/Bangkok")).strftime("%Y-%m-%d %H:%M")
+        except (TypeError, ValueError, OSError):
+            when = ""
+        out.append({
+            "sku": sku, "emp": emp, "st": st, "dv": dv, "ar": ar, "pv": pv, "wh": wh or "(ว่าง)",
+            "qty": int((v or {}).get("qty") or 0), "when": when,
+            "unconfirmed": "ยังไม่ยืนยัน" if (v or {}).get("unconfirmed") else "",
+        })
+    cols = [("sku", "PRODUCTCODE"), ("emp", "SALESMANCODE"), ("st", "SALESTYPE"), ("dv", "DIVISIONCODE"),
+            ("ar", "AREACODE"), ("pv", "PROVINCECODE"), ("wh", "WAREHOUSECODE"), ("qty", "QUANTITYCASE"),
+            ("when", "ส่งเมื่อ"), ("unconfirmed", "สถานะ")]
+    return _xlsx_response(out, cols, f"sent_ledger_{sid}_{target_year}_{target_month:02d}")
+
+
+def _host_of(url) -> str:
+    try:
+        from urllib.parse import urlparse
+
+        return urlparse(str(url or "")).hostname or ""
+    except Exception:
+        return ""
 
 
 @router.post("/target-baseline/restore")
@@ -2351,18 +2428,47 @@ def admin_get_usage_logs(
     target_year: int | None = Query(None, ge=2020, le=2100),
     level: str | None = Query(None),
     limit: int = Query(500, ge=1, le=2000),
+    sup_id: str | None = Query(None, description="กรองเฉพาะทีม"),
+    action_prefix: str | None = Query(None, description="กรองตามกลุ่มการกระทำ เช่น send_targetsun"),
+    q: str | None = Query(None, description="ค้นข้อความใน message/detail/email/action"),
+    problems_only: bool = Query(False, description="เฉพาะ warn/error"),
 ):
+    """
+    ตัวกรองทีม/กลุ่มการกระทำ/ข้อความ/เฉพาะปัญหา (ผลตรวจ 7 ต.ค. 2026 ง) — เดิมหน้าจอบอกให้กด Ctrl+F
+    และตัดที่ 500 รายการ การส่งที่ล้มเมื่อหลายวันก่อนหลุดจากหน้าไปเลย · กรองฝั่ง server ก่อนตัดจำนวน
+    """
     scan_all = target_month is None and target_year is None and date is None
+    filtering = bool(sup_id or action_prefix or q or problems_only)
     items = read_logs(
         date=date,
         level=level,
-        limit=limit,
+        limit=2000 if filtering else limit,
         target_year=target_year,
         target_month=target_month,
         scan_all=scan_all,
+        sup_id=sup_id or None,
     )
     items = _filter_usage_items_for_admin(admin, items)
-    return {"items": items, "scan_all": scan_all}
+    items = _apply_usage_log_filters(items, action_prefix, q, problems_only)
+    return {"items": items[:limit], "scan_all": scan_all, "truncated": len(items) > limit}
+
+
+def _apply_usage_log_filters(items: list[dict], action_prefix, q, problems_only) -> list[dict]:
+    """ตัวกรองเรื่อง/ข้อความ/เฉพาะปัญหา — ใช้ทั้งหน้าจอและไฟล์ Excel (ผลตรวจ 7 ต.ค. 2026 ง)"""
+    if action_prefix:
+        ap = str(action_prefix).strip().lower()
+        items = [r for r in items if str(r.get("action") or "").lower().startswith(ap)]
+    if problems_only:
+        items = [r for r in items if str(r.get("level") or "").lower() in ("warn", "warning", "error")]
+    if q:
+        needle = str(q).strip().lower()
+        items = [
+            r for r in items
+            if needle in " ".join(
+                str(r.get(k) or "") for k in ("message", "detail", "email", "action", "sup_id")
+            ).lower()
+        ]
+    return items
 
 
 def _filter_usage_items_for_admin(admin: dict, items: list[dict]) -> list[dict]:
@@ -2458,6 +2564,10 @@ def admin_export_usage_logs_xlsx(
     target_year: int | None = Query(None, ge=2020, le=2100),
     level: str | None = Query(None),
     limit: int = Query(5000, ge=1, le=20000),
+    sup_id: str | None = Query(None),
+    action_prefix: str | None = Query(None),
+    q: str | None = Query(None),
+    problems_only: bool = Query(False),
 ):
     """บันทึกการใช้งานเป็น Excel สำหรับรายงานผู้บริหาร — ขอบเขต/ตัวกรองชุดเดียวกับหน้าจอ"""
     import json as _json
@@ -2470,8 +2580,10 @@ def admin_export_usage_logs_xlsx(
         target_year=target_year,
         target_month=target_month,
         scan_all=scan_all,
+        sup_id=sup_id or None,
     )
     items = _filter_usage_items_for_admin(admin, items)
+    items = _apply_usage_log_filters(items, action_prefix, q, problems_only)
     for it in items:
         it["ts_th"] = _fmt_ts_th(it.get("ts"))
         d = it.get("detail")
@@ -2546,6 +2658,8 @@ def admin_post_usage_log(
         action=action,
         message=str(body.message or "")[:500],
         detail=str(body.detail or "")[:2000],
+        target_month=body.target_month,
+        target_year=body.target_year,
         acting_admin_email=user.get("acting_admin_email"),
     )
     return row

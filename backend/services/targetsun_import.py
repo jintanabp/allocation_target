@@ -363,6 +363,11 @@ def _keep_sent_record(token: str, meta: dict, send_status: str = "") -> None:
                 pass
         src = _prepare_dir() / f"{token}.rows.json"
         if not src.is_file():
+            # ไม่มีไฟล์แถว = ไม่ได้จด sent ledger/ts_sent ของการส่งนี้ — ต้องเห็นใน log (ผลตรวจ 7 ต.ค. 2026 ง)
+            logger.error(
+                "ไม่จด sent ledger ของการส่ง token=%s (%s) — ไม่พบไฟล์แถวที่เตรียมไว้",
+                token[:8], meta.get("sup_id"),
+            )
             return
         rows = json.loads(src.read_text(encoding="utf-8"))
         # F2: สิ่งที่ส่งจริงแบบถาวร ต่อทีม × งวด (ts_sent ข้างล่างลบเองใน 14 วัน)
@@ -983,6 +988,27 @@ def _attach_readback(
     if isinstance(ts, dict) and ts.get("success") is False:
         out["readback"] = {"checked": False, "reason": "send_failed"}
         return out
+    # สรุปสิ่งที่ส่งไว้ใน log (ผลตรวจ 7 ต.ค. 2026 ง): หีบรวมในไฟล์ · หีบใน TS ก่อนส่ง (เฉพาะ SKU ในไฟล์)
+    # · จำนวนแถวต่อคลัง · ปลายทาง — ไล่ปัญหาได้จากหน้า log โดยไม่ต้องเปิดไฟล์
+    try:
+        from urllib.parse import urlparse
+
+        skus_in_file = set((sku_totals or {}).keys())
+        before_by_sku = (before_row_snapshot or {}).get("by_sku") or {}
+        rows_by_wh: dict[str, int] = {}
+        for k in (file_qty_by_key or {}):
+            wh = str(k).split("|")[-1] if "|" in str(k) else ""
+            rows_by_wh[wh or "(ว่าง)"] = rows_by_wh.get(wh or "(ว่าง)", 0) + 1
+        out["send_summary"] = {
+            "file_boxes_total": int(sum(int(v) for v in (sku_totals or {}).values())),
+            "ts_boxes_before_total": (
+                int(sum(int(before_by_sku.get(s, 0)) for s in skus_in_file)) if before_row_snapshot else None
+            ),
+            "file_rows_by_warehouse": dict(sorted(rows_by_wh.items(), key=lambda t: -t[1])[:30]),
+            "destination_host": urlparse(_current_import_url()).hostname or "",
+        }
+    except Exception:
+        logger.exception("สรุปการส่งสำหรับ log ไม่สำเร็จ (%s)", sup_id)
     # ยังยืนยันผลไม่ได้ — ยังอ่านกลับ/นับแถวต่อ เพราะของอาจลงไปแล้วจริง ตัวเลขช่วยให้ตัดสินได้
     out["readback"] = verify_after_send(
         sup_id,

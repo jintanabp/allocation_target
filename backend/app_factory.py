@@ -120,6 +120,45 @@ def create_app() -> FastAPI:
             )
         return await call_next(request)
 
+    @app.exception_handler(Exception)
+    async def _unhandled_error_to_usage_log(request, exc):
+        """
+        error ที่ไม่ได้ตั้งใจ (500) ต้องไปถึงหน้า log ของแอดมิน ไม่ใช่แค่ data/app.log ที่ไม่มีหน้าดู
+        (ผลตรวจ 7 ต.ค. 2026 ง) · ผู้ใช้เห็นข้อความไทย + รหัสอ้างอิงไว้แจ้ง dev · ไม่ส่ง traceback กลับ
+        """
+        import uuid as _uuid
+
+        ref = _uuid.uuid4().hex[:8]
+        logger.exception("unhandled error ref=%s %s %s", ref, request.method, request.url.path)
+        try:
+            from .services.usage_log_store import append_log
+
+            qp = request.query_params
+
+            def _int(v):
+                try:
+                    return int(v) if v not in (None, "") else None
+                except (TypeError, ValueError):
+                    return None
+
+            append_log(
+                level="error",
+                sup_id=str(qp.get("sup_id") or "").strip().upper(),
+                action="server_error",
+                message=f"ระบบขัดข้องโดยไม่คาดคิด ({type(exc).__name__}) ที่ {request.method} {request.url.path}",
+                detail=f"ref={ref} · {str(exc)[:300]}",
+                target_month=_int(qp.get("target_month")),
+                target_year=_int(qp.get("target_year")),
+                context={"ref": ref, "path": request.url.path, "method": request.method,
+                         "error_type": type(exc).__name__},
+            )
+        except Exception:
+            logger.exception("เขียน log ของ error ref=%s ไม่สำเร็จ", ref)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้ง — ถ้ายังไม่ได้ แจ้งผู้ดูแลระบบพร้อมรหัสอ้างอิง {ref}"},
+        )
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],

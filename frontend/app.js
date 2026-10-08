@@ -1198,6 +1198,8 @@ function _logClientAction(action, message, detail = "", level = "info", opts = {
     message: String(message || "").slice(0, 500),
     detail: String(detail || "").slice(0, 2000),
     sup_id: String(opts.supId ?? S.supId ?? ""),
+    ...(Number(S.targetMonth) >= 1 && Number(S.targetYear) >= 2020
+      ? { target_month: Number(S.targetMonth), target_year: Number(S.targetYear) } : {}),
   };
   fetchWithTimeout(`${API_BASE_URL}/admin/usage-logs`, {
     method: "POST",
@@ -6972,15 +6974,27 @@ async function _callOptimizeApi(supId, payload) {
     `&target_month=${S.targetMonth}&target_year=${S.targetYear}`;
   // จุดเดียวที่ทุกทางเรียก /optimize ผ่าน — ทั้งทีมเดี่ยวและลูปรวมภาค (ทีมละครั้ง)
   const _t0 = Date.now();
-  const res = await fetchWithTimeout(
-    url,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    },
-    _optimizeTimeoutMs()
-  );
+  let res;
+  try {
+    res = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+      _optimizeTimeoutMs()
+    );
+  } catch (e) {
+    // หมดเวลา/เน็ตหลุดฝั่งเครื่อง — ไม่มีคำตอบให้ server จด เดิมจึงไม่เหลือร่องรอยเลย (ผลตรวจ 7 ต.ค. 2026 ง)
+    _logClientError(
+      "optimize_no_answer",
+      `กระจายหีบไม่ได้รับคำตอบ (${String(e?.name || "") === "AbortError" ? "หมดเวลา" : "เชื่อมต่อขัดข้อง"})`,
+      `sup=${supId} · งวด ${S.targetYear}-${String(S.targetMonth).padStart(2, "0")} · วิธี ${payload?.strategy || "-"}`
+      + ` · รอ ${Math.round((Date.now() - _t0) / 1000)} วินาที` + (S.aggregateMode ? " · โหมดรวมภาค" : "")
+    );
+    throw e;
+  }
   // อ่าน body ก่อน log เวลา — ไม่งั้น code/รายละเอียดของ 409/400 หายไปตลอดกาล
   // (บันทึกการใช้งานของแอดมินมีแค่ ms + สถานะผ่าน/ไม่ผ่าน ไม่มีทางสืบสาเหตุย้อนหลังได้เลย)
   const errBody = res.ok ? null : await res.json().catch(() => ({}));
@@ -18309,6 +18323,16 @@ function _fmtLogTimeBangkok(ts) {
   }
 }
 
+/** ตัวกรองเพิ่ม (ผลตรวจ 7 ต.ค. 2026 ง) — เรื่อง/ทีม/ข้อความ/เฉพาะปัญหา ใช้ทั้งตารางและไฟล์ Excel */
+function _adminUsageLogExtraFilters(q) {
+  const v = (id) => String(document.getElementById(id)?.value || "").trim();
+  if (v("adminUsageLogAction")) q.set("action_prefix", v("adminUsageLogAction"));
+  if (v("adminUsageLogSup")) q.set("sup_id", v("adminUsageLogSup").toUpperCase());
+  if (v("adminUsageLogQ")) q.set("q", v("adminUsageLogQ"));
+  if (document.getElementById("adminUsageLogProblems")?.checked) q.set("problems_only", "true");
+  return q;
+}
+
 async function adminLoadUsageLogs() {
   const tbody = document.getElementById("adminUsageLogsTable");
   const countEl = document.getElementById("adminUsageLogCount");
@@ -18320,6 +18344,7 @@ async function adminLoadUsageLogs() {
     const q = _adminPeriodFilterQuery("adminUsageLogMonth", "adminUsageLogYear");
     q.set("limit", "500");
     if (level) q.set("level", level);
+    _adminUsageLogExtraFilters(q);
     const res = await fetchWithTimeout(`${API_BASE_URL}/admin/usage-logs?${q}`, {}, 20000);
     const data = await res.json().catch(() => ({}));
     const items = Array.isArray(data.items) ? data.items : [];
@@ -18515,6 +18540,7 @@ async function adminDownloadUsageLogsXlsx() {
     const q = _adminPeriodFilterQuery("adminUsageLogMonth", "adminUsageLogYear");
     const level = document.getElementById("adminUsageLogLevel")?.value || "";
     if (level) q.set("level", level);
+    _adminUsageLogExtraFilters(q);
     const res = await fetchWithTimeout(`${API_BASE_URL}/admin/usage-logs/export-xlsx?${q}`, {}, 60000);
     if (!res.ok) throw new Error("ดาวน์โหลดไม่สำเร็จ");
     const blob = await res.blob();
@@ -19490,12 +19516,15 @@ async function adminShowTargetBaseline(supId, month, year) {
   let data = null;
   let baseErr = "";
   let rowSnaps = [];
+  let ledger = null;
   try {
-    const [res, resRows] = await Promise.all([
+    const [res, resRows, resLed] = await Promise.all([
       fetchWithTimeout(`${API_BASE_URL}/admin/target-baseline?${q}`, {}, 20000),
       fetchWithTimeout(`${API_BASE_URL}/admin/target-baseline/row-snapshots?${q}`, {}, 20000)
         .catch(() => null),
+      fetchWithTimeout(`${API_BASE_URL}/admin/sent-ledger?${q}`, {}, 20000).catch(() => null),
     ]);
+    if (resLed && resLed.ok) ledger = await resLed.json().catch(() => null);
     const j = await res.json().catch(() => ({}));
     if (res.ok) data = j;
     else baseErr = j.detail || "เปิดเป้าตั้งต้นไม่สำเร็จ";
@@ -19507,7 +19536,7 @@ async function adminShowTargetBaseline(supId, month, year) {
     toast(e.message, "amber");
     return;
   }
-  if (!data && !rowSnaps.length) {
+  if (!data && !rowSnaps.length && !(ledger && ledger.sends && ledger.sends.length)) {
     toast(baseErr || "ยังไม่มีเป้าตั้งต้นของงวดนี้", "amber");
     return;
   }
@@ -19551,6 +19580,7 @@ async function adminShowTargetBaseline(supId, month, year) {
   }
 
   body += _baselineRowSnapsHtml(rowSnaps);
+  body += _sentLedgerHtml(ledger);
 
   const canRestore = !!data && (S.isAdmin || S.role === "dev");
   body += `<p style="margin:10px 0 0;font-size:12px;color:var(--text-2);line-height:1.6;">` +
@@ -19565,6 +19595,8 @@ async function adminShowTargetBaseline(supId, month, year) {
       btn.addEventListener("click", () =>
         _adminDownloadRestoreFile(supId, month, year, btn.getAttribute("data-restore-snap"), btn));
     });
+    document.getElementById("adminSentLedgerDl")?.addEventListener("click", (ev) =>
+      _adminDownloadFile(`/admin/sent-ledger/export?${q}`, `sent_ledger_${supId}_${year}_${String(month).padStart(2, "0")}.xlsx`, ev.currentTarget));
   }, 0);
   _showInfoModal({
     title: `เป้าตั้งต้น ${supId} · งวด ${period}`,
@@ -19603,6 +19635,58 @@ function _baselineRowSnapsHtml(items) {
     rows + `</table></div>`;
 }
 
+/* สิ่งที่ระบบส่งเข้า Target Sun จริง (sent ledger) — ผลตรวจ 7 ต.ค. 2026 ง: เดิมแอดมินดูไม่ได้ */
+function _sentLedgerHtml(led) {
+  const head = `<h4 style="margin:14px 0 6px;font-size:14px;">ประวัติที่ระบบนี้ส่งเข้า Target Sun</h4>`;
+  const sends = (led && Array.isArray(led.sends)) ? led.sends : [];
+  if (!sends.length) {
+    return head + `<p style="margin:0;font-size:13px;color:var(--text-2);">ยังไม่มีการส่งที่ถูกบันทึกของงวดนี้</p>`;
+  }
+  const fmt = (t) => {
+    const n = Number(t);
+    return n ? new Date(n * 1000).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" }) : "—";
+  };
+  const stTh = { ok: "สำเร็จ", partial: "ลงบางส่วน", unknown: "ยังยืนยันผลไม่ได้" };
+  const rows = sends.slice(0, 20).map((x) =>
+    `<tr><td style="padding:3px 6px;">${escapeHtml(fmt(x.sent_at))}</td>` +
+    `<td style="padding:3px 6px;">${escapeHtml(String(x.user || "-"))}</td>` +
+    `<td style="padding:3px 6px;text-align:right;">${Number(x.rows || 0).toLocaleString("th-TH")} แถว · ` +
+    `${Number(x.boxes || 0).toLocaleString("th-TH")} หีบ</td>` +
+    `<td style="padding:3px 6px;">${escapeHtml(stTh[String(x.send_status || "")] || String(x.send_status || "สำเร็จ"))}` +
+    `${x.send_batch_id ? " · รวมภาค" : ""}</td></tr>`
+  ).join("");
+  return head +
+    `<p style="margin:0 0 6px;font-size:13px;color:var(--text-2);">แถวล่าสุดที่ระบบส่ง ${Number(led.row_count || 0).toLocaleString("th-TH")} แถว · ` +
+    `${Number(led.boxes_total || 0).toLocaleString("th-TH")} หีบ${led.import_url_host ? ` · ปลายทาง ${escapeHtml(led.import_url_host)}` : ""} ` +
+    `<button type="button" class="admin-action" id="adminSentLedgerDl">⬇ ดาวน์โหลด Excel</button></p>` +
+    `<div style="max-height:180px;overflow:auto;"><table style="width:100%;font-size:13px;border-collapse:collapse;">${rows}</table></div>`;
+}
+
+async function _adminDownloadFile(path, fallbackName, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetchWithTimeout(`${API_BASE_URL}${path}`, {}, 60000);
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(j.detail || "ดาวน์โหลดไม่สำเร็จ");
+    }
+    const blob = await res.blob();
+    const cd = res.headers.get("Content-Disposition") || "";
+    const hit = cd.match(/filename="?([^";]+)"?/i);
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = (hit && hit[1]) || fallbackName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  } catch (e) {
+    toast(e.message, "red");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 async function _adminDownloadRestoreFile(supId, month, year, snapId, btn) {
   const q = new URLSearchParams({
     sup_id: supId, target_month: String(month), target_year: String(year), snap_id: snapId,
@@ -19635,6 +19719,16 @@ async function _adminDownloadRestoreFile(supId, month, year, snapId, btn) {
   } finally {
     if (btn) btn.disabled = false;
   }
+}
+
+/** เปิดกล่องเป้าตั้งต้นจากรหัสทีม + งวดที่เลือกในแท็บผลกระจาย — ทีมที่ไม่มีผลกระจายก็เปิดได้ (ผลตรวจ 7 ต.ค. 2026 ง) */
+function adminOpenBaselineByCode() {
+  const sup = String(document.getElementById("adminBaselineSup")?.value || "").trim().toUpperCase();
+  const m = Number(document.getElementById("adminAllocMonth")?.value) || 0;
+  const y = Number(document.getElementById("adminAllocYear")?.value) || 0;
+  if (!sup) { toast("กรอกรหัสทีมก่อน เช่น SL509", "amber"); return; }
+  if (!(m >= 1 && m <= 12) || !(y >= 2020)) { toast("เลือกเดือนและปีของงวดก่อน (ด้านขวา)", "amber"); return; }
+  adminShowTargetBaseline(sup, m, y);
 }
 
 function _adminConfirmRestoreBaseline(supId, month, year) {
