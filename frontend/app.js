@@ -4237,8 +4237,11 @@ function _showLogoutModal() {
 
   // บอกตามสถานะบันทึกบน server จริง (ผลตรวจ 7 ต.ค. 2026 ค) — เดิมดูร่างใน localStorage แล้วบอก
   // 「บันทึกไว้ในเครื่องแล้ว กลับมาได้เลย」แต่ทางกู้ร่างในเครื่องไม่มีใครเรียกแล้ว คำสัญญาจึงไม่จริง
-  const hasResult = Array.isArray(S.allocations) && S.allocations.length > 0;
-  const savedOnServer = hasResult && !S._hasUnsaved && !!S.serverSnapshotMeta;
+  const hasResult = Array.isArray(S.allocations) && S.allocations.length > 0
+    && !_isAllocReadOnlyView() && !S.targetSunPreviewMode;
+  // รวมภาคบันทึกแยกทีม (ไม่ตั้ง serverSnapshotMeta ของทีมที่ดูอยู่) — ดูแค่ว่ายังมีงานค้างไหม
+  const multi = !!(S.compositeAllocView || S.aggregateMode);
+  const savedOnServer = hasResult && !S._hasUnsaved && (multi || !!S.serverSnapshotMeta);
   const draftNote = !hasResult
     ? ""
     : savedOnServer
@@ -12808,7 +12811,14 @@ function queueRegionalAllocationSave(status = "draft") {
           _updateCompositeRegionalBanner();
         }
       })
-      .catch((e) => console.warn("queueRegionalAllocationSave:", e));
+      .catch((e) => {
+        console.warn("queueRegionalAllocationSave:", e);
+        // แบบเดียวกับทีมเดียว (ผลตรวจ 7 ต.ค. 2026 ค) — บันทึกรวมภาคล้มต้องให้ผู้ใช้รู้
+        S._hasUnsaved = true;
+        if (!e?._toasted) {
+          toast("⚠ บันทึกผลกระจายรวมภาคอัตโนมัติไม่สำเร็จ — " + _userFacingError(e, "กรุณากดบันทึกอีกครั้ง"), "amber");
+        }
+      });
   }, 800);
 }
 
@@ -22209,7 +22219,16 @@ async function adminToggleTargetSun(email, enabled) {
    เดิมค้างหน่วย/โหมดรวมภาค/เป้าเงิน/แคช sessionStorage ของคนที่เพิ่งดู ไปติดกับคนถัดไป */
 function _resetViewForIdentityChange() {
   _bumpDashboardLoadGen();
+  // บันทึกอัตโนมัติที่ค้างคิวของตัวตนเดิม ต้องไม่ยิงหลังเปลี่ยนตัวตน (ตรวจซ้ำ 8 ต.ค. 2026)
+  clearTimeout(_serverAllocSaveTimer);
+  _serverAllocSaveTimer = null;
+  clearTimeout(_regionalAllocSaveTimer);
+  _regionalAllocSaveTimer = null;
   S.managerViewUnit = "";
+  S.managerViewMode = "individual";
+  S.managerViewRegion = "";
+  S.managerViewOptions = null;
+  S.regionalFailedSups = [];
   S.aggregateMode = false;
   S.aggregateSupIds = [];
   S.compositeAllocView = false;

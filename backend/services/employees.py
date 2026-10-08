@@ -612,7 +612,7 @@ def load_employees_payload(
                 logger.error("ดึงรายชื่อพนักงาน %s ไม่ได้และไม่มีแคช: %s", sup_id, e)
                 raise HTTPException(
                     503,
-                    detail="ดึงรายชื่อพนักงานจากระบบข้อมูลยอดขาย (Fabric) ไม่ได้ชั่วคราว และยังไม่มีข้อมูลสำรอง — กรุณาลองใหม่อีกครั้งในอีกสักครู่",
+                    detail="ดึงรายชื่อพนักงานจากระบบข้อมูลยอดขาย/ราคาไม่ได้ชั่วคราว และยังไม่มีข้อมูลสำรอง — กรุณาลองใหม่อีกครั้งในอีกสักครู่",
                 )
             path, stamp = older
             logger.warning(
@@ -731,7 +731,7 @@ def load_employees_payload(
                 logger.error("เชื่อม Fabric ไม่ได้ (%s): %s", sup_id, e)
                 raise HTTPException(
                     503,
-                    detail="เชื่อมต่อระบบข้อมูลยอดขาย (Fabric) ไม่ได้ชั่วคราว — กรุณาลองใหม่อีกครั้งในอีกสักครู่",
+                    detail="เชื่อมต่อระบบข้อมูลยอดขาย/ราคาไม่ได้ชั่วคราว — กรุณาลองใหม่อีกครั้งในอีกสักครู่",
                 )
         ts_div = ts_st = None
         ts_max_effective: dict | None = None

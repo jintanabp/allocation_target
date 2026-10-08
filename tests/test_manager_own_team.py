@@ -258,6 +258,17 @@ class TestDropTeamsEmptiedByMoves(unittest.TestCase):
                 out = mv.drop_teams_emptied_by_moves(["SL359", "SL372", "SL999"], 10, 2026, data_dir=d)
         self.assertEqual(out, ["SL359", "SL999"])  # SL999 ไม่มีแคช = ไม่รู้ ไม่ตัด
 
+    def test_team_with_someone_moved_in_is_kept(self):
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "emp_cache_SL372_2026_10.csv"), "w", encoding="utf-8") as f:
+                f.write("emp_id\nS516\n")
+            rows = [{"emp_id": "S516", "to_sup": "SL359"}, {"emp_id": "S777", "to_sup": "SL372"}]
+            with mock.patch("backend.services.emp_assignment_store.read_rows", return_value=rows):
+                out = mv.drop_teams_emptied_by_moves(["SL359", "SL372"], 10, 2026, data_dir=d)
+        self.assertEqual(out, ["SL359", "SL372"])
+
 
 if __name__ == "__main__":
     unittest.main()

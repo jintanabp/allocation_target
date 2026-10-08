@@ -317,9 +317,14 @@ def drop_teams_emptied_by_moves(codes: list[str], month: int, year: int, data_di
     if not rows:
         return list(codes or [])
     moved_to = {str(r.get("emp_id") or "").strip().upper(): str(r.get("to_sup") or "").strip().upper() for r in rows}
+    # ทีมที่มีคนย้าย "เข้า" ยังเป็นทีมจริง แม้คนเดิมย้ายออกหมด (ตรวจซ้ำ 8 ต.ค. 2026)
+    has_moved_in = {t for t in moved_to.values() if t}
     out: list[str] = []
     for raw in codes or []:
         c = str(raw or "").strip().upper()
+        if c in has_moved_in:
+            out.append(c)
+            continue
         path = os.path.join(data_dir, f"emp_cache_{c}_{int(year):04d}_{int(month):02d}.csv")
         try:
             emps = [str(e).strip().upper() for e in pd.read_csv(path, dtype=str, usecols=["emp_id"])["emp_id"]]
