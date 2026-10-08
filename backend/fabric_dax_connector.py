@@ -913,6 +913,22 @@ SELECTCOLUMNS(
         print(f"✅ ดึงข้อมูลสินค้า {len(df)} รายการ")
         return df
 
+    def get_section_names(self) -> dict[str, str]:
+        """
+        ชื่อกลุ่มสินค้า (Section → Section_NameThai) — ใช้แสดงชื่อกลุ่มเมื่อผู้ใช้แยกแบรนด์เป็นกลุ่มสินค้า
+        แยกจาก get_product_info โดยตั้งใจ: คอลัมน์ชื่อหายจาก semantic model เมื่อไร คำสั่งดึงราคาต้องไม่ล้มตาม
+        """
+        rows = self._execute_dax(
+            "EVALUATE SUMMARIZECOLUMNS('Dim_Product'[Section], 'Dim_Product'[Section_NameThai])"
+        )
+        out: dict[str, str] = {}
+        for r in rows:
+            code = str(self._get(r, "[Section]", "Dim_Product[Section]", default="") or "").strip()
+            name = str(self._get(r, "[Section_NameThai]", "Dim_Product[Section_NameThai]", default="") or "").strip()
+            if code and name:
+                out[code] = name
+        return out
+
     # backward-compat alias
     def get_brands_and_skus(
         self,

@@ -49,6 +49,12 @@ class OptimizeRequest(BaseModel):
     tier_pct: float = Field(default=0.80, ge=0.5, le=0.95)
     # Multi-strategy support
     brand_strategy_map: dict[str, str] = Field(default_factory=dict)
+    split_brands: list[str] = Field(default_factory=list)
+    """
+    แบรนด์ที่ผู้ใช้เลือกแยกเป็นกลุ่มสินค้า (Section) — คีย์ใน brand_strategy_map ของแบรนด์เหล่านี้
+    เป็น "แบรนด์ · รหัสกลุ่ม" แทนชื่อแบรนด์ และหมุนหีบ SKU เล็กภายในกลุ่มย่อย (backend/core/alloc_groups.py)
+    ว่าง = พฤติกรรมเดิมทุกอย่าง
+    """
     bui_deductions: dict[str, float] = Field(default_factory=dict)
     neg_growth_reason: str | None = None
     """
@@ -93,6 +99,13 @@ class OptimizeRequest(BaseModel):
         if v is None or (isinstance(v, str) and not v.strip()):
             return "L3M"
         return str(v).strip().upper()
+
+    @field_validator("split_brands", mode="before")
+    @classmethod
+    def _normalize_split_brands(cls, v: object) -> list[str]:
+        if not v or not isinstance(v, (list, tuple, set)):
+            return []
+        return sorted({str(b).strip() for b in v if str(b or "").strip()})
 
     @field_validator("brand_strategy_map", mode="before")
     @classmethod

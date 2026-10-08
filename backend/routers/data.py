@@ -415,6 +415,46 @@ def _team_only_yellow(sid: str, body, payload: dict, prev: dict | None) -> None:
         payload["force_min_one"] = (prev or {}).get("force_min_one")
 
 
+class SplitBrandsBody(BaseModel):
+    split_brands: list[str] = Field(default_factory=list, max_length=200)
+
+
+def _prefs_owner(user: dict) -> str:
+    """เจ้าของการตั้งค่า — ล็อกอินปิด (เครื่อง dev) ไม่มีอีเมล ใช้คีย์กลางของเครื่อง"""
+    return _inbox_email(user) or "local-dev"
+
+
+@router.get("/data/alloc-groups")
+def get_alloc_groups(user: dict = Depends(require_authenticated_user)) -> dict[str, Any]:
+    """แบรนด์ที่ผู้ใช้คนนี้เลือกแยกเป็นกลุ่มสินค้า + ชื่อกลุ่มสินค้า (รหัส → ชื่อไทย)"""
+    from ..services import alloc_group_prefs
+
+    return {
+        "split_brands": alloc_group_prefs.get_split_brands(_prefs_owner(user)),
+        "section_names": alloc_group_prefs.section_names(),
+    }
+
+
+@router.put("/data/alloc-groups")
+def put_alloc_groups(
+    body: SplitBrandsBody,
+    user: dict = Depends(require_authenticated_user),
+) -> dict[str, Any]:
+    """บันทึกแบรนด์ที่เลือกแยก — รายคน จำข้ามงวด · ไม่แตะเป้าหรือผลกระจายที่บันทึกไว้"""
+    from ..services import alloc_group_prefs
+
+    if user.get("view_as_email"):
+        raise HTTPException(
+            status_code=403,
+            detail="โหมดดูแทนเปลี่ยนการตั้งค่าของผู้ใช้ท่านอื่นไม่ได้ กรุณาออกจากโหมดดูแทนก่อน",
+        )
+    try:
+        saved = alloc_group_prefs.set_split_brands(_prefs_owner(user), body.split_brands)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    return {"split_brands": saved}
+
+
 @router.get("/data/allocations")
 def get_allocation_snapshot(
     user: dict = Depends(require_authenticated_user),

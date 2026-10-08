@@ -795,7 +795,8 @@ def _sku_brand_map(df_sku: pd.DataFrame) -> dict[str, str]:
     """แบรนด์ของแต่ละ SKU (ชื่อไทยก่อน แล้วอังกฤษ — เหมือน optimize._sku_brand_key) · ไม่มีแบรนด์ = ไม่อยู่ในแผนที่"""
     if df_sku is None or df_sku.empty:
         return {}
-    cols = [c for c in ("brand_name_thai", "brand_name_english") if c in df_sku.columns]
+    # แบรนด์ที่ผู้ใช้เลือกแยกเป็นกลุ่มสินค้า → หมุนภายในกลุ่มย่อย (backend/core/alloc_groups.py)
+    cols = [c for c in ("alloc_group", "brand_name_thai", "brand_name_english") if c in df_sku.columns]
     if not cols:
         return {}
     out: dict[str, str] = {}

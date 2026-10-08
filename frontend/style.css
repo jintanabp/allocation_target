@@ -5649,6 +5649,32 @@ td.alloc-summary-status--none { color: var(--text-3); opacity: 0.7; }
   margin-top: 2px;
 }
 
+/* แถบหัวกลุ่มสินค้า (แยกแบรนด์เป็นกลุ่ม — 8 ต.ค. 2026): ชื่อกลุ่มอยู่ที่คอลัมน์แรกของกลุ่ม
+   คอลัมน์ถัดไปในกลุ่มเดียวกันเป็นแถบสีเดียวกันไม่มีตัวอักษร · เส้นซ้ายหนาบอกจุดเริ่มกลุ่ม */
+.sku-th-grp {
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.5;
+  text-align: left;
+  white-space: nowrap;
+  overflow: visible;
+  color: var(--accent);
+  background: var(--accent-bg);
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin: 0 -6px 4px;
+}
+
+.sku-th-grp--plain {
+  color: var(--text-3);
+  background: var(--bg-main);
+}
+
+.result-tbl th.grp-start,
+.result-tbl td.grp-start {
+  border-left: 2px solid var(--accent-brd);
+}
+
 .sku-th-price {
   font-size: 11px;
   font-weight: 600;

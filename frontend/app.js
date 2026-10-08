@@ -995,8 +995,12 @@ let S = {
   negGrowthReason: "",
   /** เป้าเงิน Step 2 ตั้งจากปุ่ม「ตั้งตามประวัติ」ช่วงไหน (คีย์ของ HIST_FILL_SOURCES) · null = Target Sun/แก้มือ */
   yellowSource: null,
-  /** brand → strategy map สำหรับโหมดเลือกหลายวิธี */
+  /** brand → strategy map สำหรับโหมดเลือกหลายวิธี (แบรนด์ที่แยกกลุ่ม = คีย์ "แบรนด์ · รหัสกลุ่ม") */
   brandStrategyMap: {},
+  /** แบรนด์ที่ผู้ใช้เลือกแยกเป็นกลุ่มสินค้า (รายคน จำข้ามงวด — /data/alloc-groups) */
+  splitBrands: [],
+  /** รหัสกลุ่มสินค้า (Section) → ชื่อไทย จาก Fabric */
+  sectionNames: {},
   /** จากผล optimize ล่าสุด — ป้ายหลัก/รอง ในตารางผล */
   tierFlexSkus: new Set(),
   tierStrictSkuCount: 0,
@@ -4193,6 +4197,7 @@ function _doLogout() {
     _managerSet: keepLoginMeta._managerSet,
     yellowLocked: {}, skuWarnings: [],
     buiDeductions: {}, buiColumnOpen: false, negGrowthReason: "", yellowSource: null, brandStrategyMap: {},
+    splitBrands: [], sectionNames: {},
     tierFlexSkus: new Set(), tierStrictSkuCount: 0,
     revenueScale: 1,
   canImportTargetSun: true,
@@ -5038,6 +5043,7 @@ function _applyDataPayloadInner(data) {
   S.histWindowMonths = 3;
   S.skus = data.skus;
   _bumpSkusVersion();
+  _loadAllocGroupPrefs();
   // โหลดเป้าชุดใหม่แล้ว — รายการ "เป้าเปลี่ยนหลังโหลด" ของรอบก่อนไม่ใช่ความจริงอีกต่อไป
   _staleTargetChunks = [];
   S.employees = (data.employees || []).map(_enrichEmployeeAllocFlags);
@@ -7312,6 +7318,8 @@ async function _doOptimize(lockedEdits = [], opts = {}) {
       force_min_one: forceMinOne,
       new_products_even: newProductsEven,
       brand_strategy_map: isMulti ? { ...S.brandStrategyMap } : {},
+      // คีย์ของแบรนด์ที่แยกกลุ่มใน brand_strategy_map คือ "แบรนด์ · รหัสกลุ่ม" — server ต้องรู้ชุดเดียวกัน
+      split_brands: [...(S.splitBrands || [])],
       bui_deductions: Object.fromEntries(
         Object.entries(S.buiDeductions || {}).filter(([, v]) => Number(v) > 0)
       ),
@@ -7469,16 +7477,19 @@ async function _doOptimize(lockedEdits = [], opts = {}) {
 function buildBrandTabs(allocs) {
   const brandSet = new Set();
   allocs.forEach(a => {
-    const b = a.brand_name_thai || a.brand_name_english || "";
+    const b = _allocGroupOfRow(a);
     if (b) brandSet.add(b);
   });
+  // แบรนด์ที่แยกกลุ่มเรียงติดกัน (คีย์ขึ้นต้นด้วยชื่อแบรนด์) — ลำดับเดิมของแบรนด์อื่นไม่เปลี่ยน
   const brands = ["ALL", ...Array.from(brandSet).sort()];
+  // กลุ่มที่เลือกไว้หายไป (เพิ่งปิดการแยก/เปิดการแยก) → กลับไปดูทั้งหมด ไม่ค้างตารางว่าง
+  if (S.activeBrand !== "ALL" && !brandSet.has(S.activeBrand)) S.activeBrand = "ALL";
 
   const selectEl = qs("#brandSelect");
   if (selectEl) {
     selectEl.innerHTML = brands.map(b => `
       <option value="${escH(b)}">
-        ${b === "ALL" ? "📦 ทุกแบรนด์ (ทั้งหมด)" : "🏷️ " + escH(b)}
+        ${b === "ALL" ? "📦 ทุกแบรนด์ (ทั้งหมด)" : (_isSplitGroupKey(b) ? "　└ " : "🏷️ ") + escH(_allocGroupLabel(b))}
       </option>
     `).join("");
     selectEl.value = S.activeBrand;
@@ -7556,7 +7567,7 @@ function renderResult(allocs) {
   const isFiltered = S.activeBrand !== "ALL";
   // ใช้สำหรับ CSS เว้นพื้นที่ด้านขวา กันคอลัมน์ sticky ทับคอลัมน์อื่น
   document.getElementById("resultBlock")?.classList.toggle("brand-filtered", isFiltered);
-  let filtered = isFiltered ? allocs.filter(a => (a.brand_name_thai || a.brand_name_english || "") === S.activeBrand) : allocs;
+  let filtered = isFiltered ? allocs.filter(a => _allocGroupOfRow(a) === S.activeBrand) : allocs;
 
   const sortMode = qs("#skuSortSelect")?.value || "code";
   const _skuPriceMap = _getSkuPriceMap();
@@ -7568,7 +7579,7 @@ function renderResult(allocs) {
     if (!uniqueSkusObj[a.sku]) {
       uniqueSkusObj[a.sku] = {
         sku: a.sku,
-        brand: a.brand_name_thai || a.brand_name_english || "",
+        brand: _allocGroupOfRow(a),
         totalQty: 0
       };
     }
@@ -7580,6 +7591,13 @@ function renderResult(allocs) {
   else if (sortMode === "brand") skusObjArr.sort((a, b) => a.brand.localeCompare(b.brand));
   else if (sortMode === "qty") skusObjArr.sort((a, b) => b.totalQty - a.totalQty);
   else if (sortMode === "price_desc") skusObjArr.sort((a, b) => (_skuPriceMap[b.sku] ?? 0) - (_skuPriceMap[a.sku] ?? 0));
+  // เปิดแยกกลุ่มสินค้าไว้ (ผู้ใช้ขอ 8 ต.ค. 2026): เรียงตามรหัสจะจับคอลัมน์ของแต่ละแบรนด์/กลุ่มไว้ติดกันก่อน
+  // แล้วค่อยเรียงรหัสภายในกลุ่ม — ไม่งั้นแถบหัวกลุ่มขาดเป็นท่อน ๆ · ไม่เปิดแยก = เรียงรหัสล้วนเหมือนเดิม
+  // เรียงตามจำนวน/ราคา กลุ่มสลับปนกัน แถบจะซ้ำเป็นท่อน ๆ — แสดงแถบเฉพาะเรียงตามรหัส/แบรนด์
+  const groupBand = (sortMode === "code" || sortMode === "brand")
+    && (S.splitBrands || []).length > 0 && skusObjArr.some(o => _isSplitGroupKey(o.brand));
+  const _groupOrder = (arr) => arr.sort((a, b) => a.brand.localeCompare(b.brand, "th") || a.sku.localeCompare(b.sku));
+  if (groupBand) _groupOrder(skusObjArr);
 
   if (S.histDevFilter === "near" || S.histDevFilter === "far") {
     const skuSet = new Set();
@@ -7610,6 +7628,7 @@ function renderResult(allocs) {
       // ตรงเป้าครบทุกตัวแล้ว — อย่าโชว์ตารางเปล่าให้งง
       S.resultView.offTargetOnly = false;
       skusObjArr = Object.values(uniqueSkusObj);
+      if (groupBand) _groupOrder(skusObjArr);
       toast("ทุก SKU ตรงเป้าแล้ว — แสดงทั้งหมดตามเดิม", "green");
     }
   }
@@ -7660,8 +7679,8 @@ function renderResult(allocs) {
     }, 0);
     qs("#brandSummary").innerHTML = `
       <div class="brand-sum-bar">
-        <span class="brand-sum-label">${S.activeBrand}</span>
-        <span class="brand-sum-val">มูลค่ารวมแบรนด์นี้: ${baht(brandTotal)} บาท</span>
+        <span class="brand-sum-label">${escH(_allocGroupLabel(S.activeBrand))}</span>
+        <span class="brand-sum-val">มูลค่ารวม${_isSplitGroupKey(S.activeBrand) ? "กลุ่ม" : "แบรนด์"}นี้: ${baht(brandTotal)} บาท</span>
         <span class="brand-sum-note">(ยอดรวมทุกแบรนด์อยู่ใน คอลัมน์ขวาสุด)</span>
       </div>`;
   } else {
@@ -7681,6 +7700,15 @@ function renderResult(allocs) {
   for (const a of allocs) {
     if (a.wh_pin_forced && !pinBySku.has(a.sku)) pinBySku.set(a.sku, a.wh_pin_forced);
   }
+  // แถบหัวกลุ่ม — อยู่ในเซลล์หัวเดิม (ไม่เพิ่มแถว thead ใหม่ จะได้ไม่ชนตำแหน่งหัวตารางที่ค้างบนจอ)
+  const _grpOf = new Map(skusObjArr.map(o => [o.sku, o.brand]));
+  const _grpStart = new Set();
+  if (groupBand) {
+    skus.forEach((s, i) => {
+      if (i === 0 || _grpOf.get(s) !== _grpOf.get(skus[i - 1])) _grpStart.add(s);
+    });
+  }
+  const _grpStartCls = (s) => (_grpStart.has(s) ? " grp-start" : "");
   headerHtml += `<tr><th class="result-sticky-left result-sticky-left--sm"${smWhRowspan}>S/M</th><th class="result-sticky-left result-sticky-left--wh"${smWhRowspan}>W/H</th>`;
   skus.forEach(s => {
     const info = _skuInfoByCode.get(s) || {};
@@ -7690,16 +7718,21 @@ function renderResult(allocs) {
     const whPinBadge = _skuWhPinBadgeHtml(s, pinBySku);
     const fresh = _freshSkuSet.has(String(s).trim());
     const freshBadge = fresh ? `<span class="badge-fresh" title="เพิ่งกระจายใหม่จากเป้าที่เพิ่ม/เปลี่ยน">เพิ่งกระจาย</span>` : "";
-    headerHtml += `<th class="r sku-th${fresh ? " sku-th--fresh" : ""}">` +
+    const grpKey = _grpOf.get(s) || "";
+    const grpBand = groupBand
+      ? `<div class="sku-th-grp${_isSplitGroupKey(grpKey) ? "" : " sku-th-grp--plain"}" title="${escH(_allocGroupLabel(grpKey))}">` +
+        `${_grpStart.has(s) ? escH(_allocGroupLabel(grpKey) || "—") : "&nbsp;"}</div>`
+      : "";
+    headerHtml += `<th class="r sku-th${fresh ? " sku-th--fresh" : ""}${_grpStartCls(s)}">` + grpBand +
       `<div class="sku-th-code">${s} ${newBadge}${tierBadge}${whPinBadge}${freshBadge}</div>` +
-      `<div class="sku-th-brand">${escH(info.brand_name_thai || info.brand_name_english || "")}</div>` +
+      `<div class="sku-th-brand">${escH(_allocGroupLabel(_allocGroupOfRow(info)))}</div>` +
       `<div class="sku-th-price">${fmt(price)} <span class="muted">บาท/หีบ</span></div>` +
       `</th>`;
   });
   headerHtml += `<th class="sticky-gap"${smWhRowspan}></th>`;
   if (isFiltered) {
-    headerHtml += `<th class="r sticky-brand-box"${smWhRowspan}>รวมหีบ<div style="font-size:9px;color:var(--accent)">${escH(S.activeBrand)}</div></th>`;
-    headerHtml += `<th class="r sticky-brand-val"${smWhRowspan}>มูลค่ารวม<div style="font-size:9px;color:var(--accent)">${escH(S.activeBrand)}</div></th>`;
+    headerHtml += `<th class="r sticky-brand-box"${smWhRowspan}>รวมหีบ<div style="font-size:9px;color:var(--accent)">${escH(_allocGroupLabel(S.activeBrand))}</div></th>`;
+    headerHtml += `<th class="r sticky-brand-val"${smWhRowspan}>มูลค่ารวม<div style="font-size:9px;color:var(--accent)">${escH(_allocGroupLabel(S.activeBrand))}</div></th>`;
   }
   headerHtml += `<th class="r sticky-grand-box"${smWhRowspan}>รวมหีบ<div style="font-size:9px;color:var(--text-3)">ทุกแบรนด์</div></th>`;
   headerHtml += `<th class="r sticky-grand-val"${smWhRowspan}>มูลค่ารวม<div style="font-size:9px;color:var(--text-3)">ทุกแบรนด์</div>` +
@@ -7710,7 +7743,7 @@ function renderResult(allocs) {
     skus.forEach(s => {
       const info = _skuInfoByCode.get(s) || {};
       const pname = _skuDisplayName(info);
-      headerHtml += `<th class="r sku-th sku-th--product" title="${escH(pname)}">` +
+      headerHtml += `<th class="r sku-th sku-th--product${_grpStartCls(s)}" title="${escH(pname)}">` +
         `<div class="sku-th-product">${escH(pname || "—")}</div></th>`;
     });
     headerHtml += `</tr>`;
@@ -7733,7 +7766,7 @@ function renderResult(allocs) {
     const p = _skuPriceMap[a.sku] ?? Number(a.price_per_box) ?? 0;
     t.grandBoxes += b;
     t.grandValue += b * p;
-    if (isFiltered && (a.brand_name_thai || a.brand_name_english || "") === S.activeBrand) {
+    if (isFiltered && _allocGroupOfRow(a) === S.activeBrand) {
       t.brandBoxes += b;
       t.brandValue += b * p;
     }
@@ -7838,7 +7871,7 @@ function renderResult(allocs) {
           `⚠ ไม่มีเป้าที่คลังนี้ · ถ้าส่งจะลงคลัง ${escH(_redir.map((w) => w || "(ว่าง)").join(", "))}</div>`
         : "";
 
-      rowHtml += `<td class="r result-cell${_freshSkuSet.has(String(s).trim()) ? " result-cell--fresh" : ""}" style="vertical-align:top;">
+      rowHtml += `<td class="r result-cell${_freshSkuSet.has(String(s).trim()) ? " result-cell--fresh" : ""}${_grpStartCls(s)}" style="vertical-align:top;">
         <div class="result-box-wrap">
           <div class="result-box-num ${colorClass}" contenteditable="${resultReadOnly ? "false" : "true"}"
             data-emp="${escH(empId)}" data-wh="${escH(whKey)}" data-sku="${escH(s)}" onblur="onResultEdit(this)"
@@ -8463,7 +8496,7 @@ function renderResultFooter(skus, skuTotals) {
     const p = _p[a.sku] ?? 0;
     grandBoxesAll += b;
     grandValueAll += b * p;
-    if (isFiltered && (a.brand_name_thai || "") === S.activeBrand) {
+    if (isFiltered && _allocGroupOfRow(a) === S.activeBrand) {
       brandBoxesTotal += b;
       brandValueTotal += b * p;
     }
@@ -9223,7 +9256,7 @@ function _syncResultTableAfterRebalance() {
     const p = skuPriceMap[a.sku] ?? Number(a.price_per_box) ?? 0;
     t.grandBoxes += b;
     t.grandValue += b * p;
-    if (isFiltered && (a.brand_name_thai || a.brand_name_english || "") === S.activeBrand) {
+    if (isFiltered && _allocGroupOfRow(a) === S.activeBrand) {
       t.brandBoxes += b;
       t.brandValue += b * p;
     }
@@ -9296,7 +9329,7 @@ function _syncResultTableAfterRebalance() {
     // รวมยอดต่อ SKU ในรอบเดียว แทน skus.map(filter) (เดิม O(skus×allocations))
     const sumBySku = new Map();
     for (const a of allocs) {
-      if (isFiltered && (a.brand_name_thai || a.brand_name_english || "") !== S.activeBrand) continue;
+      if (isFiltered && _allocGroupOfRow(a) !== S.activeBrand) continue;
       const k = String(a.sku).trim();
       sumBySku.set(k, (sumBySku.get(k) || 0) + (Number(a.allocated_boxes) || 0));
     }
@@ -15403,7 +15436,7 @@ function dismissTargetDriftNotice() {
 function _brandsFromSkus() {
   const m = new Map();
   for (const x of S.skus || []) {
-    const b = String(x.brand_name_thai || x.brand_name_english || "").trim() || "(ไม่ระบุแบรนด์)";
+    const b = _allocGroupOfRow(x) || "(ไม่ระบุแบรนด์)";
     const cur = m.get(b) || { brand: b, skus: [] };
     cur.skus.push(String(x.sku).trim());
     m.set(b, cur);
@@ -15433,7 +15466,7 @@ function openAllocPickModal() {
       <label class="scope-opt" style="align-items:center;">
         <input type="checkbox" name="allocPickBrand" value="${escH(b.brand)}" />
         <span class="scope-opt__body">
-          <span class="scope-opt__title">${escH(b.brand)}</span>
+          <span class="scope-opt__title">${escH(_allocGroupLabel(b.brand))}</span>
           <span class="scope-opt__desc">${b.skus.length.toLocaleString("th-TH")} สินค้า</span>
         </span>
       </label>`
@@ -15442,7 +15475,7 @@ function openAllocPickModal() {
   _showInfoModal({
     title: "เลือกสินค้าที่จะกระจายใหม่",
     bodyHtml:
-      `<p style="margin:0 0 10px;text-align:left;line-height:1.6;">ติ๊กแบรนด์ที่ต้องการ หรือพิมพ์รหัสสินค้าเองก็ได้ — <strong>สินค้าที่ไม่ได้เลือกจะไม่ถูกแตะ</strong></p>` +
+      `<p style="margin:0 0 10px;text-align:left;line-height:1.6;">ติ๊กแบรนด์หรือกลุ่มสินค้าที่ต้องการ หรือพิมพ์รหัสสินค้าเองก็ได้ — <strong>สินค้าที่ไม่ได้เลือกจะไม่ถูกแตะ</strong></p>` +
       `<div style="max-height:260px;overflow:auto;text-align:left;">${rows}</div>` +
       `<label style="display:block;text-align:left;margin-top:12px;">รหัสสินค้า (คั่นด้วยเว้นวรรคหรือจุลภาค)` +
       `<input type="text" id="allocPickSkuInput" class="field-input" style="width:100%;margin-top:6px;" placeholder="เช่น 734046 111294" /></label>`,
@@ -15498,6 +15531,13 @@ function syncAllocExtraButtons() {
   const pick = document.getElementById("allocPickBtn");
   if (pick) {
     pick.style.display = editable && (S.skus || []).length ? "" : "none";
+  }
+  // แยกกลุ่มสินค้าเป็นการตั้งค่าการแสดงผล/หน่วยกระจาย — ใช้ได้ทุกมุมมอง (ทีมเดียวและรวมภาค)
+  // โหมดดูแทนบันทึกค่าของคนอื่นไม่ได้ (server ปฏิเสธ) — ซ่อนปุ่มไปเลย ไม่ให้กดแล้วเจอ error
+  const showGroups = (S.skus || []).length && !S.viewAsEmail;
+  for (const id of ["allocGroupsBtn", "resultAllocGroupsBtn"]) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = showGroups ? "" : "none";
   }
   const drift = document.getElementById("targetDriftBtn");
   if (drift) {
@@ -16348,10 +16388,204 @@ function _revenueScaleNoteHtml() {
   return `<div class="revenue-scale-note">เป้าเงินรวมจาก Target Sun ${word}มูลค่าหีบรวม ~${Math.abs(pct)}% — ระบบปรับสเกลเป้าต่อคนอัตโนมัติก่อนจัดสรร (×${scale.toFixed(4)})</div>`;
 }
 
+/* ══════════════════════════════════════════════
+   แยกแบรนด์เป็นกลุ่มสินค้า (ผู้ใช้ขอ 8 ต.ค. 2026)
+   แบรนด์ที่เลือก (เช่น มาม่า) แยกเป็นกลุ่มตาม Section ของ Fabric · แบรนด์อื่นเป็นแบรนด์เหมือนเดิม
+   ใช้กับ: ตัวกรอง/หัวตารางผล · เลือกสินค้าที่จะกระจาย · วิธีกระจายรายหน่วย · หมุนหีบ SKU เล็ก (server)
+   ไม่แตะเป้าหีบ คลัง หรือแถวที่ส่ง Target Sun · คีย์ต้องตรงกับ backend/core/alloc_groups.py
+══════════════════════════════════════════════ */
+const ALLOC_GROUP_SEP = " · ";
+let _allocGroupPrefsLoadedFor = null;
+let _allocGroupPrefsInflight = null;
+
+function _normSectionCode(v) {
+  let s = String(v ?? "").trim();
+  if (/^\d+\.0+$/.test(s)) s = s.split(".")[0];
+  // 0 = ไม่มีกลุ่ม (ไฟล์เป้าเติมช่องว่างเป็น 0) — ต้องตรงกับ alloc_groups.norm_section
+  if (/^0+$/.test(s)) return "";
+  return s;
+}
+
+function _brandOfRow(r) {
+  return String(r?.brand_name_thai || r?.brand_name_english || "").trim();
+}
+
+/** แบรนด์ที่ไม่ได้เลือกแยก = ชื่อแบรนด์ · ที่เลือกแยก = "แบรนด์ · รหัสกลุ่ม" (ไม่มีรหัส = "-") */
+function _allocGroupKey(brand, section) {
+  const b = String(brand || "").trim();
+  if (!b || !(S.splitBrands || []).includes(b)) return b;
+  return `${b}${ALLOC_GROUP_SEP}${_normSectionCode(section) || "-"}`;
+}
+
+/** แถวผลกระจาย/แถวสินค้า → หน่วยกลุ่ม · แถวผลไม่มี section จึงอ่านจากตารางสินค้า (S.skus) */
+function _allocGroupOfRow(r) {
+  const brand = _brandOfRow(r);
+  if (!brand || !(S.splitBrands || []).includes(brand)) return brand;
+  let sec = r?.section;
+  if (sec == null || String(sec).trim() === "") {
+    const ver = S._skusVersion || 0;
+    if (!S._skuSectionMap || S._skuSectionMapVer !== ver) {
+      const m = new Map();
+      for (const x of S.skus || []) m.set(String(x.sku).trim(), x.section);
+      S._skuSectionMap = m;
+      S._skuSectionMapVer = ver;
+    }
+    sec = S._skuSectionMap.get(String(r?.sku || "").trim());
+  }
+  return _allocGroupKey(brand, sec);
+}
+
+function _isSplitGroupKey(key) {
+  return String(key || "").includes(ALLOC_GROUP_SEP);
+}
+
+/** ชื่อกลุ่มสินค้าแบบสั้น — ตัดชื่อแบรนด์ที่ขึ้นต้นซ้ำออก ("มาม่าเส้นเหลือง" → "เส้นเหลือง") */
+function _sectionShortName(brand, code) {
+  if (!code || code === "-") return "อื่น ๆ";
+  const full = String((S.sectionNames || {})[code] || "").trim();
+  if (!full) return `กลุ่ม ${code}`;
+  const b = String(brand || "").trim();
+  const short = b && full.startsWith(b) ? full.slice(b.length).trim() : full;
+  return short || full;
+}
+
+function _allocGroupLabel(key) {
+  const k = String(key || "");
+  const i = k.indexOf(ALLOC_GROUP_SEP);
+  if (i < 0) return k;
+  const brand = k.slice(0, i);
+  return `${brand}${ALLOC_GROUP_SEP}${_sectionShortName(brand, k.slice(i + ALLOC_GROUP_SEP.length))}`;
+}
+
+/** โหลดแบรนด์ที่ผู้ใช้คนนี้เลือกแยก + ชื่อกลุ่ม — ครั้งเดียวต่อตัวตน · ล้มเหลว = ไม่แยก (พฤติกรรมเดิม) */
+function _loadAllocGroupPrefs(force = false) {
+  const who = String(S.viewAsEmail || "") + "|" + String(S.userEmail || "");
+  if (!force && _allocGroupPrefsLoadedFor === who) return Promise.resolve();
+  if (_allocGroupPrefsInflight) return _allocGroupPrefsInflight;
+  const p = (async () => {
+    try {
+      const res = await fetchWithTimeout(`${API_BASE_URL}/data/alloc-groups`, {}, 20000);
+      if (!res.ok) return;
+      const j = await res.json().catch(() => ({}));
+      // ระหว่างรอ ผู้ใช้เปลี่ยนตัวตน (ดูแทน/ออกจากระบบ) — ค่านี้เป็นของคนเดิม ทิ้งไป
+      if (who !== String(S.viewAsEmail || "") + "|" + String(S.userEmail || "")) return;
+      _allocGroupPrefsLoadedFor = who;
+      S.sectionNames = j && typeof j.section_names === "object" && j.section_names ? j.section_names : {};
+      const next = Array.isArray(j.split_brands) ? j.split_brands.map((b) => String(b).trim()).filter(Boolean) : [];
+      const changed = next.slice().sort().join("\n") !== (S.splitBrands || []).slice().sort().join("\n");
+      S.splitBrands = next;
+      if (changed) _onAllocGroupsChanged();
+    } catch (e) {
+      console.warn("[alloc-groups]", e);
+    } finally {
+      if (_allocGroupPrefsInflight === p) _allocGroupPrefsInflight = null;
+    }
+  })();
+  _allocGroupPrefsInflight = p;
+  return p;
+}
+
+/** เปลี่ยนชุดแบรนด์ที่แยก → วาดใหม่ทุกที่ที่ใช้หน่วยกลุ่ม */
+function _onAllocGroupsChanged() {
+  _renderBrandStrategyPanel();
+  if ((S.allocations || []).length) {
+    buildBrandTabs(S.allocations);
+    renderResult(S.allocations);
+  }
+}
+
+/** แบรนด์ในตารางเป้าที่มีสินค้ามากกว่า 1 กลุ่ม — แยกแล้วจึงมีความหมาย */
+function _splittableBrands() {
+  const m = new Map();
+  for (const x of S.skus || []) {
+    const b = _brandOfRow(x);
+    if (!b) continue;
+    const cur = m.get(b) || { brand: b, sections: new Map() };
+    const sec = _normSectionCode(x.section) || "-";
+    cur.sections.set(sec, (cur.sections.get(sec) || 0) + 1);
+    m.set(b, cur);
+  }
+  return [...m.values()]
+    .filter((x) => x.sections.size > 1 || (S.splitBrands || []).includes(x.brand))
+    .sort((a, b) => b.sections.size - a.sections.size || a.brand.localeCompare(b.brand, "th"));
+}
+
+async function openAllocGroupsModal() {
+  if (!(S.skus || []).length) {
+    toast("ยังไม่มีรายการสินค้า — กรุณาโหลดข้อมูลขั้นที่ 1 ก่อน", "amber");
+    return;
+  }
+  await _loadAllocGroupPrefs();
+  const brands = _splittableBrands();
+  const chosen = new Set(S.splitBrands || []);
+  const rows = brands.length
+    ? brands
+        .map((b) => {
+          const secs = [...b.sections.entries()]
+            .sort((x, y) => x[0].localeCompare(y[0], "en", { numeric: true }))
+            .map(([code, n]) => `${_sectionShortName(b.brand, code)} (${n.toLocaleString("th-TH")})`)
+            .join(", ");
+          return `
+      <label class="scope-opt" style="align-items:center;">
+        <input type="checkbox" name="allocGroupBrand" value="${escH(b.brand)}" ${chosen.has(b.brand) ? "checked" : ""} />
+        <span class="scope-opt__body">
+          <span class="scope-opt__title">${escH(b.brand)} — ${b.sections.size.toLocaleString("th-TH")} กลุ่ม</span>
+          <span class="scope-opt__desc">${escH(secs)}</span>
+        </span>
+      </label>`;
+        })
+        .join("")
+    : `<p style="margin:0;">ไม่มีแบรนด์ใดในงวดนี้ที่มีสินค้ามากกว่า 1 กลุ่ม</p>`;
+  _showInfoModal({
+    title: "แยกแบรนด์เป็นกลุ่มสินค้า",
+    bodyHtml:
+      `<p style="margin:0 0 10px;text-align:left;line-height:1.6;">แบรนด์ที่ติ๊กจะแสดงและกรองแยกเป็นกลุ่มสินค้า เลือกวิธีกระจาย และเลือกกระจายใหม่เป็นรายกลุ่มได้ ` +
+      `แบรนด์ที่ไม่ได้ติ๊กแสดงเป็นแบรนด์ตามเดิม<br><strong>ไม่เปลี่ยนเป้าหีบ คลังสินค้า หรือข้อมูลที่ส่งเข้า Target Sun</strong> ` +
+      `(การตั้งค่านี้จำไว้ให้ท่านทุกทีมและทุกงวด — ผลที่กระจายไว้แล้วไม่เปลี่ยนจนกว่าจะกดกระจายใหม่)</p>` +
+      `<div style="max-height:300px;overflow:auto;text-align:left;">${rows}</div>`,
+    primaryLabel: brands.length ? "บันทึก" : undefined,
+    onPrimary: async () => {
+      const picked = [...document.querySelectorAll('#infoModal input[name="allocGroupBrand"]:checked')].map((el) => el.value);
+      // แบรนด์ที่เลือกไว้แต่ไม่มีในทีม/งวดนี้ (จึงไม่อยู่ในรายการ) ต้องไม่หายไปตอนบันทึก — ค่านี้ใช้ทุกทีมทุกงวด
+      const shown = new Set(brands.map((b) => b.brand));
+      const keep = (S.splitBrands || []).filter((b) => !shown.has(b));
+      await _saveSplitBrands([...new Set([...keep, ...picked])]);
+    },
+    secondaryLabel: "ยกเลิก",
+  });
+}
+
+async function _saveSplitBrands(picked) {
+  try {
+    const res = await fetchWithTimeout(
+      `${API_BASE_URL}/data/alloc-groups`,
+      { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ split_brands: picked }) },
+      20000
+    );
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      toast(_friendlyMsg(j.detail) || "บันทึกการแยกกลุ่มสินค้าไม่สำเร็จ กรุณาลองใหม่อีกครั้ง", "red");
+      return;
+    }
+    const j = await res.json().catch(() => ({}));
+    S.splitBrands = Array.isArray(j.split_brands) ? j.split_brands : picked;
+    _onAllocGroupsChanged();
+    toast(
+      S.splitBrands.length
+        ? `แยกเป็นกลุ่มสินค้าแล้ว: ${S.splitBrands.join(", ")}`
+        : "ยกเลิกการแยกกลุ่มสินค้าแล้ว — แสดงเป็นแบรนด์ตามเดิม",
+      "green"
+    );
+  } catch (e) {
+    toast("บันทึกการแยกกลุ่มสินค้าไม่สำเร็จ กรุณาลองใหม่อีกครั้ง", "red");
+  }
+}
+
+/** หน่วยที่เลือกวิธีกระจายได้ — แบรนด์ หรือ แบรนด์ · กลุ่มสินค้า (แบรนด์ที่ผู้ใช้เลือกแยก) */
 function _getAllBrands() {
   const set = new Set();
   (S.skus || []).forEach(s => {
-    const b = (s.brand_name_thai || s.brand_name_english || "").trim();
+    const b = _allocGroupOfRow(s);
     if (b) set.add(b);
   });
   return Array.from(set).sort();
@@ -16370,6 +16604,17 @@ function _renderBrandStrategyPanel() {
     return;
   }
 
+  // เพิ่งเปิด/ปิดแยกกลุ่ม: กลุ่มใหม่รับวิธีที่แบรนด์เคยตั้งไว้ · ปิดแยก = แบรนด์รับวิธีของกลุ่มแรกที่เคยตั้ง
+  // (ไม่งั้นวิธีที่เลือกไว้เด้งกลับเป็นค่าเริ่มต้นเงียบ ๆ ตอนกดแยก/เลิกแยก)
+  const _prevMap = { ...S.brandStrategyMap };
+  brands.forEach(b => {
+    if (S.brandStrategyMap[b]) return;
+    const i = b.indexOf(ALLOC_GROUP_SEP);
+    const inherited = i >= 0
+      ? _prevMap[b.slice(0, i)]
+      : Object.keys(_prevMap).filter(k => k.startsWith(b + ALLOC_GROUP_SEP)).sort().map(k => _prevMap[k])[0];
+    if (inherited && selected.includes(inherited)) S.brandStrategyMap[b] = inherited;
+  });
   Object.keys(S.brandStrategyMap).forEach(b => {
     if (!brands.includes(b) || !selected.includes(S.brandStrategyMap[b])) {
       delete S.brandStrategyMap[b];
@@ -16403,7 +16648,7 @@ function _renderBrandStrategyPanel() {
       }).join("");
     return `
       <div class="brand-strategy-row ${missing ? "is-missing" : ""}" data-brand="${escH(b)}">
-        <span class="brand-strategy-row__name" title="${escH(b)}">🏷️ ${escH(b)}</span>
+        <span class="brand-strategy-row__name" title="${escH(_allocGroupLabel(b))}">${_isSplitGroupKey(b) ? "└" : "🏷️"} ${escH(_allocGroupLabel(b))}</span>
         <select class="brand-strategy-row__select" onchange="onBrandStrategyChange(this)" data-brand="${escH(b)}">
           ${opts}
         </select>
@@ -22337,6 +22582,10 @@ async function adminToggleTargetSun(email, enabled) {
    เดิมค้างหน่วย/โหมดรวมภาค/เป้าเงิน/แคช sessionStorage ของคนที่เพิ่งดู ไปติดกับคนถัดไป */
 function _resetViewForIdentityChange() {
   _bumpDashboardLoadGen();
+  // การแยกแบรนด์เป็นกลุ่มสินค้าเป็นค่ารายคน — เปลี่ยนตัวตนแล้วต้องโหลดของคนใหม่
+  _allocGroupPrefsLoadedFor = null;
+  _allocGroupPrefsInflight = null;
+  S.splitBrands = [];
   // บันทึกอัตโนมัติที่ค้างคิวของตัวตนเดิม ต้องไม่ยิงหลังเปลี่ยนตัวตน (ตรวจซ้ำ 8 ต.ค. 2026)
   clearTimeout(_serverAllocSaveTimer);
   _serverAllocSaveTimer = null;

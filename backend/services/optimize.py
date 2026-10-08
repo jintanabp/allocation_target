@@ -30,6 +30,7 @@ from ..core.allocation_checks import (
     validate_allocation_vs_targets,
     zero_fill_missing_employees,
 )
+from ..core import alloc_groups as _alloc_groups
 from ..core.constants import VALID_STRATEGIES
 from ..core.tga_period import enforce_tga_selection_matches_effective_window
 from ..core.paths import (
@@ -1014,12 +1015,8 @@ def _merge_partial_result(
 
 
 def _sku_brand_key(row) -> str:
-    """ชื่อแบรนด์ที่ใช้จับคู่ brand_strategy_map — ไทยก่อน แล้วอังกฤษ (ตรงกับหน้าเว็บ)"""
-    for col in ("brand_name_thai", "brand_name_english"):
-        v = str(row.get(col, "") or "").strip()
-        if v:
-            return v
-    return ""
+    """หน่วยที่ใช้จับคู่ brand_strategy_map — แบรนด์ (ไทยก่อน แล้วอังกฤษ) หรือ แบรนด์ · กลุ่มสินค้า (ตรงกับหน้าเว็บ)"""
+    return _alloc_groups.row_group(row)
 
 
 def _resolved_strategies_by_sku(df_sku: pd.DataFrame, brand_map: dict, default: str) -> set[str]:
@@ -1291,6 +1288,8 @@ def run_optimization_service(
             sup_id, target_year, target_month, len(dups), dups[:10],
         )
         df_sku = df_sku.drop_duplicates(subset=["sku"], keep="last").reset_index(drop=True)
+    # แบรนด์ที่ผู้ใช้เลือกแยกเป็นกลุ่มสินค้า (8 ต.ค. 2026) — ไม่เลือก = ไม่แตะ df_sku เลย
+    df_sku = _alloc_groups.add_group_column(df_sku, req.split_brands)
     if df_sku.empty:
         raise HTTPException(
             400,
@@ -1695,18 +1694,8 @@ def run_optimization_service(
             len(distinct_strategies), len(brand_map),
         )
         multi_strategy_run = True
-        bcol_th = "brand_name_thai" if "brand_name_thai" in df_sku.columns else None
-        bcol_en = "brand_name_english" if "brand_name_english" in df_sku.columns else None
-
-        def _brand_key(row) -> str:
-            if bcol_th and str(row.get(bcol_th, "") or "").strip():
-                return str(row.get(bcol_th, "")).strip()
-            if bcol_en and str(row.get(bcol_en, "") or "").strip():
-                return str(row.get(bcol_en, "")).strip()
-            return ""
-
         df_sku_local = df_sku.copy()
-        df_sku_local["_brand_key"] = df_sku_local.apply(_brand_key, axis=1)
+        df_sku_local["_brand_key"] = df_sku_local.apply(_sku_brand_key, axis=1)
         df_sku_local["_strategy_resolved"] = df_sku_local["_brand_key"].map(
             lambda b: brand_map.get(b, req.strategy)
         )

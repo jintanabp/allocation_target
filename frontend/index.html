@@ -16,7 +16,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=2026100816" />
+  <link rel="stylesheet" href="style.css?v=2026100818" />
 </head>
 
 <body>
@@ -806,6 +806,9 @@
           <div class="run-actions">
             <button type="button" class="alloc-scope__change" id="allocPickBtn"
                     onclick="openAllocPickModal()" style="display:none;">เลือกสินค้าที่จะกระจาย</button>
+            <button type="button" class="alloc-scope__change" id="allocGroupsBtn"
+                    onclick="openAllocGroupsModal()" style="display:none;"
+                    title="เลือกแบรนด์ (เช่น มาม่า) ให้แสดง กรอง และเลือกวิธีกระจายแยกเป็นกลุ่มสินค้า">แยกกลุ่มสินค้า</button>
             <button type="button" class="alloc-scope__change" id="targetDriftBtn"
                     onclick="checkTargetSunDrift()" style="display:none;">ตรวจเป้าล่าสุด</button>
             <button class="btn-run" id="runBtn" onclick="runOptimization()" disabled>
@@ -877,6 +880,10 @@
               <select id="brandSelect" class="field-select"
                 style="min-width: 180px; padding: 6px 30px 6px 12px; height: auto; border-radius: 6px; font-weight: 600; color: var(--accent); border-color: var(--accent-brd); background-color: var(--accent-bg);"
                 onchange="switchBrand(this.value)"></select>
+              <button type="button" class="btn-dl" id="resultAllocGroupsBtn"
+                style="color:var(--text-2); border-color:var(--border-md); background:var(--bg-main);"
+                onclick="openAllocGroupsModal()"
+                title="เลือกแบรนด์ (เช่น มาม่า) ให้แสดงและกรองแยกเป็นกลุ่มสินค้า">🗂 แยกกลุ่มสินค้า</button>
 
               <button class="btn-dl"
                 style="color:var(--text-2); border-color:var(--border-md); background:var(--bg-main);"
@@ -2175,8 +2182,8 @@
   <script src="vendor/msal-browser.min.js"></script>
   <!-- ตรรกะล้วน (ตัวแปลงเลข/คณิตการเกลี่ย) — ต้องมาก่อน app.js
        ไฟล์นี้มีเทสจริงด้วย node --test tests/logic.test.js -->
-  <script src="logic.js?v=2026100816"></script>
-  <script src="app.js?v=2026100816"></script>
+  <script src="logic.js?v=2026100818"></script>
+  <script src="app.js?v=2026100818"></script>
 </body>
 
 </html>
