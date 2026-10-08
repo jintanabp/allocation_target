@@ -35,10 +35,30 @@ def _repo_root() -> str:
 
 
 def no_target_json_path() -> str:
+    """
+    ที่เขียน — **data/** (ผลตรวจ 7 ต.ค. 2026 ข10) · แอดมินแก้จากหน้าเว็บ ห้ามเก็บใน config/ ที่อยู่ใน git
+    (deploy แบบ git pull/reset ทับค่าที่ตั้งไว้เงียบ ๆ — กติกาเดียวกับ data/alloc_rules.json)
+    """
     raw = (os.environ.get("NO_TARGET_EMPLOYEES_JSON_PATH") or "").strip()
     if raw:
         return os.path.normpath(os.path.abspath(raw))
+    return os.path.join(_repo_root(), "data", "no_target_employees.json")
+
+
+def _legacy_config_path() -> str:
     return os.path.join(_repo_root(), "config", "no_target_employees.json")
+
+
+def no_target_read_path() -> str:
+    """
+    ที่อ่าน — ไฟล์ใน data/ ถ้ามีแล้ว · ยังไม่มี (เพิ่ง deploy รุ่นนี้) = อ่านไฟล์เดิมใน config/ เป็นค่าตั้งต้น
+    บันทึกครั้งแรกจากหน้าเว็บจะเขียนลง data/ แล้วจากนั้นใช้ data/ ตลอด (ไม่ต้องย้ายไฟล์เอง ไม่แตะ .env)
+    """
+    path = no_target_json_path()
+    if (os.environ.get("NO_TARGET_EMPLOYEES_JSON_PATH") or "").strip() or os.path.isfile(path):
+        return path
+    legacy = _legacy_config_path()
+    return legacy if os.path.isfile(legacy) else path
 
 
 def norm_sup(s: Any) -> str:
@@ -86,7 +106,7 @@ def read_entries() -> list[dict[str, Any]]:
     ไฟล์พังถึงจะ raise เพราะ "อ่านไม่ออก" กับ "ไม่มีใครถูกกัน" ต่างกันคนละเรื่อง
     ผู้เรียกที่ยอมให้ผ่านได้ต้องจงใจ catch เอง
     """
-    path = no_target_json_path()
+    path = no_target_read_path()
     if not os.path.isfile(path):
         return []
     with _STORE_LOCK:

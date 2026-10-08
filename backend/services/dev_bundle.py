@@ -33,6 +33,8 @@ def _repo_root() -> str:
 # ที่ตั้งใจ และกัน `.env` (ซึ่งมี secret) ติดไปด้วยเด็ดขาด
 BUNDLE_PARTS: tuple[tuple[str, str, bool, str], ...] = (
     ("config", "config/*.json", True, "สิทธิ์ผู้ใช้ · ผูกรหัส · ลำดับชั้น · สิทธิ์หน้าแอดมิน"),
+    ("admin_lists", "data/*_employees.json", True, "รายชื่อไม่ต้องตั้งเป้า (ย้ายจาก config/ 7 ต.ค. 2026)"),
+    ("emp_moves", "data/emp_assignments.json", True, "การย้ายพนักงาน (ย้ายจาก config/ 7 ต.ค. 2026)"),
     ("grain", "data/tga_lines_*.csv", True, "เป้า grain จาก Target Sun (ตัวที่ทำให้ขอบเขตทีมต่างกัน)"),
     ("emp_cache", "data/emp_cache_*.csv", True, "รายชื่อพนักงานต่อทีม×งวด"),
     ("target_boxes", "data/target_boxes_*.csv", True, "เป้าหีบต่อ SKU ของแต่ละทีม"),

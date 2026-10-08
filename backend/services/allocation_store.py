@@ -197,6 +197,7 @@ def write_snapshot(
     body: dict[str, Any],
     *,
     expected_version: int | None = None,
+    allow_unconditional: bool = False,
 ) -> dict[str, Any]:
     """
     บันทึก snapshot แบบ compare-and-swap
@@ -219,7 +220,9 @@ def write_snapshot(
         if expected_version is not None:
             if cur_ver != int(expected_version):
                 raise SnapshotConflict(current)
-        elif current is not None and require_if_match():
+        elif current is not None and require_if_match() and not allow_unconditional:
+            # allow_unconditional: ทางที่ "ตั้งใจ" ไม่ส่ง version (ประทับส่งแล้ว / กระจายทั้งภาคที่ผู้ใช้ยืนยัน)
+            # เดิมเปิด ALLOC_REQUIRE_IF_MATCH=1 แล้วสองทางนี้ได้ 428 ทุกครั้ง (ผลตรวจ 7 ต.ค. 2026 ข15)
             raise SnapshotPreconditionRequired(current)
         # "เคยส่ง Target Sun แล้ว" ต้องอยู่ถาวร แม้สถานะจะกลับเป็น draft หลังแก้ต่อ
         # เก็บฝั่ง server ไม่พึ่ง client ส่งกลับมา — client เก่าที่ไม่ส่ง field นี้จะลบประวัติทิ้ง

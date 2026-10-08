@@ -2957,6 +2957,17 @@ def admin_set_emp_assignment(
     )
     if to_sup and to_sup == from_sup:
         raise HTTPException(400, detail="ทีมปลายทางเป็นทีมเดิมอยู่แล้ว")
+    if to_sup:
+        # ผลตรวจ 7 ต.ค. 2026 ข12: เดิมรับรหัสอะไรก็ได้ — พิมพ์ผิด/ทีมสาธิต/รหัสที่ไม่มีบัญชี → พนักงานหายจากทีมจริง
+        # แต่ไม่ไปโผล่ที่ไหน เป้าของเขาหลุดจากทุกยอดรวมเงียบ ๆ · ต้องเป็นรายการเดียวกับที่หน้าจอให้เลือก
+        if is_demo_supervisor(to_sup):
+            raise HTTPException(400, detail=f"ย้ายไปทีมสาธิต {to_sup} ไม่ได้")
+        _dest = _sup_attrs().get(to_sup) or {}
+        if _dest.get("login_kind") not in ("supervisor_acc", "manager_acc"):
+            raise HTTPException(
+                400,
+                detail=f"ไม่พบทีมปลายทาง {to_sup} ในรายชื่อหัวหน้า/ผู้จัดการที่มีบัญชี — ตรวจรหัสอีกครั้ง",
+            )
 
     try:
         rows = emp_assignment_store.set_assignment(
@@ -2991,6 +3002,8 @@ def admin_set_emp_assignment(
         (f"ย้ายพนักงาน {emp} → {to_sup}" if to_sup else f"ปลดการย้ายพนักงาน {emp}"),
         f"จากทีม {from_sup or '-'} · ล้างแคช {cleared} ไฟล์",
         level="warn",
+        # ผูกทีมปลายทาง (หรือทีมต้นทางเมื่อปลดการย้าย) — แอดมินที่มีขอบเขตจะเห็นรายการนี้ในบันทึก (ข12)
+        sup_id=to_sup or from_sup or "",
         context={"emp_id": emp, "from_sup": from_sup, "to_sup": to_sup},
     )
     return {

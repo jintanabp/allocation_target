@@ -494,6 +494,7 @@ def put_allocation_snapshot(
         reason = str(body.no_precondition_reason or "").strip().lower()
         _PRECOND_REASON = {
             "regional": ("info", "กระจายทั้งภาค — ตั้งใจทับทุกทีมในลูป"),
+            "mark_sent": ("info", "ประทับ「ส่ง Target Sun แล้ว」หลังส่งสำเร็จ — ต้องลงเสมอ"),
             "no_meta": ("warn", "ยังไม่ได้โหลด snapshot ของงวดนี้ จึงไม่มี version ในเครื่อง"),
         }
         level, why = _PRECOND_REASON.get(reason, ("warn", "หน้าเว็บเวอร์ชันเก่า — ไม่รู้จัก precondition"))
@@ -510,7 +511,9 @@ def put_allocation_snapshot(
 
     prev = read_snapshot(sid, body.target_month, body.target_year)
     try:
-        saved = write_snapshot(payload, expected_version=expected_version)
+        saved = write_snapshot(payload, expected_version=expected_version, allow_unconditional=(
+            str(body.no_precondition_reason or "").strip().lower() in ("regional", "mark_sent")
+        ))
     except SnapshotUnreadable:
         raise HTTPException(
             status_code=503,

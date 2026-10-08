@@ -137,6 +137,12 @@ client บันทึก → ส่ง if_match_version: 3
 > `expected_version is None and current is not None and require_if_match()` แล้วโยน
 > `SnapshotPreconditionRequired` ทุกครั้ง — **"ส่ง Target Sun" จะพังทันทีที่เปิดสวิตช์นี้**
 > ตอนนี้อ่าน version ใต้ `_STORE_LOCK` เดียวกันแล้วส่งเข้าไปด้วย (RLock อยู่แล้ว จึงยังอะตอมมิก)
+>
+> **ข้อแก้ไข 7 ต.ค. 2026 (ข15):** ข้อความข้างบนถูกแค่ครึ่งเดียว — `mark_sent_targetsun()` ไม่มีใครเรียก
+> ทางจริงคือหน้าเว็บ `_markAllocationSentTargetSun` → `PUT /data/allocations` แบบไม่ส่ง version และการบันทึก
+> รวมภาคก็ไม่ส่ง version โดยตั้งใจ — เปิดสวิตช์แล้วทั้งสองทางได้ 428 ทุกครั้ง · แก้แล้ว: หน้าเว็บบอกเหตุผล
+> (`no_precondition_reason` = `mark_sent` / `regional`) แล้ว `write_snapshot(..., allow_unconditional=True)`
+> ยอมให้สองทางนี้ผ่านแม้เปิดโหมดบังคับ · ทางอื่นที่ไม่ส่ง version ยังได้ 428 ตามเดิม
 
 ## lock ที่มีอยู่ในระบบ
 

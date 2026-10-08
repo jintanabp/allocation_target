@@ -900,11 +900,35 @@ async function ensureGraphToken() {
     }
     return r.accessToken;
   } catch {
-    await msalInstance.acquireTokenRedirect({
-      account: acc,
-      scopes: [GRAPH_USER_READ_SCOPE],
-    });
+    // ผลตรวจ 7 ต.ค. 2026 ข16: เดิมเด้งไปหน้าล็อกอิน Microsoft ทันทีกลางงาน (กลางคำนวณ/บันทึก/ส่ง) ไม่มีคำอธิบาย
+    // ตอนนี้บอกเป็นภาษาไทยก่อน แล้วให้ผู้ใช้กดไปล็อกอินเอง (คำขอที่ค้างอยู่จะล้มแบบมีข้อความ ไม่ใช่หน้าหายไปเฉย ๆ)
+    _showSessionExpiredModal(acc);
     return null;
+  }
+}
+
+let _sessionExpiredModalShown = false;
+function _showSessionExpiredModal(acc) {
+  if (_sessionExpiredModalShown) return;
+  _sessionExpiredModalShown = true;
+  const goLogin = () => {
+    msalInstance.acquireTokenRedirect({ account: acc, scopes: [GRAPH_USER_READ_SCOPE] })
+      .catch((e) => console.error("MS acquireTokenRedirect:", e));
+  };
+  try {
+    _showInfoModal({
+      title: "หมดเวลาการเข้าสู่ระบบ",
+      bodyHtml:
+        `<p style="margin:0;text-align:left;line-height:1.7;">การเข้าสู่ระบบ Microsoft หมดอายุ — ต้องล็อกอินใหม่ก่อนทำงานต่อ</p>` +
+        `<p style="margin:10px 0 0;text-align:left;line-height:1.7;">ผลกระจายที่บันทึกแล้วยังอยู่ครบ · ` +
+        `ถ้าเพิ่งกด<strong>ส่งเข้า Target Sun</strong> อาจส่งสำเร็จไปแล้ว — หลังล็อกอินให้ดูประวัติการส่งก่อนกดส่งซ้ำ</p>`,
+      primaryLabel: "ล็อกอินใหม่",
+      secondaryLabel: "ปิด",
+      onPrimary: goLogin,
+      onSecondary: () => { _sessionExpiredModalShown = false; },
+    });
+  } catch {
+    goLogin();
   }
 }
 
@@ -11230,6 +11254,7 @@ function _markAllocationSentTargetSun(supId = null) {
     supId: sid,
     silentSummary: true,
     ifMatchVersion: null,
+    noPreconditionReason: "mark_sent",
     ...(team ? { allocations: team.rows, yellow: team.yellow, yellow_locked: team.yellowLocked } : {}),
   })
     .then(() => {
@@ -12919,7 +12944,7 @@ async function saveServerAllocationSnapshot(status = "draft", opts = {}) {
       // บอก server ไปด้วยว่าทำไมถึงไม่ส่ง version — ไม่งั้นมันแยกไม่ออกระหว่าง
       // "ตั้งใจทับทั้งภาค" · "ยังไม่เคยโหลด snapshot จึงไม่มี version ในเครื่อง"
       // กับ "หน้าเว็บเวอร์ชันเก่าจริง ๆ" แล้วเหมาว่าเป็นอย่างหลังทั้งหมด
-      body.no_precondition_reason = opts.forceRegional ? "regional" : "no_meta";
+      body.no_precondition_reason = opts.forceRegional ? "regional" : (opts.noPreconditionReason || "no_meta");
     }
 
     const res = await fetchWithTimeout(
