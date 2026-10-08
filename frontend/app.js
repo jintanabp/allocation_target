@@ -7617,6 +7617,14 @@ function renderResult(allocs) {
             onclick="revertResultCell('${escH(empId)}','${escH(s)}','${escH(whKey)}')">↺</button>`
         : "";
 
+      // คนแยกคลัง: สินค้าที่ Target Sun ไม่มีแถวที่คลังของแถวนี้ — ตอนส่งหีบจะลงคลังที่มีแถวจริง
+      // (ผู้ใช้ยืนยัน 8 ต.ค. 2026: ลงคลังตาม Target Sun) บอกให้เห็นบนจอ ไม่ให้จอกับที่ส่งจริงไม่ตรงกัน
+      const _redir = Number(b) > 0 ? empInfo?.wh_redirect_skus?.[String(s).trim()] : null;
+      const redirectHtml = Array.isArray(_redir) && _redir.length
+        ? `<div class="hist-sub" style="color:var(--amber);font-weight:600;" title="Target Sun ไม่มีแถวของสินค้านี้ที่คลัง ${escH(whDisplay)} — ระบบส่งหีบลงแถวที่มีอยู่จริง ไม่สร้างแถวใหม่">` +
+          `ส่งเข้าคลัง ${escH(_redir.map((w) => w || "(ว่าง)").join(", "))} ตาม Target Sun</div>`
+        : "";
+
       rowHtml += `<td class="r result-cell${_freshSkuSet.has(String(s).trim()) ? " result-cell--fresh" : ""}" style="vertical-align:top;">
         <div class="result-box-wrap">
           <div class="result-box-num ${colorClass}" contenteditable="${resultReadOnly ? "false" : "true"}"
@@ -7624,7 +7632,7 @@ function renderResult(allocs) {
             ${resultReadOnly ? "" : `onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
             onpaste="onResultCellPaste(event, this)"`}
           >${Number(b).toLocaleString("th-TH")}</div>${flagHtml}${revertHtml}
-        </div>${devLineHtml}${hText}</td>`;
+        </div>${redirectHtml}${devLineHtml}${hText}</td>`;
     });
 
     // gap ก่อนคอลัมน์รวมยอด เพื่อไม่ให้ sticky ไปทับข้อมูล SKU

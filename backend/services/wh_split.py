@@ -75,6 +75,18 @@ def warehouses_per_emp_from_tga(df_tga: pd.DataFrame | None) -> dict[str, list[s
     return {e: sorted(ws) for e, ws in out.items()}
 
 
+def _grain_whs_by_emp_sku(df_tga: pd.DataFrame | None) -> dict[str, dict[str, set[str]]]:
+    """emp_id → sku → คลังที่มีแถวใน Target Sun (รวมคลังว่าง "")"""
+    if df_tga is None or df_tga.empty or not {"emp_id", "sku"} <= set(df_tga.columns):
+        return {}
+    whs = df_tga["warehouse_code"].map(_norm_wh) if "warehouse_code" in df_tga.columns else [""] * len(df_tga)
+    out: dict[str, dict[str, set[str]]] = {}
+    for e, s, w in zip(df_tga["emp_id"].astype(str).str.strip(), df_tga["sku"].astype(str).str.strip(), whs):
+        if e and s:
+            out.setdefault(e, {}).setdefault(s, set()).add(w)
+    return out
+
+
 def tga_value_by_emp_wh(
     df_tga: pd.DataFrame | None,
     price_by_sku: dict[str, float],
@@ -135,6 +147,7 @@ def expand_employee_rows(
     """
     wh_map = warehouses_per_emp_from_tga(df_tga_granular)
     value_map = tga_value_by_emp_wh(df_tga_granular, price_by_sku)
+    grain_whs_by_sku = _grain_whs_by_emp_sku(df_tga_granular)
     out: list[dict[str, Any]] = []
 
     for row in rows:
@@ -185,8 +198,15 @@ def expand_employee_rows(
         avg6_parts = _split_amount(float(row.get("hist_avg_6m") or 0.0), _weights_or_3m(avg6_amount_by_emp_wh))
         avg12_parts = _split_amount(float(row.get("hist_avg_12m") or 0.0), _weights_or_3m(avg12_amount_by_emp_wh))
 
+        # สินค้าที่ Target Sun มีแถวของคนนี้ แต่ "ไม่มี" ที่คลังของแถวนี้ — ตอนส่ง หีบของสินค้านั้นจะลงคลังที่มีแถว
+        # อยู่จริงตาม Target Sun (ไม่สร้างแถวใหม่ ไม่เดาคลัง) ไม่ใช่คลังของแถวบนจอ · หน้าเว็บใช้บอกผู้ใช้ในขั้นที่ 3
+        # (ผู้ใช้ยืนยัน 8 ต.ค. 2026: ลงคลังตาม Target Sun · เช่น C442 แถว R408 แต่ 17 สินค้ามีแถวแค่ R493)
+        emp_sku_whs = grain_whs_by_sku.get(emp) or {}
         for w in unique_whs:
             nr = dict(row)
+            redirect = {s: sorted(ws) for s, ws in emp_sku_whs.items() if w not in ws}
+            if redirect:
+                nr["wh_redirect_skus"] = redirect
             nr["warehouse_code"] = w
             nr["wh_split"] = True
             nr["wh_group_id"] = emp
