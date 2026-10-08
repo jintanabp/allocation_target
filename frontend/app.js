@@ -6498,10 +6498,11 @@ function _histFillWeight(e, src) {
   // แบ่งประวัติ (split_hist_dataframe + value_shares) · ผู้ใช้เลือกทาง ก 8 ต.ค. 2026: เดิมขั้นที่ 2 ใช้ยอดของคลังนั้น
   // อย่างเดียว (C442/R408 = 20 หีบ) แต่ขั้นที่ 3 มองว่าขายทั้ง 100 หีบ (R493 ไม่ร่วมกระจาย) สองขั้นจึงขัดกัน
   if (!_isAllocEligible(e)) return 0;
-  const emp = String(e.emp_id || "");
-  const sup = String(e.supervisor_code || "");
+  const emp = String(e.emp_id || "").trim().toUpperCase();
+  const sup = String(e.supervisor_code || "").trim().toUpperCase();
   const group = (S.employees || []).filter(
-    (x) => x.wh_split && String(x.emp_id || "") === emp && String(x.supervisor_code || "") === sup
+    (x) => x.wh_split && String(x.emp_id || "").trim().toUpperCase() === emp
+      && String(x.supervisor_code || "").trim().toUpperCase() === sup
   );
   const total = group.reduce((a, x) => a + own(x), 0);
   if (total <= 0) return 0;
@@ -18351,7 +18352,7 @@ async function adminLoadUsageLogs() {
     if (countEl) {
       countEl.textContent = items.length
         ? `แสดง ${items.length.toLocaleString("th-TH")} รายการล่าสุด`
-          + (items.length >= 500 ? " (จำกัด 500 รายการ — กด Excel เพื่อดูทั้งหมด)" : "")
+          + ((items.length >= 500 || data.truncated) ? " (จำกัด 500 รายการ — กด Excel เพื่อดูทั้งหมด)" : "")
         : "ยังไม่มีบันทึก";
     }
     if (!items.length) {

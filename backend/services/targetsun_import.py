@@ -1476,4 +1476,5 @@ def _import_allocations_one_shot(req: LakehouseUploadRequest) -> dict:
         stale_rows_cleared_count=int(df.attrs.get("stale_rows_cleared_count") or 0),
         before_row_snapshot=before_row_snapshot,
         file_row_keys=list(df.attrs.get("import_row_keys") or []),
+        file_qty_by_key=_file_qty_by_key(_file_rows(df)),
     )

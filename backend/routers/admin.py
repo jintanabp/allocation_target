@@ -1775,7 +1775,8 @@ def admin_export_sent_ledger(
     for k, v in sorted((led.get("rows") or {}).items()):
         sku, emp, st, dv, ar, pv, wh = (str(k).split("|") + [""] * 7)[:7]
         try:
-            when = _dt.fromtimestamp(float((v or {}).get("sent_at") or 0), ZoneInfo("Asia/Bangkok")).strftime("%Y-%m-%d %H:%M")
+            _t = float((v or {}).get("sent_at") or 0)
+            when = _dt.fromtimestamp(_t, ZoneInfo("Asia/Bangkok")).strftime("%Y-%m-%d %H:%M") if _t > 0 else ""
         except (TypeError, ValueError, OSError):
             when = ""
         out.append({
@@ -2439,10 +2440,12 @@ def admin_get_usage_logs(
     """
     scan_all = target_month is None and target_year is None and date is None
     filtering = bool(sup_id or action_prefix or q or problems_only)
+    # มีตัวกรอง = อ่านทั้งหมดก่อน แล้วค่อยกรอง/ตัดจำนวน (ตรวจซ้ำ 8 ต.ค. 2026) — เดิมตัด 2,000 รายการล่าสุด
+    # ของทุกทีมก่อนกรอง รายการเก่าของทีมที่ค้นหาจึงหายเงียบ ๆ
     items = read_logs(
         date=date,
         level=level,
-        limit=2000 if filtering else limit,
+        limit=0 if filtering else limit,
         target_year=target_year,
         target_month=target_month,
         scan_all=scan_all,
@@ -2456,8 +2459,9 @@ def admin_get_usage_logs(
 def _apply_usage_log_filters(items: list[dict], action_prefix, q, problems_only) -> list[dict]:
     """ตัวกรองเรื่อง/ข้อความ/เฉพาะปัญหา — ใช้ทั้งหน้าจอและไฟล์ Excel (ผลตรวจ 7 ต.ค. 2026 ง)"""
     if action_prefix:
-        ap = str(action_prefix).strip().lower()
-        items = [r for r in items if str(r.get("action") or "").lower().startswith(ap)]
+        # คั่นด้วยจุลภาคได้ — เช่น "optimize,client_optimize" (หน้าเว็บส่ง action ขึ้นต้น client_ เสมอ)
+        aps = tuple(p.strip().lower() for p in str(action_prefix).split(",") if p.strip())
+        items = [r for r in items if str(r.get("action") or "").lower().startswith(aps)]
     if problems_only:
         items = [r for r in items if str(r.get("level") or "").lower() in ("warn", "warning", "error")]
     if q:
@@ -2573,17 +2577,18 @@ def admin_export_usage_logs_xlsx(
     import json as _json
 
     scan_all = target_month is None and target_year is None and date is None
+    filtering = bool(action_prefix or q or problems_only)
     items = read_logs(
         date=date,
         level=level,
-        limit=limit,
+        limit=0 if filtering else limit,
         target_year=target_year,
         target_month=target_month,
         scan_all=scan_all,
         sup_id=sup_id or None,
     )
     items = _filter_usage_items_for_admin(admin, items)
-    items = _apply_usage_log_filters(items, action_prefix, q, problems_only)
+    items = _apply_usage_log_filters(items, action_prefix, q, problems_only)[:limit]
     for it in items:
         it["ts_th"] = _fmt_ts_th(it.get("ts"))
         d = it.get("detail")

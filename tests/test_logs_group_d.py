@@ -63,6 +63,11 @@ class TestUsageLogFilters(unittest.TestCase):
         self.assertEqual(len(self.f(action_prefix="send_targetsun")), 2)
         self.assertEqual(len(self.f(action_prefix="admin_")), 1)
 
+    def test_comma_separated_prefixes_include_web_rows(self):
+        rows = list(self.ROWS) + [{"level": "error", "action": "client_optimize_no_answer", "message": "หมดเวลา"}]
+        got = admin_router._apply_usage_log_filters(rows, "optimize,client_optimize", None, False)
+        self.assertEqual(sorted(r["action"] for r in got), ["client_optimize_no_answer", "optimize"])
+
     def test_problems_only(self):
         self.assertEqual({r["level"] for r in self.f(problems_only=True)}, {"warn", "error"})
 

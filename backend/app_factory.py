@@ -157,6 +157,8 @@ def create_app() -> FastAPI:
         return JSONResponse(
             status_code=500,
             content={"detail": f"ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้ง — ถ้ายังไม่ได้ แจ้งผู้ดูแลระบบพร้อมรหัสอ้างอิง {ref}"},
+            # ตัวจัดการนี้อยู่นอก CORSMiddleware — ใส่เองให้หน้าเว็บที่เรียกข้ามโดเมน (โหมด dev) อ่านข้อความได้
+            headers={"Access-Control-Allow-Origin": "*"},
         )
 
     app.add_middleware(
