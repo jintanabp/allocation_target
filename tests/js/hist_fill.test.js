@@ -72,6 +72,7 @@ vm.runInContext(`
   globalThis.clearMode = () => _clearHistFillMode();
   globalThis.restoreMode = (k) => _restoreHistFillMode(k);
   globalThis.sumOf = (ids) => ids.reduce((a, id) => a + (S.yellow[id] || 0), 0);
+  globalThis.weight = (e, k) => _histFillWeight(e, HIST_FILL_SOURCES[k]);
 `, ctx);
 
 const fails = [];
@@ -139,6 +140,21 @@ const eq = (got, want, msg) => { if (JSON.stringify(got) !== JSON.stringify(want
   await ctx.fill("3m");
   eq([ctx.sumOf(["A", "B"]), ctx.sumOf(["D", "E"])], [5000, 6000], "รวมภาค: ยอดแต่ละทีมเท่าเดิม");
   eq([S.yellow.A, S.yellow.B, S.yellow.D, S.yellow.E], [1250, 3750, 0, 6000], "รวมภาค: แบ่งภายในทีม");
+
+  // 1b) คนแยกคลัง (ผู้ใช้เลือกทาง ก 8 ต.ค. 2026): C442 ขาย R408 20 + R493 80 · R493 ไม่ร่วมกระจาย
+  //     → R408 ใช้ประวัติทั้งคน 100 (แบบเดียวกับขั้นที่ 3) ไม่ใช่ 20
+  {
+    const r408 = { emp_id: "C442", supervisor_code: "SL509", warehouse_code: "R408", wh_split: true, target_sun: 1000, hist_avg_3m: 20 };
+    const r493 = { emp_id: "C442", supervisor_code: "SL509", warehouse_code: "R493", wh_split: true, target_sun: 0, hist_avg_3m: 80, no_target: true };
+    ctx.setup([r408, r493], 1000);
+    eq(ctx.weight(r408, "3m"), 100, "คนแยกคลัง: คลังที่กระจายได้ใช้ประวัติทั้งคน");
+    eq(ctx.weight(r493, "3m"), 0, "คนแยกคลัง: คลังที่ไม่นำไปกระจายได้ 0");
+    // สองคลังกระจายได้ทั้งคู่ → แบ่งประวัติทั้งคนตามสัดส่วนเป้า Target Sun (3:1)
+    const w1 = { emp_id: "E9", supervisor_code: "SL1", warehouse_code: "W1", wh_split: true, target_sun: 300, hist_avg_3m: 10 };
+    const w2 = { emp_id: "E9", supervisor_code: "SL1", warehouse_code: "W2", wh_split: true, target_sun: 100, hist_avg_3m: 30 };
+    ctx.setup([w1, w2], 400);
+    eq([ctx.weight(w1, "3m"), ctx.weight(w2, "3m")], [30, 10], "สองคลัง: แบ่งประวัติทั้งคนตามสัดส่วนเป้า");
+  }
 
   if (fails.length) {
     console.error("❌ hist_fill:\n  " + fails.join("\n  "));

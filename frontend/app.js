@@ -6487,8 +6487,26 @@ function _histFillSource() {
 }
 
 function _histFillWeight(e, src) {
-  const v = Number(e?.[src.field]);
-  return Number.isFinite(v) && v > 0 ? v : 0;
+  const own = (x) => {
+    const v = Number(x?.[src.field]);
+    return Number.isFinite(v) && v > 0 ? v : 0;
+  };
+  if (!e?.wh_split) return own(e);
+  // คนแยกคลัง: ใช้ประวัติ "ทั้งคน" แบ่งให้คลังที่กระจายได้ตามสัดส่วนเป้า Target Sun — แบบเดียวกับที่ขั้นที่ 3
+  // แบ่งประวัติ (split_hist_dataframe + value_shares) · ผู้ใช้เลือกทาง ก 8 ต.ค. 2026: เดิมขั้นที่ 2 ใช้ยอดของคลังนั้น
+  // อย่างเดียว (C442/R408 = 20 หีบ) แต่ขั้นที่ 3 มองว่าขายทั้ง 100 หีบ (R493 ไม่ร่วมกระจาย) สองขั้นจึงขัดกัน
+  if (!_isAllocEligible(e)) return 0;
+  const emp = String(e.emp_id || "");
+  const sup = String(e.supervisor_code || "");
+  const group = (S.employees || []).filter(
+    (x) => x.wh_split && String(x.emp_id || "") === emp && String(x.supervisor_code || "") === sup
+  );
+  const total = group.reduce((a, x) => a + own(x), 0);
+  if (total <= 0) return 0;
+  const elig = group.filter(_isAllocEligible);
+  const tsSum = elig.reduce((a, x) => a + Math.max(0, Number(x.target_sun) || 0), 0);
+  const share = tsSum > 0 ? Math.max(0, Number(e.target_sun) || 0) / tsSum : 1 / Math.max(1, elig.length);
+  return total * share;
 }
 
 /** แถวนี้ตั้งจากประวัติแล้วได้ 0 เพราะไม่มียอดขาย และผู้ใช้ยังไม่ได้กรอกเอง */
