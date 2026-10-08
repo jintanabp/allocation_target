@@ -4145,6 +4145,10 @@ function handleLogout() {
 function _doLogout() {
   // กลับไปหน้าเลือก Supervisor/Manager เท่านั้น — ไม่เรียก MSAL logoutRedirect
   // (ผู้ใช้ยังล็อกอิน Microsoft อยู่; token/cache ใช้เรียก API รอบถัดไปได้)
+  // S ถูกสร้างใหม่ (splitBrands/sectionNames ว่าง) — ต้องล้างธง "โหลดแล้ว" ด้วย ไม่งั้นเข้าใหม่แล้ว
+  // ไม่โหลดค่าแยกกลุ่ม/ชื่อกลุ่มอีก (ตรวจซ้ำ 8 ต.ค. 2026 — เจอจากเดโมรวมภาค)
+  _allocGroupPrefsLoadedFor = null;
+  _allocGroupPrefsInflight = null;
   const keepManagers = S.managers || [];
   const keepIsAdmin = S.isAdmin;
   const keepIsMarketing = S.isMarketing;

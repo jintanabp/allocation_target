@@ -81,4 +81,9 @@ assert.strictEqual(run(`_isSplitGroupKey("ไบโอนิค")`), false);
 const names = JSON.parse(run(`JSON.stringify(_splittableBrands().map(b => b.brand))`));
 assert.deepStrictEqual(names, ["มาม่า"]);
 
+// ออกจากระบบสร้าง S ใหม่ — ต้องล้างธง "โหลดแล้ว" ไม่งั้นเข้าใหม่แล้วไม่โหลดค่าแยกกลุ่ม/ชื่อกลุ่มอีก
+for (const fn of ["_doLogout", "_resetViewForIdentityChange"]) {
+  assert.ok(/_allocGroupPrefsLoadedFor = null;/.test(grab(fn)), fn + " ต้องล้าง _allocGroupPrefsLoadedFor");
+}
+
 console.log("alloc_groups.test.js OK");
