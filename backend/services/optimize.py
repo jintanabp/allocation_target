@@ -17,7 +17,9 @@ from ..OR_engine import (
     _greedy_revenue_balancer,
     _norm_sku,
     _proportional,
+    _hist_lookup,
     _revenue_scale_factor,
+    _rotate_small_skus_in_brand,
     _skus_with_target_boxes,
     allocate_boxes,
 )
@@ -1766,6 +1768,34 @@ def run_optimization_service(
                 zero_pairs=never_sold_pairs_all,
             )
             logger.info("multi-strategy: post-merge revenue balance applied")
+            # ตัวเกลี่ยเงินหลังรวมผลย้ายหีบทีละใบได้ — หมุนผู้รับ SKU เป้าน้อยในแบรนด์ซ้ำอีกรอบ
+            # ไม่งั้นการหมุนในแต่ละกลุ่มวิธีถูกย้ายกลับไปที่คนเดิม (ผู้ใช้เลือก 7 ต.ค. 2026)
+            _locked_map_rot = {
+                (str(le["emp_id"]).strip(), _norm_sku(le["sku"])): int(le["locked_boxes"])
+                for le in (locked_edits_data or [])
+                if str(le.get("emp_id", "")).strip() and str(le.get("sku", "")).strip()
+            }
+            _rotated, _rot_stats = _rotate_small_skus_in_brand(
+                df_allocation,
+                df_emp_targets,
+                df_sku,
+                hist_lookup=_hist_lookup(df_hist_input),
+                locked_map=_locked_map_rot,
+                zero_pairs=never_sold_pairs_all,
+                even_skus=frozenset(even_skus_global or ()),
+            )
+            if _rot_stats.get("moved_boxes"):
+                # อัปเดตแถวเดิมตามคีย์ (ลำดับแถวต้องคงเดิม — _refresh_hist_deviation_after_move เทียบตามตำแหน่ง)
+                _rot_idx: dict[tuple[str, str], int] = {}
+                for _e, _s, _b in zip(_rotated["emp_id"], _rotated["sku"], _rotated["allocated_boxes"]):
+                    _k = (str(_e).strip(), _norm_sku(_s))
+                    _rot_idx[_k] = _rot_idx.get(_k, 0) + int(_b)
+                _after = df_allocation.copy()
+                _after["allocated_boxes"] = [
+                    _rot_idx.get((str(e).strip(), _norm_sku(s)), 0)
+                    for e, s in zip(_after["emp_id"], _after["sku"])
+                ]
+                df_allocation = _refresh_hist_deviation_after_move(df_allocation, _after)
     else:
         df_allocation = allocate_boxes(
             df_emp_targets,

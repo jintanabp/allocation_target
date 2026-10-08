@@ -269,6 +269,7 @@ def allocate_boxes(
     push_multiple: float = 5.0,
     history_only: bool = False,
     never_sold_known_emps: set | frozenset | None = None,
+    rotate_small_in_brand: bool = True,
 ) -> pd.DataFrame:
     strategy = strategy.upper()
     valid = ("L3M", "L6M", "LY", "EVEN", "PUSH", "LP")
@@ -449,6 +450,20 @@ def allocate_boxes(
         # ป้ายเทียบประวัติจึงเทียบผลกับตัวเอง ทุกช่องได้ "ok" ทุกครั้งที่มี SKU แบ่งเท่า
         # (งวด 09/2026 เกิดครบทั้ง 55 ทีม) · SKU แบ่งเท่าไม่ติดป้ายอยู่แล้วใน _annotate_hist_deviation
 
+    # หมุนผู้รับ SKU เป้าน้อยกว่าจำนวนคนภายในแบรนด์ — ทำหลังสุด (หลัง LP/ตัวเกลี่ยเงิน/แบ่งเท่า)
+    # เพราะทุกชั้นก่อนหน้าตัดสิน "ใครได้" ทีละ SKU แยกกัน จึงเลือกคนเดิมซ้ำทุก SKU
+    rotation_stats = {"brands": 0, "skus": 0, "moved_boxes": 0}
+    if rotate_small_in_brand:
+        df_out, rotation_stats = _rotate_small_skus_in_brand(
+            df_out,
+            df_emp_targets,
+            df_sku,
+            hist_lookup=_hist_lookup(df_hist),
+            locked_map=locked_map,
+            zero_pairs=never_sold_zero_pairs,
+            even_skus=even_skus,
+        )
+
     df_expanded = _expand_full_allocation_matrix(df_out, df_emp_targets, df_sku)
     if not base_map:
         prop_strat = strategy if strategy in ("L3M", "L6M", "LY", "EVEN", "PUSH") else "L3M"
@@ -477,6 +492,7 @@ def allocate_boxes(
     # (`_post_merge_revenue_balance`) ถ้าไม่บอกมัน มันจะยกหีบกลับเข้าช่องที่เพิ่งตัดไป
     df_expanded.attrs["never_sold_zero_pairs"] = never_sold_zero_pairs
     df_expanded.attrs["never_sold_summary"] = never_sold_summary
+    df_expanded.attrs["brand_rotation"] = rotation_stats
     return df_expanded
 
 
@@ -760,6 +776,142 @@ def _spread_one_each(total_target, n_emps) -> bool:
         return 0 < int(total_target) < int(n_emps)
     except (TypeError, ValueError):
         return False
+
+
+def _sku_brand_map(df_sku: pd.DataFrame) -> dict[str, str]:
+    """แบรนด์ของแต่ละ SKU (ชื่อไทยก่อน แล้วอังกฤษ — เหมือน optimize._sku_brand_key) · ไม่มีแบรนด์ = ไม่อยู่ในแผนที่"""
+    if df_sku is None or df_sku.empty:
+        return {}
+    cols = [c for c in ("brand_name_thai", "brand_name_english") if c in df_sku.columns]
+    if not cols:
+        return {}
+    out: dict[str, str] = {}
+    for _, r in df_sku.iterrows():
+        for c in cols:
+            v = r.get(c)
+            if v is not None and not (isinstance(v, float) and pd.isna(v)) and str(v).strip():
+                out[_norm_sku(r.get("sku"))] = str(v).strip()
+                break
+    return out
+
+
+def _rotate_small_skus_in_brand(
+    df_out: pd.DataFrame,
+    df_emp_targets: pd.DataFrame,
+    df_sku: pd.DataFrame,
+    *,
+    hist_lookup: dict | None = None,
+    locked_map: dict | None = None,
+    zero_pairs: set | frozenset | None = None,
+    even_skus: frozenset | None = None,
+) -> tuple[pd.DataFrame, dict]:
+    """
+    หมุนหีบของ SKU "เป้าน้อยกว่าจำนวนคน" ภายในแบรนด์เดียวกัน ให้ทุกคนได้ขายแบรนด์นั้น (ผู้ใช้เลือก 7 ต.ค. 2026)
+
+    ปัญหาเดิม: SKU ที่เป้าน้อยกว่าคน (เช่น 6 คน 3 หีบ) แจกคนละไม่เกิน 1 หีบ แต่ "ใครได้" ตัดสินแยกทีละ SKU
+    ด้วยประวัติ/เงิน/รหัสเหมือนกันทุกตัว — แบรนด์ที่ทุก SKU เป้าน้อย (เช่น กู๊ดเอจ) คนเดิม 3 คนได้ทุก SKU
+    อีก 3 คนไม่ได้ขายแบรนด์นั้นเลย (จำลองผ่านตัวกระจายจริง: E1–E3 ได้ทุก SKU · E4–E6 ได้ 0 ทุกวิธี)
+
+    วิธี: ต่อแบรนด์ที่มี SKU แบบนี้ตั้งแต่ 2 ตัว ไล่ทีละ SKU แล้วให้หีบกับคนที่ "ได้ SKU ของแบรนด์นี้ไปน้อยที่สุด"
+    ก่อน (นับจำนวน SKU ของแบรนด์ที่คนนั้นได้ > 0 รวม SKU ใหญ่ของแบรนด์ด้วย) เสมอกันให้คนที่ตัวกระจายเลือกไว้แล้ว
+    ก่อน (เงินขยับน้อยที่สุด) แล้วประวัติ SKU นั้น → ประวัติทั้งแบรนด์ → เป้าเงิน → รหัส
+
+    กติกาที่ห้ามพัง: ยอดต่อ SKU เท่าเดิม (ย้ายแค่ "ใครได้" ของหีบละ 1) · ช่องที่ล็อกไม่แตะ · คนที่กติกาไม่เคยขาย
+    ตัดเป็น 0 ไม่ได้รับ · SKU แบ่งเท่า (สินค้าใหม่/ไม่มีใครเคยขาย) ไม่แตะ · SKU ที่มีช่องใดได้เกิน 1 หีบไม่แตะ
+    """
+    stats = {"brands": 0, "skus": 0, "moved_boxes": 0}
+    if df_out is None or df_out.empty or df_emp_targets is None or df_emp_targets.empty:
+        return df_out, stats
+    brand_of = _sku_brand_map(df_sku)
+    if not brand_of:
+        return df_out, stats
+    hist_lookup = hist_lookup or {}
+    locked_map = locked_map or {}
+    zero_pairs = zero_pairs or frozenset()
+    even_skus = even_skus or frozenset()
+    employees = [str(e).strip() for e in df_emp_targets["emp_id"].tolist() if str(e).strip()]
+    yellow = _yellow_by_emp(df_emp_targets)
+    target = {
+        _norm_sku(s): int(round(float(t or 0)))
+        for s, t in zip(df_sku["sku"], df_sku["supervisor_target_boxes"])
+    }
+    locked = {(str(e).strip(), _norm_sku(s)): int(v) for (e, s), v in locked_map.items()}
+
+    cur: dict[tuple[str, str], int] = {}
+    for e, s, b in zip(df_out["emp_id"], df_out["sku"], df_out["allocated_boxes"]):
+        k = (str(e).strip(), _norm_sku(s))
+        cur[k] = cur.get(k, 0) + int(pd.to_numeric(b, errors="coerce") or 0)
+
+    by_brand: dict[str, list[str]] = {}
+    for s, b in brand_of.items():
+        if s in target:
+            by_brand.setdefault(b, []).append(s)
+
+    new_rows: dict[str, list[str]] = {}   # sku -> ผู้รับ 1 หีบ (เฉพาะช่องที่ไม่ล็อก)
+    for brand, skus in sorted(by_brand.items()):
+        small: list[tuple[str, list[str], int]] = []
+        for s in sorted(skus):
+            if s in even_skus:
+                continue
+            eligible = [e for e in employees if (e, s) not in zero_pairs]
+            if not _spread_one_each(target.get(s, 0), len(eligible)):
+                continue
+            free = [e for e in eligible if (e, s) not in locked]
+            vals = [cur.get((e, s), 0) for e in free]
+            if any(v > 1 for v in vals):
+                continue
+            k = sum(vals)
+            # คนที่ไม่ได้สิทธิ์ (zero_pairs) แต่มีหีบอยู่ = มีอะไรผิดปกติ — ไม่แตะ SKU นี้
+            if k <= 0 or any(cur.get((e, s), 0) for e in employees if (e, s) in zero_pairs and (e, s) not in locked):
+                continue
+            small.append((s, free, k))
+        if len(small) < 2:
+            continue
+        small_set = {s for s, _f, _k in small}
+        # นับจาก SKU ของแบรนด์ที่ไม่ถูกหมุน + ช่องที่ล็อกของ SKU ที่หมุน
+        got = {e: 0 for e in employees}
+        for s in skus:
+            for e in employees:
+                if s in small_set and (e, s) not in locked:
+                    continue
+                if cur.get((e, s), 0) > 0:
+                    got[e] += 1
+        brand_hist = {e: sum(hist_lookup.get((e, s), 0.0) for s in skus) for e in employees}
+        # SKU ที่คนมีสิทธิ์น้อยกว่าเลือกก่อน — กันคนที่รับได้หลาย SKU ถูกใช้หมดก่อนถึง SKU ที่ทางเลือกน้อย
+        for s, free, k in sorted(small, key=lambda x: (len(x[1]), x[0])):
+            pick = sorted(
+                free,
+                key=lambda e: (
+                    got[e],
+                    0 if cur.get((e, s), 0) > 0 else 1,
+                    -float(hist_lookup.get((e, s), 0.0)),
+                    -float(brand_hist.get(e, 0.0)),
+                    -float(yellow.get(e, 0.0)),
+                    e,
+                ),
+            )[:k]
+            for e in pick:
+                got[e] += 1
+            new_rows[s] = pick
+            before = {e for e in free if cur.get((e, s), 0) > 0}
+            stats["moved_boxes"] += len(set(pick) - before)
+        stats["brands"] += 1
+        stats["skus"] += len(small)
+
+    if not new_rows or not stats["moved_boxes"]:
+        return df_out, stats
+    keep = []
+    for e, s in zip(df_out["emp_id"], df_out["sku"]):
+        k = (str(e).strip(), _norm_sku(s))
+        keep.append(not (k[1] in new_rows and k not in locked))
+    out = df_out[keep].copy()
+    add = [{"emp_id": e, "sku": s, "allocated_boxes": 1} for s, emps in new_rows.items() for e in emps]
+    out = pd.concat([out, pd.DataFrame(add)], ignore_index=True)
+    logger.info(
+        "หมุนหีบ SKU เป้าน้อยในแบรนด์: %d แบรนด์ %d SKU ย้ายผู้รับ %d หีบ",
+        stats["brands"], stats["skus"], stats["moved_boxes"],
+    )
+    return out, stats
 
 
 def _eligible_emp_count(employees, sku, zero_pairs) -> int:
