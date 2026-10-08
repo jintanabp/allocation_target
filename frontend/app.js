@@ -8648,6 +8648,9 @@ function _persistAfterCellLock() {
   }
 }
 
+/* ช่องที่ผู้ใช้กดยืนยันแล้วว่าจะใส่หีบ ทั้งที่ Target Sun ไม่มีเป้าที่คลังของแถวนั้น (emp|wh|sku) — ไม่ถามซ้ำช่องเดิม */
+const _whRedirectConfirmed = new Set();
+
 function onResultEdit(el) {
   if (_isAllocReadOnlyView() || _aggregateBlocksWrite()) return;
   const emp = el.dataset.emp;
@@ -8667,13 +8670,31 @@ function onResultEdit(el) {
       (e) => String(e.emp_id) === String(emp) && String(e.warehouse_code || "") === String(wh) && e.wh_split
     );
     const _rw = _er?.wh_redirect_skus?.[String(sku).trim()];
-    if (Array.isArray(_rw) && _rw.length && !_rw.includes("")) {
+    const _okKey = `${emp}|${wh}|${String(sku).trim()}`;
+    if (Array.isArray(_rw) && _rw.length && !_rw.includes("") && !_whRedirectConfirmed.has(_okKey)) {
       const _cur = S.allocations.find(
         (a) => String(a.emp_id) === String(emp) && String(a.sku) === String(sku)
           && String(a.warehouse_code || "") === String(wh)
       );
       el.textContent = (Number(_cur?.allocated_boxes) || 0).toLocaleString("th-TH");
-      toast(`${emp} ไม่มีเป้าสินค้า ${sku} ที่คลัง ${wh} ใน Target Sun (มีแค่คลัง ${_rw.join(", ")}) — ใส่หีบช่องนี้ไม่ได้`, "amber");
+      // ผู้ใช้ขอ (8 ต.ค. 2026): แก้มือเองได้ ถ้ากดยืนยัน — บอกให้ชัดว่าหีบจะไปลงคลังไหนใน Target Sun
+      _showInfoModal({
+        title: "ยืนยันใส่หีบช่องนี้?",
+        bodyHtml:
+          `<p style="margin:0;text-align:left;line-height:1.7;">ใน Target Sun <strong>${escH(emp)}</strong> ` +
+          `ไม่มีเป้าสินค้า <strong>${escH(sku)}</strong> ที่คลัง <strong>${escH(wh)}</strong> ` +
+          `(มีแถวแค่ที่คลัง <strong>${escH(_rw.map((w) => w || "ว่าง").join(", "))}</strong>)</p>` +
+          `<p style="margin:10px 0 0;text-align:left;line-height:1.7;">ถ้ายืนยัน ${val.toLocaleString("th-TH")} หีบนี้` +
+          `<strong>จะถูกส่งเข้าคลัง ${escH(_rw.map((w) => w || "ว่าง").join(", "))}</strong> ` +
+          `(แถวที่มีอยู่แล้วใน Target Sun — ไม่สร้างแถวใหม่ ยอดรวมไม่เปลี่ยน)</p>`,
+        primaryLabel: "ยืนยันใส่หีบ",
+        secondaryLabel: "ยกเลิก",
+        onPrimary: () => {
+          _whRedirectConfirmed.add(_okKey);
+          el.textContent = val.toLocaleString("th-TH");
+          onResultEdit(el);
+        },
+      });
       return;
     }
   }
