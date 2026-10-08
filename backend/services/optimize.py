@@ -225,7 +225,9 @@ def _wh_blocked_pairs(
     for or_id, (emp, wh) in split.items():
         for s in skus:
             ws = whs_by.get((emp, s))
-            if ws and wh not in ws:
+            # แถวคลังว่างของคนแยกคลังไม่มีแถวบนจอให้รับหีบ (จอแยกเฉพาะคลังที่มีรหัส) — ถ้าตัดด้วย สินค้าที่มีเป้า
+            # อยู่ที่คลังว่างจะไม่มีใครในตัวคนนี้รับได้เลย · ไม่ตัด ปล่อยทางเดิม (ส่งลงแถวคลังว่างตาม Target Sun)
+            if ws and wh not in ws and "" not in ws:
                 blocked.add((str(or_id).strip(), s))
     if not blocked:
         return frozenset()
