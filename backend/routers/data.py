@@ -25,6 +25,7 @@ from ..services.employees import (
 from ..services.access_control import resolve_summary_supervisor_codes
 from ..services.manager_views import (
     drop_manager_code_without_team,
+    drop_teams_emptied_by_moves,
     filter_codes_by_unit,
     resolve_aggregate_supervisor_codes,
 )
@@ -179,6 +180,7 @@ def get_employees_aggregate(
     # ติดอยู่ในขอบเขตแล้วโหลดไม่ได้ กลายเป็นทีมที่ถูกข้ามพร้อมคำเตือนทุกครั้ง
     # (ตัดเฉพาะรหัสผู้จัดการ · ทีมซุปจริงที่ยังไม่มีข้อมูลต้องยังโผล่และถูกรายงาน)
     sup_ids = drop_manager_code_without_team(sup_ids, mgr, target_month, target_year)
+    sup_ids = drop_teams_emptied_by_moves(sup_ids, target_month, target_year)
 
     if not sup_ids:
         raise HTTPException(status_code=404, detail="ไม่มี Supervisor ในขอบเขตที่เลือก")
@@ -287,6 +289,9 @@ def get_employees_region_peers(
     sup_ids = sorted({str(x).strip().upper() for x in allowed if str(x).strip()})
     if unit:
         sup_ids = filter_codes_by_unit(sup_ids, unit)
+    # ทีมผู้จัดการที่ไม่มีพนักงาน / ทีมที่ทุกคนถูกย้ายออก — ไม่ใช่ "ทีมที่โหลดไม่ได้" (ผลตรวจ 7 ต.ค. 2026 ค)
+    sup_ids = drop_manager_code_without_team(sup_ids, "", target_month, target_year)
+    sup_ids = drop_teams_emptied_by_moves(sup_ids, target_month, target_year)
     if len(sup_ids) <= 1:
         raise HTTPException(
             status_code=400,

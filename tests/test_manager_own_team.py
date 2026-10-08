@@ -200,5 +200,64 @@ class TestDefaultLandingTeam(_Base):
         )
 
 
+
+# ผู้จัดการฝ่าย (Div.S ไม่มีภาค) ที่มีพนักงานสังกัดตรง — ทีมของเขาไม่มีภาค (ผลตรวจ 7 ต.ค. 2026 ค · SL301)
+ROWS_DIV = [
+    {"email": "div@x.co.th", "userpl": "SL301", "login_kind": "manager_acc",
+     "manager_level": "division", "acc_division": "Div.S", "acc_region": "",
+     "can_import_targetsun": False, "note": ""},
+    {"email": "s1@x.co.th", "userpl": "SL396", "login_kind": "supervisor_acc",
+     "acc_division": "Div.S", "acc_region": "เหนือ", "acc_unit": "credit",
+     "can_import_targetsun": False, "note": ""},
+]
+
+
+class TestDivisionAllIncludesRegionlessOwnTeam(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        path = os.path.join(self._tmp.name, "user_access.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(ROWS_DIV, fh, ensure_ascii=False)
+        self._old = os.environ.get("USER_ACCESS_JSON_PATH")
+        os.environ["USER_ACCESS_JSON_PATH"] = path
+
+    def tearDown(self):
+        if self._old is None:
+            os.environ.pop("USER_ACCESS_JSON_PATH", None)
+        else:
+            os.environ["USER_ACCESS_JSON_PATH"] = self._old
+        self._tmp.cleanup()
+
+    def test_all_view_counts_own_team_without_region(self):
+        codes = resolve_aggregate_supervisor_codes(
+            "SL301", ["SL301", "SL396"], "all", None, own_salesmen_codes={"SL301"}
+        )
+        self.assertEqual(sorted(codes), ["SL301", "SL396"])
+
+    def test_all_view_without_own_staff_unchanged(self):
+        codes = resolve_aggregate_supervisor_codes(
+            "SL301", ["SL301", "SL396"], "all", None, own_salesmen_codes=set()
+        )
+        self.assertEqual(sorted(codes), ["SL396"])
+
+
+
+class TestDropTeamsEmptiedByMoves(unittest.TestCase):
+    """ผลตรวจ 7 ต.ค. 2026 ค — SL372 มี S516 คนเดียว ย้ายไป SL359 แล้ว ไม่ต้องนับ SL372 ในรวมภาค"""
+
+    def test_team_with_everyone_moved_away_is_dropped(self):
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "emp_cache_SL372_2026_10.csv"), "w", encoding="utf-8") as f:
+                f.write("emp_id\nS516\n")
+            with open(os.path.join(d, "emp_cache_SL359_2026_10.csv"), "w", encoding="utf-8") as f:
+                f.write("emp_id\nS100\n")
+            rows = [{"emp_id": "S516", "to_sup": "SL359"}]
+            with mock.patch("backend.services.emp_assignment_store.read_rows", return_value=rows):
+                out = mv.drop_teams_emptied_by_moves(["SL359", "SL372", "SL999"], 10, 2026, data_dir=d)
+        self.assertEqual(out, ["SL359", "SL999"])  # SL999 ไม่มีแคช = ไม่รู้ ไม่ตัด
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2597,7 +2597,9 @@ def admin_submit_feedback_from_user(
             acting_admin_email=str(user.get("acting_admin_email") or ""),
             category=body.category,
             message=body.message,
-            sup_id=body.sup_id,
+            # ทีมที่ไม่อยู่ในขอบเขตของผู้ส่ง ไม่ผูกกับความเห็นนี้ (ผลตรวจ 7 ต.ค. 2026 ค) — เดิมผูกทีมไหนก็ได้
+            # แล้วไปโผล่ในบันทึกของทีมนั้น · ไม่ปฏิเสธทั้งคำขอ เพราะส่งจากหน้าล็อกอิน (ยังไม่มีทีม) ได้
+            sup_id=(_codes_in_user_scope(user, [body.sup_id]) or [""])[0] if body.sup_id else body.sup_id,
             sup_name=body.sup_name,
             target_month=body.target_month,
             target_year=body.target_year,
@@ -3368,13 +3370,24 @@ class AllocRulesRoundBody(BaseModel):
     sup_ids: list[str] = Field(default_factory=list, max_length=500)
 
 
+def _codes_in_user_scope(user: dict, codes) -> list[str]:
+    """รหัสทีมที่อยู่ในขอบเขตของผู้ใช้ — allowed_supervisor_codes=None คือไม่จำกัด (dev)"""
+    allowed = user.get("allowed_supervisor_codes")
+    out = [str(c or "").strip().upper() for c in (codes or []) if str(c or "").strip()]
+    if allowed is None:
+        return out
+    ok = {str(x).strip().upper() for x in allowed}
+    return [c for c in out if c in ok]
+
+
 @router.post("/alloc-rules/round-check")
 def alloc_rules_round_check(
     body: AllocRulesRoundBody,
     _user: dict = Depends(require_authenticated_user),
 ) -> dict[str, Any]:
     """กติกา「ไม่เคยขาย = เป้า 0」จะทำงานไหม ถ้ากระจายทีมชุดนี้รวมกันในรอบเดียว"""
-    return alloc_rules_store.never_sold_zero_round_state(body.sup_ids)
+    # ตอบเฉพาะทีมในขอบเขตของผู้ถาม (ผลตรวจ 7 ต.ค. 2026 ค) — เดิมถามสถานะของทีมไหนก็ได้
+    return alloc_rules_store.never_sold_zero_round_state(_codes_in_user_scope(_user, body.sup_ids))
 
 
 # ─── กติกาบังคับคลังเดียว — กลุ่มสินค้า (Section) × AREACODE × DIVISIONCODE ──────────

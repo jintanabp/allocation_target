@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from typing import Any
 
 from .user_access_store import read_rows
+
+logger = logging.getLogger("target_allocation")
 
 _EMP_FILE_RE = re.compile(r"^(?:emp_cache|tga_lines)_(.+)_\d{4}_\d{2}\.csv$")
 
@@ -181,6 +184,9 @@ def build_manager_view_options(
             "supervisor_meta": meta,
             "supervisor_codes": supers,
             "own_team_has_staff": own_has_staff,
+            # ทีมที่นับเป้าใน「รวมทั้งหมด」— รวมทีมที่ไม่มีภาค (เช่นทีมของผู้จัดการฝ่ายเองที่มีพนักงานสังกัดตรง)
+            # เดิมนับจาก regions อย่างเดียว ทีมไม่มีภาคจึงหลุดจากยอดรวม (ผลตรวจ 7 ต.ค. 2026 ค · SL301)
+            "countable_codes": sorted(team_only),
         }
 
     mgr_region = str((mgr_row or {}).get("acc_region") or "").strip()
@@ -292,6 +298,41 @@ def drop_manager_code_without_team(
     return out or list(codes or [])
 
 
+def drop_teams_emptied_by_moves(codes: list[str], month: int, year: int, data_dir: str = "data") -> list[str]:
+    """
+    เอาทีมที่ "ทุกคนถูกย้ายไปทีมอื่นแล้ว" ออกจากขอบเขตรวมภาค (ผลตรวจ 7 ต.ค. 2026 ค)
+
+    เช่น SL372 มี S516 คนเดียว แล้วแอดมินย้าย S516 ไป SL359 — SL372 โหลดแล้วได้ 404「ไม่พบพนักงาน」
+    กลายเป็น "ทีมที่ถูกข้าม" พร้อมคำเตือนทุกครั้งที่เปิดรวมภาค ทั้งที่ไม่มีอะไรผิด
+    ตัดสินจากแคชรายชื่อดิบของทีม (emp_cache_) — ไม่มีแคช = ไม่รู้ ไม่ตัด
+    """
+    import pandas as pd
+
+    from . import emp_assignment_store
+
+    try:
+        rows = emp_assignment_store.read_rows()
+    except Exception:
+        return list(codes or [])
+    if not rows:
+        return list(codes or [])
+    moved_to = {str(r.get("emp_id") or "").strip().upper(): str(r.get("to_sup") or "").strip().upper() for r in rows}
+    out: list[str] = []
+    for raw in codes or []:
+        c = str(raw or "").strip().upper()
+        path = os.path.join(data_dir, f"emp_cache_{c}_{int(year):04d}_{int(month):02d}.csv")
+        try:
+            emps = [str(e).strip().upper() for e in pd.read_csv(path, dtype=str, usecols=["emp_id"])["emp_id"]]
+        except Exception:
+            out.append(c)
+            continue
+        if emps and all(moved_to.get(e) and moved_to[e] != c for e in emps):
+            logger.info("ไม่นับทีม %s ในรวมภาค — พนักงานทุกคนถูกย้ายไปทีมอื่นแล้ว", c)
+            continue
+        out.append(c)
+    return out or list(codes or [])
+
+
 def units_of_codes(codes: list[str]) -> dict[str, str]:
     """หน่วยขายของแต่ละรหัสทีมจาก user_access — "" = ไม่ได้ระบุ"""
     roster = _row_by_userpl()
@@ -348,7 +389,7 @@ def resolve_aggregate_supervisor_codes(
         # supervisor_codes มีรหัสของผู้จัดการเองรวมอยู่ด้วย (ไว้ให้เลือกเปิดทีละทีม)
         # แต่การรวมเป้านับเฉพาะทีมที่ build_manager_view_options ตัดสินแล้วว่าควรนับ
         # — ซึ่งรวมรหัสผู้จัดการเมื่อเขามีพนักงานสังกัดตรง (ดู keep_own_code ที่นั่น)
-        countable = set()
+        countable = set(opts.get("countable_codes") or [])
         for entry in opts.get("regions") or []:
             countable.update(entry.get("supervisor_codes") or [])
         if not countable:

@@ -4150,6 +4150,15 @@ function _doLogout() {
     _supervisorSet: S._supervisorSet,
     _managerSet: S._managerSet,
   };
+  // ค่าที่ /managers ให้มา (สิทธิ์/ขอบเขต/แหล่งเป้า) — ออกจากระบบแล้วกลับเข้าใหม่โดยไม่โหลด /managers ซ้ำ
+  // (มีรายการผู้จัดการในเครื่องแล้ว) เดิมค่าพวกนี้หาย: มุมมองรวมภาคหาย · ดึงเป้าสดไม่ได้ · สิทธิ์ส่งกลับเป็น true
+  // โดยไม่ถาม server (ผลตรวจ 7 ต.ค. 2026 ค)
+  const keepServerMeta = {};
+  for (const k of ["adminRegions", "canImportTargetSun", "expectedPeriod", "homeSupervisorCodes", "isAdminRole",
+    "isHeadAdmin", "isRegionAdmin", "loginPickCount", "managerViews", "peerSupervisorCodes", "role",
+    "targetReadSource", "targetsunReadEnabled"]) {
+    if (k in S) keepServerMeta[k] = S[k];
+  }
   _draftPromptSuppressedForKeys.clear();
   try {
     const rm = [];
@@ -4188,6 +4197,8 @@ function _doLogout() {
   /** emp_id ที่ขยายกลุ่ม WH อยู่ (แบบ B) */
   whExpanded: null,
 };
+  Object.assign(S, keepServerMeta);
+  S.managerViewUnit = "";
   dismissAllToasts();
   ["logoutModal", "draftModal"].forEach(id => {
     document.getElementById(id)?.remove();
@@ -4224,16 +4235,15 @@ function _showLogoutModal() {
   const existing = document.getElementById("logoutModal");
   if (existing) existing.remove();
 
-  // เช็คว่า draft ถูก save แล้วหรือยัง
-  const draftKey = currentDraftStorageKey();
-  const legacyKey = `Draft_${S.supId}_${S.targetMonth}_${S.targetYear}`;
-  const hasDraft = !!(
-    localStorage.getItem(draftKey) ||
-    (legacyKey !== draftKey && localStorage.getItem(legacyKey))
-  );
-  const draftNote = hasDraft
-    ? `<div style="margin-top:8px;padding:8px 10px;background:var(--green-bg);border-radius:6px;border:1px solid var(--green-brd);font-size:12px;color:var(--green);">✓ ข้อมูลถูกบันทึกไว้ในเครื่องแล้ว — กลับมา Login ได้เลย</div>`
-    : `<div style="margin-top:8px;padding:8px 10px;background:var(--red-bg);border-radius:6px;border:1px solid var(--red-brd);font-size:12px;color:var(--red);">⚠️ ยังไม่ได้บันทึกแบบร่าง — แนะนำให้ดาวน์โหลด Excel ก่อนออก</div>`;
+  // บอกตามสถานะบันทึกบน server จริง (ผลตรวจ 7 ต.ค. 2026 ค) — เดิมดูร่างใน localStorage แล้วบอก
+  // 「บันทึกไว้ในเครื่องแล้ว กลับมาได้เลย」แต่ทางกู้ร่างในเครื่องไม่มีใครเรียกแล้ว คำสัญญาจึงไม่จริง
+  const hasResult = Array.isArray(S.allocations) && S.allocations.length > 0;
+  const savedOnServer = hasResult && !S._hasUnsaved && !!S.serverSnapshotMeta;
+  const draftNote = !hasResult
+    ? ""
+    : savedOnServer
+      ? `<div style="margin-top:8px;padding:8px 10px;background:var(--green-bg);border-radius:6px;border:1px solid var(--green-brd);font-size:12px;color:var(--green);">✓ ผลกระจายบันทึกไว้ในระบบแล้ว — กลับมาล็อกอินแล้วทำต่อได้</div>`
+      : `<div style="margin-top:8px;padding:8px 10px;background:var(--red-bg);border-radius:6px;border:1px solid var(--red-brd);font-size:12px;color:var(--red);">⚠️ ยังมีการแก้ไขที่ยังไม่ได้บันทึก — กดบันทึกก่อนออกจากระบบ</div>`;
 
   const modal = document.createElement("div");
   modal.id = "logoutModal";
@@ -5784,7 +5794,7 @@ function renderStep1() {
         .map(e => `${e.emp_id}${e.emp_name ? ` (${e.emp_name})` : ""}`
           + (e.wh_split && e.warehouse_code ? ` · คลัง ${e.warehouse_code}` : ""))
         .join(", ");
-      lines.push(`พนักงาน ${auto.length} คน (${names}) — *ไม่นำไปกระจายเป้า`);
+      lines.push(`พนักงาน ${auto.length} รายการ (${names}) — *ไม่นำไปกระจายเป้า`);
     }
     if (noTarget.length) {
       const names = [...new Set(noTarget.map(
@@ -6197,10 +6207,13 @@ function renderYellowTable() {
   if (step2Notice) {
     const bits = [];
     if (hidden.length) {
+      // แบบเดียวกับขั้นที่ 1: คนแยกคลังบอกคลังด้วย — ไม่งั้นอ่านว่า "ซ่อน C442" ทั้งที่ C442 / R408 อยู่ในตาราง
+      // นับเป็น "รายการ" ไม่ใช่ "คน" เพราะคนเดียวอาจซ่อนไปแค่คลังเดียว (ผลตรวจ 7 ต.ค. 2026 ค)
       const names = hidden
-        .map(e => `${e.emp_id}${e.emp_name ? ` (${e.emp_name})` : ""}`)
+        .map(e => `${e.emp_id}${e.emp_name ? ` (${e.emp_name})` : ""}`
+          + (e.wh_split && e.warehouse_code ? ` · คลัง ${e.warehouse_code}` : ""))
         .join(", ");
-      bits.push(`ขั้นนี้แสดงเฉพาะพนักงานที่มีเป้า — ซ่อน ${hidden.length} คน (${names}) ที่ไม่นำไปกระจายเป้า`);
+      bits.push(`ขั้นนี้แสดงเฉพาะพนักงานที่มีเป้า — ซ่อน ${hidden.length} รายการ (${names}) ที่ไม่นำไปกระจายเป้า`);
     }
     if (noTargetN) {
       const spare = _noTargetSpareBaht();
@@ -6973,6 +6986,16 @@ async function _callOptimizeApi(supId, payload) {
 }
 
 function _applyOptimizeMetaFromJson(json) {
+  // แอดมินเพิ่ม「ไม่ต้องตั้งเป้า」ระหว่างที่หน้านี้เปิดค้าง — server ตัดคนนั้นออกแล้ว แต่ขั้นที่ 2 ยังให้เงินเขา
+  // บอกให้โหลดใหม่ (ผลตรวจ 7 ต.ค. 2026 ค) · ไม่แก้ตัวเลขเองเพราะเงินส่วนนั้นต้องโยกให้เพื่อนตามกติกา
+  const ntx = Array.isArray(json.no_target_excluded) ? json.no_target_excluded.map((x) => String(x).trim().toUpperCase()) : [];
+  const staleNt = ntx.filter((id) => (S.employees || []).some(
+    (e) => String(e.emp_id || "").trim().toUpperCase() === id && !_isNoTargetEmp(e)
+  ));
+  if (staleNt.length) {
+    toast(`พนักงาน ${staleNt.slice(0, 5).join(", ")}${staleNt.length > 5 ? " ฯลฯ" : ""} ถูกตั้งเป็น「ไม่ต้องตั้งเป้า」`
+      + "ระหว่างที่หน้านี้เปิดอยู่ จึงไม่ได้รับหีบ — กรุณาโหลดข้อมูลขั้นที่ 1 ใหม่เพื่อให้เป้าเงินถูกต้อง", "amber");
+  }
   const mw = Number(json.hist_window_months);
   if (mw === 1) S.histWindowMonths = 1;
   else if (mw === 6) S.histWindowMonths = 6;
@@ -9641,7 +9664,18 @@ function _lakehouseUserCode() {
   return String(S.supId || "").trim();
 }
 
-function showLakehouseUploadModal() {
+/** เป้าเงินขั้นที่ 2 ต่างจากชุดที่ใช้กดคำนวณครั้งล่าสุดไหม (ทีม×งวดเดียวกัน) — ไม่รู้ชุดเดิม = ไม่ถือว่าเปลี่ยน */
+function _yellowChangedSinceRun() {
+  if (!S.engineYellow || S.engineYellowCtx !== _engineYellowCtx()) return false;
+  const now = S.yellow || {};
+  const keys = new Set([...Object.keys(now), ...Object.keys(S.engineYellow)]);
+  for (const k of keys) {
+    if (Math.abs((Number(now[k]) || 0) - (Number(S.engineYellow[k]) || 0)) > 0.5) return true;
+  }
+  return false;
+}
+
+function showLakehouseUploadModal(opts = {}) {
   if (_isAllocReadOnlyView()) {
     toast("โหมดดูอย่างเดียว — สลับกลับทีมของคุณเพื่อส่ง Target Sun", "amber");
     return;
@@ -9656,6 +9690,22 @@ function showLakehouseUploadModal() {
   }
   if (S.targetSunPreviewMode && !_canSendFromTargetSunPreview()) {
     toast("แก้ตัวเลขในตารางก่อน หรือให้รวมหีบต่อ SKU ตรงเป้า (✓) แล้วจึงส่งได้", "amber");
+    return;
+  }
+  // เป้าเงินขั้นที่ 2 ถูกแก้หลังกดคำนวณ — ผลในตารางยังเป็นของเป้าเงินชุดเดิม (ผลตรวจ 7 ต.ค. 2026 ค)
+  // ยอดหีบยังถูกต้อง จึงไม่บล็อก แต่ต้องถามก่อน ไม่ให้ส่งผลเก่าโดยไม่รู้ตัว
+  if (!opts.yellowChangeConfirmed && _yellowChangedSinceRun()) {
+    _showInfoModal({
+      title: "เป้าเงินเปลี่ยนหลังกดคำนวณ",
+      bodyHtml:
+        `<p style="margin:0;text-align:left;line-height:1.7;">เป้าเงินในขั้นที่ 2 ถูกแก้ไขหลังจากกดคำนวณครั้งล่าสุด ` +
+        `ผลกระจายหีบในตารางจึง<strong>ยังเป็นผลของเป้าเงินชุดเดิม</strong></p>` +
+        `<p style="margin:10px 0 0;text-align:left;line-height:1.7;">แนะนำให้กด「เริ่มคำนวณ」ใหม่ก่อนส่ง ` +
+        `หรือยืนยันส่งผลในตารางตามที่เห็นอยู่ (ยอดหีบต่อสินค้ายังตรงเป้า)</p>`,
+      primaryLabel: "ส่งผลในตารางตามเดิม",
+      secondaryLabel: "กลับไปคำนวณใหม่",
+      onPrimary: () => showLakehouseUploadModal({ yellowChangeConfirmed: true }),
+    });
     return;
   }
   const matrix = _lakehouseAllocationsFromStep3();
@@ -12817,7 +12867,15 @@ function queueServerAllocationSave(status = "draft") {
       strategy: ctx.strategy,
       silentSummary: true,
     };
-    saveServerAllocationSnapshot(status, opts).catch((e) => console.warn("saveServerAllocationSnapshot:", e));
+    saveServerAllocationSnapshot(status, opts).catch((e) => {
+      console.warn("saveServerAllocationSnapshot:", e);
+      // บันทึกอัตโนมัติล้ม (server/เน็ต) ต้องให้ผู้ใช้รู้ และนับว่า "ยังไม่ได้บันทึก" (ผลตรวจ 7 ต.ค. 2026 ค)
+      // เดิมแค่ console.warn ขณะจอขึ้น「บันทึกแบบร่างเรียบร้อย」 → ปิดแท็บ/ออกจากระบบโดยไม่มีคำเตือน
+      if (_allocSaveContextKey() === ctx.key) S._hasUnsaved = true;
+      if (!e?._toasted) {
+        toast("⚠ บันทึกผลกระจายอัตโนมัติไม่สำเร็จ — " + _userFacingError(e, "กรุณากดบันทึกอีกครั้ง"), "amber");
+      }
+    });
   }, 800);
 }
 
@@ -12987,7 +13045,9 @@ async function saveServerAllocationSnapshot(status = "draft", opts = {}) {
       const msg = _formatApiErrorDetail(j) || "บันทึกผลกระจายบน server ไม่สำเร็จ";
       _logClientError("save_allocation", msg, `sup=${supId} http=${res.status}`);
       toast("⚠ " + msg, "red");
-      throw new Error(msg);
+      const err = new Error(msg);
+      err._toasted = true;
+      throw err;
     }
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
@@ -22145,6 +22205,32 @@ async function adminToggleTargetSun(email, enabled) {
   }
 }
 
+/* เริ่ม/ออกจาก「ดูแทน」= เปลี่ยนตัวตน — ล้างมุมมอง/แคชผลกระจายของตัวตนเดิมแบบเดียวกับออกจากระบบ (ผลตรวจ 7 ต.ค. 2026 ค)
+   เดิมค้างหน่วย/โหมดรวมภาค/เป้าเงิน/แคช sessionStorage ของคนที่เพิ่งดู ไปติดกับคนถัดไป */
+function _resetViewForIdentityChange() {
+  _bumpDashboardLoadGen();
+  S.managerViewUnit = "";
+  S.aggregateMode = false;
+  S.aggregateSupIds = [];
+  S.compositeAllocView = false;
+  S.allocSourceBySup = {};
+  S.targetSunPreviewMode = false;
+  S.yellow = {};
+  S.yellowLocked = {};
+  S.engineYellow = null;
+  S.engineYellowCtx = null;
+  try {
+    const rm = [];
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const k = sessionStorage.key(i);
+      if (k && (k.startsWith("srv_alloc_") || k.startsWith("allocSnap_") || k.startsWith("allocSummary_"))) rm.push(k);
+    }
+    rm.forEach((k) => sessionStorage.removeItem(k));
+  } catch {
+    /* ignore */
+  }
+}
+
 async function adminStartViewAs(email) {
   // โหมดดูสิทธิ์จำลอง "ของจริง" ทั้งสองฝั่ง: บัญชีมีทีม = หน้าจอฝั่งผู้ใช้,
   // บัญชีแอดมิน = เข้าหน้าแอดมินตามขอบเขตของบัญชีนั้น (backend กรองข้อมูลให้ตาม
@@ -22152,6 +22238,7 @@ async function adminStartViewAs(email) {
   S.viewAsEmail = (email || "").trim().toLowerCase();
   S.isAdmin = false;
   S.managers = [];
+  _resetViewForIdentityChange();
   updateViewAsBanner();
   closeAdminView({ reloadManagers: false });
   document.getElementById("dashboardView").style.display = "none";
@@ -22168,6 +22255,7 @@ async function adminStartViewAs(email) {
 
 async function exitViewAsMode() {
   S.viewAsEmail = null;
+  _resetViewForIdentityChange();
   updateViewAsBanner();
 
   // ออกจาก session ของผู้ใช้ที่จำลอง — ไม่ให้แอดมินค้างอยู่บน dashboard ของ SL นั้น

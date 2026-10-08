@@ -57,9 +57,25 @@ def bundle_filename(light: bool = False) -> str:
     return f"dev_bundle{'_light' if light else ''}_{_bangkok_stamp()}.zip"
 
 
-def _iter_files(pattern: str) -> list[str]:
+def _iter_files(pattern: str) -> list[tuple[str, str]]:
+    """
+    คืน [(path จริง, ชื่อในไฟล์ zip)] — ส่วน data/ หาทั้งใต้รากโปรเจกต์และใต้โฟลเดอร์ที่รันแอป
+
+    ไฟล์บางชุด (sent_ledger, ts_presend, baselines/rows, ts_prepare) เขียนแบบ "data/..." อิงโฟลเดอร์ที่รัน
+    ถ้า server รันจากโฟลเดอร์อื่น (ดู /health → runtime.data_dir.same) ชุดพัฒนาเดิมจะไม่เห็นไฟล์พวกนี้เลย
+    (ผลตรวจ 8 ต.ค. 2026: zip จาก server มี sent_ledger 0 ไฟล์) · ไฟล์จากโฟลเดอร์ที่รันอยู่ใต้ "cwd/" ใน zip
+    """
     root = _repo_root()
-    return sorted(p for p in glob.glob(os.path.join(root, pattern)) if os.path.isfile(p))
+    out = [(p, os.path.relpath(p, root).replace("\\", "/"))
+           for p in glob.glob(os.path.join(root, pattern)) if os.path.isfile(p)]
+    if pattern.startswith("data/"):
+        cwd = os.getcwd()
+        if os.path.normcase(os.path.abspath(cwd)) != os.path.normcase(os.path.abspath(root)):
+            seen = {os.path.normcase(os.path.abspath(p)) for p, _ in out}
+            for p in glob.glob(os.path.join(cwd, pattern)):
+                if os.path.isfile(p) and os.path.normcase(os.path.abspath(p)) not in seen:
+                    out.append((p, "cwd/" + os.path.relpath(p, cwd).replace("\\", "/")))
+    return sorted(out, key=lambda t: t[1])
 
 
 def build_dev_bundle(light: bool = False) -> tuple[bytes, list[dict]]:
@@ -82,8 +98,7 @@ def build_dev_bundle(light: bool = False) -> tuple[bytes, list[dict]]:
                 continue
             files = _iter_files(pattern)
             total = 0
-            for path in files:
-                rel = os.path.relpath(path, root).replace("\\", "/")
+            for path, rel in files:
                 zf.write(path, rel)
                 total += os.path.getsize(path)
             manifest.append({"part": name, "files": len(files), "bytes": total, "desc": desc})

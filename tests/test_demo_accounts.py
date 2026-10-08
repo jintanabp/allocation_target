@@ -145,9 +145,18 @@ class TestDemoAccessScope(unittest.TestCase):
 
 class TestDemoDataIsUsableLikeTheRealThing(unittest.TestCase):
     def setUp(self):
+        # โหลดทีมสาธิตเขียนแคชลง data/ (อิงโฟลเดอร์ที่รัน) — ทำในโฟลเดอร์ชั่วคราว ไม่ให้ไฟล์ SLDEMO*
+        # ไปค้างใน data/ จริงของเครื่อง (ผลตรวจ 7 ต.ค. 2026 ค) และไม่ชน .tmp เวลารันเทสสองชุดพร้อมกัน
+        self._tmpdir = tempfile.mkdtemp()
+        self._cwd = os.getcwd()
+        os.chdir(self._tmpdir)
         self.payloads = {
             c: emp_svc.load_employees_payload(c, 9, 2026) for c in demo_data.DEMO_SUP_IDS
         }
+
+    def tearDown(self):
+        os.chdir(self._cwd)
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def test_each_team_has_its_own_people(self):
         seen = set()

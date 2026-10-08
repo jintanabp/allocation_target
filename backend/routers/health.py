@@ -38,6 +38,14 @@ def _git_short_hash() -> str:
         return "dev"
 
 
+def _public_runtime_status() -> dict:
+    st = runtime_status()
+    dd = st.get("data_dir")
+    if isinstance(dd, dict):
+        st["data_dir"] = {"same": dd.get("same")}
+    return st
+
+
 @router.get("/health")
 def health():
     return {
@@ -52,7 +60,8 @@ def health():
         },
         # ตรวจตอนเปิดแอป (ผลตรวจ §5.2): data_dir.same=false = data/ แยกสองที่ ·
         # single_process=false = มีหลายโปรเซสใช้ข้อมูลชุดเดียวกัน (ล็อกในแอปใช้ไม่ได้)
-        "runtime": runtime_status(),
+        # /health ไม่ต้องล็อกอิน — ไม่ส่ง path เต็มของ server (ผลตรวจ 7 ต.ค. 2026 ค) · path เต็มอยู่ใน log ตอนสตาร์ท
+        "runtime": _public_runtime_status(),
         "files": {
             # ไฟล์เป้าแยกราย sup แล้ว — รายงานเป็นจำนวนไฟล์ ส่วน legacy_* คือไฟล์ global เก่าที่ยังค้าง
             "target_boxes_files": _count_data_files("target_boxes_"),
