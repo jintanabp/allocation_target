@@ -7617,12 +7617,13 @@ function renderResult(allocs) {
             onclick="revertResultCell('${escH(empId)}','${escH(s)}','${escH(whKey)}')">↺</button>`
         : "";
 
-      // คนแยกคลัง: สินค้าที่ Target Sun ไม่มีแถวที่คลังของแถวนี้ — ตอนส่งหีบจะลงคลังที่มีแถวจริง
-      // (ผู้ใช้ยืนยัน 8 ต.ค. 2026: ลงคลังตาม Target Sun) บอกให้เห็นบนจอ ไม่ให้จอกับที่ส่งจริงไม่ตรงกัน
+      // คนแยกคลัง: สินค้าที่ Target Sun ไม่มีแถวที่คลังของแถวนี้ — ตัวกระจายไม่ให้หีบช่องนี้แล้ว (ผู้ใช้ตัดสิน
+      // 8 ต.ค. 2026: C442 ไม่มีเป้า X ที่ R408 ก็ไม่ควรได้) · ถ้าผู้ใช้พิมพ์หีบใส่เอง ตอนส่งหีบจะลงคลังที่มีแถวจริง
+      // (ไม่สร้างแถวใหม่) — เตือนให้เห็นบนจอ ไม่ให้จอกับที่ส่งจริงไม่ตรงกัน
       const _redir = Number(b) > 0 ? empInfo?.wh_redirect_skus?.[String(s).trim()] : null;
       const redirectHtml = Array.isArray(_redir) && _redir.length
-        ? `<div class="hist-sub" style="color:var(--amber);font-weight:600;" title="Target Sun ไม่มีแถวของสินค้านี้ที่คลัง ${escH(whDisplay)} — ระบบส่งหีบลงแถวที่มีอยู่จริง ไม่สร้างแถวใหม่">` +
-          `ส่งเข้าคลัง ${escH(_redir.map((w) => w || "(ว่าง)").join(", "))} ตาม Target Sun</div>`
+        ? `<div class="hist-sub" style="color:var(--amber);font-weight:600;" title="Target Sun ไม่มีเป้าสินค้านี้ที่คลัง ${escH(whDisplay)} — ถ้าส่ง หีบจะลงแถวที่มีอยู่จริง ไม่สร้างแถวใหม่">` +
+          `⚠ ไม่มีเป้าที่คลังนี้ · ถ้าส่งจะลงคลัง ${escH(_redir.map((w) => w || "(ว่าง)").join(", "))}</div>`
         : "";
 
       rowHtml += `<td class="r result-cell${_freshSkuSet.has(String(s).trim()) ? " result-cell--fresh" : ""}" style="vertical-align:top;">

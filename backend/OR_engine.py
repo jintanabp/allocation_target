@@ -270,6 +270,7 @@ def allocate_boxes(
     history_only: bool = False,
     never_sold_known_emps: set | frozenset | None = None,
     rotate_small_in_brand: bool = True,
+    wh_blocked_pairs: set | frozenset | None = None,
 ) -> pd.DataFrame:
     strategy = strategy.upper()
     valid = ("L3M", "L6M", "LY", "EVEN", "PUSH", "LP")
@@ -334,6 +335,15 @@ def allocate_boxes(
             sum(1 for v in never_sold_summary.values() if v["reason"] == "push_target"),
         )
 
+    # คู่ที่ห้ามรับหีบ = กติกาไม่เคยขาย + คู่ "คน×คลัง × สินค้า" ที่ Target Sun ไม่มีแถวที่คลังนั้น
+    # (wh_blocked_pairs — ผู้ใช้ตัดสิน 8 ต.ค. 2026: C442 มีสินค้า X แค่ที่ R493 เป้า 0 → แถว R408 ต้องไม่ได้ X)
+    # รวมกันใช้ทุกชั้น แต่เก็บแยกใน attrs — หน้าจอติดป้าย "ไม่เคยขาย" จาก never_sold_zero_pairs เท่านั้น
+    alloc_zero_pairs = never_sold_zero_pairs
+    if wh_blocked_pairs:
+        alloc_zero_pairs = set(never_sold_zero_pairs or ()) | {
+            (str(e).strip(), _norm_sku(s)) for e, s in wh_blocked_pairs
+        }
+
     # ถ้า custom strategy ส่ง cap_multiplier มา ให้ใช้ค่านั้นแทน default
     effective_cap = cap_multiplier if cap_multiplier is not None else _CAP_MULTIPLIER
     hb = max(0.0, min(1.0, float(hist_balance if hist_balance is not None else 0.85)))
@@ -370,7 +380,7 @@ def allocate_boxes(
             locked_map,
             effective_cap,
             even_skus=even_skus,
-            zero_pairs=never_sold_zero_pairs,
+            zero_pairs=alloc_zero_pairs,
         )
         base_map = _baseline_map_from_df(df_base, df_emp_targets, df_sku)
         df_out = _lp_optimize(
@@ -390,7 +400,7 @@ def allocate_boxes(
             flex_skus=flex_skus,
             flex_band_pct=_TIER_FLEX_BAND_PCT,
             strict_band_pct=_TIER_STRICT_BAND_PCT,
-            zero_pairs=never_sold_zero_pairs,
+            zero_pairs=alloc_zero_pairs,
             _meta=opt_meta,
         )
     else:
@@ -406,7 +416,7 @@ def allocate_boxes(
             locked_map,
             effective_cap,
             even_skus=even_skus,
-            zero_pairs=never_sold_zero_pairs,
+            zero_pairs=alloc_zero_pairs,
         )
 
     if tiered_allocation and flex_skus and base_map:
@@ -432,7 +442,7 @@ def allocate_boxes(
             default_band_pct=_DEFAULT_HIST_BAND_PCT,
             even_skus=even_skus,
             cap_multiplier=effective_cap,
-            zero_pairs=never_sold_zero_pairs,
+            zero_pairs=alloc_zero_pairs,
         )
 
     if even_skus:
@@ -444,7 +454,7 @@ def allocate_boxes(
             locked_map,
             force_min_one,
             df_hist=df_hist,
-            zero_pairs=never_sold_zero_pairs,
+            zero_pairs=alloc_zero_pairs,
         )
         # ห้ามเอาผลสุดท้ายไปทับ base_map (ผลตรวจ 28 ก.ย. 2026 §4.1-1) — เดิมทับตรงนี้
         # ป้ายเทียบประวัติจึงเทียบผลกับตัวเอง ทุกช่องได้ "ok" ทุกครั้งที่มี SKU แบ่งเท่า
@@ -460,7 +470,7 @@ def allocate_boxes(
             df_sku,
             hist_lookup=_hist_lookup(df_hist),
             locked_map=locked_map,
-            zero_pairs=never_sold_zero_pairs,
+            zero_pairs=alloc_zero_pairs,
             even_skus=even_skus,
         )
 
@@ -476,7 +486,7 @@ def allocate_boxes(
             locked_map,
             effective_cap,
             even_skus=even_skus,
-            zero_pairs=never_sold_zero_pairs,
+            zero_pairs=alloc_zero_pairs,
         )
         base_map = _baseline_map_from_df(df_base, df_emp_targets, df_sku)
     if base_map:
@@ -493,6 +503,9 @@ def allocate_boxes(
     df_expanded.attrs["never_sold_zero_pairs"] = never_sold_zero_pairs
     df_expanded.attrs["never_sold_summary"] = never_sold_summary
     df_expanded.attrs["brand_rotation"] = rotation_stats
+    df_expanded.attrs["wh_blocked_pairs"] = frozenset(
+        (str(e).strip(), _norm_sku(s)) for e, s in (wh_blocked_pairs or ())
+    )
     return df_expanded
 
 

@@ -189,6 +189,55 @@ def _wh_value_shares(
         return value_shares_for_reverse_map(reverse_map, {})
 
 
+def _wh_blocked_pairs(
+    reverse_map: dict[str, tuple[str, str]],
+    target_month: int,
+    target_year: int,
+    df_sku: pd.DataFrame,
+) -> frozenset[tuple[str, str]]:
+    """
+    คู่ (แถวคน×คลัง, สินค้า) ที่ห้ามรับหีบ — คนแยกคลังที่ Target Sun มีแถวของสินค้านั้น แต่ "ไม่มี" ที่คลังของแถวนี้
+
+    ผู้ใช้ตัดสิน 8 ต.ค. 2026 (C442): สินค้า X มีแถวแค่ R493 เป้า 0 (R493 ไม่นำไปกระจายเพราะเป้าเงิน 0)
+    เดิมแถว R408 ได้หีบ X ได้ แล้วตอนส่งหีบไปลงแถว R493 = ให้เป้าคลังที่ต้นทางไม่ได้ให้ · ตอนนี้แถวหนึ่ง
+    รับหีบได้เฉพาะสินค้าที่มีแถวที่คลังนั้นจริง (หรือคนนั้นไม่มีแถวของสินค้านั้นเลย = คู่ใหม่ ตามกติกาเดิม)
+
+    กันโจทย์แก้ไม่ได้: SKU ที่มีเป้าแต่ห้ามทุกแถวในรอบ → ไม่ห้ามสำหรับ SKU นั้น (log เตือน) ให้ไปทางเดิม
+    อ่าน grain ไม่ได้ = ไม่ห้ามอะไร (ทางเดิม) — ตอนส่งยังลงคลังตาม Target Sun และจอขึ้นป้าย「ส่งเข้าคลัง」
+    """
+    split = {or_id: (str(e).strip(), str(w or "").strip()) for or_id, (e, w) in (reverse_map or {}).items() if "|" in str(or_id)}
+    if not split:
+        return frozenset()
+    try:
+        dg = _read_tga_grain_across_teams(target_month, target_year, {e for e, _w in split.values()})
+    except Exception as ex:
+        logger.warning("อ่าน grain เพื่อจำกัดสินค้าต่อคลังไม่ได้: %s", ex)
+        return frozenset()
+    if dg is None or dg.empty or not {"emp_id", "sku"} <= set(dg.columns):
+        return frozenset()
+    whs_by: dict[tuple[str, str], set[str]] = {}
+    wcol = dg["warehouse_code"] if "warehouse_code" in dg.columns else [""] * len(dg)
+    for e, s, w in zip(dg["emp_id"], dg["sku"], wcol):
+        w = "" if w is None or (isinstance(w, float) and pd.isna(w)) else str(w).strip()
+        whs_by.setdefault((str(e).strip(), _norm_sku(s)), set()).add(w)
+    skus = [_norm_sku(s) for s in df_sku["sku"].tolist()] if df_sku is not None and not df_sku.empty else []
+    blocked: set[tuple[str, str]] = set()
+    for or_id, (emp, wh) in split.items():
+        for s in skus:
+            ws = whs_by.get((emp, s))
+            if ws and wh not in ws:
+                blocked.add((str(or_id).strip(), s))
+    if not blocked:
+        return frozenset()
+    all_rows = {str(k).strip() for k in reverse_map}
+    for s in {s for _o, s in blocked}:
+        if all((o, s) in blocked for o in all_rows):
+            blocked = {p for p in blocked if p[1] != s}
+            logger.warning("สินค้า %s: ทุกแถวในรอบไม่มีแถวที่คลังของตัวเอง — ไม่จำกัดตามคลังสำหรับสินค้านี้", s)
+    logger.info("จำกัดสินค้าตามคลังใน Target Sun: ห้าม %d คู่ (แถวคน×คลัง × สินค้า)", len(blocked))
+    return frozenset(blocked)
+
+
 def _apply_wh_pin_preview(
     df_final: pd.DataFrame,
     sup_id: str,
@@ -1313,6 +1362,7 @@ def run_optimization_service(
     value_shares = _wh_value_shares(
         reverse_map, sup_id, target_month, target_year, df_sku
     )
+    wh_blocked = _wh_blocked_pairs(reverse_map, target_month, target_year, df_sku)
     real_emp_list = list(
         {str(t.emp_id).strip() for t in req.yellowTargets if str(t.emp_id).strip()}
     )
@@ -1735,6 +1785,7 @@ def run_optimization_service(
                 push_multiple=alloc_rules_store.push_multiple(),
                 history_only=grp_history_only,
                 never_sold_known_emps=never_sold_known_emps,
+                wh_blocked_pairs=wh_blocked,
             )
             if df_alloc_grp.attrs.get("optimization_fallback"):
                 optimization_fallback = True
@@ -1765,7 +1816,7 @@ def run_optimization_service(
                 tiered_allocation=bool(req.tiered_allocation),
                 tier_pct=float(req.tier_pct),
                 revenue_tolerance_baht=float(req.revenue_tolerance_baht),
-                zero_pairs=never_sold_pairs_all,
+                zero_pairs=set(never_sold_pairs_all) | set(wh_blocked),
             )
             logger.info("multi-strategy: post-merge revenue balance applied")
             # ตัวเกลี่ยเงินหลังรวมผลย้ายหีบทีละใบได้ — หมุนผู้รับ SKU เป้าน้อยในแบรนด์ซ้ำอีกรอบ
@@ -1781,7 +1832,7 @@ def run_optimization_service(
                 df_sku,
                 hist_lookup=_hist_lookup(df_hist_input),
                 locked_map=_locked_map_rot,
-                zero_pairs=never_sold_pairs_all,
+                zero_pairs=set(never_sold_pairs_all) | set(wh_blocked),
                 even_skus=frozenset(even_skus_global or ()),
             )
             if _rot_stats.get("moved_boxes"):
@@ -1817,6 +1868,7 @@ def run_optimization_service(
             push_multiple=alloc_rules_store.push_multiple(),
             history_only=bool(req.history_only),
             never_sold_known_emps=never_sold_known_emps,
+            wh_blocked_pairs=wh_blocked,
         )
         optimization_fallback = bool(df_allocation.attrs.get("optimization_fallback"))
         lp_time_limited = bool(df_allocation.attrs.get("lp_time_limited"))
