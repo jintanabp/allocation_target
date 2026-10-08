@@ -8659,6 +8659,24 @@ function onResultEdit(el) {
   if (parsed.invalid) {
     toast(`「${String(el.textContent).trim()}」ไม่ใช่จำนวนหีบที่ถูกต้อง — ปรับเป็น ${val.toLocaleString("th-TH")}`, "amber");
   }
+  // คนแยกคลัง: สินค้าที่ Target Sun ไม่มีเป้าที่คลังของแถวนี้ (มีแค่คลังอื่น) ห้ามใส่หีบเอง — ตัวกระจายไม่ให้อยู่แล้ว
+  // ถ้าปล่อยให้พิมพ์ ตอนส่งหีบจะไปลงคลังอื่นที่ต้นทางไม่ได้ให้เป้า (ผู้ใช้ตัดสิน 8 ต.ค. 2026 · C442 R408/R493)
+  // คลังว่างเป็นข้อยกเว้น (ไม่มีแถวบนจอของคลังว่าง) — ตรงกับ optimize._wh_blocked_pairs
+  if (val > 0 && wh) {
+    const _er = (S.employees || []).find(
+      (e) => String(e.emp_id) === String(emp) && String(e.warehouse_code || "") === String(wh) && e.wh_split
+    );
+    const _rw = _er?.wh_redirect_skus?.[String(sku).trim()];
+    if (Array.isArray(_rw) && _rw.length && !_rw.includes("")) {
+      const _cur = S.allocations.find(
+        (a) => String(a.emp_id) === String(emp) && String(a.sku) === String(sku)
+          && String(a.warehouse_code || "") === String(wh)
+      );
+      el.textContent = (Number(_cur?.allocated_boxes) || 0).toLocaleString("th-TH");
+      toast(`${emp} ไม่มีเป้าสินค้า ${sku} ที่คลัง ${wh} ใน Target Sun (มีแค่คลัง ${_rw.join(", ")}) — ใส่หีบช่องนี้ไม่ได้`, "amber");
+      return;
+    }
+  }
   // แสดงคั่นหลักให้เหมือนช่องยอดรวม (ตัวแปลงตัดคอมมาออกตอนอ่านอยู่แล้ว)
   el.textContent = val.toLocaleString("th-TH");
 
@@ -9183,6 +9201,15 @@ function autoRebalance(silent = false, opts = {}) {
         S.newProductSkus.has(skuKey))
       || evenNeverSold.has(skuKey);
     const zeroKeys = S.neverSoldZeroKeys instanceof Set ? S.neverSoldZeroKeys : new Set();
+    // คนแยกคลัง: สินค้าที่ Target Sun ไม่มีเป้าที่คลังของแถวนี้ — ห้ามได้เพิ่มเหมือนคู่ไม่เคยขาย
+    // (ตรงกับ optimize._wh_blocked_pairs · คลังว่างเป็นข้อยกเว้น)
+    const whBlocked = new Set(
+      (S.employees || [])
+        .filter((e) => e.wh_split && Array.isArray(e.wh_redirect_skus?.[skuKey])
+          && e.wh_redirect_skus[skuKey].length && !e.wh_redirect_skus[skuKey].includes(""))
+        .map((e) => `${String(e.emp_id)}|${String(e.warehouse_code || "")}`)
+    );
+    const isWhBlocked = (a) => whBlocked.has(`${String(a.emp_id)}|${String(a.warehouse_code || "")}`);
     const minFloor = S.lastForceMinOne && target >= allocs.length ? 1 : 0;
     // เกลี่ย d หีบลงช่องที่ยังไม่ได้แก้ในชุด cells — คืนจำนวนหีบที่ย้ายได้จริง
     // ปุ่มปรับยอดแบบผสม (ผู้ใช้เลือก 30 ก.ย. 2026): อิงประวัติแต่ให้เงินรายคนใกล้เป้า
@@ -9201,7 +9228,7 @@ function autoRebalance(silent = false, opts = {}) {
     const spreadOver = (cells, d) => {
       if (!cells.length || !d) return 0;
       const weights = cells.map((a) => {
-        if (zeroKeys.has(_neverSoldZeroKeyOf(a))) return 0;
+        if (zeroKeys.has(_neverSoldZeroKeyOf(a)) || isWhBlocked(a)) return 0;
         return evenSku ? 1 : Math.max(Number(a.hist_avg) || 0, 0) + 0.1;
       });
       const moneyOk = !evenSku && price > 0 && cells.some((a) => yellowOf(a) > 0);

@@ -51,7 +51,9 @@ class TestFrontendRebalanceRules(unittest.TestCase):
 
     def test_rebalance_uses_backend_rules(self):
         body = _fn(self.src, "autoRebalance")
-        self.assertIn("zeroKeys.has(_neverSoldZeroKeyOf(a))) return 0", body)
+        self.assertIn("zeroKeys.has(_neverSoldZeroKeyOf(a)) || isWhBlocked(a)) return 0", body)
+        # คนแยกคลัง: สินค้าที่ไม่มีเป้าที่คลังของแถวนี้ห้ามได้เพิ่ม (8 ต.ค. 2026 — ตรงกับ optimize._wh_blocked_pairs)
+        self.assertIn('!e.wh_redirect_skus[skuKey].includes("")', body)
         self.assertIn("evenNeverSold.has(skuKey)", body)
         self.assertIn("cells.map(() => minFloor)", body)
 

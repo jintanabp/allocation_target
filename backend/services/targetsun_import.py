@@ -538,6 +538,36 @@ def _live_warehouse_conflicts(sup_id: str, month: int, year: int, df) -> tuple[l
     return warehouse_conflicts(snap.get("qty_by_key") or {}, _file_qty_by_key(_file_rows(df))), snap
 
 
+def _drop_zero_rows_absent_in_live(content: bytes, df, snap: dict | None):
+    """
+    ตัดแถวหีบ 0 ที่คีย์ไม่มีอยู่ใน Target Sun ตอนนี้ (อ่านสดก่อนส่ง) — คืน (content, df, จำนวนที่ตัด)
+
+    แถว 0 มีไว้ "ทับเป้าเดิมให้เป็น 0" เท่านั้น · ถ้าคีย์นั้นไม่มีใน Target Sun การส่ง 0 = สร้างแถวใหม่เปล่า
+    (จำนวนแถวเพิ่ม เป้าไม่เปลี่ยน) — เกิดได้จากคีย์ใน sent ledger ที่ส่งครั้งก่อนแต่ไม่ได้ลงจริง/ถูกลบไปแล้ว
+    หรือ grain ขั้นที่ 1 เก่ากว่า Target Sun (ผลตรวจซ้ำ 8 ต.ค. 2026 · ผลตรวจ 7 ต.ค. ข9)
+    อ่านสดไม่ได้ (snap=None) = ไม่ตัด (ด่านคลังจัดการเองแล้ว) · ยอดหีบไม่เปลี่ยน เพราะตัดแค่แถว 0
+    """
+    if snap is None or df is None or df.empty or "QUANTITYCASE" not in df.columns:
+        return content, df, 0
+    import pandas as pd
+
+    from .lakehouse import _build_xlsx_bytes, import_row_key_series
+
+    live_keys = set(snap.get("keys") or ())
+    keys = import_row_key_series(pd.DataFrame(_file_rows(df)))
+    qty = pd.to_numeric(df["QUANTITYCASE"], errors="coerce").fillna(0).astype(int)
+    mask = (qty.values == 0) & ~keys.isin(live_keys).values
+    n = int(mask.sum())
+    if not n:
+        return content, df, 0
+    attrs = dict(df.attrs)
+    out = df[~mask].copy()
+    out.attrs = attrs
+    out.attrs["import_row_keys"] = list(keys[~mask])
+    logger.info("ตัดแถวหีบ 0 ที่ไม่มีใน Target Sun ก่อนส่ง: %d แถว (กันจำนวนแถวเพิ่มโดยไม่จำเป็น)", n)
+    return _build_xlsx_bytes(out), out, n
+
+
 def _build_send_file(req: LakehouseUploadRequest):
     """
     สร้างไฟล์ของเส้นทางส่งจริง (ตรวจยอดตรงเป้า) + ด่านคลัง — ใช้ทั้ง prepare และทางส่งรวดเดียว
@@ -559,6 +589,7 @@ def _build_send_file(req: LakehouseUploadRequest):
         sid, int(req.target_month), int(req.target_year), df
     )
     if not conflicts:
+        content, df, _ = _drop_zero_rows_absent_in_live(content, df, snap)
         return content, fname, df, dropped_dims, not_in_ts, shortfall, 0
     if not getattr(req, "use_targetsun_warehouse", False):
         raise _warehouse_conflict_error(sid, conflicts, resolvable=True)
@@ -571,6 +602,7 @@ def _build_send_file(req: LakehouseUploadRequest):
     if still:
         raise _warehouse_conflict_error(sid, still, resolvable=False)
     logger.info("ใช้คลังตาม Target Sun %s: %d คู่", sid, len(pairs))
+    content, df, _ = _drop_zero_rows_absent_in_live(content, df, snap)
     return content, fname, df, dropped_dims, not_in_ts, shortfall, len(pairs)
 
 
