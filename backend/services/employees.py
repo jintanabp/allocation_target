@@ -822,7 +822,12 @@ def load_employees_payload(
         try:
             p_grain = tga_grain_cache_path(sup_id, target_month, target_year)
             if df_tga_granular is None or df_tga_granular.empty:
-                atomic_write_csv(p_grain, pd.DataFrame(columns=grain_cols), index=False)
+                # อ่านได้ 0 แถว (เช่นวันที่ 1–14 ตารางยังว่าง) — ห้ามเขียนไฟล์ว่างทับไฟล์ที่มีแถวอยู่แล้ว
+                # (ผลตรวจ 7 ต.ค. 2026 ข19) ขั้นที่ 1 จะตอบ「ยังไม่มีเป้า」อยู่ดี แต่ไฟล์ดีของรอบก่อนต้องไม่หาย
+                if os.path.isfile(p_grain) and os.path.getsize(p_grain) > 200:
+                    logger.warning("Target Sun ได้ 0 แถว (%s) — ไม่เขียนทับไฟล์ grain เดิม", p_grain)
+                else:
+                    atomic_write_csv(p_grain, pd.DataFrame(columns=grain_cols), index=False)
             else:
                 atomic_write_csv(p_grain, df_tga_granular, index=False)
             logger.info(

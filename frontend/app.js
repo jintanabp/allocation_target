@@ -2368,8 +2368,17 @@ async function onManagerViewUnitChange() {
   const sel = document.getElementById("managerViewUnitSelect");
   const next = sel ? String(sel.value || "") : "";
   if (next === S.managerViewUnit) return;
+  const prevView = _managerViewStateSnapshot();
+  const prevUnit = S.managerViewUnit;
   S.managerViewUnit = next;
-  await refreshManagerDashboardData();
+  const ok = await refreshManagerDashboardData();
+  if (!ok) {
+    // โหลดไม่สำเร็จ/ยกเลิก — คืนหน่วยเดิม (ผลตรวจ 7 ต.ค. 2026 ข2)
+    S.managerViewUnit = prevUnit;
+    if (sel) sel.value = prevUnit || "";
+    _restoreManagerViewState(prevView);
+    return;
+  }
   if (!next) {
     toast("ดูทุกหน่วยได้ แต่กระจายรวมกันไม่ได้ — เลือกหน่วยก่อนกระจาย", "amber");
   }
@@ -2608,10 +2617,46 @@ function _updateAggregateModeUI() {
   }
 }
 
+/* มุมมองผู้จัดการ (โหมด/ภาค/ทีม) ก่อนสลับ — โหลดไม่สำเร็จหรือกด「อยู่หน้าเดิม」ต้องคืนกลับครบ (ผลตรวจ 7 ต.ค. 2026 ข2/ข3)
+   เดิมตั้งโหมด/ทีมใหม่ก่อนโหลด ล้มแล้วไม่คืน → จอเป็นผลรวมภาคแต่ S.supId เป็นทีมเดียว · บันทึก/ส่งพาแถวทีมอื่นไปด้วย */
+function _managerViewStateSnapshot() {
+  return {
+    managerViewMode: S.managerViewMode,
+    managerViewRegion: S.managerViewRegion,
+    supId: S.supId,
+    aggregateMode: S.aggregateMode,
+    aggregateSupIds: S.aggregateSupIds,
+  };
+}
+
+function _restoreManagerViewState(snap) {
+  Object.assign(S, snap);
+  const modeSel = document.getElementById("managerViewModeSelect");
+  if (modeSel) modeSel.value = S.managerViewMode || "individual";
+  updateManagerViewControlsUI();
+  _updateAggregateModeUI();
+  renderYellowTable();
+  _populateSupervisorSwitchSelect();
+}
+
 async function onManagerViewModeChange() {
   const modeSel = document.getElementById("managerViewModeSelect");
   const mode = String(modeSel?.value || "individual");
   if (mode === S.managerViewMode) return;
+  // ถามเรื่องงานที่ยังไม่บันทึก "ก่อน" เปลี่ยนอะไร — เดิมถามใน refresh หลังตั้งโหมดใหม่แล้ว
+  // สลับรวมภาค → รายทีม จึงไม่เคยถาม (เช็คโหมดใหม่ = individual) งานรวมภาคหายเงียบ ๆ
+  if (S._hasUnsaved && S.managerViewMode !== "individual") {
+    const go = await _confirmDialog(
+      "มีการแก้ไขที่ยังไม่ได้บันทึก\nถ้าเปลี่ยนมุมมองต่อ การแก้ไขนั้นจะหายไป",
+      { title: "ยังมีงานที่ไม่ได้บันทึก", okLabel: "เปลี่ยนมุมมองต่อ", cancelLabel: "อยู่หน้าเดิม" }
+    );
+    if (!go) {
+      if (modeSel) modeSel.value = S.managerViewMode || "individual";
+      updateManagerViewControlsUI();
+      return;
+    }
+  }
+  const prevView = _managerViewStateSnapshot();
   if (S.managerViewMode === "individual" && mode !== "individual") {
     _rememberIndividualSupId(S.supId);
   }
@@ -2636,7 +2681,8 @@ async function onManagerViewModeChange() {
     toast("เลือกภาคที่ต้องการดูแบบรวม", "amber");
     return;
   }
-  await refreshManagerDashboardData();
+  const ok = await refreshManagerDashboardData({ unsavedConfirmed: true });
+  if (!ok) _restoreManagerViewState(prevView);
 }
 
 async function onManagerViewRegionChange() {
@@ -2647,8 +2693,10 @@ async function onManagerViewRegionChange() {
     return;
   }
   if (reg === S.managerViewRegion) return;
+  const prevView = _managerViewStateSnapshot();
   S.managerViewRegion = reg;
-  await refreshManagerDashboardData();
+  const ok = await refreshManagerDashboardData();
+  if (!ok) _restoreManagerViewState(prevView);
 }
 
 /** คืน true เมื่อโหลดสำเร็จจริง (ผลตรวจ 1 ต.ค. 2026 ข6) — ตัวเรียกที่ต้องใช้เป้าใหม่ต้องเช็คค่านี้ */
@@ -2659,7 +2707,7 @@ async function refreshManagerDashboardData(opts = {}) {
   } else if (!supRegion) {
     return false;
   }
-  if (S._hasUnsaved && S.managerViewMode !== "individual") {
+  if (S._hasUnsaved && S.managerViewMode !== "individual" && !opts.unsavedConfirmed) {
     const ok = await _confirmDialog(
       "มีการแก้ไขที่ยังไม่ได้บันทึก\nถ้าเปลี่ยนมุมมองต่อ การแก้ไขนั้นจะหายไป",
       { title: "ยังมีงานที่ไม่ได้บันทึก", okLabel: "เปลี่ยนมุมมองต่อ", cancelLabel: "อยู่หน้าเดิม" }
@@ -3207,7 +3255,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     /* เดิมเตือนเฉพาะเมื่อมีผลกระจายแล้ว — คนที่กรอกเป้าเงินขั้นที่ 2 ค้างไว้
        (ยังไม่ได้กดคำนวณ) ปิดแท็บแล้วงานหายเงียบ ๆ โดยไม่มีอะไรทัดทาน */
     const hasStep3Unsaved = S.allocations && S.allocations.length > 0 && S._hasUnsaved;
-    if (hasStep3Unsaved || S._step2Dirty) {
+    // กำลังส่งเข้า Target Sun / กำลังคำนวณ — ปิดแท็บกลางทาง server ยังทำต่อ แต่จอไม่รู้ผล
+    // ผู้ใช้มักกดส่งซ้ำ (ผลตรวจ 7 ต.ค. 2026 ข18)
+    if (hasStep3Unsaved || S._step2Dirty || _lakehouseSendInFlight || _allocRunInFlight) {
       e.preventDefault();
       e.returnValue = "";
     }
@@ -3398,7 +3448,10 @@ function _showTgaPeriodEmptyModal(targetMonth, targetYear, detail) {
   let message = detail?.message;
   if (!message) {
     message = work
-      ? `ระบบยังไม่อัปเดตเป้าสำหรับงวด ${periodStr} — กรุณารอ HQ อัปเดตเป้าเข้าระบบ\nหรือเลือกงวดก่อนหน้าที่มีข้อมูลแล้ว`
+      // เป้างวดถัดไปมักเข้าระบบตั้งแต่วันที่ 15 ของเดือน — งวดก่อนหน้าก็ถูกล้างออกจากตารางแล้ว
+      // คำแนะนำเดิม「เลือกงวดก่อนหน้า」จึงใช้ไม่ได้ (ผลตรวจ 7 ต.ค. 2026 ข19)
+      ? `ระบบยังไม่อัปเดตเป้าสำหรับงวด ${periodStr} — กรุณารอ HQ อัปเดตเป้าเข้าระบบ\n`
+        + "ปกติเป้างวดถัดไปจะเข้าระบบตั้งแต่วันที่ 15 ของเดือน · ระหว่างนี้ยังกระจายหีบไม่ได้"
       : `ไม่พบเป้าหีบของงวด ${periodStr} ในระบบเป้า Target Sun`;
   }
   const bodyHtml = `<div style="line-height:1.75;color:var(--text-2);">${
@@ -4844,7 +4897,36 @@ function _yellowTargetPayloadRow(e) {
 /* ══════════════════════════════════════════════
    DATA LOAD
 ══════════════════════════════════════════════ */
+/**
+ * โหลดข้อมูลขั้นที่ 1 ไม่สำเร็จ ต้องไม่ทิ้งสถานะครึ่ง ๆ กลาง ๆ (ผลตรวจ 7 ต.ค. 2026 ข2)
+ *
+ * ตัวจริง (_applyDataPayloadInner) เขียนทับ S.skus / S.employees / เป้ารวม ฯลฯ ก่อนจะรู้ว่าล้ม
+ * (ราคาดึงไม่ได้ / งวดไม่มีเป้า) แล้วคืน false — ผู้เรียกแค่คืน S.supId เป็นทีมเดิม จอยังเป็นของทีม A
+ * แต่ข้อมูลในหน่วยความจำเป็นของทีม B → กดกระจาย/บันทึก/ส่ง จะพาสินค้า/คนของอีกทีมไปด้วย
+ * ตัวห่อนี้จำค่าทุกช่องของ S (ตื้น ๆ — ตัวจริงแทนค่าทั้งก้อน ไม่แก้ในที่) แล้วคืนให้ครบเมื่อล้ม
+ */
 function applyDataPayload(data) {
+  const before = Object.assign({}, S);
+  const staleBefore = _staleTargetChunks;
+  const restore = () => {
+    for (const k of Object.keys(S)) {
+      if (!(k in before)) delete S[k];
+    }
+    Object.assign(S, before);
+    _staleTargetChunks = staleBefore;
+  };
+  let ok;
+  try {
+    ok = _applyDataPayloadInner(data);
+  } catch (e) {
+    restore();
+    throw e;
+  }
+  if (ok === false) restore();
+  return ok;
+}
+
+function _applyDataPayloadInner(data) {
   if (!data.employees || !data.skus) return false;
 
   data.employees.sort((a, b) => {
@@ -4880,6 +4962,22 @@ function applyDataPayload(data) {
     S.negGrowthReason = "";
     S.buiDeductions = {};
     S._step2CtxKey = _step2Ctx;
+    // ผลรอบคำนวณของทีม/งวดก่อน ต้องไม่ติดมาทีมใหม่ (ผลตรวจ 7 ต.ค. 2026 ข17) — ทีมที่เปิดจากผลที่บันทึกไว้
+    // โดยไม่กดคำนวณ เคยเห็นสเกลรายได้ ×/ป้ายหลัก-รอง/แผง「ขอให้รีเช็ค」ของทีมก่อน → ป้ายเกิน/ขาดบาทผิด
+    S.revenueScale = 1;
+    S.tierFlexSkus = new Set();
+    S.tierStrictSkuCount = 0;
+    S.optimizationFallback = false;
+    S.optimizationFallbackSups = [];
+    S.lpTimeLimitedSups = [];
+    S.regionalFailedSups = [];
+    S.droppedLocks = [];
+    S.histFallbacks = [];
+    S.neverSoldSummary = {};
+    S.neverSoldOffReasons = [];
+    S.neverSoldZeroKeys = new Set();
+    S.rebalanceResiduals = [];
+    S.rebalanceCrossTeam = [];
   }
   S.histWindowMonths = 3;
   S.skus = data.skus;
