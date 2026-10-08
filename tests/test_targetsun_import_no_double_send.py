@@ -87,6 +87,7 @@ class ConcurrentImportDoesNotDoubleSendTest(unittest.TestCase):
             target_month=self.MONTH,
             target_year=self.YEAR,
             emp_codes=["E1"],
+            file_rows=[],  # ทางจริงเขียนเสมอ — ไม่มีไฟล์แถว = ตรวจคลังไม่ได้ = ไม่ส่ง (ข14)
         )
 
     def test_second_call_while_first_still_posting_is_rejected_not_double_posted(self):
@@ -231,6 +232,7 @@ class ImportRechecksFreshnessTest(unittest.TestCase):
             target_month=self.MONTH,
             target_year=self.YEAR,
             emp_codes=["E1"],
+            file_rows=[],  # ทางจริงเขียนเสมอ — ไม่มีไฟล์แถว = ตรวจคลังไม่ได้ = ไม่ส่ง (ข14)
         )
 
     def _req(self, token, **kw):
@@ -413,3 +415,31 @@ class ImportRechecksFreshnessTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MissingRowsFileBlocksSendTest(unittest.TestCase):
+    """ผลตรวจ 7 ต.ค. 2026 ข14 — อ่านไฟล์แถวที่เตรียมไว้ไม่ได้ ต้องไม่ส่ง (เดิมกลืนเงียบ ข้ามด่านคลังซ้ำ)"""
+
+    def test_missing_rows_file_raises_409_before_post(self):
+        import tempfile
+        from unittest import mock
+
+        from fastapi import HTTPException
+
+        with tempfile.TemporaryDirectory() as d, \
+             mock.patch.object(tsi, "_prepare_dir", return_value=__import__("pathlib").Path(d)), \
+             mock.patch.object(tsi, "_warehouse_check_expected", return_value=True), \
+             mock.patch.object(tsi, "_post_targetsun_multipart") as post:
+            tsi._save_prepare_bundle(
+                "TOK-NOROWS", content=b"x", fname="t.xlsx", sup_id="SLZZ9", nrow=1, zero_rows=0,
+                dropped_dims=0, not_in_ts=[], upload_user_code="T", target_month=11, target_year=2026,
+                emp_codes=["E1"],
+            )
+            req = tsi.LakehouseUploadRequest(
+                sup_id="SLZZ9", target_month=11, target_year=2026, upload_user_code="T",
+                allocations=[], prepare_token="TOK-NOROWS",
+            )
+            with self.assertRaises(HTTPException) as cm:
+                tsi.import_prepared_targetsun(req)
+            self.assertEqual(cm.exception.detail["code"], "send_file_rows_unreadable")
+            post.assert_not_called()

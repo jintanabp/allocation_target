@@ -1131,6 +1131,19 @@ function _networkErrorMsg(err) {
   return "";
 }
 
+/**
+ * ส่งเข้า Target Sun แล้วไม่ได้คำตอบ (หมดเวลา/เน็ตหลุด) — ผลตรวจ 7 ต.ค. 2026 ข7
+ * เดิมใช้ข้อความของปุ่มคำนวณ「ลองใหม่อีกครั้ง หรือลดขอบเขต」ซึ่งผิดสำหรับการส่ง:
+ * server อาจส่งเข้า Target Sun ไปแล้ว กดซ้ำทันทีโดยไม่ตรวจ = เสี่ยงส่งซ้ำ
+ */
+function _sendNoAnswerMsg(err) {
+  const name = String(err?.name || "");
+  const raw = String(err?.message || err || "");
+  const timeout = name === "AbortError" || /abort(ed)?/i.test(raw) || /signal is aborted/i.test(raw);
+  return (timeout ? "⚠ รอคำตอบจากการส่งนานเกินเวลา" : "⚠ ไม่ได้รับคำตอบจากการส่ง (การเชื่อมต่อขาด)")
+    + " — ไม่รู้ว่าเข้า Target Sun แล้วหรือยัง · อย่าเพิ่งกดส่งซ้ำ ให้ตรวจยอดใน Target Sun หรือดูประวัติการส่งก่อน";
+}
+
 function _userFacingError(err, fallback = "เกิดข้อผิดพลาด กรุณาลองอีกครั้ง") {
   const net = _networkErrorMsg(err);
   if (net) return net;
@@ -4165,6 +4178,7 @@ function _setServerSnapshotMeta(snap, supId) {
     updated_at: snap.updated_at,
     updated_by: String(snap.updated_by || "").trim(),
     version: Number(snap.version) || 0,
+    target_sun_sent_at: snap.target_sun_sent_at || null,
   };
 }
 
@@ -9775,7 +9789,8 @@ async function _pendingReallocateTeams() {
 async function _sentToTargetSunTeams() {
   try {
     const items = await _getAllocSummaryItems();
-    return (items || []).filter((it) => it?.has_snapshot && it.target_sun_sent_at);
+    // ไม่ต้องมีผลกระจายค้างอยู่ — ทีมที่กดเริ่มใหม่แล้วยังเคยส่งอยู่ (server เติมจาก sent ledger · ข5)
+    return (items || []).filter((it) => it?.target_sun_sent_at);
   } catch {
     return [];
   }
@@ -11131,7 +11146,11 @@ function _markAllocationSentTargetSun(supId = null) {
 }
 
 function _handleTargetSunImportResponse(res, j, opts = {}) {
-  if (!res.ok && res.status === 504) {
+  // ผลตรวจ 7 ต.ค. 2026 ข7: proxy ตอบ 502/504 หรือ 5xx ที่ไม่ใช่คำตอบของแอป (ไม่มี detail) = ไม่รู้ผล
+  // ของอาจลงไปแล้ว — เดิมนับแค่ 504 · คำตอบของแอปเอง (มี detail) ยังถือว่าไม่ได้ส่งตามเดิม
+  const _gatewayUnknown = !res.ok && res.status !== 504
+    && (res.status === 502 || (res.status >= 500 && !(j && j.detail)));
+  if (!res.ok && (res.status === 504 || _gatewayUnknown)) {
     // server หมดเวลารอ Target Sun — ของอาจลงไปแล้ว ห้ามบอกว่าไม่สำเร็จ (ผลตรวจ §2.4)
     opts.uncertain = true;
     toast(
@@ -11702,7 +11721,7 @@ async function _doLakehouseUploadInner() {
         // เน็ตหลุด/หมดเวลาระหว่างรอคำตอบ — fetch throw ไม่มี response ให้ดู
         // คำขออาจถึง Target Sun ไปแล้วก็ได้ ต้องบอกผู้ใช้ให้ตรวจก่อนส่งซ้ำ
         _clearTargetSunProgressTimer();
-        toast("❌ ไม่ได้รับคำตอบจาก server: " + _userFacingError(e), "red");
+        toast(_sendNoAnswerMsg(e), "red");
         failedSup = { supId: basePayload.sup_id, uncertain: true };
         legacyJobs.slice(i + 1).forEach((x) => notSentSupIds.push(x.supId));
         jobs.forEach((x) => notSentSupIds.push(x.supId));
@@ -11742,7 +11761,7 @@ async function _doLakehouseUploadInner() {
         // catch นอกสุดทันที ข้ามกล่องสรุปรายทีมไปเลย ทั้งที่นี่คือกรณีที่อันตรายที่สุด
         // เพราะ server อาจส่งเข้า Target Sun ไปแล้วแต่คำตอบมาไม่ถึง
         _clearTargetSunProgressTimer();
-        toast("❌ ไม่ได้รับคำตอบจาก server: " + _userFacingError(e), "red");
+        toast(_sendNoAnswerMsg(e), "red");
         failedSup = { supId: basePayload.sup_id, uncertain: true };
         jobs.slice(i + 1).forEach((x) => notSentSupIds.push(x.supId));
         break;
@@ -11994,10 +12013,17 @@ async function doLakehouseValidateOnly() {
   pushGlobalBusy("กำลังตรวจไฟล์ก่อนส่ง…");
   const lines = [];
   const shortfallChunks = [];
+  // หลายทีม = ตรวจแบบเดียวกับตอนส่งจริง (ผลตรวจ 7 ต.ค. 2026 ข6): เตรียมด้วยรหัสรอบเดียวกัน แล้วตรวจยอดรวมทั้งชุด
+  // เดิมเตรียมทีละทีมแบบไม่มีรหัสรอบ → ทีมที่ย้ายหีบข้ามทีมถูกฟ้อง「ยอดไม่ตรงเป้าทีม」ทั้งที่ส่งจริงผ่าน
+  const validateBatchId = supIds.length > 1
+    ? `v${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
+    : null;
+  const batchTokens = [];
+  let batchPrepFailed = false;
   try {
     for (let i = 0; i < supIds.length; i++) {
       const supId = supIds[i];
-      const basePayload = _lakehouseExportPayload(supId, brand);
+      const basePayload = _lakehouseExportPayload(supId, brand, { sendBatchId: validateBatchId });
       if (!basePayload.allocations?.length) {
         lines.push(`${supId}: ไม่มีแถวในผลกระจาย`);
         continue;
@@ -12032,8 +12058,10 @@ async function doLakehouseValidateOnly() {
         }
         const msg = _formatApiErrorDetail(prep) || `เตรียมไม่สำเร็จ (${supId})`;
         lines.push(`${supId}: ${msg}`);
+        batchPrepFailed = true;
         continue;
       }
+      if (prep.prepare_token) batchTokens.push(prep.prepare_token);
       const rows = Number(prep.rows_sent ?? prep.row_count) || 0;
       const zero = Number(prep.zero_rows_sent ?? prep.zero_rows) || 0;
       const nz = Math.max(0, rows - zero);
@@ -12042,6 +12070,26 @@ async function doLakehouseValidateOnly() {
         `${supId}: ส่งได้ ${rows.toLocaleString("th-TH")} แถว · หีบ>0 ~${nz.toLocaleString("th-TH")} · หีบ 0: ${zero.toLocaleString("th-TH")}`
         + (dropped ? ` · ตัดออก (ไม่มีใน TS): ${dropped.toLocaleString("th-TH")}` : "")
       );
+    }
+    if (validateBatchId && batchTokens.length > 1 && !batchPrepFailed) {
+      // ตรวจยอดรวมทั้งชุด (ด่านเดียวกับตอนส่ง) — ไม่ส่งอะไร · ไฟล์ที่เตรียมไว้หมดอายุเองใน 30 นาที
+      try {
+        const vr = await fetchWithTimeout(
+          `${API_BASE_URL}/lakehouse/verify-send-batch`,
+          { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tokens: batchTokens }) },
+          120000
+        );
+        const vj = await vr.json().catch(() => ({}));
+        if (vr.ok && vj?.verified === true) {
+          lines.push(`ยอดรวมทั้ง ${batchTokens.length} ทีม: ✓ ตรงเป้ารวมทุกสินค้า`);
+        } else {
+          const d = vj?.detail;
+          lines.push(`ยอดรวมทั้ง ${batchTokens.length} ทีม: ⚠️ ${
+            (d && typeof d === "object" ? (d.message || "") : "") || _formatApiErrorDetail(vj) || "ตรวจไม่ผ่าน"}`);
+        }
+      } catch (e) {
+        lines.push(`ยอดรวมทั้งชุด: ตรวจไม่ได้ (${_userFacingError(e, "เครือข่ายขัดข้อง")})`);
+      }
     }
     const summaryHtml = `<ul style="margin:0;padding-left:1.2em;line-height:1.65;text-align:left;">${
       lines.map((l) => `<li>${escH(l)}</li>`).join("")
@@ -12954,9 +13002,17 @@ async function deleteServerAllocationSnapshot(supId = null) {
 
 function confirmRestartAllocation() {
   if (_isAllocReadOnlyView() || !_canWriteServerAllocation()) return;
+  // ทีมที่ส่งเข้า Target Sun แล้ว — เริ่มใหม่ไม่ได้ลบของใน Target Sun ต้องบอกให้รู้ (ผลตรวจ 7 ต.ค. 2026 ข5)
+  const sentAt = S.serverSnapshotMeta?.supId === String(S.supId || "").trim().toUpperCase()
+    ? S.serverSnapshotMeta?.target_sun_sent_at : null;
+  const sentWarn = sentAt
+    ? `<p style="margin:10px 0 0;line-height:1.55;color:var(--amber);"><strong>ทีมนี้ส่งเข้า Target Sun แล้ว</strong> ` +
+      `(${escH(_formatAllocUpdatedAt(sentAt))}) — เริ่มใหม่จะไม่ลบเป้าที่อยู่ใน Target Sun ` +
+      `ถ้ากระจายใหม่แล้วส่งอีกครั้ง ค่าใน Target Sun จะถูกทับด้วยผลใหม่</p>`
+    : "";
   _showInfoModal({
     title: "เริ่มกระจายใหม่?",
-    bodyHtml: `<p style="margin:0;line-height:1.55;">จะลบผลกระจายที่บันทึกบน server และแบบร่างในเครื่อง — ต้องกระจายหีบใหม่ทั้งหมด</p>`,
+    bodyHtml: `<p style="margin:0;line-height:1.55;">จะลบผลกระจายที่บันทึกบน server และแบบร่างในเครื่อง — ต้องกระจายหีบใหม่ทั้งหมด</p>${sentWarn}`,
     primaryLabel: "เริ่มใหม่",
     secondaryLabel: "ยกเลิก",
     onPrimary: () => restartAllocation().catch((e) => toast(e.message, "red")),
@@ -12965,7 +13021,11 @@ function confirmRestartAllocation() {
 
 async function restartAllocation() {
   const sid = String(S.supId || "").trim();
-  await deleteServerAllocationSnapshot(sid);
+  // autosave ที่ค้างคิวอยู่ ต้องไม่ไปเขียนผลเดิมกลับหลังลบ (ผลตรวจ 7 ต.ค. 2026 ข5)
+  clearTimeout(_serverAllocSaveTimer);
+  _serverAllocSaveTimer = null;
+  // ลบต่อคิวการบันทึก — ตัวที่กำลังยิงอยู่ต้องจบก่อน ไม่งั้น PUT ที่ช้ามาถึงหลัง DELETE แล้วคืนชีพผลเดิม
+  await _withSaveLock(() => deleteServerAllocationSnapshot(sid));
   _resetRegionalSaveFingerprints();
   _removeDraftKeysBothLocals();
   try {

@@ -395,6 +395,23 @@ def _snapshot_updated_ts(row: dict[str, Any]) -> float:
         return 0.0
 
 
+def _ledger_last_sent_at(sup_id: str, month: int, year: int) -> str | None:
+    """เวลาส่งเข้า Target Sun ครั้งล่าสุดจาก sent ledger (รูปแบบ ISO แบบเดียวกับ snapshot) — ไม่มี/อ่านไม่ได้ = None"""
+    try:
+        from datetime import datetime, timezone
+
+        from . import sent_ledger
+
+        sends = (sent_ledger.read_ledger(sup_id, month, year) or {}).get("sends") or []
+        ts = [float(s.get("sent_at") or 0) for s in sends if str(s.get("send_status") or "").lower() != "failed"]
+        ts = [t for t in ts if t > 0]
+        if not ts:
+            return None
+        return datetime.fromtimestamp(max(ts), tz=timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    except Exception:
+        return None
+
+
 def list_summaries(
     sup_ids: list[str],
     month: int,
@@ -404,8 +421,14 @@ def list_summaries(
     for sid in sup_ids:
         norm = _normalize_sup(sid)
         snap = read_snapshot(norm, month, year)
+        # 「เคยส่งแล้ว」ต้องไม่หายเมื่อผลกระจายถูกลบ (ปุ่มเริ่มกระจายใหม่) — ผลตรวจ 7 ต.ค. 2026 ข5
+        # sent ledger คือหลักฐานจริงว่าส่งเข้า Target Sun แล้ว (ไม่ถูกลบตามผลกระจาย)
+        ledger_sent_at = _ledger_last_sent_at(norm, month, year)
         if not snap or not _snapshot_has_work(snap):
-            out.append({"sup_id": norm, "has_snapshot": False})
+            row = {"sup_id": norm, "has_snapshot": False}
+            if ledger_sent_at:
+                row["target_sun_sent_at"] = ledger_sent_at
+            out.append(row)
             continue
         allocs = snap.get("allocations") or []
         out.append(
@@ -415,7 +438,7 @@ def list_summaries(
                 "status": snap.get("status"),
                 "updated_at": snap.get("updated_at"),
                 "updated_by": snap.get("updated_by"),
-                "target_sun_sent_at": snap.get("target_sun_sent_at"),
+                "target_sun_sent_at": snap.get("target_sun_sent_at") or ledger_sent_at,
                 "allocation_rows": len(allocs),
                 "strategy": snap.get("strategy") or "",
             }

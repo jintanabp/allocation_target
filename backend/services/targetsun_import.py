@@ -1215,10 +1215,22 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
         bundle_year = int(meta.get("target_year") or req.target_year)
         try:
             _rows_path = _prepare_dir() / f"{token}.rows.json"
-            file_qty = _file_qty_by_key(
-                json.loads(_rows_path.read_text(encoding="utf-8")) if _rows_path.is_file() else []
-            )
-        except Exception:
+            if not _rows_path.is_file():
+                raise FileNotFoundError(str(_rows_path))
+            file_qty = _file_qty_by_key(json.loads(_rows_path.read_text(encoding="utf-8")))
+        except Exception as e:
+            # ผลตรวจ 7 ต.ค. 2026 ข14: เดิมกลืนเงียบเป็น {} → ด่านคลังซ้ำ "ก่อน POST" ถูกข้ามทั้งด่าน
+            # (กันแถวคนละคลังซ้อน = เป้าเบิ้ล) · อ่านแถวของไฟล์ไม่ได้ = ตรวจไม่ได้ = ไม่ส่ง ให้เตรียมไฟล์ใหม่
+            logger.error("อ่านแถวของไฟล์ที่เตรียมไว้ไม่ได้ (token=%s): %s", token[:8], e)
+            if _warehouse_check_expected():
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "send_file_rows_unreadable",
+                        "message": "ยังไม่ได้ส่ง — อ่านรายการแถวของไฟล์ที่เตรียมไว้ไม่ได้ จึงตรวจคลังซ้ำก่อนส่งไม่ได้",
+                        "hint_th": "กดส่งใหม่อีกครั้ง ระบบจะเตรียมไฟล์ใหม่ให้",
+                    },
+                ) from e
             file_qty = {}
 
         # อ่านสด "ก่อนส่ง" ให้ใกล้เวลา POST จริงที่สุด (ลดโอกาสทีมอื่นแทรกส่งระหว่างรอ) —
