@@ -94,18 +94,44 @@ def _jwks_uri_variants(tid: str) -> tuple[str, str]:
     )
 
 
-def _fetch_jwks_uri_from_issuer(iss: str) -> str | None:
+_MS_LOGIN_PREFIX = "https://login.microsoftonline.com/"
+
+
+def _allowed_issuers(tid: str) -> set[str]:
+    """
+    issuer ที่ยอมรับได้ของ tenant นี้ — ตรงตัวเท่านั้น (ผลตรวจ 7 ต.ค. 2026 ก1)
+
+    เดิมเช็ค `"login.microsoftonline.com" in iss` แบบค้นข้อความ แล้วไปโหลดกุญแจจาก jwks_uri
+    ที่ issuer นั้นบอก → คนปลอม iss เป็น https://โดเมนตัวเอง/login.microsoftonline.com
+    แล้วเซ็นโทเคนเองเป็นอีเมล dev ได้ (+ ใช้ server ยิง URL ภายนอกได้)
+    """
+    t = (tid or "").strip().lower()
+    if not t:
+        return set()
+    return {
+        f"https://login.microsoftonline.com/{t}/v2.0",
+        f"https://login.microsoftonline.com/{t}",
+        f"https://sts.windows.net/{t}",
+    }
+
+
+def _issuer_ok(iss: str, tid: str) -> bool:
+    return (iss or "").strip().rstrip("/").lower() in _allowed_issuers(tid)
+
+
+def _fetch_jwks_uri_from_issuer(iss: str, tid: str = "") -> str | None:
     """
     ดึง jwks_uri จาก OpenID configuration ของ issuer ในโทเคน
     (มาตรฐาน Microsoft — ตรงกว่า hardcode discovery/keys อย่างเดียว)
+    ยอมเฉพาะ issuer ของ tenant นี้ (ตรงตัว) และ jwks_uri ต้องอยู่ที่ login.microsoftonline.com
     """
     iss = (iss or "").strip().rstrip("/")
-    if not iss:
+    if not iss or not _issuer_ok(iss, tid):
         return None
     meta_urls: list[str] = []
-    if "login.microsoftonline.com" in iss:
+    if iss.lower().startswith(_MS_LOGIN_PREFIX):
         meta_urls.append(f"{iss}/.well-known/openid-configuration")
-    if "sts.windows.net" in iss:
+    if iss.lower().startswith("https://sts.windows.net/"):
         parts = [p for p in iss.split("/") if p]
         tid = parts[-1] if parts else ""
         if tid:
@@ -122,7 +148,7 @@ def _fetch_jwks_uri_from_issuer(iss: str) -> str | None:
                 continue
             data = r.json()
             jwks_uri = data.get("jwks_uri")
-            if isinstance(jwks_uri, str) and jwks_uri.startswith("http"):
+            if isinstance(jwks_uri, str) and jwks_uri.lower().startswith(_MS_LOGIN_PREFIX):
                 return jwks_uri
         except requests.RequestException as e:
             logger.info("openid-configuration fetch failed %s: %s", meta_url, e)
@@ -143,7 +169,7 @@ def _jwks_uri_from_tenant_oidc_metadata(tid: str) -> list[str]:
             if r.status_code != 200:
                 continue
             ju = r.json().get("jwks_uri")
-            if isinstance(ju, str) and ju.startswith("http"):
+            if isinstance(ju, str) and ju.lower().startswith(_MS_LOGIN_PREFIX):
                 found.append(ju)
         except requests.RequestException as e:
             logger.info("tenant oidc meta failed %s: %s", meta_url, e)
@@ -178,7 +204,7 @@ def _candidate_jwks_uris(tid: str, iss: str) -> list[str]:
     """ลำดับ JWKS ที่ลองได้ — ลายเซ็นบางโทเคนตรงกับชุด keys คนละ URL"""
     out: list[str] = []
     out.extend(_jwks_uri_from_tenant_oidc_metadata(tid))
-    u = _fetch_jwks_uri_from_issuer(iss)
+    u = _fetch_jwks_uri_from_issuer(iss, tid)
     if u:
         out.append(u)
     if tid:
@@ -187,7 +213,8 @@ def _candidate_jwks_uris(tid: str, iss: str) -> list[str]:
     seen: set[str] = set()
     deduped: list[str] = []
     for x in out:
-        if x and x not in seen:
+        # กุญแจต้องมาจาก Microsoft เท่านั้น — ไม่ว่า metadata จะบอกอะไร
+        if x and x not in seen and x.lower().startswith(_MS_LOGIN_PREFIX):
             seen.add(x)
             deduped.append(x)
     return deduped
@@ -220,6 +247,8 @@ def _decode_microsoft_jwt_verify_signature(token: str) -> dict[str, Any]:
         )
 
     iss = str(claims.get("iss") or "").strip()
+    if not _issuer_ok(iss, tid):
+        raise ValueError("ผู้ออกโทเคน (iss) ไม่ใช่ Microsoft ของบริษัท — กรุณาล็อกอินใหม่")
     uris = _candidate_jwks_uris_cached(tid, iss)
     last_err: Exception | None = None
 
@@ -454,6 +483,11 @@ def verify_microsoft_identity(token: str) -> dict[str, Any]:
     cid = _client_id()
 
     if _aud_matches_graph(aud):
+        # Graph token ของแอปอื่นในบริษัทห้ามใช้แทน (ผลตรวจ 7 ต.ค. 2026) — ต้องออกให้แอปนี้
+        # v1 token ใช้ appid · v2 ใช้ azp
+        issued_to = str(payload.get("appid") or payload.get("azp") or "").strip().lower()
+        if cid and issued_to and issued_to != cid.lower():
+            raise ValueError("โทเคนนี้ออกให้แอปอื่น ไม่ใช่ระบบกระจายเป้า — กรุณาล็อกอินใหม่")
         email = get_primary_email_from_claims(payload)
         if not email:
             email = fetch_graph_primary_email(token)

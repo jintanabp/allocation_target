@@ -110,6 +110,35 @@ class TestLeftoverRowsCleared(_Base):
         out = self._send([dict(emp_id="E1", sku="A", allocated_boxes=10)])
         self.assertTrue(out[(out.SALESMANCODE == "E2")].empty)
 
+    def test_moved_in_employee_is_zeroed(self):
+        """ผลตรวจ 7 ต.ค. 2026 ก3: E2 ย้ายมาทีมนี้ (แคชทีมเก่ายังมีชื่อ) ไม่อยู่ในรอบนี้ → ต้องส่ง 0"""
+        self._setup([_g("E1", "A", 6), _g("E2", "A", 4)], {"A": 10})
+        pd.DataFrame([{"emp_id": "E2"}]).to_csv("data/emp_cache_SLOLD_2026_11.csv", index=False)
+        rows = [{"emp_id": "E2", "to_sup": self.SUP}]
+        with patch("backend.services.emp_assignment_store.read_rows", return_value=rows):
+            out = self._send([dict(emp_id="E1", sku="A", allocated_boxes=10)])
+        self.assertEqual(list(out[out.SALESMANCODE == "E2"].QUANTITYCASE), [0])
+        self.assertEqual(self._totals(), {"A": 10})
+
+    def test_moved_away_employee_is_left_alone(self):
+        """คนที่ย้ายไปทีมอื่นแล้ว แถวของเขาเป็นของทีมปลายทาง — ทีมต้นทางห้ามส่ง 0 ทับ"""
+        self._setup([_g("E1", "A", 6), _g("E2", "A", 4)], {"A": 10})
+        rows = [{"emp_id": "E2", "to_sup": "SLNEW"}]
+        with patch("backend.services.emp_assignment_store.read_rows", return_value=rows):
+            out = self._send([dict(emp_id="E1", sku="A", allocated_boxes=10)])
+        self.assertTrue(out[out.SALESMANCODE == "E2"].empty)
+
+    def test_ledger_of_other_destination_not_zeroed(self):
+        """ผลตรวจ 7 ต.ค. 2026 ข8: แถวที่เคยส่งไป UAT ห้ามถูกส่ง 0 ไปสร้างแถวเปล่าใน Prod"""
+        self._setup([_g("E1", "A", 10)], {"A": 10})
+        sent_ledger.record_send(self.SUP, 11, 2026, [dict(PRODUCTCODE="A", SALESMANCODE="E9", QUANTITYCASE=3,
+                                SALESTYPE="S1", DIVISIONCODE="D1", AREACODE="10", PROVINCECODE="P1",
+                                WAREHOUSECODE="WX")], token="u", send_status="ok", import_url="https://uat/x")
+        with patch("backend.services.targetsun_endpoints.targetsun_endpoints_summary",
+                   return_value={"import_url": "https://prod/x"}):
+            out = self._send([dict(emp_id="E1", sku="A", allocated_boxes=10)], record=False)
+        self.assertTrue(out[out.SALESMANCODE == "E9"].empty)
+
     def test_file_totals_still_equal_target(self):
         """แถว 0 ที่เพิ่มต้องไม่ทำให้ยอดในไฟล์เปลี่ยน (ด่าน I1 ของไฟล์ยังผ่าน)"""
         self._setup([_g("E1", "A", 6), _g("E2", "A", 4)], {"A": 10})

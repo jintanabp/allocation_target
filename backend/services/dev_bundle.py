@@ -38,6 +38,9 @@ BUNDLE_PARTS: tuple[tuple[str, str, bool, str], ...] = (
     ("target_boxes", "data/target_boxes_*.csv", True, "เป้าหีบต่อ SKU ของแต่ละทีม"),
     ("allocations", "data/allocations/*.json", False, "ผลกระจายที่บันทึกไว้ (ก้อนใหญ่)"),
     ("baselines", "data/baselines/*.json", False, "เป้าตั้งต้นของงวด"),
+    ("baseline_rows", "data/baselines/rows/*.json", False, "สำเนาแถว Target Sun ก่อนส่งครั้งแรก (ไฟล์คืนค่า)"),
+    ("presend", "data/ts_presend/*/*.json", False, "สำเนาแถว Target Sun ก่อนส่งทุกครั้ง"),
+    ("sent_ledger", "data/sent_ledger/*.json", False, "บันทึกแถวที่ระบบส่งเข้า Target Sun (สร้างใหม่ไม่ได้)"),
 )
 
 #: ส่วนที่ถูกตัดออกเมื่อขอชุดเบา — ประกาศไว้ให้เทสอ่านได้ ไม่ต้องเดาจากตาราง

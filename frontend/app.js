@@ -10828,17 +10828,25 @@ async function _verifySendBatchBeforeImport(jobs) {
   if (res.ok && body?.verified === true) return { ok: true };
 
   const detail = body?.detail;
-  if (detail?.code === "send_batch_unverifiable") {
+  if (detail?.code === "send_batch_unverifiable" || detail?.code === "send_batch_mixed_snapshot") {
     popGlobalBusy();
     await new Promise((resolve) => {
       let done = false;
       _showInfoModal({
-        title: "ตรวจยอดรวมไม่ได้ — ยังไม่ได้ส่ง",
+        title: detail.code === "send_batch_mixed_snapshot"
+          ? "เป้าของแต่ละทีมมาคนละรอบ — ยังไม่ได้ส่ง"
+          : "ตรวจยอดรวมไม่ได้ — ยังไม่ได้ส่ง",
         bodyHtml:
           `<p style="margin:0;text-align:left;line-height:1.7;">${escH(detail.message || "")}</p>`
           + `<p style="margin:10px 0 0;text-align:left;line-height:1.7;color:var(--text-2);">`
           + `${escH(detail.hint_th || "")}</p>`,
-        primaryLabel: null,
+        // ไฟล์เป้าต่างรุ่น (ผลตรวจ 7 ต.ค. 2026 ก2): ให้กดดึงเป้าใหม่ทุกทีมได้จากกล่องนี้เลย — ทำหลังจบรอบส่ง
+        // (ดู doLakehouseUpload) ไม่ทำซ้อนระหว่างรอบส่งยังค้างอยู่
+        // ซ่อนปุ่มเมื่อรอบก่อนลงไม่ครบ — ดึงใหม่ทุกทีมตอนนั้นได้ยอดรวมภาคผิด (server บอกใน previous_send_complete)
+        primaryLabel: detail.code === "send_batch_mixed_snapshot" && S.aggregateMode
+          && detail.previous_send_complete === true
+          ? "ดึงเป้าใหม่ทุกทีม" : null,
+        onPrimary: () => { _reloadRegionAfterSend = true; if (!done) { done = true; resolve(); } },
         secondaryLabel: "ปิด",
         onSecondary: () => { if (!done) { done = true; resolve(); } },
       });
@@ -11365,6 +11373,8 @@ async function _confirmTargetMismatchBeforeSend(supIds, brand) {
    ระหว่างนั้นปุ่มยังกดได้ ดับเบิลคลิกจึงยิง pipeline ส่งซ้อนกันสองชุด
    แต่ละชุดเตรียมไฟล์และ import แยกกัน = ส่งเป้าเข้า Target Sun สองรอบ */
 let _lakehouseSendInFlight = false;
+/* ผู้ใช้กด「ดึงเป้าใหม่ทุกทีม」ในกล่องไฟล์เป้าต่างรุ่น — โหลดหลังรอบส่งจบ (ปลด busy/ล็อกแล้ว) */
+let _reloadRegionAfterSend = false;
 
 async function doLakehouseUpload() {
   if (_lakehouseSendInFlight) {
@@ -11372,10 +11382,15 @@ async function doLakehouseUpload() {
     return;
   }
   _lakehouseSendInFlight = true;
+  _reloadRegionAfterSend = false;
   try {
     return await _doLakehouseUploadInner();
   } finally {
     _lakehouseSendInFlight = false;
+    if (_reloadRegionAfterSend) {
+      _reloadRegionAfterSend = false;
+      reloadDataThenReview();
+    }
   }
 }
 
@@ -19116,24 +19131,44 @@ async function adminShowTargetBaseline(supId, month, year) {
   const q = new URLSearchParams({
     sup_id: supId, target_month: String(month), target_year: String(year),
   });
-  let data;
+  // สำเนาแถวก่อนส่ง (ไฟล์คืนค่า Target Sun) โหลดคู่กัน — ทีมที่ยังไม่มีเป้าตั้งต้นแบบสรุปก็ยังดาวน์โหลดไฟล์คืนค่าได้
+  let data = null;
+  let baseErr = "";
+  let rowSnaps = [];
   try {
-    const res = await fetchWithTimeout(`${API_BASE_URL}/admin/target-baseline?${q}`, {}, 20000);
-    data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || "เปิดเป้าตั้งต้นไม่สำเร็จ");
+    const [res, resRows] = await Promise.all([
+      fetchWithTimeout(`${API_BASE_URL}/admin/target-baseline?${q}`, {}, 20000),
+      fetchWithTimeout(`${API_BASE_URL}/admin/target-baseline/row-snapshots?${q}`, {}, 20000)
+        .catch(() => null),
+    ]);
+    const j = await res.json().catch(() => ({}));
+    if (res.ok) data = j;
+    else baseErr = j.detail || "เปิดเป้าตั้งต้นไม่สำเร็จ";
+    if (resRows && resRows.ok) {
+      const jr = await resRows.json().catch(() => ({}));
+      rowSnaps = Array.isArray(jr.items) ? jr.items : [];
+    }
   } catch (e) {
     toast(e.message, "amber");
     return;
   }
+  if (!data && !rowSnaps.length) {
+    toast(baseErr || "ยังไม่มีเป้าตั้งต้นของงวดนี้", "amber");
+    return;
+  }
 
-  const base = data.baseline || {};
-  const diff = data.diff;
+  const base = (data && data.baseline) || {};
+  const diff = data ? data.diff : null;
   const period = `${String(month).padStart(2, "0")}/${year}`;
   const capturedAt = base.captured_at
     ? new Date(base.captured_at).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" })
     : "—";
 
-  let body =
+  let body = !data
+    ? `<p style="margin:0 0 10px;line-height:1.7;color:var(--text-2);">${escapeHtml(baseErr)}</p>`
+    : (base.captured_after_send
+      ? `<p style="margin:0 0 8px;line-height:1.7;color:var(--amber);">⚠️ ชุดนี้ถูกเก็บ<strong>หลังจากเคยส่งเข้า Target Sun แล้ว</strong> — อาจไม่ใช่เป้าตั้งต้นจริง</p>`
+      : "") +
     `<div class="tchange-chips" style="margin-bottom:10px;">` +
     `<span class="tchange-chip">เก็บเมื่อ ${escapeHtml(capturedAt)}</span>` +
     `<span class="tchange-chip tchange-chip--box">${Number(base.total_target_boxes || 0).toLocaleString("th-TH")} หีบ</span>` +
@@ -19141,7 +19176,9 @@ async function adminShowTargetBaseline(supId, month, year) {
     `<span class="tchange-chip">${(base.employees || []).length} คน</span>` +
     `</div>`;
 
-  if (!diff) {
+  if (!data) {
+    // ไม่มีเป้าตั้งต้นแบบสรุป — แสดงเฉพาะส่วนไฟล์คืนค่าข้างล่าง
+  } else if (!diff) {
     body += `<p style="margin:0 0 10px;line-height:1.7;">เป้าปัจจุบันของงวด ${escapeHtml(period)} ` +
       `<strong>ตรงกับตอนเปิดครั้งแรกทุกรายการ</strong> — ไม่มีอะไรหายหรือถูกทับ</p>`;
   } else {
@@ -19158,21 +19195,91 @@ async function adminShowTargetBaseline(supId, month, year) {
       `</ul></details>`;
   }
 
-  const canRestore = S.isAdmin || S.role === "dev";
+  body += _baselineRowSnapsHtml(rowSnaps);
+
+  const canRestore = !!data && (S.isAdmin || S.role === "dev");
   body += `<p style="margin:10px 0 0;font-size:12px;color:var(--text-2);line-height:1.6;">` +
     (canRestore
-      ? `การกู้คืนจะเขียนเป้าตั้งต้นทับเป้าปัจจุบัน <strong>ไม่แตะผลกระจายที่บันทึกไว้</strong> — ` +
-        `ผู้ใช้ต้องกดกระจายใหม่เองถ้าต้องการผลที่ตรงกับเป้าที่กู้มา`
-      : `การกู้คืนสงวนไว้ให้ Dev เพราะเป็นการทับข้อมูลที่ทีมอื่นอาจกำลังใช้อยู่`) +
+      ? `ปุ่ม「กู้คืนเป้าตั้งต้นในระบบ」เขียนเป้าตั้งต้นทับ<strong>ไฟล์เป้าในระบบนี้เท่านั้น ไม่แตะ Target Sun</strong> ` +
+        `และไม่แตะผลกระจายที่บันทึกไว้ — ถ้าต้องการคืนค่าใน Target Sun ให้ใช้ไฟล์คืนค่าด้านบน`
+      : `การกู้คืนไฟล์เป้าในระบบสงวนไว้ให้ Dev เพราะเป็นการทับข้อมูลที่ทีมอื่นอาจกำลังใช้อยู่`) +
     `</p>`;
 
+  setTimeout(() => {
+    document.querySelectorAll("[data-restore-snap]").forEach((btn) => {
+      btn.addEventListener("click", () =>
+        _adminDownloadRestoreFile(supId, month, year, btn.getAttribute("data-restore-snap"), btn));
+    });
+  }, 0);
   _showInfoModal({
     title: `เป้าตั้งต้น ${supId} · งวด ${period}`,
     bodyHtml: body,
-    primaryLabel: canRestore ? "กู้คืนเป้าตั้งต้น" : "",
+    primaryLabel: canRestore ? "กู้คืนเป้าตั้งต้นในระบบ" : "",
     secondaryLabel: "ปิด",
     onPrimary: canRestore ? () => _adminConfirmRestoreBaseline(supId, month, year) : undefined,
   });
+}
+
+/* ไฟล์คืนค่า Target Sun (ผลตรวจ 7 ต.ค. 2026 ก5) — สำเนาแถวที่อ่านสดก่อนส่งแต่ละครั้ง
+   ดาวน์โหลดเป็น Excel รูปแบบนำเข้า แล้วแอดมินนำไปนำเข้าเองที่ Target Sun · แอปไม่ส่งให้ */
+function _baselineRowSnapsHtml(items) {
+  const head = `<h4 style="margin:14px 0 6px;font-size:14px;">ไฟล์คืนค่าเป้าใน Target Sun</h4>`;
+  if (!items.length) {
+    return head + `<p style="margin:0;font-size:13px;color:var(--text-2);line-height:1.6;">` +
+      `ยังไม่มีสำเนา — ระบบเก็บแถวเป้าใน Target Sun ให้อัตโนมัติทุกครั้งก่อนส่ง</p>`;
+  }
+  const fmt = (t) => (t ? new Date(t).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" }) : "—");
+  const rows = items.map((it) => {
+    const label = it.kind === "first" ? "<strong>ก่อนส่งครั้งแรกของงวด</strong>" : "ก่อนส่งครั้งนี้";
+    const warn = it.captured_after_send
+      ? ` <span style="color:var(--amber);">(เก็บหลังเคยส่งแล้ว)</span>` : "";
+    return `<tr><td style="padding:4px 6px;">${label}${warn}</td>` +
+      `<td style="padding:4px 6px;">${escapeHtml(fmt(it.captured_at))}</td>` +
+      `<td style="padding:4px 6px;text-align:right;">${Number(it.row_count || 0).toLocaleString("th-TH")} แถว · ` +
+      `${Number(it.total_boxes || 0).toLocaleString("th-TH")} หีบ</td>` +
+      `<td style="padding:4px 6px;"><button type="button" class="admin-action" data-restore-snap="${escapeHtml(it.id)}">` +
+      `⬇ ดาวน์โหลด</button></td></tr>`;
+  }).join("");
+  return head +
+    `<p style="margin:0 0 6px;font-size:13px;color:var(--text-2);line-height:1.6;">` +
+    `ไฟล์ = แถวเป้าตามสำเนา + แถวที่ระบบนี้เคยส่งเพิ่มตั้งเป็น 0 · <strong>ระบบไม่ส่งให้</strong> ` +
+    `นำไฟล์ไปนำเข้าเองที่ Target Sun เมื่อต้องการคืนค่า</p>` +
+    `<div style="max-height:220px;overflow:auto;"><table style="width:100%;font-size:13px;border-collapse:collapse;">` +
+    rows + `</table></div>`;
+}
+
+async function _adminDownloadRestoreFile(supId, month, year, snapId, btn) {
+  const q = new URLSearchParams({
+    sup_id: supId, target_month: String(month), target_year: String(year), snap_id: snapId,
+  });
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetchWithTimeout(`${API_BASE_URL}/admin/target-baseline/restore-file?${q}`, {}, 60000);
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(j.detail || "สร้างไฟล์คืนค่าไม่สำเร็จ");
+    }
+    const blob = await res.blob();
+    const cd = res.headers.get("Content-Disposition") || "";
+    const hit = cd.match(/filename="?([^";]+)"?/i);
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = (hit && hit[1]) || `restore_${supId}_${year}_${String(month).padStart(2, "0")}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    const uncovered = (res.headers.get("X-Restore-Uncovered-Emps") || "").trim();
+    if (uncovered) {
+      toast(`ดาวน์โหลดแล้ว — แต่ไม่มีค่าเดิมของพนักงาน ${uncovered} (ไม่อยู่ในไฟล์) ต้องตรวจใน Target Sun เอง`, "amber");
+    } else {
+      toast("ดาวน์โหลดไฟล์คืนค่าแล้ว — ยังไม่ได้ส่งเข้า Target Sun", "green");
+    }
+  } catch (e) {
+    toast(e.message, "red");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 function _adminConfirmRestoreBaseline(supId, month, year) {

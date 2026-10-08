@@ -1950,9 +1950,13 @@ def _apply_price_fix_to_payload(
             lambda r: float(r["qty"]) * (fixes[r["sku"]][1] - fixes[r["sku"]][0]), axis=1
         )
         delta_emp = changed.groupby("emp_id")["_delta"].sum().to_dict()
+        # คลังว่าง (NaN/"") ต้องเป็นคีย์ "" — groupby ทิ้ง NaN ทิ้งไปเงียบ ๆ
+        changed["_wh"] = changed["warehouse_code"].map(
+            lambda w: "" if w is None or (isinstance(w, float) and pd.isna(w)) else str(w).strip()
+        )
         delta_key = {
-            (str(e), str(w)): float(v)
-            for (e, w), v in changed.groupby(["emp_id", "warehouse_code"])["_delta"].sum().items()
+            (str(e).strip(), str(w)): float(v)
+            for (e, w), v in changed.groupby(["emp_id", "_wh"])["_delta"].sum().items()
         }
 
     for s in payload.get("skus") or []:
@@ -1963,15 +1967,30 @@ def _apply_price_fix_to_payload(
             s["price_missing"] = False
             s["price_from_sales_history"] = bool(from_history)
 
+    # คนแยกคลัง: ส่วนต่างลงแถวคลังของตัวเองตามแถวเป้าดิบ · คลังที่ไม่มีแถวใน SKU ที่ราคาเปลี่ยน = 0
+    # (ผลตรวจ 7 ต.ค. 2026 ก6: เดิมคลังที่หาคีย์ไม่เจอได้ส่วนต่าง "ทั้งคน" ซ้ำอีกก้อน → คลังที่
+    #  「ไม่นำไปกระจายเป้า」(เช่น C442/R493) มีเงินผีแล้วกลายเป็นกระจายได้ + เงินรวมของคนเกิน)
+    # ส่วนต่างของคลังที่ไม่มีแถวบนจอเลย (ไม่น่าเกิด) ไปลงแถวที่เป้าเงินมากสุดของคนนั้น ไม่ให้หาย
+    # แถวคลังว่างของคนแยกคลัง (wh_split) ก็เป็นแถวแยกคลัง — เดิมตกไปได้ส่วนต่างทั้งคนซ้ำ (เงินเกิน)
+    split_rows: dict[str, list[dict]] = {}
+    for emp in payload.get("employees") or []:
+        if emp.get("wh_split"):
+            split_rows.setdefault(str(emp.get("emp_id") or "").strip(), []).append(emp)
+    split_extra: dict[int, float] = {}
+    for eid, rows in split_rows.items():
+        whs = {str(r.get("warehouse_code") or "").strip() for r in rows}
+        rest = float(delta_emp.get(eid) or 0) - sum(
+            float(v) for (e, w), v in delta_key.items() if e == eid and w in whs
+        )
+        if abs(rest) >= 0.005:
+            top = max(rows, key=lambda r: float(r.get("target_sun") or 0))
+            split_extra[id(top)] = rest
+
     for emp in payload.get("employees") or []:
         eid = str(emp.get("emp_id") or "").strip()
         wh = str(emp.get("warehouse_code") or "").strip()
-        if wh and emp.get("wh_split"):
-            # หาคีย์ (คน, คลัง) ไม่เจอ = แถวเป้าดิบไม่มีคลังนั้น ต้องถอยมาใช้ยอดรวม
-            # ของคนนั้น ไม่งั้นในหน่วยความจำยังเป็นราคาเก่า ขณะที่ไฟล์ถูกแก้ไปแล้ว
-            d = delta_key.get((eid, wh))
-            if d is None:
-                d = delta_emp.get(eid)
+        if emp.get("wh_split"):
+            d = float(delta_key.get((eid, wh)) or 0) + float(split_extra.get(id(emp), 0.0))
         else:
             d = delta_emp.get(eid)
         if d:
@@ -2544,6 +2563,17 @@ def load_live_targets_payload(
                 emp_list = df_cached["emp_id"].astype(str).str.strip().tolist()
             except Exception as e:
                 logger.warning("read emp cache for live targets: %s", e)
+        # แคชรายชื่อเก็บ "รายชื่อดิบก่อนย้าย" (ดู load_employees_payload) — ต้องย้ายเหมือนทางหลัก
+        # (ผลตรวจ 7 ต.ค. 2026 ข4: เดิมดึงเป้าสดแล้ว S516 ที่ย้ายไป SL359 หายจากทีมปลายทาง
+        #  แต่โผล่ที่ SL372 + เขียน grain ทับโดยไม่มีแถวของเขา)
+        if emp_list:
+            try:
+                _after, _ = emp_assignment_store.apply_to_employee_list(
+                    sid, [{"emp_id": e} for e in emp_list]
+                )
+                emp_list = [str(r.get("emp_id") or "").strip() for r in _after if str(r.get("emp_id") or "").strip()]
+            except Exception as e:
+                logger.warning("ใช้รายการย้ายพนักงานตอนดึงเป้าสดไม่ได้ (%s): %s", sid, e)
 
     if not emp_list:
         raise HTTPException(

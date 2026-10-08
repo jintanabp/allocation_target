@@ -462,6 +462,17 @@ def granular_df_for_team(
 
     codes = [_normalize_salesman_code(e) for e in emp_list if str(e).strip()]
     result = fetch_target_rows(target_year, target_month, codes)
+    if result.get("complete") is False:
+        # อ่านไม่ครบ (หน้าวน/ชนเพดานหน้า/จำนวนไม่ตรง) — ห้ามสร้างเป้าขั้นที่ 1 จากข้อมูลที่ขาด
+        # (ผลตรวจ 7 ต.ค. 2026 ข13) เดิมใช้ต่อเงียบ ๆ เป้าทีมขาด และเป้าตั้งต้นที่จับครั้งแรกขาดถาวร
+        logger.error(
+            "TargetSun query ไม่ครบ: sup=%s period=%02d/%d rows=%d total_qty=%s",
+            sup_id, target_month, target_year, len(result.get("rows") or []), result.get("totalQuantityCase"),
+        )
+        raise HTTPException(
+            503,
+            detail="อ่านเป้าจาก Target Sun ได้ไม่ครบ — ระบบยังไม่ใช้ข้อมูลชุดนี้ กรุณาลองโหลดใหม่อีกครั้งในอีกสักครู่",
+        )
     rows = result.get("rows") or []
     df = rows_to_granular_df(rows if isinstance(rows, list) else [])
     logger.info(

@@ -127,13 +127,29 @@ def capture_baseline_once(
         return False
 
 
+def _ledger_has_sends(sup_id, month, year) -> bool:
+    """ระบบเราเคยส่งงวดนี้ของทีมนี้แล้วหรือยัง — ถ้าเคย ค่าใน Target Sun ตอนนี้มีค่าที่เราส่งปนอยู่"""
+    try:
+        from . import sent_ledger
+
+        return bool((sent_ledger.read_ledger(sup_id, month, year) or {}).get("sends"))
+    except Exception:
+        return False
+
+
 def _write_baseline(path, sup_id, month, year, skus, emps, captured_by) -> bool:
+    after_send = _ledger_has_sends(sup_id, month, year)
+    if after_send:
+        # ผลตรวจ 7 ต.ค. 2026 ก5/A1: เปิดงวดครั้งแรกหลังเราส่งไปแล้ว (เช่น data/ หายตอน deploy หรือ
+        # ทีมนี้ไม่เคยเปิดผ่านแอปก่อนส่งรวมภาค) — ยังเก็บไว้ แต่ติดธงให้แอดมินรู้ว่าไม่ใช่ของตั้งต้นจริง
+        logger.warning("เป้าตั้งต้น %s %s-%02d ถูกเก็บหลังเคยส่งแล้ว — ติดธง captured_after_send", sup_id, year, month)
     doc = {
         "sup_id": str(sup_id or "").strip().upper(),
         "target_month": int(month),
         "target_year": int(year),
         "captured_at": _now_iso(),
         "captured_by": str(captured_by or "").strip(),
+        "captured_after_send": after_send,
         "total_target_boxes": sum(s["supervisor_target_boxes"] for s in skus),
         "total_target_sun": round(sum(e["target_sun"] for e in emps), 2),
         "skus": skus,

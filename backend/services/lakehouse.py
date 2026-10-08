@@ -1174,7 +1174,15 @@ def _clear_leftover_rows_outside_round(
     try:
         from . import sent_ledger
 
+        from .targetsun_endpoints import targetsun_endpoints_summary
+
         led = sent_ledger.read_ledger(sid, int(month), int(year)) or {}
+        # ledger ของปลายทางอื่น (เช่น UAT) ไม่ใช่แถวที่อยู่ในระบบที่จะส่งตอนนี้ — ส่ง 0 ไปคีย์นั้น
+        # = สร้างแถวใหม่เปล่าใน Prod (ผลตรวจ 7 ต.ค. 2026 ข8) · เงื่อนไขเดียวกับ _own_sent_boxes_by_sku
+        _url = str(targetsun_endpoints_summary().get("import_url") or "")
+        # ledger เก่าที่ไม่ได้จดปลายทาง (ก่อน 1 ต.ค.) = ทำแบบเดิม
+        if _url and led.get("import_url") and led.get("import_url") != _url:
+            led = {}
     except Exception:
         led = {}
     for k, v in (led.get("rows") or {}).items():
@@ -1190,10 +1198,27 @@ def _clear_leftover_rows_outside_round(
     if not cands:
         return df, 0
     teams = employee_teams_in_period(int(month), int(year), {c["emp_id"] for c in cands.values()})
-    shared = {e for e, ts in teams.items() if len(ts) > 1}
+    # คนที่ถูกย้ายทีม: ทีมของเขาคือ "ทีมปลายทาง" ทีมเดียว (ผลตรวจ 7 ต.ค. 2026 ก3)
+    # เดิมนับเป็น "อยู่หลายทีม" เสมอ (แคชรายชื่อทีมต้นทางเก็บรายชื่อดิบไว้) จึงไม่เคยถูกล้าง
+    # → คนย้ายที่ไม่อยู่ใน payload (เช่น เงิน 0) หีบเก่าค้างใน TS ทั้งที่ถูกแจกให้เพื่อนแล้ว
+    try:
+        from . import emp_assignment_store
+
+        moved_to = {
+            norm_emp_code(r.get("emp_id")): str(r.get("to_sup") or "").strip().upper()
+            for r in emp_assignment_store.read_rows()
+            if r.get("to_sup")
+        }
+    except Exception as ex:
+        logger.warning("อ่านรายการย้ายทีมไม่ได้ (ล้างแถวค้าง): %s", ex)
+        moved_to = {}
+    for e in list(teams):
+        if e in moved_to:
+            teams[e] = {moved_to[e]}
+    shared = {e for e, ts in teams.items() if len(ts) > 1 or (ts and sid not in ts)}
     rows = [c for c in cands.values() if norm_emp_code(c["emp_id"]) not in shared]
     if shared:
-        logger.warning("ไม่ล้างแถวค้างของพนักงานที่อยู่หลายทีม %s: %s", sid, sorted(shared)[:20])
+        logger.warning("ไม่ล้างแถวค้างของพนักงานที่อยู่หลายทีม/ย้ายไปทีมอื่นแล้ว %s: %s", sid, sorted(shared)[:20])
     if not rows:
         return df, 0
     logger.info(
@@ -1504,7 +1529,9 @@ def _live_target_snapshot(
             k = _live_target_row_key(r)
             keys.add(k)
             qty_by_key[k] = qty_by_key.get(k, 0) + qty
-        return {"by_sku": by_sku, "row_count": len(rows), "keys": keys, "qty_by_key": qty_by_key}
+        # raw_rows: แถวตามที่ Target Sun ส่งมา — เก็บเป็นสำเนาก่อนส่งไว้สร้างไฟล์คืนค่า (ts_row_snapshots)
+        return {"by_sku": by_sku, "row_count": len(rows), "keys": keys, "qty_by_key": qty_by_key,
+                "raw_rows": [r for r in rows if isinstance(r, dict)]}
     except Exception as e:  # อ่านไม่ได้ต้องไม่ทำให้เส้นทางหลักพัง
         logger.warning("อ่านเป้าปัจจุบันจาก Target Sun ไม่ได้ (%s): %s", sup_id, e)
         return None
@@ -1640,6 +1667,106 @@ def _own_sent_boxes_by_sku(sup_id: str, month: int, year: int) -> dict[str, int]
         if sku:
             out[sku] = out.get(sku, 0) + int((v or {}).get("qty") or 0)
     return out
+
+
+def _last_batch_send(sup_id: str, month: int, year: int) -> tuple[float, str] | None:
+    """
+    (เวลา, send_batch_id) ของการส่งครั้งล่าสุดของทีม×งวด ถ้าครั้งนั้นเป็น "ส่งรวมหลายทีม" ไปปลายทางเดียวกับ
+    ตอนนี้ — ไม่ใช่คืน None (เงื่อนไขเดียวกับ _own_sent_boxes_by_sku: ทีมที่ได้ข้อยกเว้น「ค่าใน TS = ที่เราส่งเอง」)
+    """
+    from . import sent_ledger
+    from .targetsun_endpoints import targetsun_endpoints_summary
+
+    try:
+        led = sent_ledger.read_ledger(sup_id, month, year) or {}
+        url = str(targetsun_endpoints_summary().get("import_url") or "")
+    except Exception:
+        return None
+    if not led.get("import_url") or led.get("import_url") != url:
+        return None
+    last = ((led.get("sends") or [None])[-1]) or {}
+    bid = str(last.get("send_batch_id") or "").strip()
+    if not bid:
+        return None
+    try:
+        t = float(last.get("sent_at") or 0)
+    except (TypeError, ValueError):
+        return None
+    return (t, bid) if t else None
+
+
+def _target_file_mtime(sup_id: str, month: int, year: int) -> float | None:
+    from ..core.paths import target_boxes_cache_path
+
+    try:
+        return os.path.getmtime(target_boxes_cache_path(str(sup_id or "").strip().upper(), int(month), int(year)))
+    except OSError:
+        return None
+
+
+def assert_batch_snapshots_same_generation(sup_ids: list[str], month: int, year: int) -> None:
+    """
+    ส่งรวมภาคซ้ำ: ไฟล์เป้าทุกทีมในชุดต้องมาจาก "รุ่นเดียวกัน" เทียบกับการส่งรวมภาคครั้งก่อน
+    (ผลตรวจ 7 ต.ค. 2026 ก2)
+
+    ทำไม: ด่านเป้าเปลี่ยนยอมให้ทีมที่ไฟล์เป้าเป็นค่าก่อนส่ง (B=40) ผ่าน ถ้าค่าใน TS ตอนนี้ = ที่เราส่งเอง (30)
+    ถ้าอีกทีมในชุดโหลดขั้นที่ 1 ใหม่หลังส่ง (A: ไฟล์ 70 = ค่าที่เราส่ง) ยอดเป้ารวมของชุด = 70+40 = 110
+    ทั้งที่เป้าจริงทั้งภาค 100 → ทุกด่านผ่านแล้วหีบงอกเข้า TS 10 หีบ
+
+    ตัดสินจากเวลาไฟล์เป้า (`target_boxes_`) เทียบ "เวลาส่งรวมภาคครั้งล่าสุดของทั้งชุด" (ค่าเดียวทุกทีม):
+    เก่ากว่า = ไฟล์ก่อนส่งรอบล่าสุด · ใหม่กว่า = โหลดใหม่หลังส่งรอบล่าสุด · มีทั้งสองแบบในชุดเดียว = บล็อก
+    ต้องใช้เวลาเดียวทั้งชุด ไม่ใช่เวลาของแต่ละทีม — ทีมที่ POST ล้มในรอบล่าสุดไม่มี ledger ของรอบนั้น
+    ถ้าเทียบกับรอบก่อนของตัวเอง ส่งซ้ำหลังล้มกลางทาง (ทางที่ข้อยกเว้นตั้งใจให้ผ่าน) จะถูกบล็อกผิด
+    ทีมที่ไม่เคยส่งรวมภาคเลย (ไม่มี ledger แบบชุด) ไม่ถูกนับ — ไฟล์เป้าของทีมนั้นเป็นค่าตั้งต้นอยู่แล้ว
+    ปลอดภัยไว้ก่อน: เขียนไฟล์ซ้ำด้วยค่าเดิม (เช่น ปรับราคา) นับเป็น "ใหม่กว่า" ได้ = บล็อกเกิน ไม่ใช่หลุด
+
+    คืนใน detail ด้วยว่า "รอบล่าสุดลงครบทุกทีมในชุดไหม" (ทุกทีมมี batch id ล่าสุดเดียวกัน) — ลงครบ = โหลดใหม่
+    ทุกทีมได้ยอดที่ถูก · ลงไม่ครบ = โหลดใหม่ทุกทีมจะได้ยอดรวมผิด ต้องให้แอดมินตรวจก่อน (หน้าเว็บซ่อนปุ่มโหลด)
+    """
+    last: dict[str, tuple[float, str]] = {}
+    for sid in sup_ids:
+        sid = str(sid or "").strip().upper()
+        lb = _last_batch_send(sid, month, year)
+        if lb is not None:
+            last[sid] = lb
+    if not last:
+        return
+    t_ref, latest_bid = max(last.values())
+    before: list[str] = []
+    after: list[str] = []
+    for sid in last:
+        t_file = _target_file_mtime(sid, month, year)
+        if t_file is None:
+            continue
+        (before if t_file < t_ref else after).append(sid)
+    if not (before and after):
+        return
+    complete = all(
+        (last.get(str(sid or "").strip().upper()) or (0, ""))[1] == latest_bid for sid in sup_ids
+    )
+    logger.error(
+        "ส่งรวมภาค %s-%02d: ไฟล์เป้าต่างรุ่นกัน — โหลดใหม่หลังส่ง %s · ยังเป็นค่าก่อนส่ง %s",
+        year, month, after, before,
+    )
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "send_batch_mixed_snapshot",
+            "message": (
+                f"ยังไม่ได้ส่ง — ทีม {', '.join(after)} โหลดเป้าใหม่หลังการส่งครั้งก่อนแล้ว "
+                f"แต่ทีม {', '.join(before)} ยังใช้เป้าชุดก่อนส่ง ถ้าส่งต่อ ยอดรวมทั้งภาคจะผิด"
+            ),
+            "hint_th": (
+                "การส่งครั้งก่อนลงครบทุกทีมแล้ว — กด「ดึงเป้าใหม่ทุกทีม」แล้วกระจายอีกครั้งก่อนส่ง"
+                if complete else
+                "การส่งครั้งก่อนอาจลงไม่ครบทุกทีม — อย่าเพิ่งส่งและอย่าดึงเป้าใหม่ แจ้งแอดมินให้ตรวจยอดใน Target Sun ก่อน "
+                "(แอดมินดาวน์โหลดไฟล์คืนค่าได้ที่ปุ่ม「เป้าตั้งต้น」)"
+            ),
+            "previous_send_complete": complete,
+            "reloaded_sup_ids": after,
+            "pre_send_sup_ids": before,
+        },
+    )
 
 
 def assert_target_snapshot_is_fresh(
@@ -2102,6 +2229,11 @@ def verify_send_batch(metas: list[dict]) -> dict:
 
     sup_ids = [sid for sid, _ in per_team]
 
+    # (0) ไฟล์เป้าต่างรุ่นกันในชุดส่งซ้ำ (ผลตรวจ 7 ต.ค. 2026 ก2) — ต้องอยู่ก่อนเทียบยอด เพราะยอดเทียบผ่านได้
+    if len(periods) == 1 and len(sup_ids) > 1:
+        _y, _m = next(iter(periods))
+        assert_batch_snapshots_same_generation(sup_ids, int(_m), int(_y))
+
     # (1) SKU ที่ทีมหนึ่งตัดทิ้ง แต่อีกทีมยังส่งอยู่
     partial = [
         {"sup_id": sid, "sku": sku, "boxes": int(totals[sku])}
@@ -2368,10 +2500,25 @@ def _enrich_emp_dimensions(
     if not df_emp.empty:
         emp_fb = df_emp.set_index("emp_id").to_dict(orient="index")
 
+    # มี grain (ทางส่งจริง): เติมจาก Fabric ได้เฉพาะ "คู่ใหม่" ที่ไม่มีแถวใน Target Sun (มีคอลัมน์ dims_inferred)
+    # แถวที่มาจาก grain = ค่าจริงของ Target Sun ทุกคอลัมน์ รวมค่าว่างจริง — ห้ามเติมทับ
+    # (ผลตรวจ 7 ต.ค. 2026 ก4: เดิมเติม PROVINCECODE ว่างจริงด้วย MAX ต่อคนจาก Fabric
+    #  ทันทีที่มีแถวใดในไฟล์ขาด dim → คีย์ upsert เปลี่ยน = แถวใหม่ซ้อนแถวเดิม เป้าเบิ้ล แบบ SL380)
+    if skip_emp_sku_dim_merge:
+        _fillable = (
+            df["dims_inferred"].notna() if "dims_inferred" in df.columns
+            else pd.Series(False, index=df.index)
+        )
+    else:
+        _fillable = pd.Series(True, index=df.index)
+
     def _emp_fb_series(col: str) -> pd.Series:
         if not emp_fb:
             return pd.Series([""] * len(df), index=df.index)
-        return df["emp_id"].map(lambda e: _cell_str((emp_fb.get(str(e).strip()) or {}).get(col)))
+        fb = df["emp_id"].map(lambda e: _cell_str((emp_fb.get(str(e).strip()) or {}).get(col)))
+        # แถวที่ห้ามเติม: ให้ "ค่าสำรอง" เป็นค่าเดิมของแถว (ว่างก็ว่างต่อ)
+        cur = df[col].map(_cell_str) if col in df.columns else pd.Series([""] * len(df), index=df.index)
+        return fb.where(_fillable, cur)
 
     df["salestype"] = _coalesce_col(df, "salestype", _emp_fb_series("salestype"))
     df["divisioncode"] = _coalesce_col(df, "divisioncode", _emp_fb_series("divisioncode"))
@@ -3128,12 +3275,14 @@ def _build_tga_upload_dataframe(
         # (dims_inferred == True แปลว่าเดา dim จากแถวอื่นของคนคนนั้นแล้วผ่านด่านบนมาได้)
         # และหีบ = 0 จึงไม่มีอะไรให้ทับ/ล้าง สร้างแถวเปล่าไปก็ไม่มีประโยชน์
         #
-        # ห้ามแตะแถวหีบ 0 ที่ dims_inferred เป็น NaN/False — พวกนั้นคือคู่ที่ Target Sun
+        # ห้ามแตะแถวหีบ 0 ที่ dims_inferred เป็น NaN — พวกนั้นคือคู่ที่ Target Sun
         # "มีอยู่แล้ว" ต้องส่ง 0 ไปทับเพื่อล้างเป้างวดก่อน ไม่ตัดจะเหลือเลขเก่าค้างเป็นยอดเกิน
         # ไม่กระทบยอดรวมต่อ SKU เลย (ตัดแถวที่มีค่า 0 ผลรวมเท่าเดิม) — ดู
         # docs/ALLOCATION_INVARIANTS.md หัวข้อ "เริ่มงาน ค9" และ docs/next-plan-2026-09.md 11.2
         if "dims_inferred" in df.columns and not df.empty:
-            _empty_new_mask = (df["dims_inferred"] == True) & (  # noqa: E712
+            # dims_inferred มีค่า (True/False) = คู่ใหม่ที่ไม่มีแถวใน Target Sun · NaN = แถวจาก grain
+            # (ผลตรวจ 7 ต.ค. 2026 ก4: เดิมดูแค่ True — คู่ใหม่ที่ได้ dim จาก Fabric (False) กลายเป็นแถว 0 ใหม่)
+            _empty_new_mask = df["dims_inferred"].notna() & (
                 pd.to_numeric(df["allocated_boxes"], errors="coerce").fillna(0).astype(int) == 0
             )
             _cut = int(_empty_new_mask.sum())

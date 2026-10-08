@@ -1629,6 +1629,84 @@ def admin_export_target_baseline(
     )
 
 
+@router.get("/target-baseline/row-snapshots")
+def admin_list_row_snapshots(
+    admin: dict = Depends(require_admin_scoped),
+    sup_id: str = Query(..., min_length=1),
+    target_month: int = Query(..., ge=1, le=12),
+    target_year: int = Query(..., ge=2020, le=2100),
+) -> dict[str, Any]:
+    """
+    สำเนาแถวเป้าใน Target Sun ก่อนส่ง (ผลตรวจ 7 ต.ค. 2026 ก5) — ชุดแรกของงวด + ทุกครั้งที่ส่ง
+    ใช้เลือกว่าจะสร้างไฟล์คืนค่าจากชุดไหน
+    """
+    from ..services import ts_row_snapshots
+
+    sid = sup_id.strip().upper()
+    ensure_sup_in_admin_scope(admin, sid)
+    return {"items": ts_row_snapshots.list_snapshots(sid, target_month, target_year)}
+
+
+@router.get("/target-baseline/restore-file")
+def admin_download_restore_file(
+    admin: dict = Depends(require_admin_scoped),
+    sup_id: str = Query(..., min_length=1),
+    target_month: int = Query(..., ge=1, le=12),
+    target_year: int = Query(..., ge=2020, le=2100),
+    snap_id: str = Query("first", min_length=1, max_length=120),
+) -> Response:
+    """
+    ไฟล์ Excel รูปแบบนำเข้า Target Sun สำหรับคืนเป้ากลับไปเป็นค่าในสำเนาที่เลือก — **ดาวน์โหลดเท่านั้น**
+
+    ไม่มีการส่งเข้า Target Sun จากที่นี่ (ผู้ใช้เลือก 7 ต.ค. 2026) แอดมินนำไฟล์ไปนำเข้าเองที่ Target Sun
+    แถวในสำเนา = จำนวนเดิม · แถวที่ระบบเราเคยส่งแต่ไม่มีในสำเนา = 0 (นำเข้าแบบ upsert ลบแถวไม่ได้)
+    """
+    from ..services import ts_row_snapshots
+    from ..services.lakehouse import (
+        LAKEHOUSE_CSV_COLUMNS,
+        _build_xlsx_bytes,
+        _format_effectivedate_bangkok_be,
+        _format_updatedate_bangkok_be,
+    )
+
+    sid = sup_id.strip().upper()
+    ensure_sup_in_admin_scope(admin, sid)
+    try:
+        rows, summary = ts_row_snapshots.build_restore_rows(sid, target_month, target_year, snap_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="ไม่พบสำเนาที่เลือก — สำเนาเก็บอัตโนมัติตอนส่งเข้า Target Sun")
+    eff = _format_effectivedate_bangkok_be(target_year, target_month)
+    upd = _format_updatedate_bangkok_be()
+    df = pd.DataFrame(rows, columns=[c for c in LAKEHOUSE_CSV_COLUMNS if c not in ("EFFECTIVEDATE", "UPDATEDATE", "USERCODE")])
+    df["EFFECTIVEDATE"] = eff
+    df["UPDATEDATE"] = upd
+    df["USERCODE"] = sid
+    content = _build_xlsx_bytes(df[LAKEHOUSE_CSV_COLUMNS])
+    _audit_admin(
+        admin,
+        "target_baseline_restore_file",
+        f"ดาวน์โหลดไฟล์คืนเป้า {sid} งวด {target_month:02d}/{target_year} (สำเนา {snap_id})",
+        f"{summary['restore_rows']} แถว ({summary['restore_boxes']:,} หีบ) + แถวที่เราเคยส่งตั้งเป็น 0 "
+        f"{summary['zeroed_rows']} แถว · ยังไม่ได้ส่งเข้า Target Sun",
+        level="warn",
+        sup_id=sid,
+        target_month=target_month,
+        target_year=target_year,
+        context=summary,
+    )
+    fname = f"restore_{sid}_{target_year}_{target_month:02d}_{snap_id}.xlsx".replace(" ", "_")
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{fname}"',
+            # พนักงานที่ระบบเคยส่งแต่ไม่มีสำเนาค่าเดิม — ไม่อยู่ในไฟล์ หน้าเว็บเตือนแอดมินให้ตรวจเอง
+            "X-Restore-Uncovered-Emps": ",".join(summary.get("uncovered_emps") or [])[:500],
+            "Access-Control-Expose-Headers": "Content-Disposition, X-Restore-Uncovered-Emps",
+        },
+    )
+
+
 @router.post("/target-baseline/restore")
 def admin_restore_target_baseline(
     admin: dict = Depends(require_admin_user),

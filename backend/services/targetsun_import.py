@@ -381,6 +381,30 @@ def _keep_sent_record(token: str, meta: dict, send_status: str = "") -> None:
         logger.exception("เก็บไฟล์ที่ส่งไว้ส่งซ้ำไม่สำเร็จ (%s)", token[:8])
 
 
+def _save_presend_rows(
+    sup_id: str, month: int, year: int, snap: dict | None, *, user: str, token: str,
+    emp_codes: list[str] | None = None,
+) -> None:
+    """
+    เก็บแถว Target Sun ที่อ่านสดก่อน POST (ผลตรวจ 7 ต.ค. 2026 ก5) — ไว้สร้างไฟล์คืนค่าในหน้าแอดมิน
+    อ่านไม่ได้/อ่านไม่ครบ (snap=None) = ไม่เก็บ · เก็บไม่สำเร็จต้องไม่ทำให้การส่งล้ม
+    """
+    if not snap or not isinstance(snap.get("raw_rows"), list):
+        return
+    try:
+        from . import ts_row_snapshots
+
+        url = _current_import_url()
+        led = sent_ledger.read_ledger(sup_id, month, year) or {}
+        had_sends = bool(led.get("sends")) and (not led.get("import_url") or led.get("import_url") == url)
+        ts_row_snapshots.save_presend_snapshot(
+            sup_id, month, year, snap["raw_rows"],
+            import_url=url, user=user, token=token, ledger_had_sends=had_sends, emp_codes=emp_codes,
+        )
+    except Exception:
+        logger.exception("เก็บสำเนาแถวก่อนส่งไม่สำเร็จ (%s %s-%02d)", sup_id, year, month)
+
+
 def _current_import_url() -> str:
     try:
         from .targetsun_endpoints import targetsun_endpoints_summary
@@ -1211,6 +1235,11 @@ def import_prepared_targetsun(req: LakehouseUploadRequest) -> dict:
             req.sup_id, bundle_month, bundle_year,
             send_batch_id=meta.get("send_batch_id"), **fresh_kwargs,
         )
+        _save_presend_rows(
+            req.sup_id, bundle_month, bundle_year, before_row_snapshot,
+            user=str(meta.get("upload_user_code") or req.upload_user_code or ""), token=token,
+            emp_codes=list(bundle_emp_codes),
+        )
 
         try:
             out = _post_targetsun_multipart(
@@ -1313,6 +1342,10 @@ def _import_allocations_one_shot(req: LakehouseUploadRequest) -> dict:
     )
     before_row_snapshot = _live_target_snapshot(
         req.sup_id, int(req.target_month), int(req.target_year), emp_codes
+    )
+    _save_presend_rows(
+        req.sup_id, int(req.target_month), int(req.target_year), before_row_snapshot,
+        user=str(req.upload_user_code or ""), token="oneshot", emp_codes=emp_codes,
     )
 
     try:
