@@ -456,11 +456,11 @@ def _apply_wh_pin_preview_guarded(
         )
         if "wh_pin_forced" not in df_final.columns:
             df_final["wh_pin_forced"] = ""
+        # รายละเอียด (ข้อความ error + traceback) อยู่ใน log server แล้ว — ไม่ส่งกลับในคำตอบ /optimize
+        # ซึ่งผู้ใช้ทุกคนเห็นได้ (มี path ของ server) · ผลตรวจ 7 ต.ค. 2026 ค
         return df_final, {
             "stage": "crashed",
             "error_type": type(e).__name__,
-            "error_message": str(e),
-            "traceback_tail": tb_text[-2000:],
         }
 
 

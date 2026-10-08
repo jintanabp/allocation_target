@@ -88,5 +88,5 @@ def get_managers(user: dict = Depends(require_authenticated_user)):
         logger.exception("GET /managers failed for %s", user.get("email") or user.get("view_as_email"))
         raise HTTPException(
             status_code=503,
-            detail=f"โหลดรายการ Supervisor/Manager ไม่สำเร็จ — {e}",
+            detail="โหลดรายการหัวหน้า/ผู้จัดการไม่สำเร็จชั่วคราว — กรุณาลองใหม่อีกครั้ง",
         ) from e

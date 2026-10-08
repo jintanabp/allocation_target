@@ -140,7 +140,9 @@ function _friendlyMsg(raw) {
     .replace(/manual edits?/gi, "ตัวเลขที่แก้เอง")
     .replace(/Export/gi, "ดาวน์โหลด")
     .replace(/Model/gi, "สัดส่วน")
-    .replace(/Fabric/gi, "ระบบเป้า Target Sun");
+    // Fabric ให้แค่ราคา/ประวัติขาย/รายชื่อพนักงาน — เป้ามาจาก Target Sun อย่างเดียวแล้ว (6 ต.ค. 2026)
+    // เดิมแปลง Fabric เป็น "ระบบเป้า Target Sun" → error ราคา/ประวัติไปโทษระบบเป้าผิดที่ (ผลตรวจ 7 ต.ค. ค)
+    .replace(/Fabric/gi, "ระบบข้อมูลยอดขาย/ราคา (Fabric)");
   // ลบคำใน () ที่อ้างชื่อ field ตรงๆ
   s = s.replace(/\(?\s*supervisor_target_boxes\s*=\s*0\s*\)?/gi, "");
   s = s.replace(/\(?\s*target_sun\s*=\s*0\s*\)?/gi, "");
@@ -8165,7 +8167,7 @@ function syncStep3ReviewNotes() {
     const fbSups = Array.isArray(S.optimizationFallbackSups) ? S.optimizationFallbackSups : [];
     const where = fbSups.length ? ` (ทีม: ${fbSups.join(", ")})` : "";
     lines.push(
-      `ระบบใช้การเกลี่ยสัดส่วนแทนการปรับแบบ LP${where} — ตรวจผล SKU ที่มี ⚠ หรือเป้าหีบไม่ตรง`
+      `ระบบใช้การเกลี่ยตามสัดส่วนประวัติแทนการเกลี่ยให้ใกล้เป้าเงิน${where} — ตรวจผล SKU ที่มี ⚠ หรือเป้าหีบไม่ตรง`
     );
   }
   // CBC หยุดที่เวลา (OPEN_ITEMS 6.2 / แบบสำรวจ R9): ผลถูกต้องครบ แต่กดใหม่อาจได้ตัวเลขต่างเล็กน้อย
@@ -9626,7 +9628,7 @@ function syncLakehouseButton() {
   } else if (_isAllocReadOnlyView()) {
     btn.title = "โหมดดูอย่างเดียว — สลับกลับทีมของคุณเพื่อส่ง Target Sun";
   } else if (!allowed) {
-    btn.title = "เฉพาะผู้ที่ได้รับอนุญาตเท่านั้น (ตั้ง can_import_targetsun ใน user_access.json หรือผู้ดูแลระบบ)";
+    btn.title = "เฉพาะผู้ที่ได้รับสิทธิ์ส่งเข้า Target Sun เท่านั้น — ติดต่อผู้ดูแลระบบเพื่อขอสิทธิ์";
   } else if (!has) {
     btn.title = "ส่งผลการกระจายหีบเข้า Target Sun — ต้องมีผลขั้นที่ 3 ก่อน";
   } else {

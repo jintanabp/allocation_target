@@ -158,7 +158,8 @@ def load_supervisor_team(
                 "cache_path": cache_path,
                 "fabric_error": str(e),
             }
-        raise HTTPException(status_code=503, detail=f"ไม่สามารถดึงพนักงานจาก Fabric: {e}") from e
+        logger.error("ดึงพนักงานจาก Fabric ไม่ได้ (%s): %s", sc, e)
+        raise HTTPException(status_code=503, detail="ดึงรายชื่อพนักงานจาก Fabric ไม่ได้ชั่วคราว — ลองใหม่อีกครั้ง") from e
 
     if df_fabric.empty:
         raise HTTPException(status_code=404, detail=f"ไม่พบพนักงานใต้ SuperCode '{sc}'")

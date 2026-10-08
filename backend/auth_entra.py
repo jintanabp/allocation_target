@@ -242,9 +242,9 @@ def _decode_microsoft_jwt_verify_signature(token: str) -> dict[str, Any]:
     tid = str(claims.get("tid") or "").strip() or _tenant_id()
     expected = _tenant_id().lower()
     if expected and tid.lower() != expected:
-        raise ValueError(
-            "tid ในโทเคนไม่ตรงกับ FABRIC_TENANT_ID / AZURE_AUTH_TENANT_ID ใน config/.env หรือ .env ที่ราก"
-        )
+        # รายละเอียดเทคนิคลง log เท่านั้น — ข้อความนี้ไปถึงผู้ใช้ (ผลตรวจ 7 ต.ค. 2026 ค)
+        logger.warning("Entra: tid ในโทเคน (%s) ไม่ตรงกับ AZURE_AUTH_TENANT_ID/FABRIC_TENANT_ID", tid)
+        raise ValueError("บัญชีนี้ไม่ใช่บัญชีของบริษัท — กรุณาล็อกอินด้วยอีเมลบริษัท")
 
     iss = str(claims.get("iss") or "").strip()
     if not _issuer_ok(iss, tid):
@@ -295,11 +295,13 @@ def _decode_microsoft_jwt_verify_signature(token: str) -> dict[str, Any]:
                 "โทเคนหมดอายุ — กรุณากดล็อกอิน Microsoft ใหม่"
             ) from e
 
+    logger.warning(
+        "Entra: ลายเซ็นโทเคนตรวจไม่ผ่าน (ลอง JWKS %d แหล่ง, tid=%s) และ Graph /me ไม่รับ — "
+        "ต้องเป็น access token ของ Graph (scope User.Read) ไม่ใช่แค่ ID token · สาเหตุ: %s",
+        len(uris), tid, last_err,
+    )
     raise ValueError(
-        f"ลายเซ็นโทเคนตรวจไม่ผ่าน (ลอง JWKS {len(uris)} แหล่ง, tid={tid}) "
-        f"และ Microsoft Graph /me ไม่รับโทเคนนี้ — "
-        f"ให้ใช้ access token ของ Graph (scope User.Read / https://graph.microsoft.com/User.Read) "
-        f"ไม่ใช่แค่ ID token; ดู log บรรทัด Graph /me rejected — สาเหตุ: {last_err}"
+        "ตรวจสอบการเข้าสู่ระบบไม่ผ่าน — กรุณากดล็อกอินด้วย Microsoft ใหม่ ถ้ายังไม่ได้ให้ติดต่อผู้ดูแลระบบ"
     ) from last_err
 
 

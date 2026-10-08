@@ -115,7 +115,7 @@
 |---|---------|-----|----------|
 | 8.1 | Users CRUD | | |
 | 8.2 | SL/SKU links | | |
-| 8.3 | แหล่งเป้า Target Sun / Fabric | | |
+| 8.3 | แหล่งเป้า = Target Sun เท่านั้น (ตัวเลือก Fabric ถูกเอาออก 6 ต.ค. 2026 — ดู 11.23) | | |
 | 8.4 | URL Read + Send แสดงค่าจริง | | |
 | 8.5 | Invalidate cache | | |
 | 8.6 | Allocations — ค้นหา + sort หัวตาราง | | |
