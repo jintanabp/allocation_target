@@ -84,5 +84,23 @@ class SkuLinkCatalogScopeTest(unittest.TestCase):
         self.assertEqual(out["count"], 1)
 
 
+
+class TestSkuLinkEditsHeadAdminOnly(unittest.TestCase):
+    """ผู้ใช้ตัดสิน 8 ต.ค. 2026: ผูกรหัส SKU มีผลทั้งบริษัท — แก้ได้เฉพาะหัวหน้าแอดมิน (และ dev)"""
+
+    def test_regional_admin_forbidden(self):
+        from fastapi import HTTPException
+
+        for role in ("admin",):
+            with self.assertRaises(HTTPException) as cm:
+                admin_router._require_head_admin_for_company_wide({"role": role, "admin_scope": {"sl_codes": set()}})
+            self.assertEqual(cm.exception.status_code, 403)
+
+    def test_head_admin_and_dev_allowed(self):
+        for role in ("head_admin", "dev"):
+            out = admin_router._require_head_admin_for_company_wide({"role": role})
+            self.assertEqual(out["role"], role)
+
+
 if __name__ == "__main__":
     unittest.main()

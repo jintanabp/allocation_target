@@ -820,6 +820,20 @@ def _sku_link_row_for_api(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _require_head_admin_for_company_wide(admin: dict = Depends(require_admin_scoped)) -> dict:
+    """
+    ค่าที่มีผลทั้งบริษัท (ผูกรหัส SKU) — แก้ได้เฉพาะหัวหน้าแอดมินและ dev (ผู้ใช้ตัดสิน 8 ต.ค. 2026)
+    เดิมแอดมินภาคแก้ได้ ทั้งที่การผูกรหัสเปลี่ยนประวัติขายที่ใช้กระจายของทุกทีมทุกภาค
+    ดูแทนแอดมินภาค = ได้ 403 เหมือนที่เจ้าตัวจะเจอ
+    """
+    if str(admin.get("role") or "") not in ("dev", "head_admin"):
+        raise HTTPException(
+            status_code=403,
+            detail="การผูกรหัส SKU มีผลทั้งบริษัท — แก้ได้เฉพาะหัวหน้าแอดมิน",
+        )
+    return admin
+
+
 @router.get("/sku-links")
 def list_sku_links(_user: dict = Depends(require_admin_or_marketing_team)) -> dict[str, Any]:
     rows = [_sku_link_row_for_api(r) for r in read_links()]
@@ -831,7 +845,7 @@ def list_sku_links(_user: dict = Depends(require_admin_or_marketing_team)) -> di
 @router.post("/sku-links")
 def create_sku_link(
     body: SkuLinkBody,
-    admin: dict = Depends(require_admin_scoped),
+    admin: dict = Depends(_require_head_admin_for_company_wide),
 ) -> dict[str, Any]:
     ensure_not_demo_for_global_write(admin)
     canon = normalize_sku(body.canonical_sku)
@@ -862,7 +876,7 @@ def create_sku_link(
 @router.put("/sku-links")
 def update_sku_link(
     body: SkuLinkUpdateBody,
-    admin: dict = Depends(require_admin_scoped),
+    admin: dict = Depends(_require_head_admin_for_company_wide),
 ) -> dict[str, Any]:
     ensure_not_demo_for_global_write(admin)
     canon = normalize_sku(body.canonical_sku)
@@ -901,7 +915,7 @@ def update_sku_link(
 @router.delete("/sku-links")
 def remove_sku_link(
     body: SkuLinkDeleteBody,
-    admin: dict = Depends(require_admin_scoped),
+    admin: dict = Depends(_require_head_admin_for_company_wide),
 ) -> dict[str, Any]:
     ensure_not_demo_for_global_write(admin)
     canon = normalize_sku(body.canonical_sku)

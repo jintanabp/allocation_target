@@ -16886,7 +16886,7 @@ function openAdminView(opts = {}) {
   // ต่างจากแท็บผูกรหัสที่มีป้ายนี้อยู่แล้ว
   const teamBadge = document.getElementById("adminTeamReadOnlyBadge");
   if (slBadge) slBadge.style.display = mktRo ? "inline" : "none";
-  if (skuBadge) skuBadge.style.display = mktRo ? "inline" : "none";
+  if (skuBadge) skuBadge.style.display = (mktRo || !_canManageSkuLinks()) ? "inline" : "none";
   if (teamBadge) teamBadge.style.display = mktRo ? "inline" : "none";
   if (teamOnly) {
     adminSwitchTab("team");
@@ -16900,6 +16900,11 @@ function openAdminView(opts = {}) {
 /** ผูกรหัส SL/SKU — dev และผู้ดูแลทุกระดับทำได้ (ฝั่ง server ตรวจขอบเขตอีกชั้น) */
 function _canManageLinks() {
   return !!(S.isAdmin || S.isAdminRole);
+}
+
+/** ผูกรหัส SKU มีผลทั้งบริษัท — แก้ได้เฉพาะ dev และหัวหน้าแอดมิน (ผู้ใช้ตัดสิน 8 ต.ค. 2026 · server ตรวจซ้ำ) */
+function _canManageSkuLinks() {
+  return !!(S.isAdmin || S.isHeadAdmin);
 }
 
 /* แท็บที่แต่ละ role เข้าได้ — null = ทุกแท็บ (dev)
@@ -19896,7 +19901,7 @@ function _renderAdminSkuCatalogBody(rows) {
     body.innerHTML = `<tr><td colspan="6" class="admin-empty">ไม่พบรายการที่ตรงกับคำค้น</td></tr>`;
     return;
   }
-  const canEdit = _canManageLinks();
+  const canEdit = _canManageSkuLinks();
   body.innerHTML = rows.map((r) => {
     const sku = String(r.sku || "").trim();
     const canon = String(r.canonical_sku || sku).trim();
@@ -20005,7 +20010,7 @@ async function adminLoadSkuLinks() {
 }
 
 async function adminSkuLinkSaveInline(canon) {
-  if (!_canManageLinks()) return;
+  if (!_canManageSkuLinks()) return;
   const sku = String(canon || "").trim();
   if (!sku) return;
   const input = document.getElementById(`adminSkuAlias-${sku}`);
@@ -20037,7 +20042,7 @@ async function adminSkuLinkSaveInline(canon) {
 }
 
 async function adminSkuLinkClearInline(canon) {
-  if (!_canManageLinks()) return;
+  if (!_canManageSkuLinks()) return;
   const sku = String(canon || "").trim();
   if (!sku || !confirm(`ลบการผูกรหัส ${sku}?`)) return;
   try {
