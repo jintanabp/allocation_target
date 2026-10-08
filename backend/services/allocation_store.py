@@ -405,8 +405,16 @@ def _ledger_last_sent_at(sup_id: str, month: int, year: int) -> str | None:
 
         from . import sent_ledger
 
+        from .targetsun_endpoints import targetsun_endpoints_summary
+
+        url = str(targetsun_endpoints_summary().get("import_url") or "")
         sends = (sent_ledger.read_ledger(sup_id, month, year) or {}).get("sends") or []
-        ts = [float(s.get("sent_at") or 0) for s in sends if str(s.get("send_status") or "").lower() != "failed"]
+        # นับเฉพาะการส่งไปปลายทางเดียวกับตอนนี้ — ส่งทดสอบไป UAT ไม่ใช่「ส่งแล้ว」ของ Prod
+        ts = [
+            float(s.get("sent_at") or 0) for s in sends
+            if str(s.get("send_status") or "").lower() != "failed"
+            and (not url or not s.get("import_url") or s.get("import_url") == url)
+        ]
         ts = [t for t in ts if t > 0]
         if not ts:
             return None

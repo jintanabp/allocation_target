@@ -824,7 +824,7 @@ def load_employees_payload(
             if df_tga_granular is None or df_tga_granular.empty:
                 # อ่านได้ 0 แถว (เช่นวันที่ 1–14 ตารางยังว่าง) — ห้ามเขียนไฟล์ว่างทับไฟล์ที่มีแถวอยู่แล้ว
                 # (ผลตรวจ 7 ต.ค. 2026 ข19) ขั้นที่ 1 จะตอบ「ยังไม่มีเป้า」อยู่ดี แต่ไฟล์ดีของรอบก่อนต้องไม่หาย
-                if os.path.isfile(p_grain) and os.path.getsize(p_grain) > 200:
+                if _csv_has_data_rows(p_grain):
                     logger.warning("Target Sun ได้ 0 แถว (%s) — ไม่เขียนทับไฟล์ grain เดิม", p_grain)
                 else:
                     atomic_write_csv(p_grain, pd.DataFrame(columns=grain_cols), index=False)
@@ -2514,6 +2514,16 @@ def load_employees_bulk(
     return merged
 
 
+def _csv_has_data_rows(path: str) -> bool:
+    """ไฟล์ CSV มีแถวข้อมูลอย่างน้อย 1 แถว (นอกจากหัวตาราง) — ใช้กันเขียนไฟล์ว่างทับไฟล์ที่มีของ"""
+    try:
+        with open(path, encoding="utf-8") as f:
+            f.readline()
+            return bool(f.readline().strip())
+    except OSError:
+        return False
+
+
 def load_live_targets_payload(
     sup_id: str,
     target_month: int,
@@ -2613,7 +2623,11 @@ def load_live_targets_payload(
     try:
         p_grain = tga_grain_cache_path(sid, target_month, target_year)
         if df_granular is None or df_granular.empty:
-            atomic_write_csv(p_grain, pd.DataFrame(columns=grain_cols), index=False)
+            # ดึงเป้าสดได้ 0 แถว — ไม่เขียนไฟล์ว่างทับไฟล์ที่มีแถว (ตรวจซ้ำ 8 ต.ค. 2026 · เหมือน ข19)
+            if _csv_has_data_rows(p_grain):
+                logger.warning("ดึงเป้าสดได้ 0 แถว (%s) — ไม่เขียนทับไฟล์ grain เดิม", p_grain)
+            else:
+                atomic_write_csv(p_grain, pd.DataFrame(columns=grain_cols), index=False)
         else:
             atomic_write_csv(p_grain, df_granular, index=False)
     except Exception as e:

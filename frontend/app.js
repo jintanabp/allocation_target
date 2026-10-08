@@ -907,14 +907,21 @@ async function ensureGraphToken() {
   }
 }
 
-let _sessionExpiredModalShown = false;
+let _sessionExpiredModalAt = 0;
 function _showSessionExpiredModal(acc) {
-  if (_sessionExpiredModalShown) return;
-  _sessionExpiredModalShown = true;
   const goLogin = () => {
     msalInstance.acquireTokenRedirect({ account: acc, scopes: [GRAPH_USER_READ_SCOPE] })
       .catch((e) => console.error("MS acquireTokenRedirect:", e));
   };
+  // ยังอยู่หน้าล็อกอิน (ไม่มีงานค้าง) — ไปหน้า Microsoft ทันทีเหมือนเดิม ไม่ขึ้นกล่องซ้ำทุกครั้งที่หน้าล็อกอินเช็ค server
+  if (document.getElementById("loginView")?.style.display !== "none") {
+    goLogin();
+    return;
+  }
+  // ขึ้นกล่องไม่เกินทุก 2 นาที — งานเบื้องหลัง (กระดิ่งแจ้งเตือน/บันทึกอัตโนมัติ) ไม่เด้งกล่องซ้ำรัว ๆ
+  const now = Date.now();
+  if (now - _sessionExpiredModalAt < 120000) return;
+  _sessionExpiredModalAt = now;
   try {
     _showInfoModal({
       title: "หมดเวลาการเข้าสู่ระบบ",
@@ -925,7 +932,6 @@ function _showSessionExpiredModal(acc) {
       primaryLabel: "ล็อกอินใหม่",
       secondaryLabel: "ปิด",
       onPrimary: goLogin,
-      onSecondary: () => { _sessionExpiredModalShown = false; },
     });
   } catch {
     goLogin();
@@ -1164,8 +1170,9 @@ function _sendNoAnswerMsg(err) {
   const name = String(err?.name || "");
   const raw = String(err?.message || err || "");
   const timeout = name === "AbortError" || /abort(ed)?/i.test(raw) || /signal is aborted/i.test(raw);
-  return (timeout ? "⚠ รอคำตอบจากการส่งนานเกินเวลา" : "⚠ ไม่ได้รับคำตอบจากการส่ง (การเชื่อมต่อขาด)")
-    + " — ไม่รู้ว่าเข้า Target Sun แล้วหรือยัง · อย่าเพิ่งกดส่งซ้ำ ให้ตรวจยอดใน Target Sun หรือดูประวัติการส่งก่อน";
+  return (timeout ? "⚠ ระบบไม่ได้รับผลการส่งภายในเวลาที่กำหนด" : "⚠ ระบบไม่ได้รับผลการส่ง เนื่องจากการเชื่อมต่อขัดข้อง")
+    + " จึงยังไม่สามารถยืนยันได้ว่าข้อมูลถูกบันทึกใน Target Sun แล้วหรือไม่"
+    + " กรุณาตรวจสอบยอดใน Target Sun หรือประวัติการส่งก่อนดำเนินการส่งอีกครั้ง";
 }
 
 function _userFacingError(err, fallback = "เกิดข้อผิดพลาด กรุณาลองอีกครั้ง") {
@@ -2396,8 +2403,8 @@ async function onManagerViewUnitChange() {
   const prevUnit = S.managerViewUnit;
   S.managerViewUnit = next;
   const ok = await refreshManagerDashboardData();
-  if (!ok) {
-    // โหลดไม่สำเร็จ/ยกเลิก — คืนหน่วยเดิม (ผลตรวจ 7 ต.ค. 2026 ข2)
+  if (ok === false) {
+    // โหลดไม่สำเร็จ/ยกเลิก — คืนหน่วยเดิม (ผลตรวจ 7 ต.ค. 2026 ข2) · null =「กรุณาเลือกภาค」ไม่ใช่ล้ม เก็บหน่วยไว้
     S.managerViewUnit = prevUnit;
     if (sel) sel.value = prevUnit || "";
     _restoreManagerViewState(prevView);
@@ -2650,6 +2657,13 @@ function _managerViewStateSnapshot() {
     supId: S.supId,
     aggregateMode: S.aggregateMode,
     aggregateSupIds: S.aggregateSupIds,
+    // loadData ล้างสถานะรวมภาคพวกนี้ "ก่อน" applyDataPayload — ถ้าไม่จำไว้ โหลดล้มแล้วคืนโหมดรวมภาค
+    // แต่ compositeAllocView=false → แก้ช่องแล้วบันทึกแถวทุกทีมลง snapshot ทีมเดียว (ตรวจซ้ำ 8 ต.ค. 2026)
+    compositeAllocView: S.compositeAllocView,
+    allocSourceBySup: S.allocSourceBySup,
+    targetBoxesBySup: S.targetBoxesBySup,
+    resultFooterSkuMap: S.resultFooterSkuMap,
+    resultFooterScopeSup: S.resultFooterScopeSup,
   };
 }
 
@@ -2669,7 +2683,8 @@ async function onManagerViewModeChange() {
   if (mode === S.managerViewMode) return;
   // ถามเรื่องงานที่ยังไม่บันทึก "ก่อน" เปลี่ยนอะไร — เดิมถามใน refresh หลังตั้งโหมดใหม่แล้ว
   // สลับรวมภาค → รายทีม จึงไม่เคยถาม (เช็คโหมดใหม่ = individual) งานรวมภาคหายเงียบ ๆ
-  if (S._hasUnsaved && S.managerViewMode !== "individual") {
+  // ทั้งสองทิศ: ออกจากรวมภาค (งานรวมภาคหาย) และเข้ารวมภาคจากรายทีม (refresh ล้างผลกระจายทิ้ง) — ตรวจซ้ำ 8 ต.ค.
+  if (S._hasUnsaved && (S.managerViewMode !== "individual" || mode !== "individual")) {
     const go = await _confirmDialog(
       "มีการแก้ไขที่ยังไม่ได้บันทึก\nถ้าเปลี่ยนมุมมองต่อ การแก้ไขนั้นจะหายไป",
       { title: "ยังมีงานที่ไม่ได้บันทึก", okLabel: "เปลี่ยนมุมมองต่อ", cancelLabel: "อยู่หน้าเดิม" }
@@ -2706,7 +2721,7 @@ async function onManagerViewModeChange() {
     return;
   }
   const ok = await refreshManagerDashboardData({ unsavedConfirmed: true });
-  if (!ok) _restoreManagerViewState(prevView);
+  if (ok === false) _restoreManagerViewState(prevView);
 }
 
 async function onManagerViewRegionChange() {
@@ -2720,7 +2735,7 @@ async function onManagerViewRegionChange() {
   const prevView = _managerViewStateSnapshot();
   S.managerViewRegion = reg;
   const ok = await refreshManagerDashboardData();
-  if (!ok) _restoreManagerViewState(prevView);
+  if (ok === false) _restoreManagerViewState(prevView);
 }
 
 /** คืน true เมื่อโหลดสำเร็จจริง (ผลตรวจ 1 ต.ค. 2026 ข6) — ตัวเรียกที่ต้องใช้เป้าใหม่ต้องเช็คค่านี้ */
@@ -2756,7 +2771,7 @@ async function refreshManagerDashboardData(opts = {}) {
       ok = await loadSupervisorRegionAggregate({ refresh: !!opts.refresh });
     } else if (S.managerViewMode === "region" && S.managerViewOptions?.scope_kind === "division" && !S.managerViewRegion) {
       toast("กรุณาเลือกภาค", "amber");
-      return false;
+      return null;  // ยังไม่ได้เลือกภาค — ไม่ใช่โหลดล้ม (ผู้เรียกไม่ต้องคืนมุมมองเดิม)
     } else {
       ok = await loadAggregateData(S.managerViewMode, S.managerViewRegion, {
         refresh: !!opts.refresh,
@@ -10020,7 +10035,9 @@ async function openAllocScopeModal(opts = {}) {
         .map((it) => {
           const when = it.target_sun_sent_at ? _formatAllocUpdatedAt(it.target_sun_sent_at) : "—";
           const st = String(it.status || "").toLowerCase();
-          const note = st === "sent_targetsun" ? "" : " · หลังส่งมีการแก้เพิ่ม";
+          const note = !it.has_snapshot
+            ? " · ผลกระจายในแอปถูกลบ/เริ่มใหม่แล้ว"
+            : (st === "sent_targetsun" ? "" : " · หลังส่งมีการแก้เพิ่ม");
           return `<li><code>${escH(String(it.sup_id || ""))}</code> — ส่งเมื่อ ${escH(when)}${escH(note)}</li>`;
         })
         .join("")}</ul>` +
@@ -11271,13 +11288,13 @@ function _markAllocationSentTargetSun(supId = null) {
 function _handleTargetSunImportResponse(res, j, opts = {}) {
   // ผลตรวจ 7 ต.ค. 2026 ข7: proxy ตอบ 502/504 หรือ 5xx ที่ไม่ใช่คำตอบของแอป (ไม่มี detail) = ไม่รู้ผล
   // ของอาจลงไปแล้ว — เดิมนับแค่ 504 · คำตอบของแอปเอง (มี detail) ยังถือว่าไม่ได้ส่งตามเดิม
-  const _gatewayUnknown = !res.ok && res.status !== 504
-    && (res.status === 502 || (res.status >= 500 && !(j && j.detail)));
+  const _gatewayUnknown = !res.ok && res.status !== 504 && res.status >= 500 && !(j && j.detail);
   if (!res.ok && (res.status === 504 || _gatewayUnknown)) {
     // server หมดเวลารอ Target Sun — ของอาจลงไปแล้ว ห้ามบอกว่าไม่สำเร็จ (ผลตรวจ §2.4)
     opts.uncertain = true;
     toast(
-      "⚠ หมดเวลารอคำตอบจาก Target Sun — ไม่รู้ว่าลงแล้วหรือยัง ตรวจยอดใน Target Sun ก่อนส่งซ้ำ",
+      "⚠ ระบบไม่ได้รับผลตอบกลับจาก Target Sun ภายในเวลาที่กำหนด จึงยังไม่สามารถยืนยันผลการบันทึกได้ "
+        + "กรุณาตรวจสอบยอดใน Target Sun ก่อนดำเนินการส่งอีกครั้ง",
       "red"
     );
     return false;
@@ -11308,7 +11325,8 @@ function _handleTargetSunImportResponse(res, j, opts = {}) {
   if (j.send_status === "unknown") {
     opts.uncertain = true;
     toast(
-      "⚠ Target Sun ตอบกลับแต่ไม่บอกว่ารับข้อมูลหรือไม่ — ตรวจยอดใน Target Sun ก่อนส่งซ้ำ",
+      "⚠ Target Sun ตอบกลับโดยไม่ระบุผลการบันทึก จึงยังไม่สามารถยืนยันได้ว่าข้อมูลถูกบันทึกแล้วหรือไม่ "
+        + "กรุณาตรวจสอบยอดใน Target Sun ก่อนดำเนินการส่งอีกครั้ง",
       "red"
     );
     return false;
@@ -13147,6 +13165,8 @@ async function restartAllocation() {
   // autosave ที่ค้างคิวอยู่ ต้องไม่ไปเขียนผลเดิมกลับหลังลบ (ผลตรวจ 7 ต.ค. 2026 ข5)
   clearTimeout(_serverAllocSaveTimer);
   _serverAllocSaveTimer = null;
+  clearTimeout(_regionalAllocSaveTimer);
+  _regionalAllocSaveTimer = null;
   // ลบต่อคิวการบันทึก — ตัวที่กำลังยิงอยู่ต้องจบก่อน ไม่งั้น PUT ที่ช้ามาถึงหลัง DELETE แล้วคืนชีพผลเดิม
   await _withSaveLock(() => deleteServerAllocationSnapshot(sid));
   _resetRegionalSaveFingerprints();
@@ -13584,7 +13604,7 @@ function _renderAllocationSummaryRows(items) {
       it.target_sun_sent_at && statusKey !== "sent_targetsun"
         ? ` <span class="admin-inv-muted" title="ส่งเข้า Target Sun ครั้งล่าสุดเมื่อ ${escapeHtml(
             _formatAllocUpdatedAt(it.target_sun_sent_at)
-          )} — หลังจากนั้นมีการแก้เพิ่ม">(เคยส่งแล้ว)</span>`
+          )} — ${it.has_snapshot ? "หลังจากนั้นมีการแก้เพิ่ม" : "ผลกระจายในแอปถูกลบ/เริ่มใหม่แล้ว แต่เป้าใน Target Sun ยังเป็นค่าที่ส่งไป"}">(เคยส่งแล้ว)</span>`
         : "";
     const viewBtn = it.has_snapshot
       ? `<button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="viewAllocationSnapshot('${escapeHtml(sid)}')">ดู</button>`

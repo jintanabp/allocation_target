@@ -71,6 +71,9 @@ _PROTECTED_CONFIGS = (
     "config/sl_links.json",
     "config/sku_links.json",
     "config/access_hierarchy.json",
+    # ย้ายจาก config/ มา data/ (ผลตรวจ 7 ต.ค. 2026 ข10) — เทสที่ลืม env override จะแก้ข้อมูลจริงบนเครื่อง dev
+    "data/emp_assignments.json",
+    "data/no_target_employees.json",
     # persist_hierarchy เขียนคู่กับ access_hierarchy.json เสมอ แต่ path มาจาก
     # _repo_root() ไม่มี env คุม — ถ้าเทสต์ลืม patch จะค้างข้อมูลปลอมจนกว่าจะ rebuild
     "data/managers_cache.json",

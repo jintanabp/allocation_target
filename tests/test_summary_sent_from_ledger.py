@@ -28,8 +28,13 @@ class TestSummarySentFromLedger(unittest.TestCase):
             os.environ, {"ALLOCATIONS_DATA_DIR": os.path.join(self._tmp.name, "data", "allocations")}
         )
         self._env_alloc.start()
+        self._ep = __import__("unittest").mock.patch(
+            "backend.services.targetsun_endpoints.targetsun_endpoints_summary", return_value={"import_url": "U"}
+        )
+        self._ep.start()
 
     def tearDown(self):
+        self._ep.stop()
         self._env_alloc.stop()
         os.chdir(self._cwd)
         self._tmp.cleanup()
@@ -42,6 +47,11 @@ class TestSummarySentFromLedger(unittest.TestCase):
 
     def test_failed_send_not_counted(self):
         sent_ledger.record_send("SLZZS", 11, 2026, [ROW], token="t", send_status="failed", import_url="U")
+        [row] = allocation_store.list_summaries(["SLZZS"], 11, 2026)
+        self.assertNotIn("target_sun_sent_at", row)
+
+    def test_send_to_other_destination_not_counted(self):
+        sent_ledger.record_send("SLZZS", 11, 2026, [ROW], token="t", send_status="ok", import_url="UAT")
         [row] = allocation_store.list_summaries(["SLZZS"], 11, 2026)
         self.assertNotIn("target_sun_sent_at", row)
 
@@ -64,8 +74,13 @@ class TestStrictModeAllowsIntentionalUnconditional(unittest.TestCase):
             os.environ, {"ALLOCATIONS_DATA_DIR": os.path.join(self._tmp.name, "data", "allocations")}
         )
         self._env_alloc.start()
+        self._ep = __import__("unittest").mock.patch(
+            "backend.services.targetsun_endpoints.targetsun_endpoints_summary", return_value={"import_url": "U"}
+        )
+        self._ep.start()
 
     def tearDown(self):
+        self._ep.stop()
         self._env_alloc.stop()
         os.chdir(self._cwd)
         self._tmp.cleanup()
