@@ -214,6 +214,13 @@ def main() -> int:
     # ── ทางที่สาม: เป้าเปลี่ยนหลังเปิดงวด ───────────────────────────────
     print("[5] ทางที่สาม — เป้าเปลี่ยนหลังเปิดงวดครั้งแรก")
     base = _read_json(_data("baselines", f"{suffix}.json"))
+    # เป้าตั้งต้นปรับรุ่นได้จนกว่าจะส่งครั้งแรก (12 ต.ค. 2026) — "ตอนเปิดครั้งแรก" คือรุ่น 1 ใน history/
+    if base and base.get("previous_revisions"):
+        _first = base["previous_revisions"][0]
+        _hist = _read_json(_data("baselines", "history", str(_first.get("file") or "")))
+        if _hist:
+            print(f"    (เป้าตั้งต้นมี {len(base['previous_revisions']) + 1} รุ่น — ใช้รุ่นแรกเทียบ)")
+            base = _hist
     if not base:
         print(f"    ไม่มี data/baselines/{suffix}.json — งวดนี้ยังไม่เคยเก็บเป้าตั้งต้น")
     else:

@@ -7,8 +7,12 @@
 และไม่มีทางกู้กลับ — ผู้ใช้ต้องไปไล่หาเอาเองใน Target Sun
 
 หลักการ:
-  - **เขียนครั้งเดียว** ตอนงวดนั้นถูกเปิดครั้งแรก แล้วไม่แตะอีกเลย
-    (ถ้าเขียนทับเรื่อย ๆ ก็จะกลายเป็นสำเนาของค่าล่าสุด = ไม่มีประโยชน์)
+  - เก็บตอนงวดนั้นถูกเปิดครั้งแรก · **ก่อนระบบเราส่งงวดนั้นครั้งแรก** ถ้าเป้าใน Target Sun เปลี่ยน
+    (HQ ลงเป้าทีละส่วนช่วงวันที่ 15) ระบบเก็บชุดใหม่เป็น "รุ่นถัดไป" และเก็บรุ่นเก่าไว้ใน history/
+    (OPEN_ITEMS 10.4 — ผู้ใช้เลือก 12 ต.ค. 2026: เดิมจำชุดแรกที่อาจลงไม่ครบไว้ตลอด)
+    ช่วงนั้นค่าใน Target Sun ยังเป็นของ HQ ล้วน ๆ จึงเชื่อได้
+  - **ส่งครั้งแรกแล้ว = ล็อก ไม่แตะอีกเลย** (หลังส่ง ค่าใน Target Sun มีค่าที่เราส่งปนอยู่)
+  - รุ่นเก่าไม่ลบ — ดูย้อนได้ว่า HQ ลงเป้ากี่รอบ แต่ละรอบเท่าไร
   - เก็บทั้งเป้าหีบราย SKU และเป้าเงินราย emp เพราะทั้งคู่หายได้พอกัน
   - ไม่มีอะไรในระบบลบไฟล์นี้อัตโนมัติ — ตัวล้าง cache ตามอายุวนเฉพาะไฟล์ชั้นบนใน data/
 """
@@ -100,31 +104,133 @@ def capture_baseline_once(
     captured_by: str | None = None,
 ) -> bool:
     """
-    เก็บเป้าตั้งต้นถ้ายังไม่เคยเก็บ — คืน True เมื่อเพิ่งเขียนไฟล์
+    เก็บเป้าตั้งต้น — คืน True เมื่อเพิ่งเขียนไฟล์ (ครั้งแรก หรือรุ่นใหม่ก่อนส่งครั้งแรก)
 
-    ห้ามเขียนทับของเดิมเด็ดขาด นั่นคือคุณค่าทั้งหมดของไฟล์นี้
+    ยังไม่มี = เก็บ · มีแล้วและยังไม่เคยส่งงวดนี้ + เป้าเปลี่ยน = เก็บรุ่นใหม่ (รุ่นเก่าไป history/)
+    ส่งแล้ว = ห้ามเขียนทับเด็ดขาด นั่นคือคุณค่าทั้งหมดของไฟล์นี้
     ล้มเหลวแล้วไม่ throw — การเก็บหลักฐานต้องไม่ทำให้การโหลดหน้าจอพัง
     """
     try:
         path = target_baseline_path(sup_id, month, year)
-        if os.path.isfile(path):
-            return False
         skus = _sku_rows(df_sku)
         emps = _emp_rows(df_sun)
         if not skus and not emps:
             return False   # ไม่มีอะไรให้เก็บ อย่าสร้างไฟล์เปล่าไว้กันการเก็บครั้งหน้า
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        # "เช็คว่ายังไม่มี → เขียน" ต้องอยู่ใต้ล็อกเดียวกัน — เปิดงวดใหม่พร้อมกันสองแท็บ
-        # ครั้งแรก ทั้งคู่ผ่านด่าน isfile ข้างบนได้ แล้วคนที่สองเขียนทับของคนแรกเงียบ ๆ
-        # (ผิดสัญญา "เขียนครั้งเดียว") · ล็อกเป็น RLock ต่อ path ตัวเดียวกับที่
+        # "เช็ค → เขียน" ต้องอยู่ใต้ล็อกเดียวกัน — เปิดงวดใหม่พร้อมกันสองแท็บ ทั้งคู่ผ่านด่านได้
+        # แล้วคนที่สองเขียนทับของคนแรกเงียบ ๆ · ล็อกเป็น RLock ต่อ path ตัวเดียวกับที่
         # atomic_write_json ใช้ จึงซ้อนกันได้ไม่ deadlock (ใช้ได้เฉพาะ 1 worker เหมือนทั้งโมดูล)
         with read_locked(path):
-            if os.path.isfile(path):
-                return False
-            return _write_baseline(path, sup_id, month, year, skus, emps, captured_by)
+            if not os.path.isfile(path):
+                return _write_baseline(path, sup_id, month, year, skus, emps, captured_by)
+            return _maybe_revise_before_first_send(path, sup_id, month, year, skus, emps, captured_by)
     except Exception as e:
         logger.warning("เก็บเป้าตั้งต้นไม่สำเร็จ (%s %s-%02d): %s", sup_id, year, month, e)
         return False
+
+
+def _target_signature(skus, emps) -> tuple:
+    """
+    สิ่งที่ถือว่า "เป้าเปลี่ยน" — หีบราย SKU + รายชื่อพนักงาน
+    ไม่นับเป้าเงิน: target_sun = หีบ × ราคา จึงขยับตามแหล่งราคา (Fabric ล่ม → ราคาแคชเก่า/0) ไม่ใช่ HQ เปลี่ยนเป้า
+    (ตรวจซ้ำ 12 ต.ค. 2026 — เดิมนับเป้าเงินด้วย ราคากระพริบแล้วเก็บรุ่นใหม่วนไปมา หรือเก็บเป้าเงิน 0 แล้วล็อก)
+    """
+    return (
+        tuple((x["sku"], int(x["supervisor_target_boxes"])) for x in skus or []),
+        tuple(sorted(str(x["emp_id"]) for x in emps or [])),
+    )
+
+
+def baseline_history_dir() -> str:
+    return os.path.join("data", "baselines", "history")
+
+
+def _maybe_revise_before_first_send(path, sup_id, month, year, skus, emps, captured_by) -> bool:
+    """
+    มีเป้าตั้งต้นอยู่แล้ว — เก็บรุ่นใหม่เฉพาะเมื่อ (1) ระบบเรายังไม่เคยส่งงวดนี้ และ (2) เป้าเปลี่ยนจริง
+    รุ่นเดิมย้ายไป history/ ไม่ลบ · คืน True เมื่อเขียนรุ่นใหม่
+    """
+    import json
+
+    with open(path, encoding="utf-8") as f:
+        cur = json.load(f)
+    if cur.get("captured_after_send") or _period_maybe_sent(sup_id, month, year):
+        return False  # ส่งไปแล้ว (หรืออาจส่งแล้ว) = ล็อก
+    old_skus = cur.get("skus") or []
+    old_emps = cur.get("employees") or []
+    if _target_signature(old_skus, old_emps) == _target_signature(skus, emps):
+        return False
+    # ราคาดึงไม่ได้ตอนนี้ (เป้าเงินรวม 0 ทั้งที่มีหีบ) — อย่าเอาชุดนี้มาแทน รอโหลดรอบหน้าที่ราคาครบ
+    if sum(x["supervisor_target_boxes"] for x in skus) > 0 and sum(float(x["target_sun"]) for x in emps) <= 0:
+        logger.warning("ไม่ปรับเป้าตั้งต้น %s %s-%02d: เป้าเงินรวมเป็น 0 (ราคายังดึงไม่ได้)", sup_id, year, month)
+        return False
+    rev = int(cur.get("revision") or 1)
+    hist_dir = baseline_history_dir()
+    os.makedirs(hist_dir, exist_ok=True)
+    base_name = os.path.splitext(os.path.basename(path))[0]
+    hist_path = os.path.join(hist_dir, f"{base_name}_r{rev}.json")
+    n = 1
+    while os.path.exists(hist_path):  # ห้ามทับประวัติ
+        n += 1
+        hist_path = os.path.join(hist_dir, f"{base_name}_r{rev}_{n}.json")
+    atomic_write_json(hist_path, cur, indent=2)
+    previous = list(cur.get("previous_revisions") or []) + [{
+        "revision": rev,
+        "captured_at": cur.get("captured_at"),
+        "captured_by": cur.get("captured_by"),
+        "total_target_boxes": cur.get("total_target_boxes"),
+        "total_target_sun": cur.get("total_target_sun"),
+        "sku_count": len(old_skus),
+        "file": os.path.basename(hist_path),
+    }]
+    logger.info(
+        "ปรับเป้าตั้งต้น %s %s-%02d เป็นรุ่น %d (ยังไม่เคยส่ง · เป้าใน Target Sun เปลี่ยน): หีบ %s -> %d",
+        sup_id, year, month, rev + 1, cur.get("total_target_boxes"), sum(x["supervisor_target_boxes"] for x in skus),
+    )
+    wrote = _write_baseline(path, sup_id, month, year, skus, emps, captured_by,
+                            revision=rev + 1, previous_revisions=previous)
+    # หน้า log ของแอดมินต้องเห็นว่าเป้าใน Target Sun เปลี่ยนก่อนส่ง (เดิมขึ้นเป็น "เป้าต่างจากตั้งต้น")
+    try:
+        from .usage_log_store import append_log
+
+        append_log(
+            level="info", email="", role="system", sup_id=str(sup_id or "").strip().upper(),
+            action="target_baseline_revised",
+            message=(
+                f"เป้าใน Target Sun เปลี่ยนก่อนส่งครั้งแรก — เก็บเป้าตั้งต้นรุ่น {rev + 1} "
+                f"(หีบ {cur.get('total_target_boxes')} → {sum(x['supervisor_target_boxes'] for x in skus)})"
+            ),
+            detail=f"รุ่นเดิมเก็บไว้ที่ history/{os.path.basename(hist_path)}",
+            target_month=int(month), target_year=int(year),
+        )
+    except Exception as e:
+        logger.warning("จด log การปรับเป้าตั้งต้นไม่สำเร็จ: %s", e)
+    return wrote
+
+
+def _period_maybe_sent(sup_id, month, year) -> bool:
+    """
+    ทีม×งวดนี้ "อาจส่งแล้ว" ไหม — ใช้ล็อกเป้าตั้งต้น ต้องเอียงไปทางล็อก (ตรวจซ้ำ 12 ต.ค. 2026):
+    ledger มีการส่ง · ไฟล์ ledger มีแต่อ่านไม่ได้ (antivirus ถือไฟล์) · มีสำเนาแถวก่อนส่ง (เขียนตอนกดส่งเสมอ)
+    """
+    if _ledger_has_sends(sup_id, month, year):
+        return True
+    try:
+        from . import sent_ledger
+        from .ts_row_snapshots import first_snapshot_path, presend_dir
+
+        lp = sent_ledger.ledger_path(sup_id, month, year)
+        if os.path.isfile(lp) and sent_ledger.read_ledger(sup_id, month, year) is None:
+            return True
+        if os.path.isfile(first_snapshot_path(sup_id, month, year)):
+            return True
+        d = presend_dir(sup_id, month, year)
+        if os.path.isdir(d) and any(n.endswith(".json") for n in os.listdir(d)):
+            return True
+    except Exception as e:
+        logger.warning("ตรวจว่าเคยส่งงวดนี้ไหมไม่ได้ (%s %s-%02d) — ถือว่าอาจส่งแล้ว: %s", sup_id, year, month, e)
+        return True
+    return False
 
 
 def _ledger_has_sends(sup_id, month, year) -> bool:
@@ -137,7 +243,8 @@ def _ledger_has_sends(sup_id, month, year) -> bool:
         return False
 
 
-def _write_baseline(path, sup_id, month, year, skus, emps, captured_by) -> bool:
+def _write_baseline(path, sup_id, month, year, skus, emps, captured_by, *, revision: int = 1,
+                    previous_revisions: list | None = None) -> bool:
     after_send = _ledger_has_sends(sup_id, month, year)
     if after_send:
         # ผลตรวจ 7 ต.ค. 2026 ก5/A1: เปิดงวดครั้งแรกหลังเราส่งไปแล้ว (เช่น data/ หายตอน deploy หรือ
@@ -154,6 +261,9 @@ def _write_baseline(path, sup_id, month, year, skus, emps, captured_by) -> bool:
         "total_target_sun": round(sum(e["target_sun"] for e in emps), 2),
         "skus": skus,
         "employees": emps,
+        # รุ่นของเป้าตั้งต้น — ปรับได้จนกว่าจะส่งงวดนี้ครั้งแรก (OPEN_ITEMS 10.4) · รุ่นเก่าอยู่ใน history/
+        "revision": int(revision),
+        "previous_revisions": list(previous_revisions or []),
     }
     atomic_write_json(path, doc, indent=2)
     logger.info(

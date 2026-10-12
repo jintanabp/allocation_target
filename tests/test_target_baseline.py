@@ -66,13 +66,71 @@ class TestCaptureOnce(_TmpCwd):
         self.assertTrue(made)
         self.assertTrue(os.path.isfile(target_baseline_path(SUP, 9, 2026)))
 
-    def test_never_overwrites(self):
-        """คุณค่าทั้งหมดของไฟล์นี้คือ 'ไม่ถูกทับ' — ถ้าทับได้ก็เป็นแค่สำเนาค่าล่าสุด"""
+    def test_never_overwrites_after_first_send(self):
+        """ส่งงวดนี้แล้ว = ล็อก — ค่าใน Target Sun หลังส่งมีค่าที่เราส่งปนอยู่ ถ้าทับก็เป็นแค่สำเนาค่าล่าสุด"""
+        from unittest.mock import patch
+
         capture_baseline_once(SUP, 9, 2026, _sku([("A", 100, 12.5)]), _sun([("E1", 500.0)]))
-        made2 = capture_baseline_once(SUP, 9, 2026, _sku([("A", 999, 12.5)]), _sun([("E1", 1.0)]))
+        with patch("backend.services.target_baseline._ledger_has_sends", return_value=True):
+            made2 = capture_baseline_once(SUP, 9, 2026, _sku([("A", 999, 12.5)]), _sun([("E1", 1.0)]))
         self.assertFalse(made2)
         base = read_baseline(SUP, 9, 2026)
-        self.assertEqual(base["skus"][0]["supervisor_target_boxes"], 100, "ต้องเป็นค่าชุดแรกเสมอ")
+        self.assertEqual(base["skus"][0]["supervisor_target_boxes"], 100, "ส่งแล้วต้องเป็นค่าเดิมเสมอ")
+
+    def test_revises_before_first_send_and_keeps_history(self):
+        """
+        OPEN_ITEMS 10.4: HQ ลงเป้าทีละส่วนช่วงวันที่ 15 — เปิดงวดตอนลงครึ่งเดียวแล้วจำค่าครึ่งเดียวไว้ตลอด
+        ก่อนส่งครั้งแรก เป้าเปลี่ยน = เก็บรุ่นใหม่ · รุ่นเก่าไม่ลบ (history/)
+        """
+        capture_baseline_once(SUP, 9, 2026, _sku([("A", 50, 12.5)]), _sun([("E1", 250.0)]), captured_by="t1")
+        made2 = capture_baseline_once(SUP, 9, 2026, _sku([("A", 100, 12.5), ("B", 30, 5.0)]),
+                                      _sun([("E1", 500.0)]), captured_by="t2")
+        self.assertTrue(made2)
+        base = read_baseline(SUP, 9, 2026)
+        self.assertEqual(base["total_target_boxes"], 130)
+        self.assertEqual(base["revision"], 2)
+        self.assertEqual(base["previous_revisions"][0]["total_target_boxes"], 50)
+        hist = os.listdir(os.path.join("data", "baselines", "history"))
+        self.assertEqual(len(hist), 1)
+        import json
+
+        with open(os.path.join("data", "baselines", "history", hist[0]), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["total_target_boxes"], 50)
+
+    def test_same_targets_or_price_only_change_does_not_revise(self):
+        """เป้าเงินรายคน = หีบ × ราคา — ราคาขยับ (แคช/Fabric ล่ม) ทำให้เงินขยับตาม แต่ไม่ใช่ HQ เปลี่ยนเป้า"""
+        capture_baseline_once(SUP, 9, 2026, _sku([("A", 100, 12.5)]), _sun([("E1", 1250.0)]))
+        self.assertFalse(capture_baseline_once(SUP, 9, 2026, _sku([("A", 100, 12.5)]), _sun([("E1", 1250.0)])))
+        self.assertFalse(capture_baseline_once(SUP, 9, 2026, _sku([("A", 100, 13.0)]), _sun([("E1", 1300.0)])))
+        self.assertFalse(capture_baseline_once(SUP, 9, 2026, _sku([("A", 100, 0.0)]), _sun([("E1", 0.0)])))
+        self.assertEqual(read_baseline(SUP, 9, 2026).get("revision"), 1)
+        self.assertFalse(os.path.isdir(os.path.join("data", "baselines", "history")))
+
+    def test_never_revises_to_zero_money_when_prices_missing(self):
+        """เป้าเปลี่ยนจริงแต่ราคายังดึงไม่ได้ (เงินรวม 0) — รอรอบที่ราคาครบ ไม่เก็บชุดเงิน 0 แล้วไปล็อก"""
+        capture_baseline_once(SUP, 9, 2026, _sku([("A", 50, 10.0)]), _sun([("E1", 500.0)]))
+        self.assertFalse(capture_baseline_once(SUP, 9, 2026, _sku([("A", 80, 0.0)]), _sun([("E1", 0.0)])))
+        self.assertEqual(read_baseline(SUP, 9, 2026)["total_target_boxes"], 50)
+        self.assertTrue(capture_baseline_once(SUP, 9, 2026, _sku([("A", 80, 10.0)]), _sun([("E1", 800.0)])))
+
+    def test_locked_when_send_evidence_exists_even_if_ledger_unreadable(self):
+        """ล็อกต้องเอียงไปทางล็อก: ledger อ่านไม่ได้ / มีสำเนาแถวก่อนส่ง = ถือว่าอาจส่งแล้ว"""
+        from backend.services import sent_ledger
+        from backend.services.ts_row_snapshots import presend_dir
+
+        capture_baseline_once(SUP, 9, 2026, _sku([("A", 50, 10.0)]), _sun([("E1", 500.0)]))
+        lp = sent_ledger.ledger_path(SUP, 9, 2026)
+        os.makedirs(os.path.dirname(lp), exist_ok=True)
+        with open(lp, "w", encoding="utf-8") as f:
+            f.write("{broken")
+        self.assertFalse(capture_baseline_once(SUP, 9, 2026, _sku([("A", 99, 10.0)]), _sun([("E1", 990.0)])))
+        os.remove(lp)
+        d = presend_dir(SUP, 9, 2026)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "x.json"), "w", encoding="utf-8") as f:
+            f.write("{}")
+        self.assertFalse(capture_baseline_once(SUP, 9, 2026, _sku([("A", 99, 10.0)]), _sun([("E1", 990.0)])))
+        self.assertEqual(read_baseline(SUP, 9, 2026)["total_target_boxes"], 50)
 
     def test_does_not_create_an_empty_file(self):
         """ไฟล์เปล่าจะกันการเก็บครั้งหน้าไว้ตลอดกาล — ต้องไม่สร้าง"""
@@ -138,10 +196,12 @@ class TestCaptureOnceConcurrent(_TmpCwd):
             t1.join(5)
             t2.join(5)
 
-        self.assertEqual(results, {"first": True, "second": False})
+        # คำขอที่สองรอคำขอแรกเขียนเสร็จ แล้วจึงเห็นว่าเป้าเปลี่ยน (ยังไม่เคยส่ง) → เก็บเป็นรุ่น 2
+        # ไม่มีใครเขียนทับกันกลางทาง และรุ่นแรกยังอยู่ใน history (OPEN_ITEMS 10.4)
+        self.assertEqual(results, {"first": True, "second": True})
         doc = read_baseline(SUP, 9, 2026)
-        self.assertEqual(doc["captured_by"], "first")
-        self.assertEqual(doc["total_target_boxes"], 10)
+        self.assertEqual((doc["captured_by"], doc["revision"], doc["total_target_boxes"]), ("second", 2, 99))
+        self.assertEqual(doc["previous_revisions"][0]["total_target_boxes"], 10)
 
 
 class TestDiff(_TmpCwd):

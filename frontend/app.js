@@ -20134,7 +20134,17 @@ async function adminShowTargetBaseline(supId, month, year) {
     `<span class="tchange-chip tchange-chip--box">${Number(base.total_target_boxes || 0).toLocaleString("th-TH")} หีบ</span>` +
     `<span class="tchange-chip">${(base.skus || []).length} SKU</span>` +
     `<span class="tchange-chip">${(base.employees || []).length} คน</span>` +
-    `</div>`;
+    (Number(base.revision) > 1 ? `<span class="tchange-chip">รุ่นที่ ${Number(base.revision)}</span>` : "") +
+    `</div>` +
+    // รุ่นก่อนหน้า — เป้าใน Target Sun เปลี่ยนก่อนส่งครั้งแรก (HQ ลงเป้าทีละส่วน) ระบบเก็บชุดใหม่ให้เอง (OPEN_ITEMS 10.4)
+    (Array.isArray(base.previous_revisions) && base.previous_revisions.length
+      ? `<p style="margin:0 0 10px;line-height:1.7;font-size:13px;color:var(--text-2);">` +
+        `เป้าใน Target Sun เปลี่ยนก่อนส่งครั้งแรก ระบบจึงเก็บเป้าตั้งต้นเป็นชุดล่าสุดให้ (ส่งครั้งแรกแล้วจะไม่เปลี่ยนอีก) · รุ่นก่อนหน้า: ` +
+        base.previous_revisions.map((r) =>
+          `รุ่น ${escapeHtml(String(r.revision))} — ${Number(r.total_target_boxes || 0).toLocaleString("th-TH")} หีบ ` +
+          `(${escapeHtml(r.captured_at ? new Date(r.captured_at).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" }) : "—")})`
+        ).join(" · ") + `</p>`
+      : "");
 
   if (!data) {
     // ไม่มีเป้าตั้งต้นแบบสรุป — แสดงเฉพาะส่วนไฟล์คืนค่าข้างล่าง
