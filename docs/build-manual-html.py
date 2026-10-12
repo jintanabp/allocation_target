@@ -131,7 +131,12 @@ def md_to_body(md: str) -> tuple[str, list[tuple[str, str]]]:
         tag = list_type or "ul"
         out.append(f"<{tag}>")
         for item in list_buf:
-            out.append(f"<li>{inline_md(item)}</li>")
+            text, subs = item if isinstance(item, list) else (item, [])
+            sub_html = (
+                "<ul class=\"sub\">" + "".join(f"<li>{inline_md(x)}</li>" for x in subs) + "</ul>"
+                if subs else ""
+            )
+            out.append(f"<li>{inline_md(text)}{sub_html}</li>")
         out.append(f"</{tag}>")
         list_buf = []
         list_type = None
@@ -220,9 +225,30 @@ def md_to_body(md: str) -> tuple[str, list[tuple[str, str]]]:
             i += 1
             continue
 
+        # รายการย่อย / บรรทัดต่อของข้อในรายการ (เยื้องเข้า) — เดิมถูกแบนเป็นข้อระดับเดียวกัน อ่านแล้วงง
+        indent = len(line) - len(line.lstrip(" "))
+        if list_buf and indent >= 2 and stripped:
+            last = list_buf[-1]
+            if not isinstance(last, list):
+                last = [last, []]
+                list_buf[-1] = last
+            if stripped.startswith("- "):
+                last[1].append(stripped[2:])
+            elif last[1]:
+                last[1][-1] = last[1][-1] + " " + stripped
+            else:
+                last[0] = last[0] + " " + stripped
+            i += 1
+            continue
+
         if stripped.startswith("> "):
             flush_list()
-            out.append(f'<blockquote class="note">{inline_md(stripped[2:])}</blockquote>')
+            # บรรทัด > ติดกันหลายบรรทัด = กล่องเดียว
+            parts = [stripped[2:]]
+            while i + 1 < len(lines) and lines[i + 1].strip().startswith("> "):
+                i += 1
+                parts.append(lines[i].strip()[2:])
+            out.append(f'<blockquote class="note">{inline_md(" ".join(parts))}</blockquote>')
             i += 1
             continue
 
@@ -230,7 +256,7 @@ def md_to_body(md: str) -> tuple[str, list[tuple[str, str]]]:
         if om:
             if list_type not in (None, "ol"):
                 flush_list()
-                list_type = "ol"
+            list_type = "ol"  # เดิมตั้งเฉพาะตอนเปลี่ยนชนิด → รายการลำดับเลขทุกอันกลายเป็นจุด
             list_buf.append(om.group(2))
             i += 1
             continue
@@ -238,7 +264,7 @@ def md_to_body(md: str) -> tuple[str, list[tuple[str, str]]]:
         if stripped.startswith("- "):
             if list_type not in (None, "ul"):
                 flush_list()
-                list_type = "ul"
+            list_type = "ul"
             list_buf.append(stripped[2:])
             i += 1
             continue
@@ -288,6 +314,8 @@ CSS = """
   --warn-brd: #fcd34d;
 }
 * { box-sizing: border-box; }
+ul.sub { margin: 6px 0 4px; padding-left: 1.4em; list-style: circle; }
+ul.sub li { margin: 3px 0; }
 body {
   margin: 0;
   font-family: 'Sarabun', 'Segoe UI', sans-serif;
@@ -674,7 +702,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <div class="print-bar">
       <div class="print-bar__text">
         <strong>📖 คู่มือ Target Allocation</strong>
-        <span class="print-bar__tip">สำหรับหัวหน้าทีมขายและผู้จัดการ · ต้องการพิมพ์หรือเก็บเป็น PDF กดปุ่มด้านขวา (หรือ Ctrl+P)</span>
+        <span class="print-bar__tip">สำหรับ Supervisor และ Manager · ต้องการพิมพ์หรือเก็บเป็น PDF กดปุ่มด้านขวา (หรือ Ctrl+P)</span>
       </div>
       <div class="print-bar__actions">
         <button type="button" onclick="window.print()">🖨️ พิมพ์ / บันทึก PDF</button>
