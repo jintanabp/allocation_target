@@ -674,7 +674,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <div class="print-bar">
       <div class="print-bar__text">
         <strong>📖 คู่มือ Target Allocation</strong>
-        <span class="print-bar__tip">บันทึก PDF แบบ<strong>ไม่มีวันที่/ชื่อไฟล์</strong>ด้านบนล่าง: รัน <code style="background:#312e81;padding:1px 6px;border-radius:4px;">python docs/build-manual-html.py --pdf</code> · หรือ Ctrl+P แล้ว<strong> ปิด Headers and footers</strong> (Edge: ตั้งค่าเพิ่มเติม → หัวกระดาษและท้ายกระดาษ)</span>
+        <span class="print-bar__tip">สำหรับหัวหน้าทีมขายและผู้จัดการ · ต้องการพิมพ์หรือเก็บเป็น PDF กดปุ่มด้านขวา (หรือ Ctrl+P)</span>
       </div>
       <div class="print-bar__actions">
         <button type="button" onclick="window.print()">🖨️ พิมพ์ / บันทึก PDF</button>
@@ -689,7 +689,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <article>
       <header class="hero">
         <h1>คู่มือการใช้งาน Target Allocation</h1>
-        <p class="lead">ระบบกระจายเป้าหมาย (หีบ) ให้พนักงานขายรายคน</p>
+        <p class="lead">ระบบกระจายเป้าหมาย (หีบ) ให้พนักงานขายรายคน — คู่มือสำหรับผู้ใช้</p>
       </header>
       {body}
     </article>
@@ -752,9 +752,10 @@ def main() -> int:
     page = HTML_TEMPLATE.format(css=CSS, toc_links=toc_links, body=body)
     for out_path in OUT_PATHS:
         html_out = page
+        # ฝังรูปทุกไฟล์ — HTML ไฟล์เดียวเปิดได้ทั้งจากในแอปและแนบอีเมลให้ผู้ใช้ (รูปไม่หลุด)
         if out_path.parent.name == "frontend":
             html_out = html_out.replace('src="images/', 'src="manual-images/')
-            html_out = embed_local_images(html_out)
+        html_out = embed_local_images(html_out)
         out_path.write_text(html_out, encoding="utf-8")
         print(f"Wrote {out_path}")
     if IMAGES_SRC.is_dir():
