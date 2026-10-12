@@ -1514,16 +1514,24 @@ async function loadRegionalCompositeAllocationView(gen = null) {
   if (!supOrder.length) return false;
 
   S.allocSourceBySup = {};
+  // เวอร์ชันผลกระจายของแต่ละทีมที่ผู้จัดการเห็นตอนโหลด — ใช้กันบันทึก/ส่งทับงานที่ซุปเพิ่งแก้
+  // (ตรวจก่อนใช้จริง 12 ต.ค. 2026) · 0 = ทีมยังไม่มีผลกระจายบน server ตอนโหลด
+  S.regionalKnownVersion = {};
+  S.regionalConflictSups = new Set();
   const allRows = [];
 
   const parts = await Promise.all(supOrder.map(async (supId) => {
     if (gen != null && _isDashboardLoadStale(gen)) return [];
     let snap = null;
+    let snapReadFailed = false;
     try {
       snap = await _fetchServerAllocationSnapshot(supId);
     } catch {
       snap = null;
+      snapReadFailed = true;
     }
+    // อ่านไม่ได้ = ไม่รู้เวอร์ชัน → ไม่ใส่ (บันทึก/ส่งทีมนี้แบบเดิม) ห้ามถือเป็น 0 ไม่งั้นชนปลอมว่ามีคนแก้
+    if (!snapReadFailed) S.regionalKnownVersion[supId] = Number(snap?.version) || 0;
     if (_snapshotUsableForComposite(snap)) {
       S.allocSourceBySup[supId] = "snapshot";
       let rows = _filterAllocsForSup(snap.allocations, supId);
@@ -6945,7 +6953,8 @@ async function runOptimization() {
         qs("#resultBlock").scrollIntoView({ behavior: "smooth", block: "start" });
         if (_regionalAggregateWritable()) {
           S.compositeAllocView = true;
-          const saved = await saveRegionalAllocationSnapshots(displayAllocs, "optimized");
+          // กระจายใหม่ทั้งภาค (ยืนยันในกล่องขอบเขตแล้ว) = ตั้งใจทับทุกทีม
+          const saved = await saveRegionalAllocationSnapshots(displayAllocs, "optimized", { overwriteAll: true });
           for (const supId of saved || []) {
             S.allocSourceBySup[supId] = "snapshot";
           }
@@ -11483,7 +11492,9 @@ function _markAllocationSentTargetSun(supId = null) {
     noPreconditionReason: "mark_sent",
     ...(team ? { allocations: team.rows, yellow: team.yellow, yellow_locked: team.yellowLocked } : {}),
   })
-    .then(() => {
+    .then((saved) => {
+      // ป้ายสถานะขั้นที่ 3 ต้องขึ้น「ส่งแล้ว」ทันที ไม่ใช่รอโหลดใหม่ (ตรวจก่อนใช้จริง 12 ต.ค. 2026)
+      if (saved && sid === String(S.supId || "").trim().toUpperCase()) updateStep3SnapshotBadge(saved);
       _invalidateAllocSnapshotCache(sid);
       _invalidateAllocationSummaryCache(true);
       loadAllocationSummary(true);
@@ -11830,6 +11841,31 @@ async function _doLakehouseUploadInner() {
   if (S.targetSunPreviewMode) {
     if (!await _confirmPreviewSendToTargetSun()) return;
   } else if (!await _confirmIfServerSnapshotStale(S.supId, "ส่ง Target Sun")) return;
+  if (S.compositeAllocView && supIds.length) {
+    // บันทึกอัตโนมัติของผู้จัดการเองที่ค้างคิว/กำลังยิง ต้องลงก่อนเทียบเวอร์ชัน ไม่งั้นหยุดส่งเพราะตัวเอง
+    if (_regionalAllocSaveTimer) {
+      clearTimeout(_regionalAllocSaveTimer);
+      _regionalAllocSaveTimer = null;
+      try { await saveRegionalAllocationSnapshots(S.allocations, "draft"); } catch (e) { console.warn(e); }
+    }
+    try { await _allocSaveChain; } catch (_) { /* ตัวที่ล้มบอกผู้ใช้ไปแล้ว */ }
+    const changed = await _regionalTeamsChangedSinceLoad(supIds);
+    if (changed.length) {
+      _showInfoModal({
+        title: "ยังไม่ได้ส่ง — มีคนแก้ทีมนี้หลังจากคุณเปิดหน้า",
+        bodyHtml:
+          `<p style="margin:0 0 8px;text-align:left;line-height:1.7;">ทีมต่อไปนี้มีคนบันทึกผลกระจายหลังจากที่คุณโหลดหน้านี้ ` +
+          `ถ้าส่งตอนนี้ ผลบนจอของคุณจะไปทับงานของเขาใน Target Sun:</p>` +
+          `<ul style="margin:0 0 8px 18px;text-align:left;line-height:1.7;">${changed.map((c) =>
+            `<li><strong>${escH(c.supId)}</strong>${c.by ? ` — บันทึกล่าสุดโดย ${escH(c.by)}` : ""}</li>`).join("")}</ul>` +
+          `<p style="margin:0;text-align:left;line-height:1.7;">กรุณาตกลงกับซุปของทีมก่อนว่าใครเป็นคนส่ง แล้ว<strong>โหลดหน้าใหม่</strong>ก่อนส่ง</p>`,
+        secondaryLabel: "ปิด",
+      });
+      _logClientAction("regional_send_blocked_changed", `ไม่ส่ง — ${changed.length} ทีมมีคนบันทึกหลังโหลด`,
+        changed.map((c) => c.supId).join(","), "warn");
+      return;
+    }
+  }
   // ยอดไม่ตรงเป้า = ไม่ส่ง ไม่มีปุ่มยืนยันข้าม (ส่งทีมเดียวเทียบเป้าทีม · หลายทีมเทียบเป้ารวม)
   const mismatchDecision = await _confirmTargetMismatchBeforeSend(supIds, brand);
   if (!mismatchDecision.proceed) return;
@@ -12233,7 +12269,36 @@ async function _doLakehouseUploadInner() {
       { shortfall: pending, shortfall_boxes: pending.reduce((s, x) => s + x.missing_boxes, 0) },
       { alreadySent: true }
     );
+    return;
   }
+  // ส่งครบ ไม่มีอะไรต้องแก้ — กล่องสรุปที่ต้องกดตกลง (เดิมมีแค่ข้อความแวบ 5 วิ ผู้ใช้ไม่เห็นแล้วกดส่งซ้ำ ·
+  // ตรวจก่อนใช้จริง 12 ต.ค. 2026)
+  if (sentCount > 0) {
+    // ระหว่างส่งอาจมีกล่องเตือนเปิดอยู่ (แถวที่ Target Sun ไม่รับ / หีบ 0 อาจยังไม่ลง) — ห้ามทับ
+    // ให้ใช้ข้อความสั้นแทน (ตรวจซ้ำ 12 ต.ค. 2026)
+    if (document.getElementById("infoModal")) {
+      toast(`✅ ส่งเข้า Target Sun แล้ว (${sentSupIds.join(", ")}) — อ่านกล่องแจ้งเตือนก่อน ไม่ต้องกดส่งซ้ำ`, "green");
+    } else {
+      _showSendSuccessModal(sentSupIds);
+    }
+  }
+}
+
+function _showSendSuccessModal(supIds) {
+  const teams = (supIds || []).filter(Boolean);
+  const periodStr = MONTH_FULL_TH[S.targetMonth] + " " + (S.targetYear + 543);
+  const now = new Date().toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" });
+  _showInfoModal({
+    title: "✅ ส่งเข้า Target Sun เรียบร้อยแล้ว",
+    bodyHtml:
+      `<ul style="margin:0 0 10px 18px;text-align:left;line-height:1.8;">` +
+      `<li>ทีม: <strong>${escH(teams.join(", ") || S.supId || "—")}</strong></li>` +
+      `<li>งวด: <strong>${escH(periodStr)}</strong></li>` +
+      `<li>เวลา: ${escH(now)}</li></ul>` +
+      `<p style="margin:0;text-align:left;line-height:1.7;"><strong>ไม่ต้องกดส่งซ้ำ</strong> — ` +
+      `ถ้าแก้ตัวเลขเพิ่มภายหลัง ค่อยกดส่งใหม่อีกครั้ง ระบบจะเขียนทับค่าเดิมให้</p>`,
+    secondaryLabel: "ตกลง",
+  });
 }
 
 /**
@@ -13175,10 +13240,15 @@ async function saveServerAllocationSnapshot(status = "draft", opts = {}) {
     }
     // กระจายทั้งภาคคือการตั้งใจทับทุกทีม (ผู้ใช้ยืนยันใน modal「กระจายใหม่ทั้งภาค」แล้ว)
     // จึงไม่ส่ง precondition — ไม่งั้นจะเด้ง modal ถามทีละทีมกลางลูป
-    const ifMatch = opts.forceRegional
-      ? null
-      : opts.ifMatchVersion !== undefined
-        ? opts.ifMatchVersion
+    // ifMatchVersion ที่ส่งมาตรง ๆ มาก่อน — บันทึกรวมภาคจากการแก้มือส่งเวอร์ชันของทีมนั้นมาด้วย
+    // (forceRegional ใช้แค่ข้ามการถามทีละทีมตอน "กระจายใหม่ทั้งภาค" ที่ผู้ใช้ยืนยันแล้ว)
+    // ifMatchVersion เป็นฟังก์ชันได้ — อ่านค่า "ในคิว" ไม่ใช่ตอนต่อคิว ไม่งั้นบันทึกอัตโนมัติสองรอบติดกันของ
+    // ผู้จัดการเองชนกันเอง (รอบสองถือเวอร์ชันก่อนรอบแรกลง · ตรวจซ้ำ 12 ต.ค. 2026)
+    const _im = typeof opts.ifMatchVersion === "function" ? opts.ifMatchVersion() : opts.ifMatchVersion;
+    const ifMatch = _im !== undefined
+      ? _im
+      : opts.forceRegional
+        ? null
         : _ifMatchVersionFor(supId);
     if (ifMatch !== null && ifMatch !== undefined) {
       body.if_match_version = ifMatch;
@@ -13226,10 +13296,16 @@ async function saveServerAllocationSnapshot(status = "draft", opts = {}) {
       String(supId || "").trim().toUpperCase() === String(S.supId || "").trim().toUpperCase();
     if (saved?.updated_at && isCurrentSup) _setServerSnapshotMeta(saved, supId);
     if (saved) _writeAllocSnapshotCache(supId, saved);
+    // ให้ผู้เรียกอัปเดตเวอร์ชันที่จำไว้ "ก่อนปล่อยคิว" — รอบถัดไปในคิวจะเห็นเวอร์ชันใหม่แน่นอน
+    if (saved && typeof opts.onSaved === "function") {
+      try { opts.onSaved(saved); } catch (e) { console.warn("onSaved:", e); }
+    }
     return { saved };
   });
 
   if (attempt.conflict) {
+    // บันทึกรวมภาค: ไม่ถามทีละทีมกลางลูป — คืนให้ผู้เรียกรวบรวมแล้วบอกทีเดียว
+    if (opts.returnConflict) return { _conflict: true, detail: attempt.j?.detail || null };
     return await _handleSnapshotConflict(attempt.conflict, attempt.j, supId, status, opts);
   }
   if (!opts.silentSummary) {
@@ -13282,7 +13358,12 @@ function _resetRegionalSaveFingerprints() {
   _lastRegionalSaveFp.clear();
 }
 
-async function saveRegionalAllocationSnapshots(allocs, status = "optimized") {
+/**
+ * opts.overwriteAll = true เฉพาะ "กระจายใหม่ทั้งภาค" ที่ผู้ใช้ยืนยันในกล่องขอบเขตแล้วว่าจะทับทุกทีม
+ * นอกนั้น (บันทึกอัตโนมัติหลังแก้มือ · กระจายเฉพาะบางสินค้า) ส่งเวอร์ชันที่ผู้จัดการเห็นตอนโหลดไปด้วย —
+ * ซุปบันทึกหลังจากนั้น = ไม่ทับ แล้วบอกให้โหลดใหม่ (ตรวจก่อนใช้จริง 12 ต.ค. 2026: เดิมทับเงียบ ๆ งานซุปหาย)
+ */
+async function saveRegionalAllocationSnapshots(allocs, status = "optimized", opts = {}) {
   // ทีมที่อยู่ในขอบเขตรวมภาคจริง ๆ — กันแถวไร้เจ้าของไปตกที่รหัสผู้จัดการ (R2)
   const inScope = new Set(_aggregateSupervisorOrder());
   const bySup = new Map();
@@ -13306,7 +13387,14 @@ async function saveRegionalAllocationSnapshots(allocs, status = "optimized") {
   const saved = [];
   let wrote = 0;
   let skipped = 0;
+  const conflicts = [];
+  const known = S.regionalKnownVersion || (S.regionalKnownVersion = {});
+  if (!S.regionalConflictSups) S.regionalConflictSups = new Set();
+  // ประทับ「ส่งแล้ว」ต้องลงเสมอ · กระจายใหม่ทั้งภาคที่ยืนยันแล้ว = ตั้งใจทับ
+  const guard = !opts.overwriteAll && status !== "sent_targetsun";
   for (const [supId, rows] of bySup) {
+    // ทีมที่ชนไปแล้วรอบก่อน — ไม่ลองซ้ำทุก autosave จนกว่าจะโหลดใหม่ (กล่องบอกไปแล้วครั้งหนึ่ง)
+    if (guard && S.regionalConflictSups.has(supId)) continue;
     try {
       // สถานะต้องดูจากแถวของทีมนั้น ๆ ไม่ใช่ค่าเดียวเหมารวมทั้งภาค
       // (บางทีมอาจมีแก้มือ บางทีมไม่มี — sent_targetsun ยังใช้ค่าที่ส่งเข้ามาตรง ๆ)
@@ -13322,14 +13410,27 @@ async function saveRegionalAllocationSnapshots(allocs, status = "optimized") {
       }
       // เป้าเงินเฉพาะของทีมนั้น — เดิมไม่ส่ง จึงได้ S.yellow ทั้งภาคติดไปทุกทีม
       const team = _teamRowsAndYellow(supId, rows);
-      await saveServerAllocationSnapshot(supStatus, {
+      const res = await saveServerAllocationSnapshot(supStatus, {
         supId,
         allocations: rows,
         yellow: team.yellow,
         yellow_locked: team.yellowLocked,
         forceRegional: true,
         silentSummary: true,
+        ...(guard && Object.prototype.hasOwnProperty.call(known, supId)
+          ? { ifMatchVersion: () => known[supId], returnConflict: true }
+          : {}),
+        onSaved: (sv) => {
+          if (Number.isFinite(Number(sv?.version))) known[supId] = Number(sv.version);
+          // (3) บันทึกได้แล้ว = เลิกนับเป็นทีมที่ชน (เช่นหลังกระจายใหม่ทั้งภาคที่ตั้งใจทับ)
+          S.regionalConflictSups?.delete(supId);
+        },
       });
+      if (res && res._conflict) {
+        conflicts.push({ supId, by: res.detail?.updated_by || res.detail?.current?.updated_by || "" });
+        S.regionalConflictSups.add(supId);
+        continue;
+      }
       // จำหลังบันทึกสำเร็จเท่านั้น — ล้มแล้วต้องได้ลองใหม่รอบหน้า
       _lastRegionalSaveFp.set(fpKey, fp);
       wrote++;
@@ -13343,11 +13444,69 @@ async function saveRegionalAllocationSnapshots(allocs, status = "optimized") {
   if (skipped) {
     console.debug(`saveRegionalAllocationSnapshots: เขียน ${wrote} ทีม · ข้าม ${skipped} ทีมที่ไม่มีอะไรเปลี่ยน`);
   }
+  if (conflicts.length) _showRegionalSaveConflictModal(conflicts);
   // สรุปการใช้งานเปลี่ยนก็ต่อเมื่อมีการเขียนจริง
   if (wrote) {
     loadAllocationSummary(true);
   }
   return saved;
+}
+
+/** บอกทีมที่ไม่ได้บันทึกเพราะมีคนบันทึกหลังจากผู้จัดการโหลด — ให้โหลดใหม่ ไม่มีปุ่มเขียนทับ */
+function _showRegionalSaveConflictModal(conflicts) {
+  const items = conflicts
+    .map((c) => `<li><strong>${escH(c.supId)}</strong>${c.by ? ` — บันทึกล่าสุดโดย ${escH(c.by)}` : ""}</li>`)
+    .join("");
+  _logClientAction(
+    "regional_save_conflict",
+    `บันทึกรวมภาคไม่ทับ ${conflicts.length} ทีมที่มีคนบันทึกหลังโหลด`,
+    conflicts.map((c) => c.supId).join(","),
+    "warn",
+  );
+  _showInfoModal({
+    title: "มีคนแก้ทีมนี้หลังจากคุณเปิดหน้า",
+    bodyHtml:
+      `<p style="margin:0 0 8px;text-align:left;line-height:1.7;">ทีมต่อไปนี้มีคนบันทึกผลกระจายหลังจากที่คุณโหลดหน้านี้ ` +
+      `ระบบ<strong>จึงไม่บันทึกทับ</strong> เพื่อไม่ให้งานของเขาหาย:</p>` +
+      `<ul style="margin:0 0 8px 18px;text-align:left;line-height:1.7;">${items}</ul>` +
+      `<p style="margin:0;text-align:left;line-height:1.7;">การแก้ของคุณใน<strong>ทีมเหล่านี้ยังไม่ได้บันทึก</strong> — ` +
+      `กรุณาตกลงกับซุปของทีมก่อน แล้วกด「โหลดใหม่」เพื่อดูผลล่าสุด (การแก้บนจอของทีมเหล่านี้จะถูกแทนด้วยผลล่าสุด)</p>`,
+    primaryLabel: "โหลดใหม่",
+    onPrimary: () => {
+      // แคชในเครื่องอาจยังเป็นชุดเก่า (เก็บ 5 นาที) — ต้องดึงของจริงจาก server ไม่งั้นโหลดได้ชุดเดิมแล้วชนวน
+      for (const c of conflicts) _invalidateAllocSnapshotCache(c.supId);
+      if (typeof loadRegionalCompositeAllocationView === "function") {
+        loadRegionalCompositeAllocationView().then((ok) => {
+          if (ok && (S.allocations || []).length) {
+            buildBrandTabs(S.allocations);
+            renderResult(S.allocations);
+          }
+        });
+      }
+    },
+    secondaryLabel: "ปิด",
+  });
+}
+
+/**
+ * ก่อนส่งรวมภาค: ทีมไหนมีคนบันทึกหลังจากผู้จัดการโหลด = หยุด (ไม่มีปุ่มข้าม)
+ * ส่งตอนนั้น = เอาผลบนจอของผู้จัดการไปทับสิ่งที่ซุปเพิ่งทำใน Target Sun (ตรวจก่อนใช้จริง 12 ต.ค. 2026)
+ * ทีมที่ไม่รู้เวอร์ชัน (ไม่ได้มาจากมุมมองรวมภาค) ไม่ตรวจที่นี่ · อ่านไม่ได้ = ไม่บล็อก (server มีด่านยอดอยู่แล้ว)
+ */
+async function _regionalTeamsChangedSinceLoad(supIds) {
+  const known = S.regionalKnownVersion || {};
+  const changed = [];
+  for (const sid of supIds || []) {
+    if (!Object.prototype.hasOwnProperty.call(known, sid)) continue;
+    try {
+      const snap = await _fetchServerAllocationSnapshot(sid, { forceRefresh: true });
+      const v = Number(snap?.version) || 0;
+      if (v !== Number(known[sid] || 0)) changed.push({ supId: sid, by: snap?.updated_by || "" });
+    } catch (e) {
+      console.warn("[regional send] อ่านเวอร์ชันทีมไม่ได้:", sid, e);
+    }
+  }
+  return changed;
 }
 
 async function deleteServerAllocationSnapshot(supId = null) {

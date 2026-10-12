@@ -29,7 +29,9 @@ class RegionalSaveDedupeTest(unittest.TestCase):
         with open(APP_JS, encoding="utf-8") as f:
             cls.src = f.read()
         i = cls.src.index("async function saveRegionalAllocationSnapshots(")
-        cls.body = cls.src[i : i + 2600]
+        # ทั้งฟังก์ชัน (ถึงวงเล็บปิดระดับบนสุด) — ความยาวคงที่ตัดกลางฟังก์ชันเมื่อโค้ดยาวขึ้น (12 ต.ค. 2026)
+        j = cls.src.index("\n}\n", i)
+        cls.body = cls.src[i : j + 2]
 
     def test_skips_teams_whose_rows_did_not_change(self):
         """หัวใจของข้อนี้ — ลายเซ็นตรงกับครั้งก่อน = ข้ามไปเลย ไม่ต้องยิง PUT"""
