@@ -472,6 +472,7 @@ def allocate_boxes(
             locked_map=locked_map,
             zero_pairs=alloc_zero_pairs,
             even_skus=even_skus,
+            rule_covered_emps=_never_sold_covered_emps(df_sold_12m, never_sold_known_emps, df_emp_targets),
         )
 
     df_expanded = _expand_full_allocation_matrix(df_out, df_emp_targets, df_sku)
@@ -818,6 +819,7 @@ def _rotate_small_skus_in_brand(
     locked_map: dict | None = None,
     zero_pairs: set | frozenset | None = None,
     even_skus: frozenset | None = None,
+    rule_covered_emps: set | frozenset | None = None,
 ) -> tuple[pd.DataFrame, dict]:
     """
     หมุนหีบของ SKU "เป้าน้อยกว่าจำนวนคน" ภายในแบรนด์เดียวกัน ให้ทุกคนได้ขายแบรนด์นั้น (ผู้ใช้เลือก 7 ต.ค. 2026)
@@ -891,10 +893,24 @@ def _rotate_small_skus_in_brand(
                 if cur.get((e, s), 0) > 0:
                     got[e] += 1
         brand_hist = {e: sum(hist_lookup.get((e, s), 0.0) for s in skus) for e in employees}
+        # ห้ามหมุนหีบไปให้คนที่ไม่เคยขายแบรนด์/กลุ่มนี้เลย (OPEN_ITEMS 9.4 ก — ผู้ใช้เลือก 12 ต.ค. 2026)
+        # เดิมเลือก "คนที่ได้แบรนด์น้อยสุด" ก่อน = คนไม่เคยขายได้ก่อนทุกครั้ง → ตอนกติกาไม่เคยขายปิด
+        # (ไม่มีประวัติ 12 เดือน / แอดมินปิดให้ทีมในรอบรวม) เกิดแถวใหม่ใน Target Sun
+        # คนที่ได้หีบ SKU นั้นอยู่แล้วจากชั้นก่อนยังอยู่ในวงหมุนได้ (ไม่ย้ายหีบมาเพิ่มคนใหม่ แต่ก็ไม่ไล่ใครออก)
+        # ไม่มีใครในทีมมีประวัติแบรนด์นี้เลย (ไม่มีข้อมูล) = ใช้แบบเดิม
+        # คนที่กติกาไม่เคยขายครอบคลุมอยู่ (rule_covered_emps) ถูกคัดด้วยประวัติ 12 เดือนผ่าน zero_pairs แล้ว
+        # ห้ามคัดซ้ำด้วยประวัติช่วงสั้นของวิธีกระจาย (3/6 เดือน / LY เดือนเดียว) — ไม่งั้นคนที่ขายเมื่อ 4–12 เดือนก่อน
+        # ถูกตัดออกจากการหมุนทั้งที่กติกาอนุญาต (ตรวจซ้ำ 12 ต.ค. 2026)
+        restrict = any(v > 0 for v in brand_hist.values())
+        covered = rule_covered_emps or frozenset()
         # SKU ที่คนมีสิทธิ์น้อยกว่าเลือกก่อน — กันคนที่รับได้หลาย SKU ถูกใช้หมดก่อนถึง SKU ที่ทางเลือกน้อย
         for s, free, k in sorted(small, key=lambda x: (len(x[1]), x[0])):
+            pool = [
+                e for e in free
+                if e in covered or brand_hist.get(e, 0.0) > 0 or cur.get((e, s), 0) > 0
+            ] if restrict else free
             pick = sorted(
-                free,
+                pool,
                 key=lambda e: (
                     got[e],
                     0 if cur.get((e, s), 0) > 0 else 1,
@@ -926,6 +942,20 @@ def _rotate_small_skus_in_brand(
         stats["brands"], stats["skus"], stats["moved_boxes"],
     )
     return out, stats
+
+
+def _never_sold_covered_emps(df_sold_12m, known_emps, df_emp_targets) -> frozenset:
+    """
+    พนักงานที่กติกา「ไม่เคยขาย = เป้า 0」ตัดสินให้จริงรอบนี้ — กติกาปิด (ไม่ส่งประวัติ 12 เดือนมา) = ไม่มีใคร
+    known_emps=None แปลว่ารู้ครบทุกคน (ดู _never_sold_plan)
+    """
+    if df_sold_12m is None or getattr(df_sold_12m, "empty", True):
+        return frozenset()
+    if known_emps is not None:
+        return frozenset(str(e).strip() for e in known_emps)
+    if df_emp_targets is None or df_emp_targets.empty:
+        return frozenset()
+    return frozenset(str(e).strip() for e in df_emp_targets["emp_id"].tolist())
 
 
 def _eligible_emp_count(employees, sku, zero_pairs) -> int:

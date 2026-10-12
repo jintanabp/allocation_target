@@ -31,7 +31,7 @@ vm.runInContext(`
     jsons.forEach((j) => Object.keys((j && j.never_sold_summary) || {}).forEach((k) => out.add(k)));
     return out;
   }
-  ${["_applyOptimizeMetaFromJson", "_applyOptimizeMetaFromSups"].map(grab).join("\n")}
+  ${["_applyOptimizeMetaFromJson", "_applyOptimizeMetaFromSups", "_newTsPairsFrom"].map(grab).join("\n")}
   globalThis.fresh = () => { S = { supId: "SL1", optimizationFallbackSups: ["OLD"], regionalFailedSups: [{ supId: "OLD" }],
                                    lpTimeLimitedSups: ["OLD"] }; return S; };
   globalThis.single = (j) => { _applyOptimizeMetaFromJson(j); return S; };

@@ -18,6 +18,7 @@ from ..OR_engine import (
     _norm_sku,
     _proportional,
     _hist_lookup,
+    _never_sold_covered_emps,
     _revenue_scale_factor,
     _rotate_small_skus_in_brand,
     _skus_with_target_boxes,
@@ -1014,6 +1015,34 @@ def _merge_partial_result(
     return merged
 
 
+def _new_target_sun_pairs(df_final: pd.DataFrame, target_month: int, target_year: int) -> dict | None:
+    """
+    คู่พนักงาน×สินค้าที่ได้หีบ > 0 แต่ยังไม่มีแถวเป้าใน Target Sun (grain ขั้นที่ 1) = แถวใหม่ตอนส่ง
+
+    OPEN_ITEMS 9.4 ง (ผู้ใช้เลือก 12 ต.ค. 2026): ตอนกติกา「ไม่เคยขาย = เป้า 0」ไม่ทำงาน คนที่ไม่เคยขาย
+    ได้หีบได้ แล้วแถวใน Target Sun เพิ่ม — หน้าจอต้องบอกจำนวนให้เห็นก่อนส่ง ไม่ใช่รู้ทีหลัง
+    ไม่มี grain ให้เทียบ = None (ไม่รู้ ห้ามตอบว่า 0) · เป็นตัวเลขประมาณ: ไม่นับการรวมคลัง/ผูกรหัสตอนส่ง
+    """
+    if df_final is None or df_final.empty or not {"emp_id", "sku", "allocated_boxes"} <= set(df_final.columns):
+        return None
+    boxes = pd.to_numeric(df_final["allocated_boxes"], errors="coerce").fillna(0)
+    got = df_final[boxes > 0]
+    emps = {norm_emp_code(e) for e in got["emp_id"].astype(str)}
+    try:
+        dg = _read_tga_grain_across_teams(target_month, target_year, emps)
+    except Exception as e:  # นับไม่ได้ไม่ควรทำให้กระจายล้ม
+        logger.warning("นับแถวใหม่ใน Target Sun ไม่ได้: %s", e)
+        return None
+    if dg is None or dg.empty:
+        return None
+    have = set(zip(dg["emp_id"], dg["sku"].astype(str).str.strip()))
+    new = sorted({
+        (norm_emp_code(e), str(k).strip())
+        for e, k in zip(got["emp_id"].astype(str), got["sku"])
+    } - have)
+    return {"count": len(new), "sample": [f"{e} × {k}" for e, k in new[:10]]}
+
+
 def _sku_brand_key(row) -> str:
     """หน่วยที่ใช้จับคู่ brand_strategy_map — แบรนด์ (ไทยก่อน แล้วอังกฤษ) หรือ แบรนด์ · กลุ่มสินค้า (ตรงกับหน้าเว็บ)"""
     return _alloc_groups.row_group(row)
@@ -1825,6 +1854,10 @@ def run_optimization_service(
                 locked_map=_locked_map_rot,
                 zero_pairs=set(never_sold_pairs_all) | set(wh_blocked),
                 even_skus=frozenset(even_skus_global or ()),
+                # ชุดเดียวกับรอบในแต่ละกลุ่มวิธี — คนที่กติกาไม่เคยขายครอบคลุม ไม่ถูกคัดซ้ำด้วยประวัติช่วงสั้น
+                rule_covered_emps=_never_sold_covered_emps(
+                    df_hist_12 if never_sold_on else None, never_sold_known_emps, df_emp_targets
+                ),
             )
             if _rot_stats.get("moved_boxes"):
                 # อัปเดตแถวเดิมตามคีย์ (ลำดับแถวต้องคงเดิม — _refresh_hist_deviation_after_move เทียบตามตำแหน่ง)
@@ -2118,8 +2151,18 @@ def run_optimization_service(
         df_final, sup_id, target_month, target_year
     )
 
+    # นับเฉพาะรอบที่กติกาไม่เคยขายไม่ทำงาน/ทำไม่ครบ (หน้าจอบอกเฉพาะกรณีนั้น) — รอบปกติไม่ต้องอ่าน grain ทุกไฟล์ซ้ำ
+    # กระจายเฉพาะบางสินค้า: นับจากผลทั้งงวดที่รวมกลับแล้ว (df_to_write) ไม่ใช่เฉพาะ SKU ที่เพิ่งกระจาย
+    new_ts_pairs = (
+        _new_target_sun_pairs(df_to_write, target_month, target_year)
+        if (never_sold_off_reason or never_sold_hist_missing)
+        else None
+    )
+
     return {
         "allocations": df_final.to_dict(orient="records"),
+        # คู่ที่ยังไม่มีแถวใน Target Sun = แถวใหม่ตอนส่ง (None = ไม่มี grain ให้เทียบ) — OPEN_ITEMS 9.4 ง
+        "new_target_sun_pairs": new_ts_pairs,
         # ชั่วคราวเพื่อ debug (22 ก.ย. 2026) — เข้า data/app.log บนเซิร์ฟเวอร์ไม่ได้เลย จึงฝัง
         # รายละเอียด error (ถ้ามี) มาใน response ตรงนี้แทน ดูได้จาก DevTools Network tab
         # ลบทิ้งได้เมื่อเจอสาเหตุแล้ว

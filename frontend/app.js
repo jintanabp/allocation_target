@@ -1024,6 +1024,8 @@ let S = {
   neverSoldSummary: {},
   /** ทำไมกติกา「ไม่เคยขาย = เป้า 0」ไม่ทำงานรอบล่าสุด — [{supId, reason, sups}] · [] = ทำงานปกติ */
   neverSoldOffReasons: [],
+  /** คู่คน×สินค้าที่ได้หีบแต่ยังไม่มีแถวใน Target Sun = แถวใหม่ตอนส่ง {count, sample} · null = ไม่รู้ (OPEN_ITEMS 9.4 ง) */
+  newTsPairs: null,
   /** คู่ที่กติกา「ไม่เคยขาย」ตัดเป็น 0 รอบล่าสุด — Set ของ "allocKey|sku" (ปุ่มปรับยอดห้ามเติมให้) */
   neverSoldZeroKeys: new Set(),
   /** ติ๊ก「ทุกคนอย่างน้อย 1 หีบ」ตอนกระจายรอบล่าสุด — ปุ่มปรับยอดดึงไม่ต่ำกว่า 1 */
@@ -5040,6 +5042,7 @@ function _applyDataPayloadInner(data) {
     S.histFallbacks = [];
     S.neverSoldSummary = {};
     S.neverSoldOffReasons = [];
+    S.newTsPairs = null;
     S.neverSoldZeroKeys = new Set();
     S.rebalanceResiduals = [];
     S.rebalanceCrossTeam = [];
@@ -7068,6 +7071,7 @@ function _applyOptimizeMetaFromJson(json) {
   S.neverSoldOffReasons = json.never_sold_off_reason
     ? [{ supId: String(S.supId || ""), ...json.never_sold_off_reason }]
     : [];
+  S.newTsPairs = _newTsPairsFrom([json]);
   // กติกาทำงาน แต่บางทีมไม่มีประวัติ 12 เดือน — คนทีมนั้นไม่ถูกตัด (§4.1-4)
   if (json.never_sold_hist_missing) {
     S.neverSoldOffReasons.push({ supId: String(S.supId || ""), reason: "hist_missing", ...json.never_sold_hist_missing });
@@ -7159,6 +7163,7 @@ function _applyOptimizeMetaFromSups(metaBySup) {
     }
   }
   S.neverSoldOffReasons = neverSoldOff;
+  S.newTsPairs = _newTsPairsFrom(entries.map(([, j]) => j));
   S.tierFlexSkus = flexSkus;
   S.tierStrictSkuCount = strictCount;
   // อัตราส่วนต่อทีมไม่เท่ากัน — ใช้ค่าเฉลี่ยเพื่อแสดงผลรวมภาค
@@ -8186,7 +8191,33 @@ function _neverSoldOffLines() {
   if (rows.some((r) => r?.reason === "system_off")) {
     lines.push("กติกา「ไม่เคยขาย = เป้า 0」ถูกปิดทั้งระบบอยู่ — เป้ากระจายแบบเดิมทุกทีม");
   }
+  // ผลที่ตามมาเมื่อกติกาไม่ทำงาน: คนไม่เคยขายได้หีบ → แถวใหม่ใน Target Sun (OPEN_ITEMS 9.4 ง)
+  const nt = S.newTsPairs;
+  if (lines.length && nt && Number(nt.count) > 0) {
+    const eg = (nt.sample || []).slice(0, 5).join(", ");
+    lines.push(
+      `ผลรอบนี้มีคู่พนักงาน×สินค้าที่ยังไม่มีเป้าใน Target Sun ${Number(nt.count).toLocaleString("th-TH")} คู่`
+      + ` — ตอนส่งจะเกิดแถวใหม่ประมาณเท่านี้ (คลังว่าง)${eg ? ` เช่น ${eg}` : ""}`
+      + ` (นับจากผลที่ระบบคำนวณ ยังไม่รวมช่องที่แก้มือหลังจากนั้น)`
+      + ` · ถ้าไม่ต้องการ กรุณาแก้ช่องเหล่านี้เป็น 0 ก่อนส่ง หรือแก้สาเหตุข้างต้นแล้วกระจายใหม่`
+    );
+  }
   return lines;
+}
+
+/** รวมจำนวนคู่ที่ยังไม่มีแถวใน Target Sun จากผล /optimize หลายก้อน — ไม่มีก้อนไหนรู้ = null */
+function _newTsPairsFrom(jsons) {
+  let known = false;
+  let count = 0;
+  const sample = [];
+  for (const j of jsons || []) {
+    const v = j && j.new_target_sun_pairs;
+    if (!v || typeof v !== "object") continue;
+    known = true;
+    count += Number(v.count) || 0;
+    for (const x of v.sample || []) if (sample.length < 10) sample.push(String(x));
+  }
+  return known ? { count, sample } : null;
 }
 
 /**
@@ -10134,6 +10165,7 @@ async function openAllocScopeModal(opts = {}) {
     bodyHtml +=
       `<div class="scope-modal__warn"><strong>⚠️ รอบนี้กติกา「ไม่เคยขาย = เป้า 0」จะไม่ทำงาน</strong>` +
       `<div>เพราะทีมเหล่านี้ถูกปิดกติกาไว้ในหน้าแอดมิน: ${offList}</div>` +
+      `<div>ผลคือคนที่ไม่เคยขายสินค้าบางตัวอาจได้หีบ และตอนส่งจะเกิดแถวใหม่ใน Target Sun</div>` +
       `<div class="scope-modal__warn-foot">` +
       `โหมดรวมภาคใช้กติกาเดียวกันทั้งก้อน จึงปิดให้ทั้งรอบ — ` +
       `ถ้าอยากให้ทีมที่เหลือยังใช้กติกา ให้เลือก <strong>「แยกตามทีมของแต่ละ Supervisor」</strong> ด้านบน ` +
