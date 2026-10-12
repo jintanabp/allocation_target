@@ -20,6 +20,7 @@ import unittest
 from unittest.mock import patch
 
 import pandas as pd
+from fastapi import HTTPException
 
 REPO = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, REPO)
@@ -103,9 +104,21 @@ class TestLeftoverRowsCleared(_Base):
         self.assertNotIn("B", set(out.PRODUCTCODE))
         self.assertEqual(self._totals(), {"A": 10, "B": 5})
 
-    def test_shared_employee_is_left_alone(self):
-        """พนักงานที่อยู่สองทีมในงวดนี้ — แถวของเขาอาจเป็นของอีกทีม ห้ามล้าง"""
+    def test_shared_employee_with_boxes_in_own_target_blocks_send(self):
+        """
+        พนักงานที่อยู่สองทีม — ห้ามล้างแถวเขา (อาจเป็นของอีกทีม) แต่หีบของเขาถูกนับในเป้าทีมนี้แล้ว
+        ส่งไปทั้งที่แถวเขาค้าง = Target Sun เกินเป้า (A=10 → 14) · ตรวจก่อนใช้จริง 12 ต.ค. 2026 C2 → หยุด 409
+        """
         self._setup([_g("E1", "A", 6), _g("E2", "A", 4)], {"A": 10})
+        pd.DataFrame([_g("E2", "A", 4)]).to_csv("data/tga_lines_SLOTHER_2026_11.csv", index=False)
+        with self.assertRaises(HTTPException) as cm:
+            self._send([dict(emp_id="E1", sku="A", allocated_boxes=10)])
+        self.assertEqual(cm.exception.status_code, 409)
+        self.assertEqual(cm.exception.detail["code"], "shared_employee_rows_left")
+
+    def test_shared_employee_without_boxes_here_is_left_alone(self):
+        """คนอยู่สองทีมแต่ไม่มีหีบในเป้าทีมนี้ — ไม่กระทบยอด ส่งได้และไม่แตะแถวเขา"""
+        self._setup([_g("E1", "A", 10), _g("E2", "A", 0)], {"A": 10})
         pd.DataFrame([_g("E2", "A", 4)]).to_csv("data/tga_lines_SLOTHER_2026_11.csv", index=False)
         out = self._send([dict(emp_id="E1", sku="A", allocated_boxes=10)])
         self.assertTrue(out[(out.SALESMANCODE == "E2")].empty)
@@ -120,12 +133,27 @@ class TestLeftoverRowsCleared(_Base):
         self.assertEqual(list(out[out.SALESMANCODE == "E2"].QUANTITYCASE), [0])
         self.assertEqual(self._totals(), {"A": 10})
 
-    def test_moved_away_employee_is_left_alone(self):
-        """คนที่ย้ายไปทีมอื่นแล้ว แถวของเขาเป็นของทีมปลายทาง — ทีมต้นทางห้ามส่ง 0 ทับ"""
+    def test_moved_away_employee_still_in_stale_grain_blocks_send(self):
+        """
+        คนที่ย้ายไปทีมอื่นแล้ว แถวของเขาเป็นของทีมปลายทาง — ทีมต้นทางห้ามส่ง 0 ทับ · แต่ถ้า grain ของทีมต้นทาง
+        ยังมีหีบเขา (โหลดขั้นที่ 1 ก่อนย้าย) เป้าทีมต้นทางนับหีบนั้นไปแล้ว → หยุดให้โหลดใหม่ (12 ต.ค. 2026 C2)
+        """
         self._setup([_g("E1", "A", 6), _g("E2", "A", 4)], {"A": 10})
         rows = [{"emp_id": "E2", "to_sup": "SLNEW"}]
         with patch("backend.services.emp_assignment_store.read_rows", return_value=rows):
-            out = self._send([dict(emp_id="E1", sku="A", allocated_boxes=10)])
+            with self.assertRaises(HTTPException) as cm:
+                self._send([dict(emp_id="E1", sku="A", allocated_boxes=10)])
+        self.assertEqual(cm.exception.detail["code"], "shared_employee_rows_left")
+
+    def test_moved_away_employee_after_reload_is_left_alone(self):
+        """โหลดขั้นที่ 1 ใหม่หลังย้าย → grain ทีมต้นทางไม่มีหีบเขาแล้ว → ส่งได้ และไม่แตะแถวเขา"""
+        self._setup([_g("E1", "A", 10)], {"A": 10})
+        sent_ledger.record_send(self.SUP, 11, 2026, [dict(PRODUCTCODE="A", SALESMANCODE="E2", QUANTITYCASE=4,
+                                SALESTYPE="S1", DIVISIONCODE="D1", AREACODE="10", PROVINCECODE="P1",
+                                WAREHOUSECODE="W1")], token="m", send_status="ok")
+        rows = [{"emp_id": "E2", "to_sup": "SLNEW"}]
+        with patch("backend.services.emp_assignment_store.read_rows", return_value=rows):
+            out = self._send([dict(emp_id="E1", sku="A", allocated_boxes=10)], record=False)
         self.assertTrue(out[out.SALESMANCODE == "E2"].empty)
 
     def test_ledger_of_other_destination_not_zeroed(self):

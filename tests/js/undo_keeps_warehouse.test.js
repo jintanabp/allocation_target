@@ -22,7 +22,7 @@ function grab(name) {
 }
 
 const names = [
-  "_pushUndoState", "undoLastEdit", "_empWarehouseForLakehouse", "_lakehouseWhForEmp",
+  "_pushUndoState", "undoLastEdit", "_empWarehouseForLakehouse", "_lakehouseIsWhSplitEmp", "_lakehouseWhForEmp",
   "_lakehousePairKey", "_lakehouseMergeIntoMap", "_lakehouseLookupFromMap",
   "_lakehouseAllocationsFromStep3", "_allocResultKey",
 ];

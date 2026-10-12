@@ -427,8 +427,11 @@ function _dismissInfoModal() {
   else m.remove();
 }
 
-function _showInfoModal({ title, bodyHtml, primaryLabel, onPrimary, secondaryLabel = "ปิด", onSecondary } = {}) {
+function _showInfoModal({ title, bodyHtml, primaryLabel, onPrimary, secondaryLabel = "ปิด", onSecondary, onDismiss } = {}) {
   _dismissInfoModal();
+  // onDismiss: Esc / คลิกนอกกรอบ — ไม่ส่ง = ทำแบบปุ่มรองเหมือนเดิม · ใช้กับกล่องที่ปุ่มรองทำของหาย/ส่งข้อมูล
+  // (ตรวจก่อนใช้จริง 12 ต.ค. 2026: กล่อง「มีการอัปเดตบน server」กด Esc แล้วโหลดทับงานบนจอ)
+  const _dismissFn = typeof onDismiss === "function" ? onDismiss : onSecondary;
   // ตารางผลเปิดเต็มจออยู่ → กล่องนี้ (ต่อกับ body) จะมองไม่เห็น ต้องออกจากเต็มจอก่อน
   if (document.body.classList.contains("has-result-fullscreen") && typeof toggleResultFullscreen === "function") {
     toggleResultFullscreen(false);
@@ -460,15 +463,15 @@ function _showInfoModal({ title, bodyHtml, primaryLabel, onPrimary, secondaryLab
   modal._dismiss = () => {
     modal._dismiss = null;
     try {
-      onSecondary && onSecondary();
+      _dismissFn && _dismissFn();
     } finally {
       close();
     }
   };
-  // Escape = เหมือนกดปุ่มรอง (ยกเลิก) — ต้องเรียก onSecondary ด้วย ไม่งั้นตัวที่รอคำตอบค้าง
+  // Escape = เหมือนกดปุ่มรอง (ยกเลิก) — ต้องเรียก onSecondary ด้วย ไม่งั้นตัวที่รอคำตอบค้าง (หรือ onDismiss ถ้าส่งมา)
   unbind = bindModalBehaviour(modal, () => {
     try {
-      onSecondary && onSecondary();
+      _dismissFn && _dismissFn();
     } finally {
       close();
     }
@@ -491,7 +494,7 @@ function _showInfoModal({ title, bodyHtml, primaryLabel, onPrimary, secondaryLab
     if (e.target === modal) {
       modal._dismiss = null;
       try {
-        onSecondary && onSecondary();
+        _dismissFn && _dismissFn();
       } finally {
         close();
       }
@@ -4360,6 +4363,8 @@ async function _confirmIfServerSnapshotStale(supId, actionLabel = "บันท�
           });
           resolve(false);
         },
+        // Esc / คลิกนอกกรอบ = ยกเลิกเฉย ๆ ไม่โหลดทับงานบนจอ (เดิมเท่ากับกด「โหลดใหม่」)
+        onDismiss: () => resolve(false),
       });
     });
   } catch (e) {
@@ -9779,6 +9784,35 @@ function _yellowChangedSinceRun() {
   return false;
 }
 
+/**
+ * บอกปลายทางส่ง (Target Sun Prod / UAT) ในหน้าต่างส่งทุกครั้ง — ตรวจก่อนใช้จริง 12 ต.ค. 2026:
+ * ถ้าไฟล์ตั้งค่าบน server หาย ระบบตกไปค่าตั้งต้นที่ "อ่าน Prod · ส่ง UAT" ผู้ใช้เห็นเป้าจริงแต่ส่งไม่ถึง Prod
+ * ดึงไม่ได้ = ไม่แสดง (ไม่บล็อกการส่ง)
+ */
+async function _fillLakehouseDestLine() {
+  const el = document.getElementById("lakehouseDestLine");
+  if (!el) return;
+  el.className = "lakehouse-dest";
+  el.textContent = "";
+  try {
+    const res = await fetchWithTimeout(`${API_BASE_URL}/health`, {}, 5000);
+    const j = await res.json().catch(() => ({}));
+    const t = j && j.targetsun;
+    if (!t || !t.send) return;
+    if (t.send === "Prod" && !t.using_default_settings) {
+      el.classList.add("lakehouse-dest--ok");
+      el.textContent = "ปลายทาง: Target Sun ระบบจริง (Prod)";
+    } else {
+      el.classList.add("lakehouse-dest--warn");
+      el.textContent = t.send === "UAT"
+        ? "⚠️ ปลายทาง: Target Sun ระบบทดสอบ (UAT) — ข้อมูลจะไม่เข้าระบบจริง ถ้าตั้งใจส่งจริง กรุณาแจ้งผู้ดูแลระบบก่อนกดส่ง"
+        : "⚠️ ยังยืนยันปลายทาง Target Sun ไม่ได้ (ไฟล์ตั้งค่าบน server ใช้ค่าตั้งต้น) — กรุณาแจ้งผู้ดูแลระบบก่อนกดส่ง";
+    }
+  } catch (_) {
+    /* ดึงไม่ได้ก็ไม่เป็นไร — ไม่ใช่ด่านบล็อก */
+  }
+}
+
 function showLakehouseUploadModal(opts = {}) {
   if (_isAllocReadOnlyView()) {
     toast("โหมดดูอย่างเดียว — สลับกลับทีมของคุณเพื่อส่ง Target Sun", "amber");
@@ -9806,14 +9840,19 @@ function showLakehouseUploadModal(opts = {}) {
         `ผลกระจายหีบในตารางจึง<strong>ยังเป็นผลของเป้าเงินชุดเดิม</strong></p>` +
         `<p style="margin:10px 0 0;text-align:left;line-height:1.7;">แนะนำให้กด「เริ่มคำนวณ」ใหม่ก่อนส่ง ` +
         `หรือยืนยันส่งผลในตารางตามที่เห็นอยู่ (ยอดหีบต่อสินค้ายังตรงเป้า)</p>`,
-      primaryLabel: "ส่งผลในตารางตามเดิม",
-      secondaryLabel: "กลับไปคำนวณใหม่",
-      onPrimary: () => showLakehouseUploadModal({ yellowChangeConfirmed: true }),
+      // ปุ่มหลัก = ทางที่ปลอดภัย (ผู้ใช้สูงวัยกดปุ่มสีหลักเป็นนิสัย — ตรวจก่อนใช้จริง 12 ต.ค. 2026)
+      primaryLabel: "กลับไปคำนวณใหม่",
+      onPrimary: () => document.getElementById("runBtn")?.scrollIntoView({ behavior: "smooth", block: "center" }),
+      secondaryLabel: "ส่งผลในตารางตามเดิม",
+      onSecondary: () => showLakehouseUploadModal({ yellowChangeConfirmed: true }),
+      onDismiss: () => {},
     });
     return;
   }
   const matrix = _lakehouseAllocationsFromStep3();
   const total = matrix.length;
+  // แสดงหีบรวมคู่กับจำนวนแถว — เดิมมีแต่จำนวนแถว ผู้ใช้เข้าใจผิดว่าเป็นหีบ (ตรวจก่อนใช้จริง 12 ต.ค. 2026)
+  const _sendBoxesTotal = matrix.reduce((t, a) => t + (Number(a.allocated_boxes) || 0), 0);
   const nonZero = matrix.filter(a => (Number(a.allocated_boxes) || 0) > 0).length;
   const zeros = total - nonZero;
   const nzInAllocs = _lakehouseNonZeroInAllocs("ALL");
@@ -9880,10 +9919,11 @@ function showLakehouseUploadModal(opts = {}) {
         </div>
         <div class="lakehouse-stat">
           <span class="lakehouse-stat__label">ข้อมูลที่ส่ง</span>
-          <span class="lakehouse-stat__value">${total.toLocaleString("th-TH")}</span>
-          <span class="lakehouse-stat__sub">${S.targetSunPreviewMode ? "เป้า/แก้มือจาก Target Sun" : "จากผลขั้นที่ 3 เท่านั้น"}</span>
+          <span class="lakehouse-stat__value">${total.toLocaleString("th-TH")} แถว</span>
+          <span class="lakehouse-stat__sub">รวม <strong>${_sendBoxesTotal.toLocaleString("th-TH")} หีบ</strong> · ${S.targetSunPreviewMode ? "เป้า/แก้มือจาก Target Sun" : "จากผลขั้นที่ 3 เท่านั้น"}</span>
         </div>
       </div>
+      <div id="lakehouseDestLine" class="lakehouse-dest" aria-live="polite"></div>
 
       <ul class="lakehouse-what">
         <li>ส่งจำนวนหีบตามที่คุณยืนยันในตารางขั้นที่ 3</li>
@@ -9923,6 +9963,7 @@ function showLakehouseUploadModal(opts = {}) {
   _loadSendHistoryIntoModal();
   _loadSendEnvLabel();
   qs("#lakehouseModal").style.display = "flex";
+  _fillLakehouseDestLine();
   _staticModalUnbind.lakehouseModal = bindModalBehaviour(
     qs("#lakehouseModal"), closeLakehouseUploadModal
   );
@@ -9938,9 +9979,18 @@ function _empWarehouseForLakehouse(empId) {
   return wh != null && String(wh).trim() ? String(wh).trim() : null;
 }
 
+/** พนักงานคนนี้แยกหลายคลังไหม — แถวคลังว่างของเขาคือ "คลังว่าง" จริงจาก Target Sun ไม่ใช่คลังที่ไม่รู้ */
+function _lakehouseIsWhSplitEmp(empId) {
+  const eid = String(empId || "").trim();
+  return (S.employees || []).some((e) => e.wh_split && String(e.emp_id || "").trim() === eid);
+}
+
 function _lakehouseWhForEmp(empId, whFromRow) {
   const wh = String(whFromRow || "").trim();
   if (wh) return wh;
+  // คนแยกคลัง: คลังว่างคือแถวคลังว่างของเขาเอง ห้ามเดาเป็นคลังแรก (ตรวจก่อนใช้จริง 12 ต.ค. 2026 C3 —
+  // เดิมหีบของแถวคลังว่างย้ายไปรวมที่คลังแรก ยอดรวมไม่เปลี่ยนจึงไม่มีด่านไหนจับ)
+  if (_lakehouseIsWhSplitEmp(empId)) return "";
   return _empWarehouseForLakehouse(empId) || "";
 }
 
@@ -9964,11 +10014,13 @@ function _lakehouseMergeIntoMap(map, emp, sku, whFromRow, boxes) {
     warehouse_code: wh || null,
   };
   map.set(key, entry);
-  if (wh) map.set(_lakehousePairKey(emp, "", sku), entry);
+  // คีย์สำรอง "ไม่ระบุคลัง" ใช้ได้เฉพาะคนคลังเดียว — คนแยกคลัง คีย์นี้คือแถวคลังว่างจริงของเขา ชนกันแล้วหีบซ้อน
+  if (wh && !_lakehouseIsWhSplitEmp(emp)) map.set(_lakehousePairKey(emp, "", sku), entry);
 }
 
 function _lakehouseLookupFromMap(map, emp, sku, whFromRow) {
   const wh = _lakehouseWhForEmp(emp, whFromRow);
+  if (_lakehouseIsWhSplitEmp(emp)) return map.get(_lakehousePairKey(emp, wh, sku)) || null;
   return (
     map.get(_lakehousePairKey(emp, wh, sku))
     || map.get(_lakehousePairKey(emp, "", sku))
@@ -15730,6 +15782,33 @@ async function runReAllocationForSkus(skus, opts = {}) {
 ════════════════════════════════════════════════════════════════════════════ */
 const MANUAL_STEPS = [
   {
+    title: "ก่อนเริ่มใช้งาน (อ่านก่อน)",
+    desc: `<ul class="manual-list">
+<li><strong>เป้างวดใหม่เข้าระบบประมาณวันที่ 15</strong> — ถ้าขึ้น「ระบบยังไม่อัปเดตเป้า」แปลว่ายังไม่มีเป้า <strong>ให้รอ</strong> ไม่ใช่ระบบเสีย</li>
+<li>ตอนเข้าระบบ ตรวจว่าเลือก <strong>งวดเดือนที่จะทำเป้า</strong> ถูกต้อง</li>
+<li>แก้เป้าเงินในขั้นที่ 2 แล้ว ต้องกด <strong>คำนวณใหม่</strong> ในขั้นที่ 3 ทุกครั้ง</li>
+<li>คลิกช่องหีบแล้วไม่ได้แก้เลข = <strong>ล็อกช่องนั้นไว้</strong> · ไม่ได้ตั้งใจให้กด ↺ ปลดล็อก</li>
+<li>ก่อนส่ง ดูแถวล่างสุดของตาราง <strong>ทุกสินค้าต้องเป็น ✓ สีเขียว</strong> (หีบรวม = เป้า)</li>
+<li>อ่านแผง <strong>📋 ขอให้รีเช็ค</strong> ใต้ตารางให้ครบ — โดยเฉพาะข้อความ「แถวใหม่ใน Target Sun」</li>
+<li>กด <strong>ส่งเข้า Target Sun ครั้งเดียว</strong> แล้วรอจนขึ้นผลสำเร็จ <strong>ห้ามปิดหน้า ห้ามกดซ้ำ</strong> · ถ้าขึ้น「ยังยืนยันผลไม่ได้」ให้รอ 5–10 นาทีแล้วแจ้งแอดมิน</li>
+<li>ผู้จัดการภาค: <strong>ตกลงกับซุปก่อนว่าใครเป็นคนส่ง</strong> อย่าแก้/ส่งทีมที่ซุปกำลังทำอยู่</li>
+</ul>
+<p class="manual-note">ตัวเลข「ข้อมูลที่ส่ง」ในหน้าต่างส่ง คือ <strong>จำนวนแถว ไม่ใช่จำนวนหีบ</strong></p>`,
+    tips: `<ul class="manual-list">
+<li>💡 ขึ้นหน้าต่าง「มีคนอื่นแก้ไว้บนเซิร์ฟเวอร์」 — อ่านให้ดีแล้วกดปุ่มในกรอบ อย่ากด Esc หรือคลิกนอกกรอบ</li>
+<li>บัญชีทดลอง (demo) ส่งเข้าระบบจริงไม่ได้ ใช้ฝึกเท่านั้น</li>
+<li>เจอปัญหา กดปุ่ม 💬 ส่งความเห็น มุมขวาล่าง</li>
+</ul>`,
+    art: `<svg viewBox="0 0 220 160" xmlns="http://www.w3.org/2000/svg">
+      <rect x="14" y="14" width="192" height="132" rx="10" fill="#FFFFFF" stroke="#E2E8F0"/>
+      <text x="28" y="38" font-family="Sarabun" font-size="12" font-weight="700" fill="#0F172A">เช็คก่อนส่ง</text>
+      <text x="28" y="62" font-family="Sarabun" font-size="11" fill="#059669">✓ งวดเดือนถูกต้อง</text>
+      <text x="28" y="84" font-family="Sarabun" font-size="11" fill="#059669">✓ คำนวณใหม่หลังแก้เป้า</text>
+      <text x="28" y="106" font-family="Sarabun" font-size="11" fill="#059669">✓ หีบรวม = เป้า ทุก SKU</text>
+      <text x="28" y="128" font-family="Sarabun" font-size="11" fill="#DC2626">✗ ห้ามกดส่งซ้ำ</text>
+    </svg>`
+  },
+  {
     title: "เข้าสู่ระบบ",
     desc: `<ul class="manual-list">
 <li>(แนะนำ) กด <strong>อ่านคู่มือก่อนใช้งาน</strong> บนการ์ด — มีป้าย <strong>แนะนำ</strong> · อ่านได้ก่อนล็อกอิน</li>
@@ -17711,6 +17790,8 @@ async function adminInvalidateCache(layer) {
    (2) ส่ง rev กลับไปด้วย กันแอดมินสองคนบันทึกทับกัน */
 
 let _allocRulesState = null;
+/** ค่าที่บันทึกอยู่จริงบน server — เทียบกับที่แก้บนจอเพื่อบอกว่า "ยังไม่บันทึก" */
+let _allocRulesSaved = null;
 
 async function adminLoadAllocRules() {
   const msg = document.getElementById("adminAllocRulesMsg");
@@ -17731,6 +17812,7 @@ function adminRenderAllocRules() {
   const push = document.getElementById("adminAllocRulesPush");
   const src = document.getElementById("adminAllocRulesSource");
   if (enabled) enabled.checked = !!st.enabled;
+  _allocRulesSaved = { enabled: !!st.enabled, disabled_sups: [...(st.disabled_sups || [])].sort() };
   if (push) {
     push.value = st.push_multiple;
     push.min = st.min_push_multiple;
@@ -17756,6 +17838,39 @@ function adminRenderAllocRules() {
   _adminRenderAllocRulesChips();
 }
 
+/**
+ * บอกสถานะที่ใช้อยู่จริงเป็นคำพูด — ช่องติ๊ก「เปิดกติกานี้ทั้งระบบ」แบบเดิมพอไม่ได้ติ๊ก อ่านไม่ออกว่าปิดอยู่
+ * (ผู้ใช้ขอ 12 ต.ค. 2026) · แก้บนจอแล้วยังไม่กดบันทึก = บอกด้วยว่ายังไม่มีผล
+ */
+function _adminAllocRulesStatusText(saved, pending) {
+  const teams = (saved.disabled_sups || []);
+  const now = !saved.enabled
+    ? { cls: "off", text: "⛔ ตอนนี้: ปิดทั้งระบบ — ไม่มีทีมไหนใช้กติกานี้ (คนที่ไม่เคยขายสินค้าได้รับเป้าได้)" }
+    : teams.length
+      ? { cls: "on", text: `✅ ตอนนี้: เปิดอยู่ — ใช้กับทุกทีม ยกเว้น ${teams.length.toLocaleString("th-TH")} ทีม (${teams.join(", ")})` }
+      : { cls: "on", text: "✅ ตอนนี้: เปิดอยู่ — ใช้กับทุกทีม" };
+  const changed = pending
+    && (pending.enabled !== saved.enabled
+      || [...(pending.disabled_sups || [])].sort().join(",") !== teams.join(","));
+  if (!changed) return now;
+  const after = pending.enabled ? "เปิด" : "ปิดทั้งระบบ";
+  return { cls: now.cls, text: now.text, pending: `ยังไม่บันทึก — กด「บันทึก」แล้วจะเป็น: ${after}` };
+}
+
+function _adminAllocRulesSyncStatus() {
+  const box = document.getElementById("adminAllocRulesStatus");
+  const st = _allocRulesState;
+  if (!box || !st || !_allocRulesSaved) return;
+  const pending = {
+    enabled: !!document.getElementById("adminAllocRulesEnabled")?.checked,
+    disabled_sups: st.disabled_sups || [],
+  };
+  const s = _adminAllocRulesStatusText(_allocRulesSaved, pending);
+  box.className = `alloc-rules-status alloc-rules-status--${s.cls}`;
+  box.innerHTML = `<strong>${escapeHtml(s.text)}</strong>`
+    + (s.pending ? `<div class="alloc-rules-status__pending">${escapeHtml(s.pending)}</div>` : "");
+}
+
 function _adminAllocRulesSyncHint() {
   const st = _allocRulesState;
   const hint = document.getElementById("adminAllocRulesPushHint");
@@ -17778,8 +17893,10 @@ function _adminRenderAllocRulesChips() {
   const st = _allocRulesState;
   if (!box || !st) return;
   const list = st.disabled_sups || [];
+  _adminAllocRulesSyncStatus();
   if (!list.length) {
-    box.innerHTML = `<span class="alloc-rules-empty">ยังไม่มีทีมไหนถูกปิด — กติกาทำงานกับทุกทีม</span>`;
+    // กติกาปิดทั้งระบบอยู่ ห้ามบอกว่า "ทำงานกับทุกทีม" (เดิมขึ้นแบบนี้แม้ปิดทั้งระบบ — สับสน)
+    box.innerHTML = `<span class="alloc-rules-empty">ยังไม่มีทีมไหนอยู่ในรายการนี้</span>`;
     return;
   }
   const byCode = new Map((st.teams || []).map((t) => [t.sup_id, t.name]));
@@ -19306,6 +19423,7 @@ function _adminRenderNightlyCheck(data) {
         + ` และรอบปิดงวดวันสุดท้ายของเดือน ${String(s.closing_hour ?? 23).padStart(2, "0")}:00 น. · ${last}</div>`
       : `<div class="admin-alert admin-alert--warn">ปิดอยู่ — ระบบไม่ตรวจเอง (กด「รันเดี๋ยวนี้」ได้ถ้าต้องการตรวจรอบเดียว) · ${last}</div>`;
   }
+  _adminNightlySyncPending();
   const meta = document.getElementById("adminNightlyMeta");
   if (meta) {
     meta.textContent = s.updated_at ? `ตั้งค่าล่าสุด ${_adminFmtTime(s.updated_at)}${s.updated_by ? ` โดย ${s.updated_by}` : ""}` : "";
@@ -19331,6 +19449,23 @@ function _adminRenderNightlyCheck(data) {
         + `<td>${escapeHtml(r.date || "—")}</td><td>${escapeHtml(AppLogic.nightlyReasonText(r.reason))}</td></tr>`;
     })
     .join("");
+}
+
+/**
+ * ติ๊กแล้วยังไม่กดบันทึก = ยังไม่มีผล — แถบสถานะด้านบนบอกค่าที่บันทึกอยู่จริงเสมอ
+ * (ผู้ใช้เห็นช่องติ๊กแต่แถบขึ้น "ปิดอยู่" แล้วงง — 12 ต.ค. 2026)
+ */
+function _adminNightlySyncPending() {
+  const box = document.getElementById("adminNightlyStatus");
+  if (!box) return;
+  box.querySelector(".admin-nightly-pending")?.remove();
+  const saved = !!_adminNightlyData?.settings?.enabled;
+  const now = !!document.getElementById("adminNightlyEnabled")?.checked;
+  if (!_adminNightlyData || saved === now) return;
+  const div = document.createElement("div");
+  div.className = "admin-alert admin-alert--warn admin-nightly-pending";
+  div.textContent = `ยังไม่บันทึก — กด「บันทึก」ด้านล่างแล้วจะเป็น: ${now ? "เปิดตรวจทุกคืน" : "ปิด"}`;
+  box.appendChild(div);
 }
 
 async function adminLoadNightlyCheck() {

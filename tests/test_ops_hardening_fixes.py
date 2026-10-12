@@ -114,10 +114,10 @@ class TestB9NoMutationObserverForModalClose(unittest.TestCase):
         self.assertIsNotNone(m)
         body = m.group(1)
         # ปุ่มปิด + คลิกพื้นหลัง + Escape (ผ่าน bindModalBehaviour)
-        self.assertGreaterEqual(
-            body.count("onSecondary && onSecondary()"), 3,
-            "ทุกทางปิดต้องเรียก onSecondary ไม่งั้นตัวที่รอคำตอบค้าง",
-        )
+        # Esc/คลิกนอกกรอบเรียก _dismissFn ซึ่งคือ onSecondary เว้นแต่ผู้เรียกส่ง onDismiss มาเอง (12 ต.ค. 2026)
+        self.assertIn('const _dismissFn = typeof onDismiss === "function" ? onDismiss : onSecondary;', body)
+        calls = body.count("onSecondary && onSecondary()") + body.count("_dismissFn && _dismissFn()")
+        self.assertGreaterEqual(calls, 3, "ทุกทางปิดต้องเรียก onSecondary/onDismiss ไม่งั้นตัวที่รอคำตอบค้าง")
 
     def test_every_send_gate_supplies_on_secondary(self):
         for fn in (

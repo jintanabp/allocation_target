@@ -16,7 +16,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=2026100818" />
+  <link rel="stylesheet" href="style.css?v=2026101201" />
 </head>
 
 <body>
@@ -138,7 +138,7 @@
                   <span class="login-manual-cta__badge">แนะนำ</span>
                 </span>
                 <span class="login-manual-cta__meta">
-                  <span class="login-manual-cta__chip">9 ขั้นตอน</span>
+                  <span class="login-manual-cta__chip">10 ขั้นตอน</span>
                   <span class="login-manual-cta__chip">~4 นาที</span>
                   <span class="login-manual-cta__chip">อ่านได้ก่อนล็อกอิน</span>
                 </span>
@@ -995,7 +995,7 @@
         <div>
           <div class="manual-eyebrow">คู่มือใช้งาน</div>
           <div class="manual-title" id="manualModalTitle">ระบบกระจายเป้าหมายยอดขาย</div>
-          <div class="manual-sub">อ่านทีละขั้นตอน — 9 หัวข้อ · ใช้เวลาประมาณ 4 นาที</div>
+          <div class="manual-sub">อ่านทีละขั้นตอน — 10 หัวข้อ · ใช้เวลาประมาณ 4 นาที</div>
         </div>
         <button type="button" class="manual-close" onclick="closeManualModal()" aria-label="ปิด">✕</button>
       </div>
@@ -1745,11 +1745,14 @@
             <p><strong>ปิดรายทีมกับโหมดรวมภาค:</strong> ถ้าผู้จัดการกดคำนวณแบบ <strong>รวมภาค</strong> (ทุกทีมเป็นก้อนเดียว) แล้วมีทีมที่ถูกปิดอยู่ในรอบนั้น <strong>กติกาจะปิดทั้งรอบ</strong> — ทีมอื่นที่ยังเปิดอยู่จะไม่ได้ใช้กติกาไปด้วย · หน้าจอของผู้จัดการขึ้นบอกทั้งก่อนกดและหลังคำนวณ พร้อมบอกว่าถ้าอยากให้ทีมที่เหลือยังใช้กติกา ให้เลือก「แยกตามทีม」แทน</p>
           </div>
 
+          <!-- สถานะที่ใช้อยู่จริงตอนนี้ (ผู้ใช้ขอ 12 ต.ค. 2026: ช่องติ๊กอย่างเดียวอ่านไม่ออกว่าเปิดหรือปิดอยู่) -->
+          <div id="adminAllocRulesStatus" class="alloc-rules-status" aria-live="polite"></div>
+
           <div class="alloc-rules-grid">
             <div class="alloc-rules-block">
               <label class="alloc-rules-switch">
-                <input type="checkbox" id="adminAllocRulesEnabled" />
-                <span><strong>เปิดกติกานี้ทั้งระบบ</strong></span>
+                <input type="checkbox" id="adminAllocRulesEnabled" onchange="_adminAllocRulesSyncStatus()" />
+                <span><strong>ใช้กติกานี้</strong> <span class="alloc-rules-switch__sub">(ติ๊ก = เปิดให้ทุกทีม · ไม่ติ๊ก = ปิดทุกทีม)</span></span>
               </label>
               <p class="alloc-rules-note">ปิดตรงนี้ = <strong>ทุกทีมเปลี่ยนพร้อมกัน</strong> ใช้เฉพาะตอนกติกาออกมาผิดทั้งบริษัท · ถ้าเป็นทีมเดียวให้ใส่รหัสทีมในช่องด้านขวาแทน</p>
             </div>
@@ -2001,7 +2004,7 @@
           <div class="alloc-rules-grid">
             <div class="alloc-rules-block">
               <label class="alloc-rules-switch">
-                <input type="checkbox" id="adminNightlyEnabled" />
+                <input type="checkbox" id="adminNightlyEnabled" onchange="_adminNightlySyncPending()" />
                 <span><strong>เปิดตรวจอัตโนมัติทุกคืน</strong></span>
               </label>
               <p class="alloc-rules-note">ค่าตั้งต้น <strong>ปิด</strong> · เปิดแล้วระบบจะอ่าน Target Sun ของทุกทีมที่เคยส่ง วันละครั้งตามเวลาที่ตั้ง</p>
@@ -2182,8 +2185,8 @@
   <script src="vendor/msal-browser.min.js"></script>
   <!-- ตรรกะล้วน (ตัวแปลงเลข/คณิตการเกลี่ย) — ต้องมาก่อน app.js
        ไฟล์นี้มีเทสจริงด้วย node --test tests/logic.test.js -->
-  <script src="logic.js?v=2026100818"></script>
-  <script src="app.js?v=2026100818"></script>
+  <script src="logic.js?v=2026101201"></script>
+  <script src="app.js?v=2026101201"></script>
 </body>
 
 </html>

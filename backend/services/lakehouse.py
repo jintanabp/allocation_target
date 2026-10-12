@@ -1216,6 +1216,34 @@ def _clear_leftover_rows_outside_round(
         if e in moved_to:
             teams[e] = {moved_to[e]}
     shared = {e for e, ts in teams.items() if len(ts) > 1 or (ts and sid not in ts)}
+    # คนที่ข้ามไม่ล้าง แต่มีหีบอยู่ใน grain ของทีมนี้เอง = หีบนั้นถูกนับในเป้าทีมนี้แล้ว (เป้าสร้างจาก grain)
+    # ถ้าส่งไปทั้งที่แถวเขายังค้าง Target Sun จะได้ "ไฟล์ + แถวค้าง" เกินเป้า — ด่านทุกด่านผ่านเพราะเทียบแค่ไฟล์
+    # (ตรวจก่อนใช้จริง 12 ต.ค. 2026 C2) → หยุดพร้อมบอกชื่อ ไม่ส่งยอดเกินเป้าเข้าไป
+    if shared and dg is not None and not dg.empty and {"emp_id", "sku"} <= set(dg.columns):
+        _q = pd.to_numeric(dg["qty"] if "qty" in dg.columns else 0, errors="coerce").fillna(0)
+        _left: dict[str, int] = {}
+        _present_norm = {(norm_emp_code(a), b) for a, b in present_pairs}
+        for e, k, q in zip(dg["emp_id"].map(norm_emp_code), dg["sku"].astype(str).str.strip(), _q):
+            if q > 0 and e in shared and k in round_skus and (e, k) not in _present_norm:
+                _left[e] = _left.get(e, 0) + int(q)
+        if _left:
+            logger.error("ส่ง %s ไม่ได้: พนักงานหลายทีม/ย้ายทีมมีหีบค้างในเป้าทีมนี้ %s", sid, _left)
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "shared_employee_rows_left",
+                    "message": (
+                        f"ยังไม่ได้ส่ง — พนักงาน {', '.join(sorted(_left)[:5])} มีเป้าเดิมอยู่ในทีม {sid} "
+                        f"รวม {sum(_left.values()):,} หีบ แต่ไม่ได้อยู่ในรอบนี้ และยังอยู่ในทีมอื่นด้วย "
+                        "ถ้าส่งตอนนี้ ยอดใน Target Sun จะเกินเป้า"
+                    ),
+                    "hint_th": (
+                        "ถ้าพนักงานย้ายทีมแล้ว ให้กดโหลดข้อมูลขั้นที่ 1 ของทีมนี้ใหม่แล้วกระจายอีกครั้ง · "
+                        "ถ้ายังอยู่สองทีมจริง ให้แอดมินจัดให้อยู่ทีมเดียวที่หน้า「ย้ายพนักงาน」"
+                    ),
+                    "employees": sorted(_left)[:20],
+                },
+            )
     rows = [c for c in cands.values() if norm_emp_code(c["emp_id"]) not in shared]
     if shared:
         logger.warning("ไม่ล้างแถวค้างของพนักงานที่อยู่หลายทีม/ย้ายไปทีมอื่นแล้ว %s: %s", sid, sorted(shared)[:20])
@@ -2158,6 +2186,67 @@ def verify_row_count_after_send(
         return {"checked": False, "reason": "error"}
 
 
+def employees_in_multiple_team_grains(sup_ids, month: int, year: int, skus=None) -> dict[str, list[str]]:
+    """
+    พนักงานที่มีแถวเป้า (หีบ > 0) อยู่ในไฟล์ grain ของมากกว่าหนึ่งทีมในชุดนี้ — {รหัส: [ทีม]}
+
+    ตรวจก่อนใช้จริง 12 ต.ค. 2026 (C1): Target Sun ถูกอ่านตามรหัสพนักงาน ไม่กรองทีม พนักงานที่อยู่ใต้สองทีม
+    (หรือย้ายทีมแล้วไฟล์ทีมเก่ายังค้าง) จึงมีแถวเป้าเต็มอยู่ในไฟล์ของทั้งสองทีม → เป้ารวมภาค = ผลบวกไฟล์รายทีม
+    นับเขาสองรอบ แล้วด่านยอดรวมก็ผ่านเพราะเทียบกับเป้าที่บวกซ้ำชุดเดียวกัน · อ่านไฟล์ไม่ได้ = ข้ามทีมนั้น
+    """
+    teams_of: dict[str, set[str]] = {}
+    suffix = f"_{int(year):04d}_{int(month):02d}.csv"
+    for sid in {str(x or "").strip().upper() for x in (sup_ids or []) if str(x or "").strip()}:
+        path = os.path.join("data", f"tga_lines_{sid}{suffix}")
+        if not os.path.exists(path):
+            continue
+        try:
+            with read_locked(path):
+                dg = pd.read_csv(path, dtype=str, keep_default_na=False)
+        except Exception as e:
+            logger.warning("อ่าน grain %s เพื่อตรวจพนักงานซ้ำทีมไม่ได้: %s", path, e)
+            continue
+        if dg.empty or "emp_id" not in dg.columns:
+            continue
+        if "qty" not in dg.columns:
+            continue
+        qty = pd.to_numeric(dg["qty"], errors="coerce").fillna(0)
+        mask = qty > 0
+        # ส่งแยกแบรนด์/บางสินค้า: ดูเฉพาะสินค้าที่ชุดนี้ส่ง — คนที่ซ้ำทีมแค่ในแบรนด์อื่นไม่กระทบยอดชุดนี้
+        if skus is not None and "sku" in dg.columns:
+            mask &= dg["sku"].astype(str).str.strip().isin(skus)
+        for e in set(dg.loc[mask, "emp_id"].map(norm_emp_code)) - {""}:
+            teams_of.setdefault(e, set()).add(sid)
+    return {e: sorted(t) for e, t in sorted(teams_of.items()) if len(t) > 1}
+
+
+def assert_no_employee_in_multiple_team_grains(sup_ids, month: int, year: int, skus=None) -> None:
+    dup = employees_in_multiple_team_grains(sup_ids, month, year, skus=skus)
+    if not dup:
+        return
+    lst = [{"emp_id": e, "teams": t} for e, t in list(dup.items())[:20]]
+    # สร้างข้อความแยกก่อน — f-string ซ้อนเครื่องหมายคำพูดชนิดเดียวกันใช้ได้แค่ Python 3.12+
+    # (server ใช้ runtime/python 3.11 → SyntaxError ทั้งไฟล์ แอปเปิดไม่ขึ้น · ตรวจซ้ำ 12 ต.ค. 2026)
+    ex = ", ".join("{} ({})".format(x["emp_id"], " / ".join(x["teams"])) for x in lst[:3])
+    logger.error("พนักงานมีเป้าอยู่ในไฟล์ของหลายทีม (%d คน): %s", len(dup), lst[:5])
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "employee_in_two_teams",
+            "message": (
+                f"ยังไม่ได้ทำต่อ — พนักงาน {len(dup)} คนมีเป้าอยู่ในข้อมูลของมากกว่าหนึ่งทีม "
+                f"(เช่น {ex}) "
+                "ถ้าทำต่อ เป้าของเขาจะถูกนับซ้ำในยอดรวมภาค"
+            ),
+            "hint_th": (
+                "ถ้าพนักงานย้ายทีมแล้ว ให้กดโหลดข้อมูลขั้นที่ 1 ของทีมเดิมใหม่ · ถ้ายังอยู่สองทีมจริง "
+                "ให้แอดมินย้ายให้อยู่ทีมเดียวที่หน้า「ย้ายพนักงาน」 หรือกระจาย/ส่งแบบแยกรายทีม"
+            ),
+            "employees": lst,
+        },
+    )
+
+
 def verify_send_batch(metas: list[dict]) -> dict:
     """
     ด่านระดับชุด — ยอดรวมของ "ทุกทีมที่จะส่งรอบนี้" ต้องเท่าเป้ารวมของทีมเหล่านั้น ราย SKU
@@ -2236,6 +2325,8 @@ def verify_send_batch(metas: list[dict]) -> dict:
     if len(periods) == 1 and len(sup_ids) > 1:
         _y, _m = next(iter(periods))
         assert_batch_snapshots_same_generation(sup_ids, int(_m), int(_y))
+        # (0b) พนักงานคนเดียวมีเป้าในไฟล์หลายทีม = เป้ารวมชุดนับเขาซ้ำ ด่านยอดรวมข้างล่างจึงผ่านได้ (12 ต.ค. 2026 C1)
+        assert_no_employee_in_multiple_team_grains(sup_ids, int(_m), int(_y), skus=set(file_by_sku) or None)
 
     # (1) SKU ที่ทีมหนึ่งตัดทิ้ง แต่อีกทีมยังส่งอยู่
     partial = [

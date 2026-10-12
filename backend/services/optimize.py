@@ -57,6 +57,7 @@ from ..schemas import OptimizeRequest
 from ..fabric_dax_connector import FabricDAXConnector
 from . import alloc_rules_store, no_target_store
 from .lakehouse import (
+    assert_no_employee_in_multiple_team_grains,
     _apply_warehouse_pin_rules,
     _boxes_by_sku,
     _read_tga_grain_across_teams,
@@ -1352,6 +1353,9 @@ def run_optimization_service(
     ).fillna(0.0)
     if summed_target:
         _reject_employee_in_two_teams(df_all_targets)
+        # ด่านบนดูแค่คนที่หน้าเว็บส่งมา (คนที่ถูกกรองออก เช่นไม่ต้องตั้งเป้า ไม่อยู่ในนั้น) แต่เป้ารวมภาค
+        # บวกจากไฟล์รายทีมซึ่งมีแถวของเขาครบ — ตรวจจากไฟล์ grain ตรง ๆ ด้วย (ตรวจก่อนใช้จริง 12 ต.ค. 2026 C1)
+        assert_no_employee_in_multiple_team_grains(target_sup_ids, target_month, target_year)
     # ทุกโหมด (หลังด่านสองทีม เพื่อให้กรณีข้ามทีมได้ข้อความเฉพาะของมัน) — 7.14
     _reject_duplicate_employee_rows(df_all_targets)
     # ตัดพนักงานที่ "ไม่ต้องตั้งเป้า" ออกก่อนทุกอย่าง — /optimize ไม่เคยกรองพนักงานเลย

@@ -10506,6 +10506,19 @@ tr.emp-row--no-target .emp-tag {
   cursor: pointer;
 }
 #adminView .alloc-rules-switch input { width: 18px; height: 18px; cursor: pointer; }
+#adminView .alloc-rules-switch__sub { font-weight: 400; color: var(--text-3); font-size: 12px; }
+#adminView .alloc-rules-status {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 14px;
+  border: 1px solid var(--border-md);
+  background: var(--bg-main);
+}
+#adminView .alloc-rules-status:empty { display: none; }
+#adminView .alloc-rules-status--on { border-color: var(--green-brd, #86efac); background: var(--green-bg, #f0fdf4); color: var(--green, #15803d); }
+#adminView .alloc-rules-status--off { border-color: var(--red-brd); background: var(--red-bg); color: var(--red); }
+#adminView .alloc-rules-status__pending { margin-top: 4px; font-size: 13px; font-weight: 600; color: var(--amber, #b45309); }
 #adminView .alloc-rules-field {
   display: block;
   font-size: 13px;
@@ -10937,3 +10950,9 @@ body.has-result-fullscreen .btn-feedback--floating {
   top: auto;
   bottom: calc(max(16px, env(safe-area-inset-bottom, 0px)) + 58px);
 }
+
+/* ปลายทางส่ง Target Sun ในหน้าต่างส่ง (12 ต.ค. 2026) */
+.lakehouse-dest { margin: 10px 0 0; font-size: 14px; font-weight: 600; }
+.lakehouse-dest:empty { display: none; }
+.lakehouse-dest--ok { color: var(--green); }
+.lakehouse-dest--warn { color: var(--red); background: var(--red-bg); border: 1px solid var(--red-brd); border-radius: 8px; padding: 8px 12px; }

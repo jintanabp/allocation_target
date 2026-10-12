@@ -46,6 +46,22 @@ def _public_runtime_status() -> dict:
     return st
 
 
+def _targetsun_labels() -> dict:
+    try:
+        from ..services.targetsun_endpoints import targetsun_endpoints_summary
+
+        t = targetsun_endpoints_summary()
+    except Exception:
+        return {"send": "unknown", "read": "unknown", "using_default_settings": True}
+    known = {"Prod", "UAT"}
+    lab = lambda v: v if v in known else "other"  # noqa: E731
+    return {
+        "send": lab(t.get("import_host_label")),
+        "read": lab(t.get("read_host_label")),
+        "using_default_settings": t.get("using_default_settings") == "1",
+    }
+
+
 @router.get("/health")
 def health():
     return {
@@ -62,6 +78,9 @@ def health():
         # single_process=false = มีหลายโปรเซสใช้ข้อมูลชุดเดียวกัน (ล็อกในแอปใช้ไม่ได้)
         # /health ไม่ต้องล็อกอิน — ไม่ส่ง path เต็มของ server (ผลตรวจ 7 ต.ค. 2026 ค) · path เต็มอยู่ใน log ตอนสตาร์ท
         "runtime": _public_runtime_status(),
+        # ปลายทางส่ง Target Sun (Prod/UAT) — หน้าต่างส่งบอกผู้ใช้ทุกครั้ง กันส่งเข้า UAT โดยไม่รู้ตัว
+        # (ตรวจก่อนใช้จริง 12 ต.ค. 2026) · ส่งแค่ป้าย ไม่ส่ง URL/ชื่อเครื่อง
+        "targetsun": _targetsun_labels(),
         "files": {
             # ไฟล์เป้าแยกราย sup แล้ว — รายงานเป็นจำนวนไฟล์ ส่วน legacy_* คือไฟล์ global เก่าที่ยังค้าง
             "target_boxes_files": _count_data_files("target_boxes_"),
