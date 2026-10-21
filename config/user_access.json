@@ -734,20 +734,6 @@
     "acc_scope": "all"
   },
   {
-    "email": "prasert.c@sahapat.co.th",
-    "userpl": "SL532",
-    "can_import_targetsun": true,
-    "note": "",
-    "full_name": "ประเสริฐ ชุ่มชนต์",
-    "acc_region": "ใต้",
-    "acc_type": "NON",
-    "acc_joblevel": "1",
-    "login_kind": "manager_acc",
-    "manager_level": "regional",
-    "acc_division": "Div.S",
-    "acc_scope": "all"
-  },
-  {
     "email": "pratak.k@sahapat.co.th",
     "userpl": "SL529",
     "can_import_targetsun": true,
@@ -1242,16 +1228,6 @@
     "acc_division": "Div.E",
     "acc_position": "ผจก.แผนก Div.E",
     "acc_scope": "all"
-  },
-  {
-    "email": "wijittre.k@sahapat.co.th",
-    "userpl": "SL532",
-    "can_import_targetsun": false,
-    "note": "test for SL532",
-    "acc_region": "เหนือ",
-    "login_kind": "supervisor_acc",
-    "acc_division": "Div.E",
-    "acc_scope": "region_peers"
   },
   {
     "email": "winai.s@sahapat.co.th",
