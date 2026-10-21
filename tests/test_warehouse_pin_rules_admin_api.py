@@ -43,8 +43,10 @@ class WarehousePinRulesApiTest(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self._old_env = os.environ.get("WAREHOUSE_PIN_RULES_PATH")
         os.environ["WAREHOUSE_PIN_RULES_PATH"] = os.path.join(self._tmp.name, "rules.json")
+        self._cwd = os.getcwd()
 
     def tearDown(self):
+        os.chdir(self._cwd)  # ต้องออกจาก tmp ก่อนลบ (Windows ลบโฟลเดอร์ที่ยืนอยู่ไม่ได้)
         if self._old_env is None:
             os.environ.pop("WAREHOUSE_PIN_RULES_PATH", None)
         else:
@@ -96,39 +98,89 @@ class WarehousePinRulesApiTest(unittest.TestCase):
             )
         self.assertEqual(ctx.exception.status_code, 409)
 
-    def test_combos_endpoint_returns_data_from_fabric(self):
-        seen_calls = {}
-        fake = type(
-            "Fake",
-            (),
-            {
-                "get_tga_dim_combos_by_product": lambda self, skus, m, y: (
-                    seen_calls.update({"skus": skus, "m": m, "y": y}) or
-                    pd.DataFrame(
-                        [{"areacode": "3", "divisioncode": "S", "warehouse_code": "G010", "qty": 100.0, "emp_count": 10}]
-                    )
-                ),
-            },
-        )
-        with patch.object(admin_router, "FabricDAXConnector", return_value=fake()):
-            out = admin_router.admin_warehouse_pin_rule_combos(
-                skus="SKU1,SKU2", year=2026, month=10, _admin=ADMIN
-            )
+    # ── รายการสินค้า/สถิติคลังอ่านจากไฟล์ขั้นที่ 1 ของทุกทีม (เลิกอ่าน Fabric TGA 21 ต.ค. 2026) ──
+
+    def _in_tmp_data(self, files):
+        """เขียนไฟล์ขั้นที่ 1 ปลอมลง <tmp>/data แล้ว chdir เข้าไป (โค้ดจริงอ่าน path สัมพัทธ์ data/)"""
+        os.chdir(self._tmp.name)
+        os.makedirs("data", exist_ok=True)
+        for name, rows in files.items():
+            pd.DataFrame(rows).to_csv(os.path.join("data", name), index=False)
+
+    def test_combos_endpoint_reads_team_grain_files_not_fabric(self):
+        self._in_tmp_data({
+            "tga_lines_SLA_2026_11.csv": [
+                {"emp_id": "E1", "sku": "SKU1", "qty": 6, "salestype": "S", "divisioncode": "B", "areacode": "3", "provincecode": "", "warehouse_code": "G010"},
+                {"emp_id": "E2", "sku": "SKU1", "qty": 4, "salestype": "S", "divisioncode": "B", "areacode": "3", "provincecode": "", "warehouse_code": "G010"},
+                {"emp_id": "E3", "sku": "SKU9", "qty": 9, "salestype": "S", "divisioncode": "B", "areacode": "3", "provincecode": "", "warehouse_code": "R082"},
+            ],
+            "tga_lines_SLB_2026_11.csv": [
+                {"emp_id": "E4", "sku": "SKU2", "qty": 5, "salestype": "C", "divisioncode": "B", "areacode": "5", "provincecode": "", "warehouse_code": ""},
+            ],
+        })
+        with patch.object(admin_router, "FabricDAXConnector", side_effect=AssertionError("ห้ามเรียก Fabric")):
+            out = admin_router.admin_warehouse_pin_rule_combos(skus="SKU1,SKU2", year=2026, month=11, _admin=ADMIN)
         self.assertEqual(out["sku_count"], 2)
+        got = {(c["areacode"], c["divisioncode"], c["warehouse_code"]): (c["qty"], c["emp_count"]) for c in out["combos"]}
+        self.assertEqual(got, {("3", "B", "G010"): (10.0, 2), ("5", "B", ""): (5.0, 1)})
+        self.assertEqual((out["source_year"], out["source_month"]), (2026, 11))
+
+    def test_combos_falls_back_to_latest_month_that_has_the_skus(self):
+        self._in_tmp_data({
+            "tga_lines_SLA_2026_10.csv": [
+                {"emp_id": "E1", "sku": "SKU1", "qty": 6, "salestype": "S", "divisioncode": "B", "areacode": "3", "provincecode": "", "warehouse_code": "G010"},
+            ],
+        })
+        out = admin_router.admin_warehouse_pin_rule_combos(skus="SKU1", year=2026, month=11, _admin=ADMIN)
         self.assertEqual(len(out["combos"]), 1)
-        self.assertEqual(out["combos"][0]["warehouse_code"], "G010")
-        self.assertEqual(seen_calls["skus"], ["SKU1", "SKU2"])  # ส่ง SKU ตรง ๆ ไม่ derive จาก section
+        self.assertEqual((out["source_year"], out["source_month"]), (2026, 10))
+        self.assertIn("10/2026", out["hint"])
+
+    def test_combos_fills_divisions_missing_this_month_from_earlier_months(self):
+        """ต้นงวดมีแค่ทีม division E โหลดแล้ว — division B (ภาคกลาง) ต้องยังมีให้เลือกจากงวดก่อน
+        และชุดที่มีทั้งสองงวดใช้ตัวเลขงวดใหม่ ไม่บวกข้ามงวด"""
+        row = lambda e, q, div, wh: {"emp_id": e, "sku": "SKU1", "qty": q, "salestype": "S", "divisioncode": div, "areacode": "3", "provincecode": "", "warehouse_code": wh}
+        self._in_tmp_data({
+            "tga_lines_SLE_2026_11.csv": [row("E1", 7, "E", "R082")],
+            "tga_lines_SLE_2026_10.csv": [row("E1", 99, "E", "R082")],
+            "tga_lines_SLB_2026_10.csv": [row("B1", 5, "B", "G010")],
+        })
+        out = admin_router.admin_warehouse_pin_rule_combos(skus="SKU1", year=2026, month=11, _admin=ADMIN)
+        got = {(c["divisioncode"], c["warehouse_code"]): c["qty"] for c in out["combos"]}
+        self.assertEqual(got, {("E", "R082"): 7.0, ("B", "G010"): 5.0})
+        self.assertIn("11/2026", out["hint"])
+        self.assertIn("10/2026", out["hint"])
 
     def test_combos_endpoint_requires_at_least_one_sku(self):
         with self.assertRaises(HTTPException) as ctx:
             admin_router.admin_warehouse_pin_rule_combos(skus="  , ,", year=2026, month=10, _admin=ADMIN)
         self.assertEqual(ctx.exception.status_code, 400)
 
-    def test_combos_endpoint_fails_loudly_not_silently_on_fabric_error(self):
-        with patch.object(admin_router, "FabricDAXConnector", side_effect=RuntimeError("boom")):
-            with self.assertRaises(HTTPException) as ctx:
-                admin_router.admin_warehouse_pin_rule_combos(skus="SKU1", year=2026, month=10, _admin=ADMIN)
-        self.assertEqual(ctx.exception.status_code, 502)
+    def test_catalog_lists_skus_with_section_from_every_team(self):
+        tb = lambda sku, sec, boxes, name: {"sku": sku, "section": sec, "supervisor_target_boxes": boxes, "product_name_thai": name, "product_name_english": ""}
+        self._in_tmp_data({
+            "target_boxes_SLA_2026_11.csv": [tb("409011", "702", 10, "ก"), tb("SKU0", "702", 0, "ไม่มีเป้า")],
+            "target_boxes_SLB_2026_11.csv": [tb("402107", "704", 5, "ข"), tb("409011", "702", 3, "ก")],
+        })
+        with patch.object(admin_router, "FabricDAXConnector", side_effect=AssertionError("ห้ามเรียก Fabric")):
+            out = admin_router.admin_warehouse_pin_rule_catalog(year=2026, month=11, _admin=ADMIN)
+        got = {r["sku"]: (r["section"], r["target_boxes"]) for r in out["skus"]}
+        self.assertEqual(got, {"409011": ("702", 13.0), "402107": ("704", 5.0)})  # SKU ไม่มีเป้าไม่ขึ้น
+
+    def test_catalog_falls_back_to_previous_month_and_says_so(self):
+        self._in_tmp_data({
+            "target_boxes_SLA_2026_10.csv": [{"sku": "409011", "section": "702", "supervisor_target_boxes": 10}],
+        })
+        out = admin_router.admin_warehouse_pin_rule_catalog(year=2026, month=11, _admin=ADMIN)
+        self.assertEqual([r["sku"] for r in out["skus"]], ["409011"])
+        self.assertEqual((out["source_year"], out["source_month"]), (2026, 10))
+        self.assertIn("ยังไม่มีทีมไหนโหลด", out["hint"])
+
+    def test_catalog_with_no_files_explains_what_to_do(self):
+        self._in_tmp_data({})
+        out = admin_router.admin_warehouse_pin_rule_catalog(year=2026, month=11, _admin=ADMIN)
+        self.assertEqual(out["skus"], [])
+        self.assertIn("ขั้นที่ 1", out["hint"])
 
 
 class WarehousePinRulesWiringTest(unittest.TestCase):
@@ -140,6 +192,7 @@ class WarehousePinRulesWiringTest(unittest.TestCase):
             '@router.get("/settings/warehouse-pin-rules")',
             '@router.put("/settings/warehouse-pin-rules")',
             '@router.get("/warehouse-pin-rules/combos")',
+            '@router.get("/warehouse-pin-rules/catalog")',
         ):
             block = self.src.split(marker)[1].split("@router.")[0]
             self.assertIn('require_capability("warehouse_pin_rules")', block, marker)

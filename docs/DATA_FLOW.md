@@ -134,7 +134,7 @@ Methods: `get_skus_sold_by_team`, `get_historical_sales`, `get_calendar_year_sal
 | `UPDATEDATE` | `TGA_COL_EFFECTIVE_FALLBACK` |
 | `SALESTYPE`, `DIVISIONCODE`, `AREACODE`, `PROVINCECODE`, `WAREHOUSECODE` | `LAKEHOUSE_COL_*` |
 
-Methods: `get_tga_max_effective_raw`, `get_tga_target_salesman_granular`, `get_tga_lakehouse_dims_by_emp_sku`, `get_tga_lakehouse_dims_by_emp`, `get_tga_dim_combos_by_product` (กรองด้วย `PRODUCTCODE` แทน `SALESMANCODE` — ใช้เฉพาะหน้าแอดมิน「กติกาบังคับคลัง」เพื่อโชว์คลังที่เจอจริงของกลุ่มสินค้า)
+Methods: `get_tga_max_effective_raw`, `get_tga_target_salesman_granular`, `get_tga_lakehouse_dims_by_emp_sku`, `get_tga_lakehouse_dims_by_emp`, `get_tga_dim_combos_by_product` (เลิกใช้แล้ว 21 ต.ค. 2026 — หน้าแอดมิน「กติกาบังคับคลัง」อ่านไฟล์ขั้นที่ 1 แทน เพราะ Fabric TGA ไม่มีใครดูแลแล้ว)
 
 ---
 
@@ -226,6 +226,8 @@ TTL: `EMPLOYEE_PAYLOAD_CACHE_TTL_SEC`, `MANAGERS_CACHE_TTL_SEC`, `ADMIN_TEAM_CAC
 | `POST /admin/alloc-rules/round-check` | ไม่ | ผู้ใช้ทั่วไปยิงได้ (ไม่ใช่ admin) — ถามว่ารหัสทีมที่ระบุถูกปิดกติกาไหม ก่อนกดกระจายรวมภาค |
 | `GET /admin/settings/warehouse-pin-rules` | ไม่ | อ่านกติกาบังคับคลังเดียว (`data/warehouse_pin_rules.json`) |
 | `PUT /admin/settings/warehouse-pin-rules` | ไม่ | บันทึกกติกาบังคับคลัง — CAS ด้วย `expected_rev` |
+| `GET /admin/warehouse-pin-rules/catalog` | ไม่ | สินค้า+กลุ่มสินค้าให้เลือกตั้งกติกา — จาก `data/target_boxes_*` ของทุกทีม (ไม่ใช่ Fabric TGA) ถอยงวดล่าสุดที่มีไฟล์ถ้างวดที่ขอยังไม่มีทีมโหลด |
+| `GET /admin/warehouse-pin-rules/combos` | ไม่ | ภาค×division×คลังของ SKU ที่เลือก — จาก `data/tga_lines_*` ของทุกทีม งวดที่ขอ + ย้อน 2 งวดเติมชุดที่ขาด |
 | `GET /admin/warehouse-pin-rules/combos` | ใช่ | คลัง/เขต/ดิวิชันที่ TGA เห็นจริงของ SKU ชุดที่แอดมินเลือกไว้ (query `skus=`, ไม่ใช่ section) — ช่วยเลือกคลังที่จะปักหมุด |
 | `GET /debug/fabric` | ใช่ | debug (`ENABLE_DEBUG_ENDPOINTS=1`) |
 

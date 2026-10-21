@@ -3594,41 +3594,40 @@ def admin_warehouse_pin_rule_combos(
     month: int | None = Query(None, ge=1, le=12),
     _admin: dict = Depends(require_capability("warehouse_pin_rules")),
 ) -> dict[str, Any]:
-    """คลัง/เขต/ดิวิชันที่ TGA เห็นจริงของ SKU ชุดนี้ — ให้แอดมินเลือกคลังที่จะปักหมุด
+    """คลัง/เขต/ดิวิชันที่เป้าจริงของ SKU ชุดนี้ใช้อยู่ — ให้แอดมินเลือกคลังที่จะปักหมุด
     โดยมีข้อมูลจริงประกอบ (% หีบ/จำนวนคนต่อคลัง) ไม่ใช่เดาเอง
 
     รับ SKU ตรง ๆ จากที่แอดมินเลือกในโมดัล (ไม่ใช่ derive จาก section อีกต่อไป) เพราะ
     แอดมินอาจเลือกแค่บางตัวในกลุ่ม ไม่ใช่ทั้งกลุ่มเสมอไป
+
+    อ่านจากไฟล์ขั้นที่ 1 ของทุกทีม (เป้า Target Sun) — เดิมอ่าน Fabric TGA ที่เลิกดูแลแล้ว
+    งวดใหม่จึงว่าง (21 ต.ค. 2026) ดู services/warehouse_pin_catalog.py
     """
     from ..core.tga_period import expected_allocation_period_ce
+    from ..services import warehouse_pin_catalog
 
     if month is None or year is None:
         year, month = expected_allocation_period_ce()
-    year = int(year)
-    month = int(month)
     sku_list = sorted({s.strip() for s in skus.split(",") if s.strip()})
     if not sku_list:
         raise HTTPException(status_code=400, detail="ต้องระบุ SKU อย่างน้อย 1 รายการ")
+    return {"sku_count": len(sku_list), **warehouse_pin_catalog.combos(sku_list, int(year), int(month))}
 
-    try:
-        fabric = FabricDAXConnector()
-        df_combos = fabric.get_tga_dim_combos_by_product(sku_list, month, year)
-        combos = [] if df_combos is None or df_combos.empty else df_combos.to_dict(orient="records")
-        return {
-            "sku_count": len(sku_list),
-            "combos": combos,
-            "hint": (
-                f"งวด {month:02d}/{year} · {len(sku_list)} SKU"
-                if combos
-                else f"ไม่พบข้อมูลคลังในงวด {month:02d}/{year} สำหรับ {len(sku_list)} SKU ที่เลือก"
-            ),
-        }
-    except Exception as e:
-        logger.warning("warehouse-pin-rules combos fabric failed: %s", e)
-        raise HTTPException(
-            status_code=502,
-            detail="ดึงข้อมูลคลังจาก Fabric ไม่สำเร็จ — กด「โหลดใหม่」อีกครั้ง",
-        ) from e
+
+@router.get("/warehouse-pin-rules/catalog")
+def admin_warehouse_pin_rule_catalog(
+    year: int | None = Query(None, ge=2000, le=2100),
+    month: int | None = Query(None, ge=1, le=12),
+    _admin: dict = Depends(require_capability("warehouse_pin_rules")),
+) -> dict[str, Any]:
+    """สินค้าที่มีเป้า + กลุ่มสินค้า ให้แอดมินเลือกตั้งกติกา — จากไฟล์ขั้นที่ 1 ของทุกทีม
+    (ไม่ใช่ /sku-links/catalog ที่ยังอ่าน Fabric TGA) ดู services/warehouse_pin_catalog.py"""
+    from ..core.tga_period import expected_allocation_period_ce
+    from ..services import warehouse_pin_catalog
+
+    if month is None or year is None:
+        year, month = expected_allocation_period_ce()
+    return warehouse_pin_catalog.catalog(int(year), int(month))
 
 
 # ── ตรวจ Target Sun รายคืน (เฟส F3) — dev เท่านั้น ─────────────────────────

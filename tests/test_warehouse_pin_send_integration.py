@@ -207,6 +207,96 @@ class WarehousePinSendIntegrationTest(unittest.TestCase):
         self.assertEqual(out.attrs.get("wh_pin_boxes_moved"), 10)
         self.assertEqual(out.attrs.get("wh_pin_rows_zeroed"), 2)
 
+    # ── เงื่อนไขเสริม (21 ต.ค. 2026): หน่วยเครดิต + เฉพาะพนักงาน — สถานการณ์ที่ผู้ใช้ขอจริง ──
+
+    def _real_case_rules(self):
+        store.write_rules([
+            # ภาคเหนือ B: เฉพาะหน่วยเครดิต ทุกคน
+            {"section": "702", "skus": ["SKU1"], "areacode": "5", "divisioncode": "B",
+             "salestype": "S", "warehouse_code": "G010"},
+            # ภาคกลาง B: เฉพาะหน่วยเครดิต เฉพาะพนักงานในรายชื่อ
+            {"section": "702", "skus": ["SKU1"], "areacode": "3", "divisioncode": "B",
+             "salestype": "S", "emp_ids": ["S344", "S345"], "warehouse_code": "G010"},
+        ])
+
+    def test_real_case_credit_and_employee_list_through_the_send_file(self):
+        self._write_cache(
+            grain_rows=[
+                _grain("S344", "SKU1", 6, "R082", st="S", div="B", area="3"),  # ในรายชื่อ คลังอื่น
+                _grain("S345", "SKU1", 4, "", st="S", div="B", area="3"),      # ในรายชื่อ คลังว่าง
+                _grain("S999", "SKU1", 5, "R082", st="S", div="B", area="3"),  # ภาคกลาง ไม่อยู่ในรายชื่อ
+                _grain("S998", "SKU1", 2, "", st="S", div="B", area="3"),      # ภาคกลาง ไม่อยู่ในรายชื่อ คลังว่าง
+                _grain("V001", "SKU1", 3, "R303", st="C", div="B", area="3"),  # ภาคกลาง รถเงินสด
+                _grain("N001", "SKU1", 7, "R500", st="S", div="B", area="5"),  # ภาคเหนือ เครดิต
+                _grain("N002", "SKU1", 1, "R501", st="C", div="B", area="5"),  # ภาคเหนือ รถเงินสด
+            ],
+            target_rows=[{"sku": "SKU1", "section": "702", "supervisor_target_boxes": 28, "price_per_box": 100.0}],
+        )
+        self._real_case_rules()
+        req = self._req([
+            {"emp_id": e, "sku": "SKU1", "allocated_boxes": b}
+            for e, b in (("S344", 6), ("S345", 4), ("S999", 5), ("S998", 2), ("V001", 3), ("N001", 7), ("N002", 1))
+        ])
+        # ไม่ mock ด่านยอดรวม — ถ้ายอดไม่ตรงเป้า/ไม่ตรง payload จะได้ HTTPException ทันที
+        out, _dropped, _preview, _short = lh._build_tga_upload_dataframe(req, drop_incomplete_rows=True)
+        rows = out[out["PRODUCTCODE"] == "SKU1"]
+        got = {
+            (r.SALESMANCODE, r.WAREHOUSECODE): int(r.QUANTITYCASE)
+            for r in rows.itertuples()
+        }
+        self.assertEqual(got, {
+            ("S344", "G010"): 6, ("S344", "R082"): 0,  # ย้ายไป G010 + ส่ง 0 ทับคลังเก่า
+            ("S345", "G010"): 4, ("S345", ""): 0,      # คลังว่างเดิมได้ 0 ทับ
+            ("S999", "R082"): 5,                       # ไม่อยู่ในรายชื่อ — คงคลังตามเป้า
+            ("S998", ""): 2,                           # ไม่อยู่ในรายชื่อ — คงคลังว่างตามเป้า
+            ("V001", "R303"): 3,                       # รถเงินสด — ไม่โดน
+            ("N001", "G010"): 7, ("N001", "R500"): 0,  # ภาคเหนือเครดิต — ทุกคนโดน
+            ("N002", "R501"): 1,                       # ภาคเหนือรถเงินสด — ไม่โดน
+        })
+        self.assertEqual(int(rows["QUANTITYCASE"].sum()), 28)
+
+    def test_old_unrestricted_rule_still_behaves_exactly_as_before(self):
+        """กติกาที่บันทึกไว้ก่อนมีช่องใหม่ (ไม่มี salestype/emp_ids ในไฟล์) ต้องยังจับทุกคนเหมือนเดิม"""
+        self._write_cache(
+            grain_rows=[
+                _grain("S999", "SKU1", 5, "R082", st="S", div="B", area="3"),
+                _grain("V001", "SKU1", 3, "R303", st="C", div="B", area="3"),
+            ],
+            target_rows=[{"sku": "SKU1", "section": "702", "supervisor_target_boxes": 8, "price_per_box": 100.0}],
+        )
+        import json
+        with open(os.environ["WAREHOUSE_PIN_RULES_PATH"], "w", encoding="utf-8") as f:
+            json.dump({"rev": 1, "rules": [{
+                "id": "old1", "section": "702", "skus": ["SKU1"], "areacode": "3",
+                "divisioncode": "B", "warehouse_code": "G010",
+            }]}, f)
+        req = self._req([
+            {"emp_id": "S999", "sku": "SKU1", "allocated_boxes": 5},
+            {"emp_id": "V001", "sku": "SKU1", "allocated_boxes": 3},
+        ])
+        out, _d, _p, _s = lh._build_tga_upload_dataframe(req, drop_incomplete_rows=True)
+        live = out[(out["PRODUCTCODE"] == "SKU1") & (out["QUANTITYCASE"] > 0)]
+        self.assertEqual(set(live["WAREHOUSECODE"]), {"G010"})
+        self.assertEqual(int(out["QUANTITYCASE"].sum()), 8)
+
+    def test_excel_download_matches_send_for_real_case(self):
+        self._write_cache(
+            grain_rows=[
+                _grain("S344", "SKU1", 6, "R082", st="S", div="B", area="3"),
+                _grain("S999", "SKU1", 5, "R082", st="S", div="B", area="3"),
+            ],
+            target_rows=[{"sku": "SKU1", "section": "702", "supervisor_target_boxes": 11, "price_per_box": 100.0}],
+        )
+        self._real_case_rules()
+        req = self._req([
+            {"emp_id": "S344", "sku": "SKU1", "allocated_boxes": 6},
+            {"emp_id": "S999", "sku": "SKU1", "allocated_boxes": 5},
+        ])
+        sent, *_ = lh._build_tga_upload_dataframe(req, drop_incomplete_rows=True)
+        excel, *_ = lh._build_tga_upload_dataframe(req, drop_incomplete_rows=False)
+        key = lambda d: sorted(zip(d["SALESMANCODE"], d["WAREHOUSECODE"], d["QUANTITYCASE"].astype(int)))
+        self.assertEqual(key(sent), key(excel))
+
 
 if __name__ == "__main__":
     unittest.main()

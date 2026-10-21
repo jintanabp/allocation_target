@@ -18247,10 +18247,16 @@ async function adminLoadWarehousePinRules() {
 
 async function adminLoadWhPinSections() {
   const sel = document.getElementById("adminWhPinSection");
+  const srcHint = document.getElementById("adminWhPinCatalogHint");
   if (sel) sel.innerHTML = `<option value="">กำลังโหลด…</option>`;
+  if (srcHint) srcHint.textContent = "";
   try {
-    // ไม่ส่ง super_code — endpoint นี้จะดึง SKU ที่มีเป้าทั้งบริษัทของงวดปัจจุบันมาให้
-    const data = await _adminJsonFetch("/admin/sku-links/catalog", { timeout: 120000 });
+    // อ่านจากไฟล์ขั้นที่ 1 ของทุกทีม (เป้า Target Sun) — เดิมใช้ /admin/sku-links/catalog ที่ยังอ่าน
+    // Fabric TGA ซึ่งเลิกดูแลแล้ว งวดใหม่จึงว่างทั้งที่เป้าเข้าแล้ว (21 ต.ค. 2026)
+    const period = _effectiveTargetPeriod();
+    const q = new URLSearchParams({ year: String(period.year), month: String(period.month) });
+    const data = await _adminJsonFetch(`/admin/warehouse-pin-rules/catalog?${q}`, { timeout: 120000 });
+    if (srcHint) srcHint.textContent = data.hint || "";
     const bySection = new Map();
     for (const row of data.skus || []) {
       const sec = String(row.section || "").trim();
@@ -18272,7 +18278,7 @@ async function adminLoadWhPinSections() {
     if (sel) {
       sel.innerHTML = _whPinSections.length
         ? [`<option value="">— เลือกกลุ่มสินค้า —</option>`, ...whPinSections_options()].join("")
-        : `<option value="">— ไม่พบกลุ่มสินค้าที่มีเป้างวดนี้ —</option>`;
+        : `<option value="">— ไม่พบกลุ่มสินค้า (ดูเหตุผลด้านล่าง) —</option>`;
     }
   } catch (e) {
     if (sel) sel.innerHTML = `<option value="">โหลดรายการกลุ่มสินค้าไม่สำเร็จ</option>`;
