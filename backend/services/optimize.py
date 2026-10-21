@@ -71,6 +71,7 @@ from .wh_split import (
     prepare_optimize_targets,
     restore_allocation_emp_ids,
     split_hist_dataframe,
+    real_wh,
     tga_value_by_emp_wh,
     value_shares_for_reverse_map,
 )
@@ -228,9 +229,9 @@ def _wh_blocked_pairs(
     for or_id, (emp, wh) in split.items():
         for s in skus:
             ws = whs_by.get((emp, s))
-            # แถวคลังว่างของคนแยกคลังไม่มีแถวบนจอให้รับหีบ (จอแยกเฉพาะคลังที่มีรหัส) — ถ้าตัดด้วย สินค้าที่มีเป้า
-            # อยู่ที่คลังว่างจะไม่มีใครในตัวคนนี้รับได้เลย · ไม่ตัด ปล่อยทางเดิม (ส่งลงแถวคลังว่างตาม Target Sun)
-            if ws and wh not in ws and "" not in ws:
+            # คลังว่างมีแถวบนจอของตัวเองแล้ว (BLANK_WH_TOKEN, 21 ต.ค. 2026) — เดิมยกเว้นสินค้าที่มีเป้าที่คลังว่าง
+            # เพราะไม่มีแถวให้รับ แถวคลังอื่นจึงรับแทน แล้วตอนส่งหีบไหลไปคลังว่าง จอกับของที่ส่งไม่ตรงกัน
+            if ws and real_wh(wh) not in ws:
                 blocked.add((str(or_id).strip(), s))
     if not blocked:
         return frozenset()

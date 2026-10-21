@@ -38,16 +38,19 @@ class TestWhBlockedPairsHelper(unittest.TestCase):
         rmap = {"C442|R408": ("C442", "R408"), "E2": ("E2", "")}
         self.assertEqual(_wh_blocked_pairs(rmap, 9, 2026, self.df_sku), frozenset({("C442|R408", "X")}))
 
-    def test_sku_at_blank_warehouse_not_blocked(self):
-        # คนแยกคลังที่สินค้า B มีเป้าอยู่ที่คลังว่าง — ไม่มีแถวบนจอของคลังว่าง จึงต้องไม่ตัด
+    def test_blank_warehouse_row_is_a_real_row(self):
+        # 21 ต.ค. 2026: คลังว่างมีแถว「(ว่าง)」ของตัวเอง — สินค้า B มีเป้าแค่คลังว่าง แถว R408 ห้ามรับ
+        # สินค้า A มีเป้าแค่ R408 แถว (ว่าง) ห้ามรับ (เดิมยกเว้นคลังว่างเพราะไม่มีแถวให้รับ)
         pd.DataFrame([
             {"emp_id": "C442", "sku": "A", "qty": 10, "warehouse_code": "R408"},
             {"emp_id": "C442", "sku": "B", "qty": 4, "warehouse_code": ""},
-            {"emp_id": "E2", "sku": "B", "qty": 1, "warehouse_code": "W9"},
         ]).to_csv("data/tga_lines_SLZZWB_2026_09.csv", index=False)
-        rmap = {"C442|R408": ("C442", "R408"), "E2": ("E2", "")}
+        rmap = {"C442|R408": ("C442", "R408"), "C442|(ว่าง)": ("C442", "(ว่าง)")}
         df_sku = pd.DataFrame([{"sku": "A"}, {"sku": "B"}])
-        self.assertEqual(_wh_blocked_pairs(rmap, 9, 2026, df_sku), frozenset())
+        self.assertEqual(
+            _wh_blocked_pairs(rmap, 9, 2026, df_sku),
+            frozenset({("C442|R408", "B"), ("C442|(ว่าง)", "A")}),
+        )
 
     def test_no_split_rows_no_block(self):
         self.assertEqual(_wh_blocked_pairs({"E2": ("E2", "")}, 9, 2026, self.df_sku), frozenset())

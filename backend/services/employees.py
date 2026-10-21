@@ -100,7 +100,7 @@ from .sku_link_store import (
 )
 from .target_baseline import capture_baseline_once, diff_against_baseline
 from .usage_log_store import append_log
-from .wh_split import expand_employee_rows, warehouses_per_emp_from_tga
+from .wh_split import expand_employee_rows, real_wh, warehouses_per_emp_from_tga
 from .employee_payload_cache import (
     read_cached_employee_payload,
     write_cached_employee_payload,
@@ -1986,7 +1986,8 @@ def _apply_price_fix_to_payload(
             split_rows.setdefault(str(emp.get("emp_id") or "").strip(), []).append(emp)
     split_extra: dict[int, float] = {}
     for eid, rows in split_rows.items():
-        whs = {str(r.get("warehouse_code") or "").strip() for r in rows}
+        # แถวคลังว่าง (BLANK_WH_TOKEN) เทียบกับ delta_key ที่คิดจากแถวเป้าดิบ (คลัง "") — แปลงก่อน
+        whs = {real_wh(r.get("warehouse_code")) for r in rows}
         rest = float(delta_emp.get(eid) or 0) - sum(
             float(v) for (e, w), v in delta_key.items() if e == eid and w in whs
         )
@@ -1996,7 +1997,7 @@ def _apply_price_fix_to_payload(
 
     for emp in payload.get("employees") or []:
         eid = str(emp.get("emp_id") or "").strip()
-        wh = str(emp.get("warehouse_code") or "").strip()
+        wh = real_wh(emp.get("warehouse_code"))
         if emp.get("wh_split"):
             d = float(delta_key.get((eid, wh)) or 0) + float(split_extra.get(id(emp), 0.0))
         else:

@@ -53,7 +53,9 @@ class TestFrontendRebalanceRules(unittest.TestCase):
         body = _fn(self.src, "autoRebalance")
         self.assertIn("zeroKeys.has(_neverSoldZeroKeyOf(a)) || isWhBlocked(a)) return 0", body)
         # คนแยกคลัง: สินค้าที่ไม่มีเป้าที่คลังของแถวนี้ห้ามได้เพิ่ม (8 ต.ค. 2026 — ตรงกับ optimize._wh_blocked_pairs)
-        self.assertIn('!e.wh_redirect_skus[skuKey].includes("")', body)
+        # คลังว่างมีแถว「(ว่าง)」ของตัวเองแล้ว (21 ต.ค. 2026) — ไม่ยกเว้นสินค้าที่มีเป้าที่คลังว่างอีก
+        self.assertIn("e.wh_redirect_skus[skuKey].length)", body)
+        self.assertNotIn('.includes("")', body)
         self.assertIn("evenNeverSold.has(skuKey)", body)
         self.assertIn("cells.map(() => minFloor)", body)
 

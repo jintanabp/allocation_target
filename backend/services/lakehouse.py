@@ -18,6 +18,7 @@ from ..fabric_dax_connector import FabricDAXConnector
 from ..schemas import LakehouseUploadRequest
 from . import no_target_store
 from . import warehouse_pin_rules_store
+from .wh_split import real_wh
 
 logger = logging.getLogger("target_allocation")
 
@@ -3067,6 +3068,11 @@ def _build_tga_upload_dataframe(
     """
     t0 = time.perf_counter()
     rows_raw = [a.model_dump() for a in req.allocations]
+    # แถวคลังว่างของคนแยกคลังมาจากจอในชื่อ BLANK_WH_TOKEN — คืนเป็นคลังว่างจริงก่อนทุกอย่าง
+    # (ชื่อนี้ห้ามถึง Target Sun เด็ดขาด ดู wh_split.py)
+    for _r in rows_raw:
+        if "warehouse_code" in _r:
+            _r["warehouse_code"] = real_wh(_r.get("warehouse_code"))
     rows_raw, moved_out = _drop_rows_of_reassigned_employees(rows_raw, req.sup_id)
     df = pd.DataFrame(rows_raw)
     if df.empty:

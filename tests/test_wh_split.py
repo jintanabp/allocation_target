@@ -12,7 +12,9 @@ REPO = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, REPO)
 
 from backend.services.wh_split import (  # noqa: E402
+    BLANK_WH_TOKEN,
     _norm_wh,
+    real_wh,
     alloc_key,
     expand_employee_rows,
     prepare_optimize_targets,
@@ -53,8 +55,12 @@ class TestBlankWarehouseIsNotAWarehouse(unittest.TestCase):
         })
         self.assertEqual(warehouses_per_emp_from_tga(df), {"S554": ["G010"]})
 
-    def test_nan_warehouse_does_not_fabricate_a_split(self):
-        """เคสจริงที่เจอ (SL225): พนักงานคลังเดียวต้องไม่ถูกแตกและเป้าเงินต้องไม่ถูกหั่น"""
+    def test_nan_warehouse_never_becomes_a_code_named_nan(self):
+        """เคสจริงที่เจอ (SL225): NaN เคยกลายเป็นคลังปลอม "nan" — ห้ามเกิดอีก
+
+        21 ต.ค. 2026 ผู้ใช้ขอให้คลังว่างเป็นแถวแยกเมื่อคนนั้นมีรหัสคลังจริงด้วย (Target Sun ถือเป็นคนละแถว)
+        S554 (G010 + ว่าง) จึงแตกเป็น G010 กับ「(ว่าง)」ตั้งใจ — เป้าเงินแบ่งตามมูลค่าเป้าแต่ละคลัง
+        ไม่มีชื่อคลัง "nan" หลุดออกมา และเป้ารวมของคนยังครบ"""
         import numpy as np
 
         df = pd.DataFrame({
@@ -66,11 +72,27 @@ class TestBlankWarehouseIsNotAWarehouse(unittest.TestCase):
         rows = expand_employee_rows(
             [{"emp_id": "S554", "target_sun": 1000.0}], df, {"A": 10.0, "B": 20.0}
         )
-        self.assertEqual(len(rows), 1, "ต้องไม่ถูกแตกเป็นสองแถว")
+        by_wh = {r["warehouse_code"]: r for r in rows}
+        self.assertEqual(set(by_wh), {"G010", BLANK_WH_TOKEN})
+        self.assertNotIn("nan", {str(w).lower() for w in by_wh})
+        self.assertTrue(all(r["wh_split"] for r in rows))
+        self.assertEqual(by_wh["G010"]["target_sun"], 500.0)          # A 10×10 = 100
+        self.assertEqual(by_wh[BLANK_WH_TOKEN]["target_sun"], 500.0)  # B 5×20 = 100
+        self.assertEqual(by_wh[BLANK_WH_TOKEN]["alloc_key"], f"S554|{BLANK_WH_TOKEN}")
+        self.assertEqual(by_wh["G010"]["wh_redirect_skus"], {"B": [""]})
+        self.assertEqual(by_wh[BLANK_WH_TOKEN]["wh_redirect_skus"], {"A": ["G010"]})
+
+    def test_only_blank_warehouse_is_not_split(self):
+        df = pd.DataFrame({"emp_id": ["E1", "E1"], "sku": ["A", "B"], "qty": [1, 2], "warehouse_code": ["", ""]})
+        rows = expand_employee_rows([{"emp_id": "E1", "target_sun": 10.0}], df, {"A": 1.0, "B": 1.0})
+        self.assertEqual(len(rows), 1)
         self.assertFalse(rows[0]["wh_split"])
-        self.assertEqual(rows[0]["target_sun"], 1000.0, "เป้าเงินต้องอยู่ครบ ไม่ถูกหั่นไปคลังปลอม")
-        self.assertEqual(rows[0]["warehouse_code"], "G010")
-        self.assertEqual(rows[0]["alloc_key"], "S554")
+        self.assertEqual(rows[0]["warehouse_code"], "")
+
+    def test_real_wh_maps_token_back_to_blank(self):
+        self.assertEqual(real_wh(BLANK_WH_TOKEN), "")
+        self.assertEqual(real_wh("G010"), "G010")
+        self.assertEqual(real_wh(float("nan")), "")
 
     def test_tga_value_without_warehouse_column(self):
         df = pd.DataFrame({"emp_id": ["E1"], "sku": ["A"], "qty": [3]})

@@ -8958,14 +8958,14 @@ function onResultEdit(el) {
   }
   // คนแยกคลัง: สินค้าที่ Target Sun ไม่มีเป้าที่คลังของแถวนี้ (มีแค่คลังอื่น) ห้ามใส่หีบเอง — ตัวกระจายไม่ให้อยู่แล้ว
   // ถ้าปล่อยให้พิมพ์ ตอนส่งหีบจะไปลงคลังอื่นที่ต้นทางไม่ได้ให้เป้า (ผู้ใช้ตัดสิน 8 ต.ค. 2026 · C442 R408/R493)
-  // คลังว่างเป็นข้อยกเว้น (ไม่มีแถวบนจอของคลังว่าง) — ตรงกับ optimize._wh_blocked_pairs
+  // คลังว่างมีแถว「(ว่าง)」ของตัวเองแล้ว (21 ต.ค. 2026) จึงไม่ยกเว้นอีก — ตรงกับ optimize._wh_blocked_pairs
   if (val > 0 && wh) {
     const _er = (S.employees || []).find(
       (e) => String(e.emp_id) === String(emp) && String(e.warehouse_code || "") === String(wh) && e.wh_split
     );
     const _rw = _er?.wh_redirect_skus?.[String(sku).trim()];
     const _okKey = `${emp}|${wh}|${String(sku).trim()}`;
-    if (Array.isArray(_rw) && _rw.length && !_rw.includes("") && !_whRedirectConfirmed.has(_okKey)) {
+    if (Array.isArray(_rw) && _rw.length && !_whRedirectConfirmed.has(_okKey)) {
       const _cur = S.allocations.find(
         (a) => String(a.emp_id) === String(emp) && String(a.sku) === String(sku)
           && String(a.warehouse_code || "") === String(wh)
@@ -9517,11 +9517,11 @@ function autoRebalance(silent = false, opts = {}) {
       || evenNeverSold.has(skuKey);
     const zeroKeys = S.neverSoldZeroKeys instanceof Set ? S.neverSoldZeroKeys : new Set();
     // คนแยกคลัง: สินค้าที่ Target Sun ไม่มีเป้าที่คลังของแถวนี้ — ห้ามได้เพิ่มเหมือนคู่ไม่เคยขาย
-    // (ตรงกับ optimize._wh_blocked_pairs · คลังว่างเป็นข้อยกเว้น)
+    // (ตรงกับ optimize._wh_blocked_pairs · คลังว่างมีแถวของตัวเองแล้ว ไม่ยกเว้น)
     const whBlocked = new Set(
       (S.employees || [])
         .filter((e) => e.wh_split && Array.isArray(e.wh_redirect_skus?.[skuKey])
-          && e.wh_redirect_skus[skuKey].length && !e.wh_redirect_skus[skuKey].includes(""))
+          && e.wh_redirect_skus[skuKey].length)
         .map((e) => `${String(e.emp_id)}|${String(e.warehouse_code || "")}`)
     );
     const isWhBlocked = (a) => whBlocked.has(`${String(a.emp_id)}|${String(a.warehouse_code || "")}`);

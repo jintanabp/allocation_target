@@ -1,5 +1,11 @@
 """
 แยกพนักงานตาม warehouse จาก TGA grain — ใช้เมื่อพนักงานมี ≥ 2 คลังในงวดนั้น
+
+**คลังว่างนับเป็นคลังหนึ่ง เมื่อคนนั้นมีรหัสคลังจริงด้วย** (ผู้ใช้ขอ 21 ต.ค. 2026) — ตั้งแต่ 7 ก.ย. 2026
+คลังว่างเป็นค่าคีย์ค่าหนึ่งใน Target Sun (แถวว่างกับแถว G010 คือคนละแถว) เดิมจอรวมไว้แถวเดียว
+ป้าย G010 คนเลยเข้าใจว่าทุกสินค้าลง G010 · แถวคลังว่างใช้ชื่อสงวน BLANK_WH_TOKEN ในการคำนวณและ
+บนจอ (ทั้งระบบถือ "" = คนไม่แยกคลัง จึงใช้ "" เป็นชื่อแถวไม่ได้) แล้วแปลงกลับเป็น "" ด้วย real_wh()
+ทุกจุดที่เทียบกับ Target Sun และก่อนสร้างไฟล์ส่ง (lakehouse._build_tga_upload_dataframe)
 """
 
 from __future__ import annotations
@@ -9,6 +15,9 @@ from typing import Any
 import pandas as pd
 
 _ALLOC_SEP = "|"
+
+#: ชื่อแถว "คลังว่าง" ของคนแยกคลัง — ห้ามหลุดไปถึง Target Sun (แปลงด้วย real_wh ก่อนส่ง)
+BLANK_WH_TOKEN = "(ว่าง)"
 
 
 def alloc_key(emp_id: str, warehouse_code: str | None = None, *, wh_split: bool = False) -> str:
@@ -56,6 +65,22 @@ def _norm_wh(val: Any) -> str:
     if s.lower() in _BLANK_WH_LITERALS:
         return ""
     return s
+
+
+def real_wh(val: Any) -> str:
+    """รหัสคลังจริงที่ใช้เทียบกับ Target Sun — ชื่อแถวคลังว่าง (BLANK_WH_TOKEN) คืน """""
+    w = _norm_wh(val)
+    return "" if w == BLANK_WH_TOKEN else w
+
+
+def _emps_with_blank_wh(df_tga: pd.DataFrame | None) -> set[str]:
+    """พนักงานที่มีแถวคลังว่างใน Target Sun อย่างน้อยหนึ่งแถว"""
+    if df_tga is None or df_tga.empty or "emp_id" not in df_tga.columns:
+        return set()
+    if "warehouse_code" not in df_tga.columns:
+        return set(df_tga["emp_id"].astype(str).str.strip()) - {""}
+    whs = df_tga["warehouse_code"].map(_norm_wh)
+    return {e for e, w in zip(df_tga["emp_id"].astype(str).str.strip(), whs) if e and not w}
 
 
 def warehouses_per_emp_from_tga(df_tga: pd.DataFrame | None) -> dict[str, list[str]]:
@@ -146,6 +171,7 @@ def expand_employee_rows(
     ขยายแถวพนักงานตาม WH จาก TGA — พนักงานที่มีคลังเดียวไม่เปลี่ยนหน้าตา (wh_split=False)
     """
     wh_map = warehouses_per_emp_from_tga(df_tga_granular)
+    blank_emps = _emps_with_blank_wh(df_tga_granular)
     value_map = tga_value_by_emp_wh(df_tga_granular, price_by_sku)
     grain_whs_by_sku = _grain_whs_by_emp_sku(df_tga_granular)
     out: list[dict[str, Any]] = []
@@ -155,7 +181,10 @@ def expand_employee_rows(
         if not emp:
             continue
         whs = wh_map.get(emp) or []
-        unique_whs = sorted(set(whs), key=lambda x: (x == "", x))
+        unique_whs = sorted(set(whs))
+        # มีรหัสคลังจริงด้วย + มีแถวคลังว่าง = คลังว่างเป็นอีกแถว (ไว้ท้ายสุด) · มีแต่คลังว่าง = คนไม่แยกคลัง
+        if unique_whs and emp in blank_emps:
+            unique_whs.append(BLANK_WH_TOKEN)
         if len(unique_whs) < 2:
             nr = dict(row)
             # คลังจริงจาก TGA (unique_whs) ต้องชนะค่าที่ติดมากับแถวเสมอ ไม่ใช่กลับกัน —
@@ -168,18 +197,18 @@ def expand_employee_rows(
             out.append(nr)
             continue
 
-        shares = {w: value_map.get((emp, w), 0.0) for w in unique_whs}
+        shares = {w: value_map.get((emp, real_wh(w)), 0.0) for w in unique_whs}
         ts_total = float(row.get("target_sun") or 0.0)
         ly_total = float(row.get("ly_sales") or 0.0)
         avg_total = float(row.get("hist_avg_3m") or 0.0)
         ts_parts = _split_amount(ts_total, shares)
         ly_weights = (
-            {w: float(ly_amount_by_emp_wh.get((emp, w), 0.0)) for w in unique_whs}
+            {w: float(ly_amount_by_emp_wh.get((emp, real_wh(w)), 0.0)) for w in unique_whs}
             if ly_amount_by_emp_wh
             else shares
         )
         avg_weights = (
-            {w: float(avg3_amount_by_emp_wh.get((emp, w), 0.0)) for w in unique_whs}
+            {w: float(avg3_amount_by_emp_wh.get((emp, real_wh(w)), 0.0)) for w in unique_whs}
             if avg3_amount_by_emp_wh
             else shares
         )
@@ -192,7 +221,7 @@ def expand_employee_rows(
         def _weights_or_3m(m):
             if not m:
                 return avg_weights
-            w_ = {w: float(m.get((emp, w), 0.0)) for w in unique_whs}
+            w_ = {w: float(m.get((emp, real_wh(w)), 0.0)) for w in unique_whs}
             return w_ if sum(max(0.0, v) for v in w_.values()) > 0 else avg_weights
 
         avg6_parts = _split_amount(float(row.get("hist_avg_6m") or 0.0), _weights_or_3m(avg6_amount_by_emp_wh))
@@ -204,7 +233,7 @@ def expand_employee_rows(
         emp_sku_whs = grain_whs_by_sku.get(emp) or {}
         for w in unique_whs:
             nr = dict(row)
-            redirect = {s: sorted(ws) for s, ws in emp_sku_whs.items() if w not in ws}
+            redirect = {s: sorted(ws) for s, ws in emp_sku_whs.items() if real_wh(w) not in ws}
             if redirect:
                 nr["wh_redirect_skus"] = redirect
             nr["warehouse_code"] = w
@@ -317,5 +346,5 @@ def value_shares_for_reverse_map(
     shares: dict[tuple[str, str], float] = {}
     for _or_id, (emp, wh) in reverse_map.items():
         if wh:
-            shares[(emp, wh)] = float(value_map.get((emp, wh), 0.0))
+            shares[(emp, wh)] = float(value_map.get((emp, real_wh(wh)), 0.0))
     return shares
