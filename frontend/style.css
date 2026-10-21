@@ -10558,6 +10558,9 @@ tr.emp-row--no-target .emp-tag {
   color: var(--text-2);
 }
 #adminView .wh-pin-pickgrid select { display: block; margin-top: 6px; width: 100%; }
+#adminView .wh-pin-pickgrid input.field-input { display: block; margin-top: 6px; width: 100%; }
+.wh-pin-scope-field { display: block; margin-top: 10px; font-size: 13px; color: var(--text-2); }
+.wh-pin-scope-field select, .wh-pin-scope-field input { display: block; margin-top: 6px; width: 100%; }
 
 #adminView .wh-pin-area-group {
   display: flex;

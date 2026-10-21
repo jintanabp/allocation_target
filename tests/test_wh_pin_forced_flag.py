@@ -212,6 +212,32 @@ class WhPinPreviewTest(unittest.TestCase):
         out = opt._apply_wh_pin_preview(df, SUP, MONTH, YEAR)
         self.assertEqual(out.iloc[0]["emp_id"], "e1")  # ตัวพิมพ์เดิมต้องไม่ถูกแก้
 
+    def test_credit_employee_list_rule_in_step3(self):
+        """ภาคกลาง B เครดิต เฉพาะ S344 → G010 — S999 คนละคนในภาคเดียวกันต้องไม่ถูกแตะ/ไม่ติดป้าย"""
+        store.write_rules([{
+            "section": "702", "skus": ["SKU1"], "areacode": "3", "divisioncode": "B",
+            "salestype": "S", "emp_ids": ["S344"], "warehouse_code": "G010",
+        }])
+        g1 = _grain_row("S344", "SKU1", area="3", div="B"); g1["salestype"] = "S"
+        g2 = _grain_row("S999", "SKU1", area="3", div="B"); g2["salestype"] = "S"
+        g3 = _grain_row("S345", "SKU1", area="3", div="B"); g3["salestype"] = "C"
+        self._write_grain([g1, g2, g3])
+        df = pd.DataFrame([
+            {"emp_id": "S344", "sku": "SKU1", "allocated_boxes": 6, "warehouse_code": "R082"},
+            {"emp_id": "S344", "sku": "SKU1", "allocated_boxes": 4, "warehouse_code": "G002"},
+            {"emp_id": "S999", "sku": "SKU1", "allocated_boxes": 5, "warehouse_code": "R082"},
+            {"emp_id": "S345", "sku": "SKU1", "allocated_boxes": 2, "warehouse_code": "R303"},
+        ])
+        out = opt._apply_wh_pin_preview(df, SUP, MONTH, YEAR)
+        self.assertNotIn("salestype", out.columns)
+        live = out[out["allocated_boxes"] > 0]
+        got = {(r.emp_id, r.warehouse_code): (int(r.allocated_boxes), r.wh_pin_forced) for r in live.itertuples()}
+        self.assertEqual(got, {
+            ("S344", "G010"): (10, "G010"),
+            ("S999", "R082"): (5, ""),
+            ("S345", "R303"): (2, ""),
+        })
+
 
 class WhPinPreviewGuardedTest(unittest.TestCase):
     """
@@ -267,7 +293,6 @@ class WhPinPreviewGuardedTest(unittest.TestCase):
         self.assertEqual(debug["stage"], "crashed")
         self.assertEqual(int(out["allocated_boxes"].sum()), 10)
         self.assertEqual(out.iloc[0]["wh_pin_forced"], "")
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -171,5 +171,47 @@ class WarehousePinApplyTest(unittest.TestCase):
         self.assertTrue(out.empty)
 
 
+    def test_credit_only_employee_list_rule_leaves_others_on_their_targetsun_warehouse(self):
+        """เคสจริงที่ผู้ใช้ขอ 21 ต.ค. 2026: ภาคกลาง B หน่วยเครดิต เฉพาะ S344/S345 ลง G010
+        คนอื่นในภาค/division เดียวกัน (หรือหน่วยรถเงินสด) ใช้คลังตามเป้า Target Sun เดิม —
+        รวมถึงคลังว่าง ถ้าเป้ามาเป็นคลังว่าง"""
+        store.write_rules([{
+            "section": "702", "skus": ["SKU1"], "areacode": "3", "divisioncode": "B",
+            "salestype": "S", "emp_ids": ["S344", "S345"], "warehouse_code": "G010",
+        }])
+        df = pd.DataFrame([
+            _row("S344", "SKU1", 6, "R082", div="B", st="S"),   # ในรายชื่อ เครดิต → G010
+            _row("S345", "SKU1", 3, "", div="B", st="S"),       # ในรายชื่อ คลังว่าง → G010
+            _row("S999", "SKU1", 5, "R082", div="B", st="S"),   # ไม่อยู่ในรายชื่อ → คงเดิม
+            _row("S998", "SKU1", 2, "", div="B", st="S"),       # ไม่อยู่ในรายชื่อ คลังว่าง → คงว่าง
+            _row("S344", "SKU1", 4, "R303", div="B", st="C"),   # คนในรายชื่อแต่หน่วยรถเงินสด → คงเดิม
+        ])
+        out, stats = lh._apply_warehouse_pin_rules(df, SUP, 10, 2026)
+        self.assertEqual(stats["matched_groups"], 2)
+        live = out[out["allocated_boxes"] > 0]
+        got = {(r.emp_id, r.salestype, r.warehouse_code): int(r.allocated_boxes) for r in live.itertuples()}
+        self.assertEqual(got, {
+            ("S344", "S", "G010"): 6,
+            ("S345", "S", "G010"): 3,
+            ("S999", "S", "R082"): 5,
+            ("S998", "S", ""): 2,
+            ("S344", "C", "R303"): 4,
+        })
+        self.assertEqual(int(out["allocated_boxes"].sum()), 20)
+
+    def test_credit_only_rule_without_employee_list_pins_every_credit_employee(self):
+        store.write_rules([{
+            "section": "702", "skus": ["SKU1"], "areacode": "5", "divisioncode": "B",
+            "salestype": "S", "warehouse_code": "G010",
+        }])
+        df = pd.DataFrame([
+            _row("E1", "SKU1", 6, "R082", area="5", div="B", st="S"),
+            _row("E2", "SKU1", 4, "R082", area="5", div="B", st="C"),
+        ])
+        out, _ = lh._apply_warehouse_pin_rules(df, SUP, 10, 2026)
+        live = out[out["allocated_boxes"] > 0]
+        got = {(r.emp_id, r.warehouse_code) for r in live.itertuples()}
+        self.assertEqual(got, {("E1", "G010"), ("E2", "R082")})
+
 if __name__ == "__main__":
     unittest.main()

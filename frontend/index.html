@@ -16,7 +16,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=2026101204" />
+  <link rel="stylesheet" href="style.css?v=2026102101" />
 </head>
 
 <body>
@@ -1787,7 +1787,7 @@
           <div class="admin-card-header">
             <div>
               <h2 class="admin-card__title">กติกาบังคับคลังเดียว</h2>
-              <p class="admin-card__hint">กลุ่มสินค้า × ภาค × Division ที่กำหนด จะถูกส่งเป้าไปคลังเดียวเท่านั้นตอนส่งเข้า Target Sun</p>
+              <p class="admin-card__hint">สินค้าที่เลือก × ภาค × Division (จำกัดหน่วยขาย/พนักงานได้) จะถูกส่งเป้าไปคลังเดียวเท่านั้น</p>
             </div>
             <div class="admin-period-bar">
               <button type="button" class="admin-btn-refresh admin-btn-refresh--sm" onclick="adminLoadWarehousePinRules()" title="โหลดกติกาที่บันทึกไว้ล่าสุดจากเซิร์ฟเวอร์">
@@ -1800,7 +1800,8 @@
 
           <div class="admin-help-strip wh-pin-help">
             <p><strong>กติกานี้ทำอะไร:</strong> บางกลุ่มสินค้ามีเป้ากระจายอยู่หลายคลังตามประวัติขาย ทั้งที่ต้องการให้กลุ่มนั้น (ในภาค+division ที่เลือก) ถูกส่งเป้าไปที่ <strong>คลังเดียวเท่านั้น</strong></p>
-            <p><strong>มีผลตอนไหน:</strong> ตอน<strong>「ตรวจไฟล์ก่อนส่ง」หรือส่งจริง</strong>เท่านั้น — ตารางผลกระจายที่ซุปเห็นตอนกดคำนวณอาจยังโชว์หลายคลังปนกันตามประวัติเหมือนเดิม เพราะคลังไม่เคยเป็นส่วนหนึ่งของการคำนวณหีบเลย ระบบจะรวมเป็นคลังเดียว + ล้างคลังเก่าเป็น 0 ให้อัตโนมัติตอนสร้างไฟล์ส่งจริง</p>
+            <p><strong>มีผลตอนไหน:</strong> ตั้งแต่ซุปกดกระจายหีบ (ตารางผลกระจายรวมหีบไปคลังที่บังคับ และขึ้นป้าย 🔒 ที่หัว SKU) และตอนส่งจริง ระบบจะส่ง 0 ทับคลังเก่าให้อัตโนมัติ</p>
+            <p><strong>หน่วยขาย / เฉพาะพนักงาน:</strong> เว้นว่าง = ใช้กับทุกคนในภาค+division นั้น · ถ้าระบุ คนที่ไม่เข้าเงื่อนไขจะใช้คลังตามเป้า Target Sun เหมือนไม่มีกติกา · ถ้ามีหลายกติกาเข้าพร้อมกัน กติกาที่ระบุพนักงานชนะ รองลงมาคือที่ระบุหน่วย</p>
           </div>
 
           <div class="alloc-rules-block wh-pin-card">
@@ -1840,6 +1841,16 @@
               <label>คลังที่จะปักหมุด
                 <select id="adminWhPinWarehouse" class="admin-select admin-select--sm" aria-label="เลือกคลัง" disabled></select>
               </label>
+              <label>หน่วยขาย
+                <select id="adminWhPinSalestype" class="admin-select admin-select--sm" aria-label="เลือกหน่วยขาย">
+                  <option value="">ทุกหน่วย</option>
+                  <option value="S">เฉพาะเครดิต</option>
+                  <option value="C">เฉพาะรถเงินสด</option>
+                </select>
+              </label>
+              <label>เฉพาะพนักงาน (เว้นว่าง = ทุกคน)
+                <input type="text" id="adminWhPinEmpIds" class="field-input" placeholder="เช่น S344, S345, S346" aria-label="รหัสพนักงาน คั่นด้วยจุลภาคหรือเว้นวรรค" />
+              </label>
             </div>
             <p id="adminWhPinSectionHint" class="alloc-rules-note"></p>
             <div class="alloc-rules-pickrow">
@@ -1855,6 +1866,7 @@
                 <h3 class="alloc-rules-subtitle">กติกาที่ตั้งไว้</h3>
                 <p class="wh-pin-step-hint">ตรวจสอบก่อนกดบันทึก — เลือกหลายแถวแล้วลบทีเดียวได้</p>
               </div>
+              <button type="button" id="adminWhPinBulkScopeBtn" class="admin-btn-ghost admin-btn-ghost--sm" onclick="whPinOpenScopeModal()" disabled title="เปลี่ยนหน่วยขาย/พนักงานของแถวที่ติ๊กไว้ โดยไม่ต้องลบแล้วเพิ่มใหม่">แก้หน่วย/พนักงาน</button>
               <button type="button" id="adminWhPinBulkDeleteBtn" class="admin-btn-ghost admin-btn-ghost--sm wh-pin-bulk-del" onclick="adminWhPinRulesRemoveSelected()" disabled>ลบที่เลือก</button>
             </div>
             <div class="wh-pin-table-wrap">
@@ -1862,11 +1874,11 @@
                 <thead>
                   <tr>
                     <th><input type="checkbox" id="adminWhPinSelectAll" onchange="adminWhPinRulesToggleAll(this.checked)" aria-label="เลือกทุกแถว" /></th>
-                    <th>SKU</th><th>กลุ่มสินค้า</th><th>ภาค</th><th>Division</th><th>คลัง</th><th>ตั้งโดย</th><th></th>
+                    <th>SKU</th><th>กลุ่มสินค้า</th><th>ภาค</th><th>Division</th><th>หน่วยขาย</th><th>พนักงาน</th><th>คลัง</th><th>ตั้งโดย</th><th></th>
                   </tr>
                 </thead>
                 <tbody id="adminWhPinRulesTableBody">
-                  <tr><td colspan="8" class="admin-empty">ยังไม่มีกติกา</td></tr>
+                  <tr><td colspan="10" class="admin-empty">ยังไม่มีกติกา</td></tr>
                 </tbody>
               </table>
             </div>
@@ -1894,6 +1906,29 @@
           <div class="modal-foot">
             <button type="button" class="admin-btn-ghost" onclick="closeWhPinSkuModal()">ยกเลิก</button>
             <button type="button" class="admin-btn-primary" data-modal-primary onclick="_whPinSkuModalConfirm()">ตกลง</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="whPinScopeModal" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="whPinScopeModalTitle">
+        <div class="modal-card" onclick="event.stopPropagation()">
+          <div class="modal-title" id="whPinScopeModalTitle">แก้หน่วย/พนักงานของแถวที่เลือก</div>
+          <div class="modal-body">
+            <p id="whPinScopeModalInfo" class="alloc-rules-note"></p>
+            <label class="wh-pin-scope-field">หน่วยขาย
+              <select id="whPinScopeSalestype" class="admin-select admin-select--sm">
+                <option value="">ทุกหน่วย</option>
+                <option value="S">เฉพาะเครดิต</option>
+                <option value="C">เฉพาะรถเงินสด</option>
+              </select>
+            </label>
+            <label class="wh-pin-scope-field">เฉพาะพนักงาน (เว้นว่าง = ทุกคน)
+              <input type="text" id="whPinScopeEmpIds" class="field-input" placeholder="เช่น S344, S345, S346" />
+            </label>
+          </div>
+          <div class="modal-foot">
+            <button type="button" class="admin-btn-ghost" onclick="closeWhPinScopeModal()">ยกเลิก</button>
+            <button type="button" class="admin-btn-primary" data-modal-primary onclick="_whPinScopeModalConfirm()">ตกลง</button>
           </div>
         </div>
       </div>
@@ -2185,8 +2220,8 @@
   <script src="vendor/msal-browser.min.js"></script>
   <!-- ตรรกะล้วน (ตัวแปลงเลข/คณิตการเกลี่ย) — ต้องมาก่อน app.js
        ไฟล์นี้มีเทสจริงด้วย node --test tests/logic.test.js -->
-  <script src="logic.js?v=2026101204"></script>
-  <script src="app.js?v=2026101204"></script>
+  <script src="logic.js?v=2026102101"></script>
+  <script src="app.js?v=2026102101"></script>
 </body>
 
 </html>

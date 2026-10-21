@@ -2702,7 +2702,8 @@ def _apply_warehouse_pin_rules(
     ที่ตั้งไว้ (warehouse_pin_rules_store) — ใช้แก้ปัญหาที่บางกลุ่มสินค้ากระจายเป้าปน
     หลายคลังตามประวัติขาย ทั้งที่ธุรกิจต้องการคลังเดียว
 
-    จับคู่กติกาด้วย SKU ตรง ๆ (rules_by_key คืน {(sku, areacode, divisioncode): rule})
+    จับคู่กติกาด้วย SKU ตรง ๆ (rules_by_key คืน {(sku, areacode, divisioncode): [rule]}
+    แล้ว match_rule เลือกข้อที่ตรงหน่วย/พนักงานของแถวนั้น — ข้อที่เจาะจงกว่าชนะ)
     ไม่ผ่าน Dim_Product[Section] เลย — Section เป็นแค่ตัวช่วยกรองตอนแอดมินเลือกสินค้าใน
     หน้าเว็บ (เลือกกลุ่มแล้วเลือกเฉพาะบางตัวผ่านโมดัล) จุดนี้จึงไม่ต้องพึ่งไฟล์เป้าราย sup
     หรือคอลัมน์ section เลย — ไม่มีทางเกิดกรณี "ไม่มีข้อมูลให้จับคู่" แบบเดิมอีกต่อไป
@@ -2731,17 +2732,23 @@ def _apply_warehouse_pin_rules(
         return df, empty_stats
 
     d = df.copy()
-    d["_wh_pin_area"] = d.get("areacode", "").map(_areacode_str)
-    d["_wh_pin_div"] = d.get("divisioncode", "").map(_cell_str)
+    _blank = pd.Series([""] * len(d), index=d.index)
+    d["_wh_pin_area"] = d.get("areacode", _blank).map(_areacode_str)
+    d["_wh_pin_div"] = d.get("divisioncode", _blank).map(_cell_str)
+    # หน่วย (SALESTYPE) อยู่ในกลุ่มด้วย — กติกาอาจจำกัดเฉพาะหน่วยเครดิต/รถเงินสด และแถวคนละ
+    # หน่วยเป็นคนละคีย์ upsert อยู่แล้ว ห้ามรวมหีบข้ามกัน
+    d["_wh_pin_st"] = d.get("salestype", _blank).map(_cell_str)
 
     extra_rows: list[dict] = []
     zero_idx: list[int] = []
     stats = dict(empty_stats)
 
-    for (emp_id, sku, area, div), grp in d.groupby(
-        ["emp_id", "sku", "_wh_pin_area", "_wh_pin_div"], sort=False
+    for (emp_id, sku, area, div, st), grp in d.groupby(
+        ["emp_id", "sku", "_wh_pin_area", "_wh_pin_div", "_wh_pin_st"], sort=False
     ):
-        rule = rules.get((str(sku).strip(), area, div))
+        rule = warehouse_pin_rules_store.match_rule(
+            rules.get((str(sku).strip(), area, div)), emp_id, st
+        )
         if not rule:
             continue
 
@@ -2814,7 +2821,7 @@ def _apply_warehouse_pin_rules(
 
     if zero_idx:
         d.loc[zero_idx, "allocated_boxes"] = 0
-    d = d.drop(columns=["_wh_pin_area", "_wh_pin_div"])
+    d = d.drop(columns=["_wh_pin_area", "_wh_pin_div", "_wh_pin_st"])
     if extra_rows:
         d = pd.concat([d, pd.DataFrame(extra_rows)], ignore_index=True)
         logger.warning(

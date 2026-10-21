@@ -18183,6 +18183,46 @@ function _whPinAreaLabel(areacode) {
   return name ? `${name} (${areacode})` : String(areacode);
 }
 
+// เงื่อนไขเสริมของกติกา (21 ต.ค. 2026) — ว่าง = ไม่จำกัด · SALESTYPE ในแถวเป้า: S = เครดิต, C = รถเงินสด
+const WH_PIN_SALESTYPE_TH = { S: "เครดิต", C: "รถเงินสด" };
+function _whPinSalestypeLabel(st) {
+  return st ? (WH_PIN_SALESTYPE_TH[st] || st) : "ทุกหน่วย";
+}
+function _whPinNormEmp(code) {
+  const s = String(code || "").trim().toUpperCase();
+  return /^\d+$/.test(s) ? s.padStart(5, "0") : s;
+}
+function _whPinParseEmpIds(text) {
+  return [...new Set(String(text || "").split(/[\s,;]+/).map(_whPinNormEmp).filter(Boolean))].sort();
+}
+function _whPinSpecificity(r) {
+  return ((r.emp_ids || []).length ? 2 : 0) + (r.salestype ? 1 : 0);
+}
+// กติกาสองข้อของ SKU×ภาค×division เดียวกันชนกันไหม — ต้องตรงกับ warehouse_pin_rules_store._overlaps
+function _whPinOverlaps(a, b) {
+  if (_whPinSpecificity(a) !== _whPinSpecificity(b)) return false;
+  if ((a.salestype || "") !== (b.salestype || "")) return false;
+  const ea = a.emp_ids || [];
+  const eb = new Set(b.emp_ids || []);
+  if (ea.length || eb.size) return ea.some((e) => eb.has(e));
+  return true;
+}
+// คืนข้อความบอกจุดชนแรกที่เจอ หรือ "" ถ้าไม่ชน
+function _whPinFindConflict(rules) {
+  const seen = new Map();
+  for (const r of rules || []) {
+    for (const sku of r.skus || []) {
+      const key = `${sku}|${r.areacode}|${r.divisioncode}`;
+      for (const o of seen.get(key) || []) {
+        if (_whPinOverlaps(r, o)) return `SKU ${sku} ${_whPinAreaLabel(r.areacode)} division ${r.divisioncode} (${_whPinSalestypeLabel(r.salestype)})`;
+      }
+      if (!seen.has(key)) seen.set(key, []);
+      seen.get(key).push(r);
+    }
+  }
+  return "";
+}
+
 async function adminLoadWarehousePinRules() {
   const msg = document.getElementById("adminWhPinMsg");
   if (msg) msg.textContent = "กำลังโหลด…";
@@ -18512,7 +18552,7 @@ function adminRenderWarehousePinRulesTable() {
   const validKeys = new Set(rows.map((x) => _whPinRowKey(x.ruleId, x.sku)));
   for (const k of [..._whPinSelectedRuleIds]) if (!validKeys.has(k)) _whPinSelectedRuleIds.delete(k);
   if (!rows.length) {
-    body.innerHTML = `<tr><td colspan="8" class="admin-empty">ยังไม่มีกติกา</td></tr>`;
+    body.innerHTML = `<tr><td colspan="10" class="admin-empty">ยังไม่มีกติกา</td></tr>`;
   } else {
     body.innerHTML = rows.map(({ ruleId, sku, rule: r }) => {
       const key = _whPinRowKey(ruleId, sku);
@@ -18522,6 +18562,8 @@ function adminRenderWarehousePinRulesTable() {
       <td>${escapeHtml(r.section)}</td>
       <td>${escapeHtml(_whPinAreaLabel(r.areacode))}</td>
       <td>${escapeHtml(r.divisioncode)}</td>
+      <td>${escapeHtml(_whPinSalestypeLabel(r.salestype))}</td>
+      <td>${(r.emp_ids || []).length ? escapeHtml(r.emp_ids.join(", ")) : "ทุกคน"}</td>
       <td>${escapeHtml(r.warehouse_code)}</td>
       <td>${r.id ? escapeHtml(r.created_by || "—") : "ยังไม่บันทึก"}</td>
       <td><button type="button" class="admin-btn-ghost admin-btn-ghost--sm" onclick="adminWhPinRulesRemoveSku('${escapeHtml(ruleId)}', '${escapeHtml(sku)}')" aria-label="ลบ SKU นี้ออกจากกติกา" title="ลบแค่ SKU นี้ออกจากกติกา — SKU อื่นในกติกาเดียวกันไม่ถูกแตะ">✕</button></td>
@@ -18534,6 +18576,11 @@ function adminRenderWarehousePinRulesTable() {
   if (bulkBtn) {
     bulkBtn.disabled = !_whPinSelectedRuleIds.size;
     bulkBtn.textContent = _whPinSelectedRuleIds.size ? `ลบที่เลือก (${_whPinSelectedRuleIds.size})` : "ลบที่เลือก";
+  }
+  const scopeBtn = document.getElementById("adminWhPinBulkScopeBtn");
+  if (scopeBtn) {
+    scopeBtn.disabled = !_whPinSelectedRuleIds.size;
+    scopeBtn.textContent = _whPinSelectedRuleIds.size ? `แก้หน่วย/พนักงาน (${_whPinSelectedRuleIds.size})` : "แก้หน่วย/พนักงาน";
   }
 }
 
@@ -18565,6 +18612,64 @@ function adminWhPinRulesRemoveSelected() {
   adminRenderWarehousePinRulesTable();
 }
 
+/* ── แก้หน่วย/พนักงานของแถวที่ติ๊กไว้ — ใช้เปลี่ยนกติกาเดิม (เช่น ทั้งภาค → เฉพาะเครดิต
+   บางคน) โดยไม่ต้องลบแล้วเลือกสินค้าใหม่ทีละกลุ่ม · แถวในตาราง = 1 SKU ของกติกา ถ้าติ๊กแค่
+   บาง SKU ของกติกา จะแยก SKU เหล่านั้นออกเป็นกติกาใหม่ ส่วนที่เหลือคงเงื่อนไขเดิม ── */
+
+function whPinOpenScopeModal() {
+  if (!_whPinRulesState || !_whPinSelectedRuleIds.size) return;
+  const info = document.getElementById("whPinScopeModalInfo");
+  if (info) info.textContent = `ใช้กับ ${_whPinSelectedRuleIds.size} แถวที่ติ๊กไว้ — ยังไม่มีผลจนกว่าจะกด「บันทึกกติกาทั้งหมด」`;
+  // ถ้าทุกแถวที่เลือกมีเงื่อนไขเดียวกัน เติมค่าเดิมไว้ให้ ไม่งั้นเริ่มว่าง
+  const picked = _whPinFlattenedRows().filter((x) => _whPinSelectedRuleIds.has(_whPinRowKey(x.ruleId, x.sku)));
+  const sig = new Set(picked.map((x) => `${x.rule.salestype || ""}|${(x.rule.emp_ids || []).join(",")}`));
+  const one = sig.size === 1 ? picked[0].rule : null;
+  const stEl = document.getElementById("whPinScopeSalestype");
+  if (stEl) stEl.value = one ? one.salestype || "" : "";
+  const empEl = document.getElementById("whPinScopeEmpIds");
+  if (empEl) empEl.value = one ? (one.emp_ids || []).join(", ") : "";
+  const modal = qs("#whPinScopeModal");
+  modal.style.display = "flex";
+  _staticModalUnbind.whPinScopeModal = bindModalBehaviour(modal, closeWhPinScopeModal);
+}
+
+function closeWhPinScopeModal() { _closeStaticModal("whPinScopeModal"); }
+
+function _whPinScopeModalConfirm() {
+  const st = _whPinRulesState;
+  if (!st) return;
+  const salestype = document.getElementById("whPinScopeSalestype")?.value || "";
+  const emp_ids = _whPinParseEmpIds(document.getElementById("whPinScopeEmpIds")?.value || "");
+  const pickedByRule = new Map();
+  for (const key of _whPinSelectedRuleIds) {
+    const [ruleId, sku] = key.split("::");
+    if (!pickedByRule.has(ruleId)) pickedByRule.set(ruleId, new Set());
+    pickedByRule.get(ruleId).add(sku);
+  }
+  const next = [];
+  for (const r of st.rules || []) {
+    const picked = pickedByRule.get(r._tmp_id || r.id);
+    if (!picked) { next.push(r); continue; }
+    const keep = (r.skus || []).filter((s) => !picked.has(s));
+    const moved = (r.skus || []).filter((s) => picked.has(s));
+    if (!keep.length) {
+      next.push({ ...r, salestype, emp_ids });
+    } else {
+      next.push({ ...r, skus: keep });
+      next.push({ ...r, _tmp_id: `tmp_${++_whPinTmpIdSeq}`, id: "", created_by: "", skus: moved, salestype, emp_ids });
+    }
+  }
+  const conflict = _whPinFindConflict(next);
+  if (conflict) {
+    toast(`แก้ไม่ได้ — ชนกับกติกาอื่นที่เงื่อนไขเดียวกัน: ${conflict}`, "red");
+    return;
+  }
+  st.rules = next;
+  _whPinSelectedRuleIds = new Set();
+  closeWhPinScopeModal();
+  adminRenderWarehousePinRulesTable();
+}
+
 function adminWhPinRulesAdd() {
   const st = _whPinRulesState;
   if (!st) return;
@@ -18573,6 +18678,8 @@ function adminWhPinRulesAdd() {
   const areas = _whPinSelectedAreas();
   const divisioncode = document.getElementById("adminWhPinDivision")?.value || "";
   const warehouse_code = document.getElementById("adminWhPinWarehouse")?.value || "";
+  const salestype = document.getElementById("adminWhPinSalestype")?.value || "";
+  const emp_ids = _whPinParseEmpIds(document.getElementById("adminWhPinEmpIds")?.value || "");
   const addMsg = document.getElementById("adminWhPinAddMsg");
   if (!section || !skus.length || !areas.length || !divisioncode || !warehouse_code) {
     if (addMsg) addMsg.textContent = "เลือกกลุ่มสินค้า สินค้า ภาค (อย่างน้อย 1) division และคลังให้ครบก่อนกดเพิ่ม";
@@ -18582,11 +18689,14 @@ function adminWhPinRulesAdd() {
   const added = [];
   const skipped = [];
   for (const areacode of areas) {
-    // เช็คว่า SKU ตัวไหนถูกใช้ไปแล้วในกติกาอื่นของภาค+division เดียวกัน (ต้องมีคลังเดียวต่อ SKU)
-    const claimed = new Map();
+    // เช็คว่า SKU ตัวไหนชนกติกาอื่นของภาค+division เดียวกันที่เจาะจงเท่ากัน (แถวเดียวต้องมีคลังเดียว)
+    // กติกาที่เจาะจงต่างกัน (ทั้งภาค vs เฉพาะเครดิต/เฉพาะคน) อยู่ร่วมกันได้ — ข้อที่เจาะจงกว่าชนะ
+    const candidate = { salestype, emp_ids };
+    const claimed = new Set();
     for (const r of st.rules || []) {
       if (r.areacode !== areacode || r.divisioncode !== divisioncode) continue;
-      for (const s of r.skus || []) claimed.set(s, r);
+      if (!_whPinOverlaps(candidate, r)) continue;
+      for (const s of r.skus || []) claimed.add(s);
     }
     const conflicts = skus.filter((s) => claimed.has(s));
     if (conflicts.length) {
@@ -18604,6 +18714,8 @@ function adminWhPinRulesAdd() {
         skus,
         areacode,
         divisioncode,
+        salestype,
+        emp_ids,
         warehouse_code,
         created_by: "",
         note: "",
@@ -18641,6 +18753,8 @@ async function adminSaveWarehousePinRules() {
           skus: r.skus || [],
           areacode: r.areacode,
           divisioncode: r.divisioncode,
+          salestype: r.salestype || "",
+          emp_ids: r.emp_ids || [],
           warehouse_code: r.warehouse_code,
           note: r.note || "",
         })),

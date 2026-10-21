@@ -3537,6 +3537,10 @@ class WarehousePinRuleBody(BaseModel):
     skus: list[str] = Field(default_factory=list, max_length=2000)
     areacode: str
     divisioncode: str
+    # ว่าง = ไม่จำกัด · "S" = เครดิต, "C" = รถเงินสด (SALESTYPE ในแถวเป้า Target Sun)
+    salestype: str = ""
+    # ว่าง = ทุกคนในภาค/division · มีค่า = เฉพาะพนักงานเหล่านี้
+    emp_ids: list[str] = Field(default_factory=list, max_length=500)
     warehouse_code: str
     note: str = ""
 

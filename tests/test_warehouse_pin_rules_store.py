@@ -120,10 +120,74 @@ class WarehousePinRulesStoreTest(unittest.TestCase):
         idx = store.rules_by_key()
         self.assertIn(("SKU1", "3", "S"), idx)
         self.assertIn(("SKU2", "3", "S"), idx)
-        self.assertEqual(idx[("SKU1", "3", "S")]["warehouse_code"], "G010")
-        self.assertEqual(idx[("SKU2", "3", "S")]["warehouse_code"], "G010")
+        self.assertEqual(idx[("SKU1", "3", "S")][0]["warehouse_code"], "G010")
+        self.assertEqual(idx[("SKU2", "3", "S")][0]["warehouse_code"], "G010")
         # sku คนละตัว คนละภาค ต้องไม่ปนกัน
         self.assertNotIn(("SKU1", "4", "S"), idx)
+
+    # ── เงื่อนไขเสริม: หน่วย (salestype) + เฉพาะพนักงาน (emp_ids) — ผู้ใช้ขอ 21 ต.ค. 2026 ──
+
+    def test_old_rules_without_new_fields_read_as_unrestricted(self):
+        out = store.write_rules([_rule()])
+        self.assertEqual(out["rules"][0]["salestype"], "")
+        self.assertEqual(out["rules"][0]["emp_ids"], [])
+        cands = store.rules_by_key()[("SKU1", "3", "S")]
+        self.assertIsNotNone(store.match_rule(cands, "ANY1", "C"))
+
+    def test_salestype_and_emp_ids_are_normalized(self):
+        out = store.write_rules([_rule(salestype="s", emp_ids=[" s345", "S344", "s344"])])
+        self.assertEqual(out["rules"][0]["salestype"], "S")
+        self.assertEqual(out["rules"][0]["emp_ids"], ["S344", "S345"])
+
+    def test_unknown_salestype_rejected(self):
+        with self.assertRaises(ValueError):
+            store.write_rules([_rule(salestype="X")])
+
+    def test_salestype_rule_matches_only_that_unit(self):
+        store.write_rules([_rule(salestype="S")])
+        cands = store.rules_by_key()[("SKU1", "3", "S")]
+        self.assertIsNotNone(store.match_rule(cands, "E1", "S"))
+        self.assertIsNone(store.match_rule(cands, "E1", "C"))
+        self.assertIsNone(store.match_rule(cands, "E1", ""))
+
+    def test_emp_rule_matches_only_listed_employees(self):
+        store.write_rules([_rule(salestype="S", emp_ids=["S344", "S345"])])
+        cands = store.rules_by_key()[("SKU1", "3", "S")]
+        self.assertIsNotNone(store.match_rule(cands, "s344", "S"))
+        self.assertIsNone(store.match_rule(cands, "S999", "S"))
+        self.assertIsNone(store.match_rule(cands, "S344", "C"))
+
+    def test_more_specific_rule_wins_and_both_can_coexist(self):
+        store.write_rules([
+            _rule(section="702", wh="R082"),                                   # ทั้งภาค
+            _rule(section="702", wh="G020", salestype="S"),                     # เฉพาะเครดิต
+            _rule(section="702", wh="G010", salestype="S", emp_ids=["S344"]),   # เฉพาะคน
+        ])
+        cands = store.rules_by_key()[("SKU1", "3", "S")]
+        self.assertEqual(store.match_rule(cands, "S344", "S")["warehouse_code"], "G010")
+        self.assertEqual(store.match_rule(cands, "S999", "S")["warehouse_code"], "G020")
+        self.assertEqual(store.match_rule(cands, "S999", "C")["warehouse_code"], "R082")
+
+    def test_same_scope_overlapping_employees_rejected(self):
+        with self.assertRaises(ValueError):
+            store.write_rules([
+                _rule(section="702", wh="G010", salestype="S", emp_ids=["S344", "S345"]),
+                _rule(section="704", wh="R082", salestype="S", emp_ids=["S345"]),
+            ])
+
+    def test_same_scope_disjoint_employees_allowed(self):
+        out = store.write_rules([
+            _rule(section="702", wh="G010", salestype="S", emp_ids=["S344"]),
+            _rule(section="702", wh="R082", salestype="S", emp_ids=["S345"]),
+        ])
+        self.assertEqual(len(out["rules"]), 2)
+
+    def test_credit_and_van_rules_for_same_sku_allowed(self):
+        out = store.write_rules([
+            _rule(section="702", wh="G010", salestype="S"),
+            _rule(section="702", wh="R082", salestype="C"),
+        ])
+        self.assertEqual(len(out["rules"]), 2)
 
     def test_empty_rules_list_is_valid_and_clears_prior_rules(self):
         store.write_rules([_rule()])

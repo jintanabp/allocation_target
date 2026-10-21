@@ -243,6 +243,49 @@ def _wh_blocked_pairs(
     return frozenset(blocked)
 
 
+def _pin_wh_for_rows(df: pd.DataFrame, rules: dict) -> pd.Series:
+    """คลังที่กติกาบังคับต่อแถว ("" = ไม่โดนกติกา) — ผลเดียวกับ warehouse_pin_rules_store.match_rule
+
+    เดิมจุดนี้ใช้ df.apply(func, axis=1) ซึ่งเรียก Python function ทีละแถว ช้ามากเมื่อทีมมี
+    พนักงาน×SKU หลักพัน-หมื่นแถว (SL225 22 ก.ย. 2026 — กระจายหีบค้างจน worker โดน timeout
+    ฆ่ากลางคัน) จึงต้อง vectorized ล้วน: แตกกติกาเป็นตาราง (1 แถวต่อ SKU×พนักงาน) merge ครั้ง
+    เดียว กรองหน่วย/พนักงาน แล้วเก็บข้อที่เจาะจงที่สุดต่อแถว (ระบุพนักงาน > ระบุหน่วย > ไม่ระบุ)
+    df ต้องมี emp_id/sku/areacode/divisioncode/salestype และ index ไม่ซ้ำ
+    """
+    out = pd.Series("", index=df.index, dtype="object")
+    if df.empty or not rules:
+        return out
+    rows = []
+    for (sku, area, div), cands in rules.items():
+        for r in cands:
+            r_st = str(r.get("salestype") or "").strip().upper()
+            r_emps = [norm_emp_code(e) for e in (r.get("emp_ids") or [])]
+            score = (2 if r_emps else 0) + (1 if r_st else 0)
+            for e in r_emps or [""]:
+                rows.append({
+                    "sku": str(sku).strip(), "areacode": str(area).strip(),
+                    "divisioncode": str(div).strip(), "_r_st": r_st, "_r_emp": e,
+                    "_r_score": score, "_pin_wh": str(r.get("warehouse_code") or "").strip(),
+                })
+    if not rows:
+        return out
+    left = pd.DataFrame({
+        "_row": df.index,
+        "sku": df["sku"].astype(str).str.strip().values,
+        "areacode": df["areacode"].fillna("").astype(str).str.strip().values,
+        "divisioncode": df["divisioncode"].fillna("").astype(str).str.strip().values,
+        "_st": df["salestype"].fillna("").astype(str).str.strip().str.upper().values,
+        "_emp": df["emp_id"].astype(str).map(norm_emp_code).values,
+    })
+    m = left.merge(pd.DataFrame(rows), on=["sku", "areacode", "divisioncode"], how="inner")
+    if m.empty:
+        return out
+    ok = (m["_r_st"].eq("") | m["_r_st"].eq(m["_st"])) & (m["_r_emp"].eq("") | m["_r_emp"].eq(m["_emp"]))
+    m = m[ok].sort_values("_r_score", ascending=False, kind="stable").drop_duplicates("_row")
+    out.loc[m["_row"].values] = m["_pin_wh"].values
+    return out
+
+
 def _apply_wh_pin_preview(
     df_final: pd.DataFrame,
     sup_id: str,
@@ -286,22 +329,28 @@ def _apply_wh_pin_preview(
         if not rules:
             return df_final
 
+        _dim_cols = ["emp_id", "sku", "areacode", "divisioncode", "salestype"]
+
+        def _clean_dims(frame: pd.DataFrame) -> pd.DataFrame:
+            frame = frame.copy()
+            if "salestype" not in frame.columns:
+                frame["salestype"] = ""
+            for c in _dim_cols:
+                frame[c] = frame[c].fillna("").astype(str).str.strip()
+            return frame[_dim_cols]
+
         path = tga_grain_cache_path(sup_id, target_month, target_year)
         if os.path.exists(path):
             dg = pd.read_csv(
                 path,
-                dtype={"sku": str, "emp_id": str, "areacode": str, "divisioncode": str},
+                dtype={"sku": str, "emp_id": str, "areacode": str, "divisioncode": str, "salestype": str},
             )
             if dg.empty or "areacode" not in dg.columns or "divisioncode" not in dg.columns:
-                dg = pd.DataFrame(columns=["emp_id", "sku", "areacode", "divisioncode"])
+                dg = pd.DataFrame(columns=_dim_cols)
             else:
-                dg["emp_id"] = dg["emp_id"].astype(str).str.strip()
-                dg["sku"] = dg["sku"].astype(str).str.strip()
-                dg["areacode"] = dg["areacode"].fillna("").astype(str).str.strip()
-                dg["divisioncode"] = dg["divisioncode"].fillna("").astype(str).str.strip()
-                dg = dg[["emp_id", "sku", "areacode", "divisioncode"]]
+                dg = _clean_dims(dg)
         else:
-            dg = pd.DataFrame(columns=["emp_id", "sku", "areacode", "divisioncode"])
+            dg = pd.DataFrame(columns=_dim_cols)
 
         # โหมดรวมภาค/รวมหน่วยมีพนักงานหลายทีมใน df_final เดียว — ไฟล์ grain ของทีม
         # เจ้าของอย่างเดียวไม่มี dim ให้คนทีมอื่น กติกาบังคับคลังจึงไม่จับคู่ให้พวกเขา
@@ -317,11 +366,7 @@ def _apply_wh_pin_preview(
         if _missing_emps:
             _extra = _read_tga_grain_across_teams(target_month, target_year, _missing_emps)
             if not _extra.empty and {"areacode", "divisioncode"} <= set(_extra.columns):
-                _extra = _extra[["emp_id", "sku", "areacode", "divisioncode"]].copy()
-                _extra["emp_id"] = _extra["emp_id"].astype(str).str.strip()
-                _extra["sku"] = _extra["sku"].astype(str).str.strip()
-                _extra["areacode"] = _extra["areacode"].fillna("").astype(str).str.strip()
-                _extra["divisioncode"] = _extra["divisioncode"].fillna("").astype(str).str.strip()
+                _extra = _clean_dims(_extra)
                 dg = pd.concat([dg, _extra], ignore_index=True) if not dg.empty else _extra
                 logger.info(
                     "optimize wh pin preview: เติม grain ข้ามทีม %d แถว ให้พนักงาน %d คน sup=%s",
@@ -334,30 +379,21 @@ def _apply_wh_pin_preview(
         # คอลัมน์นี้ถูกคืนกลับไปให้ frontend ตรง ๆ (df_final.to_dict) ห้ามเปลี่ยนรูปแบบ
         dg["_join_emp"] = dg["emp_id"].map(norm_emp_code)
         dg = dg.drop_duplicates(subset=["_join_emp", "sku"])
+        # salestype ใช้จับคู่กติกาที่จำกัดหน่วย (เครดิต/รถเงินสด) — df_final ปกติไม่มีคอลัมน์นี้
+        # ถ้าวันหนึ่งมีมาแล้วให้ใช้ของเดิม ไม่ merge ทับ (กันชื่อชน _x/_y แบบที่เคยพังเงียบ)
+        _added_st = "salestype" not in df_final.columns
+        _dim_take = ["_join_emp", "sku", "areacode", "divisioncode"] + (["salestype"] if _added_st else [])
         df_final["_join_emp"] = df_final["emp_id"].astype(str).map(norm_emp_code)
         df_final = pd.merge(
             df_final,
-            dg[["_join_emp", "sku", "areacode", "divisioncode"]],
+            dg[_dim_take],
             on=["_join_emp", "sku"],
             how="left",
         )
         df_final = df_final.drop(columns=["_join_emp"])
         df_final["areacode"] = df_final["areacode"].fillna("")
         df_final["divisioncode"] = df_final["divisioncode"].fillna("")
-
-        # เดิมจุดนี้ใช้ df.apply(func, axis=1) สองรอบ (สลับคลังแถวเดี่ยว + ติดป้าย wh_pin_forced)
-        # ซึ่งเรียก Python function ทีละแถว ช้ามากเมื่อทีมมีพนักงาน×SKU หลักพัน-หมื่นแถว (เช่น
-        # SL225 ที่เจอปัญหาจริง 22 ก.ย. 2026 — กระจายหีบค้างจน "Internal Server Error" แบบที่
-        # Python ตัวเองก็ไม่มีโอกาสได้จับ exception เลย เพราะ worker/timeout ฆ่า process กลาง
-        # คัน) เปลี่ยนมาใช้ pd.merge (vectorized ล้วน ไม่มี Python loop ต่อแถว) แทนทั้งคู่
-        rules_df = pd.DataFrame(
-            [
-                {"sku": k[0], "areacode": k[1], "divisioncode": k[2], "_pin_wh": str(v.get("warehouse_code") or "").strip()}
-                for k, v in rules.items()
-            ]
-        )
-        for c in ("sku", "areacode", "divisioncode"):
-            rules_df[c] = rules_df[c].astype(str).str.strip()
+        df_final["salestype"] = df_final["salestype"].fillna("")
         df_final["sku"] = df_final["sku"].astype(str).str.strip()
 
         # คนละวิธีกันสองแบบตามจำนวนแถวของ (emp_id, sku) นั้น:
@@ -380,28 +416,21 @@ def _apply_wh_pin_preview(
                     "optimize: กติกาบังคับคลังรวมผลกระจาย Step 3 ให้แล้ว sup=%s %d กลุ่ม (%d หีบย้าย)",
                     sup_id, stats["matched_groups"], stats["boxes_moved"],
                 )
-        if not df_single.empty and not rules_df.empty:
-            df_single = pd.merge(df_single, rules_df, on=["sku", "areacode", "divisioncode"], how="left")
-            has_rule = df_single["_pin_wh"].notna() & (df_single["_pin_wh"] != "")
-            needs_switch = has_rule & (df_single["warehouse_code"].astype(str).str.strip() != df_single["_pin_wh"])
+        if not df_single.empty:
+            pin_wh = _pin_wh_for_rows(df_single, rules)
+            needs_switch = pin_wh.ne("") & df_single["warehouse_code"].astype(str).str.strip().ne(pin_wh)
             switched = int(needs_switch.sum())
             if switched:
-                df_single.loc[needs_switch, "warehouse_code"] = df_single.loc[needs_switch, "_pin_wh"]
+                df_single.loc[needs_switch, "warehouse_code"] = pin_wh[needs_switch]
                 logger.info(
                     "optimize: กติกาบังคับคลังสลับคลังแถวเดี่ยวใน Step 3 ให้แล้ว sup=%s %d แถว",
                     sup_id, switched,
                 )
-            df_single = df_single.drop(columns=["_pin_wh"])
         df_final = pd.concat([df_single, df_multi], ignore_index=True)
-
-        if not rules_df.empty:
-            df_final = df_final.drop(columns=["wh_pin_forced"])  # เดี๋ยวจะ merge เข้ามาใหม่ — ชื่อชนของเดิมที่ตั้ง "" ไว้ตอนต้นฟังก์ชัน
-            df_final = pd.merge(
-                df_final, rules_df.rename(columns={"_pin_wh": "wh_pin_forced"}),
-                on=["sku", "areacode", "divisioncode"], how="left",
-            )
-            df_final["wh_pin_forced"] = df_final["wh_pin_forced"].fillna("")
-        df_final = df_final.drop(columns=["areacode", "divisioncode"])
+        df_final["wh_pin_forced"] = _pin_wh_for_rows(df_final, rules)
+        df_final = df_final.drop(
+            columns=["areacode", "divisioncode"] + (["salestype"] if _added_st else [])
+        )
         return df_final
     except Exception as e:
         logger.warning("wh pin preview skipped: %s", e)
