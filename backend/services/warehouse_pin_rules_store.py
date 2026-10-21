@@ -253,6 +253,22 @@ def write_rules(
         cur_rev = int(current.get("rev") or 0)
         if expected_rev is not None and cur_rev != int(expected_rev):
             raise WarehousePinRulesConflict(read_state())
+        # หน้าเว็บส่งกติกาทั้งก้อนกลับมาโดยไม่มี created_by/created_at (body ไม่มีช่องนี้) — เดิมเลย
+        # ได้ค่าว่างทุกครั้ง ช่อง「ตั้งโดย」ขึ้น — ทุกแถว (ผู้ใช้เจอ 21 ต.ค. 2026)
+        # กติกาที่มีอยู่แล้ว (id เดิม) คงคนตั้ง/เวลาตั้งเดิมไว้ · กติกาใหม่ = คนที่กดบันทึกรอบนี้
+        prev_by_id = {
+            _norm_str(r.get("id")): r
+            for r in (current.get("rules") or [])
+            if isinstance(r, dict) and _norm_str(r.get("id"))
+        }
+        editor = _norm_str(updated_by).lower()
+        for rule in normalized:
+            prev = prev_by_id.get(rule["id"])
+            if prev is not None:
+                rule["created_by"] = _norm_str(prev.get("created_by")) or rule["created_by"]
+                rule["created_at"] = _norm_str(prev.get("created_at")) or rule["created_at"]
+            elif not rule["created_by"]:
+                rule["created_by"] = editor
         doc = {
             "_readme": (
                 "กติกาบังคับคลังเดียวสำหรับกลุ่มสินค้า×ภาค×division ที่หัวหน้าแอดมินตั้งจาก"

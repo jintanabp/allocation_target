@@ -58,7 +58,7 @@ class WarehousePinRulesStoreTest(unittest.TestCase):
         again = store.read_state()
         self.assertEqual(again["rules"][0]["warehouse_code"], "G010")
         self.assertEqual(again["rules"][0]["skus"], ["SKU1", "SKU2"])
-        self.assertEqual(again["rules"][0]["created_by"], "")  # ไม่ได้ส่งมา ว่างได้
+        self.assertEqual(again["rules"][0]["created_by"], "tester@x.com")  # คนที่กดบันทึก
 
     def test_skus_are_deduped_and_sorted(self):
         out = store.write_rules([_rule(skus=["SKU2", "SKU1", "SKU1", " SKU3 "])])
@@ -188,6 +188,36 @@ class WarehousePinRulesStoreTest(unittest.TestCase):
             _rule(section="702", wh="R082", salestype="C"),
         ])
         self.assertEqual(len(out["rules"]), 2)
+
+    def test_new_rule_records_who_saved_it(self):
+        """หน้าเว็บไม่ส่ง created_by มา — ช่อง「ตั้งโดย」ต้องเป็นคนที่กดบันทึก ไม่ใช่ว่าง"""
+        out = store.write_rules([_rule()], updated_by="Boss@spc.co.th")
+        self.assertEqual(out["rules"][0]["created_by"], "boss@spc.co.th")
+
+    def test_existing_rule_keeps_original_creator_when_someone_else_saves(self):
+        first = store.write_rules([_rule()], updated_by="a@spc.co.th")
+        kept = dict(first["rules"][0], created_by="", created_at="")  # หน้าเว็บส่งกลับแบบไม่มีสองช่องนี้
+        second = store.write_rules(
+            [kept, _rule(skus=["SKU9"], area="4")], updated_by="b@spc.co.th"
+        )
+        by_sku = {r["skus"][0]: r for r in second["rules"]}
+        self.assertEqual(by_sku["SKU1"]["created_by"], "a@spc.co.th")
+        self.assertEqual(by_sku["SKU1"]["created_at"], first["rules"][0]["created_at"])
+        self.assertEqual(by_sku["SKU9"]["created_by"], "b@spc.co.th")
+
+    def test_old_rule_saved_without_creator_stays_blank_not_misattributed(self):
+        """กติกาที่บันทึกไว้ก่อนแก้ (created_by ว่าง) ห้ามเดาว่าเป็นของคนที่กดบันทึกรอบนี้"""
+        first = store.write_rules([_rule(created_by="")])
+        # จำลองไฟล์เดิมบน server ที่ created_by ว่าง
+        import json
+        path = os.environ["WAREHOUSE_PIN_RULES_PATH"]
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+        doc["rules"][0]["created_by"] = ""
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(doc, f)
+        out = store.write_rules([first["rules"][0]], updated_by="b@spc.co.th")
+        self.assertEqual(out["rules"][0]["created_by"], "")
 
     def test_empty_rules_list_is_valid_and_clears_prior_rules(self):
         store.write_rules([_rule()])
