@@ -212,6 +212,24 @@ class WhPinPreviewTest(unittest.TestCase):
         out = opt._apply_wh_pin_preview(df, SUP, MONTH, YEAR)
         self.assertEqual(out.iloc[0]["emp_id"], "e1")  # ตัวพิมพ์เดิมต้องไม่ถูกแก้
 
+    def test_employee_without_warehouse_split_stays_on_one_row(self):
+        """เคสจริง S346 (21 ต.ค. 2026): พนักงานไม่แยกคลัง ผลกระจายมีคลัง "" — เดิม SKU ที่โดนกติกา
+        ถูกเขียนคลังเป็น G010 จนหน้าเว็บแตกคนเดียวเป็นสองแถว (S346|G010 กับ S346)"""
+        self._rule(skus=["SKU1"], area="3", div="S", wh="G010")
+        self._write_grain([
+            _grain_row("E1", "SKU1", area="3", div="S", wh=""),
+            _grain_row("E1", "SKU2", area="3", div="S", wh="G010"),
+        ])
+        df = pd.DataFrame([
+            {"emp_id": "E1", "sku": "SKU1", "allocated_boxes": 13, "warehouse_code": ""},
+            {"emp_id": "E1", "sku": "SKU2", "allocated_boxes": 7, "warehouse_code": ""},
+        ])
+        out = opt._apply_wh_pin_preview(df, SUP, MONTH, YEAR)
+        self.assertEqual(set(out["warehouse_code"]), {""})          # แถวเดียวเหมือนเดิม
+        got = dict(zip(out["sku"], out["wh_pin_forced"]))
+        self.assertEqual(got, {"SKU1": "G010", "SKU2": ""})          # ป้าย 🔒 ยังขึ้น
+        self.assertEqual(int(out["allocated_boxes"].sum()), 20)
+
     def test_credit_employee_list_rule_in_step3(self):
         """ภาคกลาง B เครดิต เฉพาะ S344 → G010 — S999 คนละคนในภาคเดียวกันต้องไม่ถูกแตะ/ไม่ติดป้าย"""
         store.write_rules([{

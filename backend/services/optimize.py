@@ -418,7 +418,12 @@ def _apply_wh_pin_preview(
                 )
         if not df_single.empty:
             pin_wh = _pin_wh_for_rows(df_single, rules)
-            needs_switch = pin_wh.ne("") & df_single["warehouse_code"].astype(str).str.strip().ne(pin_wh)
+            cur_wh = df_single["warehouse_code"].fillna("").astype(str).str.strip()
+            # คลัง "" = พนักงานไม่แยกคลัง (หน้าเว็บไม่ส่งคลังมา) — ห้ามเขียนคลังทับ เพราะหน้าเว็บใช้
+            # "รหัส|คลัง" เป็นคีย์แถว: SKU ที่โดนกติกาจะหลุดไปแถวใหม่ "S346|G010" ส่วน SKU อื่นค้าง
+            # แถว "S346" — คนเดียวขึ้นสองแถว เป้าเงินต่อแถวผิด (ผู้ใช้เจอ 21 ต.ค. 2026)
+            # ตอนส่งจริงไม่ต้องพึ่งค่านี้ lakehouse ย้ายไปคลังที่บังคับเองอยู่แล้ว · ป้าย 🔒 ยังขึ้นตามเดิม
+            needs_switch = pin_wh.ne("") & cur_wh.ne("") & cur_wh.ne(pin_wh)
             switched = int(needs_switch.sum())
             if switched:
                 df_single.loc[needs_switch, "warehouse_code"] = pin_wh[needs_switch]
