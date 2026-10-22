@@ -2798,7 +2798,9 @@ def _apply_warehouse_pin_rules(
         # แบรนด์ ฯลฯ ติดมาด้วยสำหรับโชว์ผลตอนคำนวณ Step 3) แล้วทับเฉพาะคีย์กลุ่ม + ฟิลด์ที่
         # ต้องรวม/เปลี่ยนจริง — ผู้เรียกเดิม (ตอนส่งจริง) มีแค่ 8 คอลัมน์นี้อยู่แล้วจึงไม่ต่าง
         row0 = grp.iloc[0]
-        extra_row = row0.to_dict()
+        # ไม่เอาคอลัมน์ชั่วคราว _wh_pin_* ติดมา — d.drop ข้างล่างลบแค่ใน d แต่ concat จะใส่กลับ
+        # เข้ามาจากแถวใหม่ แถวอื่นได้ NaN แล้ว /optimize ตอบ 500 แปลง JSON ไม่ได้ (QA 21 ต.ค. 2026)
+        extra_row = {k: v for k, v in row0.to_dict().items() if not str(k).startswith("_wh_pin_")}
         for col in _WH_PIN_SUM_ACROSS_GROUP_COLS:
             if col in grp.columns:
                 extra_row[col] = pd.to_numeric(grp[col], errors="coerce").fillna(0).sum()
@@ -2810,10 +2812,13 @@ def _apply_warehouse_pin_rules(
                 "salestype": _cell_str(row0.get("salestype", "")),
                 "divisioncode": div,
                 "areacode": area,
-                "provincecode": _cell_str(row0.get("provincecode", "")),
                 "warehouse_code": target_wh,
             }
         )
+        # provincecode เติมเฉพาะเมื่อ df มีคอลัมน์นี้ (ตอนส่งจริงมี) — พรีวิว Step 3 ไม่มี
+        # ถ้าเติมทุกครั้งจะเกิดคอลัมน์ใหม่ที่แถวอื่นเป็น NaN แบบเดียวกับข้างบน
+        if "provincecode" in d.columns:
+            extra_row["provincecode"] = _cell_str(row0.get("provincecode", ""))
         extra_rows.append(extra_row)
         stats["matched_groups"] += 1
         stats["boxes_moved"] += moved

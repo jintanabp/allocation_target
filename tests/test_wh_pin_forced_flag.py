@@ -130,6 +130,28 @@ class WhPinPreviewTest(unittest.TestCase):
         # คอลัมน์ประวัติเทียบเคียง (hist_avg) ต้องรวมข้ามแถวไปด้วย ไม่ใช่ก็อปแค่แถวแรก
         self.assertAlmostEqual(float(pinned.iloc[0]["hist_avg"]), 6.0)
 
+    def test_split_warehouse_consolidation_leaves_no_nan_for_other_rows(self):
+        """QA 21 ต.ค. 2026: แถวใหม่ที่รวมคลังพาคอลัมน์ชั่วคราว _wh_pin_* และ provincecode
+        ติดมา แถวอื่น (คนอื่น/SKU อื่น) จึงได้ NaN แล้ว /optimize ตอบ 500 เพราะแปลง JSON ไม่ได้
+        ("Out of range float values are not JSON compliant: nan") ทั้งที่ไฟล์ผลถูกเขียนไปแล้ว"""
+        import json
+
+        self._rule(skus=["SKU1"], area="3", div="S", wh="G010")
+        self._write_grain([
+            _grain_row("E1", "SKU1", area="3", div="S"),
+            _grain_row("E2", "SKU2", area="3", div="S"),
+        ])
+        df = pd.DataFrame([
+            {"emp_id": "E1", "sku": "SKU1", "allocated_boxes": 6, "warehouse_code": "R082"},
+            {"emp_id": "E1", "sku": "SKU1", "allocated_boxes": 4, "warehouse_code": ""},
+            {"emp_id": "E2", "sku": "SKU2", "allocated_boxes": 7, "warehouse_code": "R303"},
+        ])
+        out = opt._apply_wh_pin_preview(df, SUP, MONTH, YEAR)
+        self.assertEqual(int(out["allocated_boxes"].sum()), 17)
+        self.assertEqual([c for c in out.columns if c.startswith("_") or c == "provincecode"], [])
+        self.assertFalse(out.isna().any().any(), out.to_dict("records"))
+        json.dumps(out.to_dict("records"), allow_nan=False)  # ต้องไม่ล้ม
+
     def test_single_warehouse_employee_gets_switched_in_place_too(self):
         """พนักงานคลังเดียว (ไม่เคยแตก) แต่คลังนั้นไม่ใช่คลังปักหมุด — ต้องถูกสลับคลังให้ตรง
         กติกาด้วยเหมือนกัน ไม่ใช่แค่คนคลังแตก (เจอเคสจริง SL225/S543/411140 22 ก.ย. 2026:
