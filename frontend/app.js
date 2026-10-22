@@ -17767,6 +17767,8 @@ function adminRenderTargetEndpoints(data) {
   if (!row) return;
   const preset = data?.endpoint_preset || "test";
   const presets = Array.isArray(data?.endpoint_presets) ? data.endpoint_presets : [];
+  _adminEndpointPresetCurrent = preset;
+  _adminEndpointPresetLabels = Object.fromEntries(presets.map((p) => [p.id, p.label || p.id]));
   row.innerHTML = presets.map((p) => {
     const id = `adminEp_${p.id}`;
     const checked = p.id === preset ? "checked" : "";
@@ -17802,9 +17804,30 @@ function adminRenderTargetEndpoints(data) {
   }
 }
 
+// ปลายทางที่บันทึกอยู่ตอนนี้ — ใช้คืนค่า radio เมื่อกดยกเลิกในกล่องยืนยัน
+let _adminEndpointPresetCurrent = "";
+let _adminEndpointPresetLabels = {};
+
 async function adminSaveTargetEndpointPreset() {
   const picked = document.querySelector('input[name="adminEndpointPreset"]:checked');
   const preset = picked?.value || "test";
+  // คลิกเดียวเปลี่ยนที่ส่งผลกระจายจริง (ถึงขั้นสลับไป Production) — ต้องถามก่อน (QA 21 ต.ค. 2026)
+  if (preset !== _adminEndpointPresetCurrent) {
+    const fromLbl = _adminEndpointPresetLabels[_adminEndpointPresetCurrent] || _adminEndpointPresetCurrent || "-";
+    const toLbl = _adminEndpointPresetLabels[preset] || preset;
+    const ok = await _confirmDialog(
+      `เปลี่ยนปลายทาง Target Sun\nจาก: ${fromLbl}\nเป็น: ${toLbl}\n\n`
+      + "มีผลทันทีกับทุกคนที่กดส่งหลังจากนี้",
+      { title: "ยืนยันเปลี่ยนปลายทาง Target Sun", okLabel: "เปลี่ยนปลายทาง", cancelLabel: "ยกเลิก" },
+    );
+    if (!ok) {
+      const prev = document.querySelector(
+        `input[name="adminEndpointPreset"][value="${CSS.escape(_adminEndpointPresetCurrent)}"]`,
+      );
+      if (prev) prev.checked = true;
+      return;
+    }
+  }
   const eff = document.getElementById("adminEndpointEffective");
   if (eff) eff.textContent = "กำลังบันทึก…";
   try {

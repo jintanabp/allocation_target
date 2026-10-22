@@ -3354,14 +3354,24 @@ def admin_get_target_endpoints(
 @router.put("/settings/target-endpoints")
 def admin_set_target_endpoints(
     body: TargetEndpointPresetBody,
-    _admin: dict = Depends(require_admin_user),
+    admin: dict = Depends(require_admin_user),
 ):
-    from ..services.app_runtime_settings import set_target_endpoint_preset
+    from ..services.app_runtime_settings import get_target_endpoint_config, set_target_endpoint_preset
 
+    before = str(get_target_endpoint_config().get("preset_stored") or "")
     try:
         data = set_target_endpoint_preset(body.preset)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    after = str(data.get("target_endpoint_preset") or body.preset)
+    # ปลายทางส่ง Target Sun เปลี่ยนแล้วผลการส่งไปคนละระบบ — ต้องรู้ว่าใครเปลี่ยนเมื่อไร (QA 21 ต.ค. 2026)
+    _audit_admin(
+        admin, "admin_target_endpoint_preset",
+        f"เปลี่ยนปลายทาง Target Sun {before or '-'} → {after}",
+        f"preset {before or '-'} → {after}",
+        level="warning" if after == "prod" or before == "prod" else "info",
+        context={"before": before, "after": after},
+    )
     payload_cache_cleared = 0
     if body.preset in ("test", "uat", "prod"):
         from ..services.employee_payload_cache import invalidate_employee_payload_cache
