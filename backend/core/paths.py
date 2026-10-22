@@ -6,6 +6,20 @@ def safe_id(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9_]", "_", str(s))
 
 
+def _brand_file_tag(brand: str) -> str:
+    """
+    ชื่อแบรนด์สำหรับใส่ในชื่อไฟล์ — safe_id ทำอักษรไทยเป็น "_" ทั้งหมด แบรนด์ไทยคนละแบรนด์
+    ที่ยาวเท่ากันจึงได้ชื่อไฟล์เดียวกัน (สองคน export คนละแบรนด์พร้อมกัน = ได้ไฟล์ของอีกแบรนด์)
+    ต่อท้ายด้วย hash สั้นของชื่อจริงเมื่อ safe_id ทำให้ชื่อเปลี่ยน (QA 21 ต.ค. 2026 L11)
+    """
+    s = safe_id(brand)
+    if s == str(brand):
+        return s
+    import hashlib
+
+    return f"{s}_{hashlib.sha1(str(brand).encode('utf-8')).hexdigest()[:8]}"
+
+
 def hist_cache_path(sup_id: str, month: int, year: int, n_months: int = 3) -> str:
     """
     3 เดือน: data/hist_cache_{sup}_{year}_{mm}.csv (รูปแบบเดิม)
@@ -138,14 +152,14 @@ def excel_export_path(
     - ผูกงวดด้วย (ผลตรวจ §2.7) — เดิมสองแท็บ/สองคน export คนละงวดของทีมเดียวกัน
       ไฟล์ทับกัน แล้วอาจดาวน์โหลดได้ไฟล์ของอีกงวด
     """
-    brand_safe = safe_id(brand) if brand and brand != "ALL" else "ALL"
+    brand_safe = _brand_file_tag(brand) if brand and brand != "ALL" else "ALL"
     return f"data/Target_{safe_id(sup_id)}_{_period_tag(month, year)}{brand_safe}.xlsx"
 
 
 def export_result_path(
     sup_id: str, brand: str, month: int | None = None, year: int | None = None
 ) -> str:
-    brand_safe = safe_id(brand) if brand != "ALL" else "ALL"
+    brand_safe = _brand_file_tag(brand) if brand != "ALL" else "ALL"
     return f"data/export_{safe_id(sup_id)}_{_period_tag(month, year)}{brand_safe}.csv"
 
 

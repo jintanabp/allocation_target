@@ -74,6 +74,24 @@ class TestYellowForMultiWarehouseEmployee(unittest.TestCase):
         )
         self.assertNotEqual(self._total_fill(out, "C442"), GREEN_FILL.fgColor.rgb)
 
+    def test_wh_column_lists_each_employees_warehouses(self):
+        """QA 21 ต.ค. 2026 L11: คอลัมน์ W/H เคยว่างเสมอ"""
+        self._write()
+        out = create_target_excel(
+            result_csv="data/r.csv", output_path="data/out.xlsx", brand_filter="ALL",
+            yellow_map={"C442": 5000.0, "C500": 5000.0}, sup_id="SLTEST", target_boxes_csv="data/t.csv",
+        )
+        ws = openpyxl.load_workbook(out).active
+        head = [ws.cell(row=r, column=4).value for r in range(1, 12)]
+        self.assertIn("W/H", head)
+        wh = {}
+        for row in ws.iter_rows(min_row=11):
+            emp = str(row[1].value or "").strip()
+            if emp and row[4].value == "เป้า":
+                wh[emp] = row[3].value
+        self.assertEqual(wh["C442"], "R408, R409")
+        self.assertIsNone(wh["C500"], "คลังว่าง = ช่องว่าง ไม่ใส่ข้อความเดา")
+
     @staticmethod
     def _total_fill(path, emp):
         ws = openpyxl.load_workbook(path).active
@@ -91,6 +109,33 @@ class TestFrontendStripsWarehouseFromKey(unittest.TestCase):
         m = re.search(r"yellow_targets: Object\.entries\(S\.yellow\)\.map\(\(\[key, v\]\) => \(\{(.*?)\}\)\)", src, re.S)
         self.assertIsNotNone(m, "ไม่พบจุดประกอบ yellow_targets")
         self.assertIn('String(key).split("|")[0]', m.group(1))
+
+
+
+class TestThaiBrandFileNamesDoNotCollide(unittest.TestCase):
+    """QA L11: safe_id ทำอักษรไทยเป็น "_" — แบรนด์ไทยยาวเท่ากันเคยได้ชื่อไฟล์เดียวกัน"""
+
+    def test_two_thai_brands_of_same_length_get_different_files(self):
+        from backend.core.paths import excel_export_path, export_result_path
+
+        a = excel_export_path("SL1", "มาม่า", 11, 2026)
+        b = excel_export_path("SL1", "ไวไว", 11, 2026)
+        self.assertNotEqual(a, b)
+        self.assertNotEqual(export_result_path("SL1", "มาม่า", 11, 2026),
+                            export_result_path("SL1", "ไวไว", 11, 2026))
+        self.assertEqual(a, excel_export_path("SL1", "มาม่า", 11, 2026), "ชื่อเดิมต้องได้ไฟล์เดิมเสมอ")
+
+    def test_ascii_brand_and_all_keep_their_names(self):
+        from backend.core.paths import excel_export_path
+
+        self.assertTrue(excel_export_path("SL1", "MAMA", 11, 2026).endswith("MAMA.xlsx"))
+        self.assertTrue(excel_export_path("SL1", "ALL", 11, 2026).endswith("ALL.xlsx"))
+
+    def test_export_payload_sends_warehouse(self):
+        with open(os.path.join(REPO, "frontend", "app.js"), encoding="utf-8") as fh:
+            src = fh.read()
+        i = src.index("async function doExport")
+        self.assertIn('warehouse_code: a.warehouse_code || ""', src[i:i + 2500])
 
 
 if __name__ == "__main__":

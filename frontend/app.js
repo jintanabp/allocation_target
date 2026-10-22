@@ -12728,6 +12728,8 @@ async function _doExportInner() {
         emp_id: a.emp_id,
         sku: a.sku,
         allocated_boxes: a.allocated_boxes || 0,
+        // คอลัมน์ W/H ใน Excel — เดิมไม่ส่งไป คอลัมน์จึงว่างเสมอ (QA L11)
+        warehouse_code: a.warehouse_code || "",
         hist_avg: a.hist_avg || 0,
         hist_ly_same_month: Number(a.hist_ly_same_month) || 0,
         hist_prev_month: Number(a.hist_prev_month) || 0,

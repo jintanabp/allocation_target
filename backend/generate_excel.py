@@ -110,6 +110,17 @@ def _load_sku_official(target_boxes_csv: str | None, brand_filter_for_csv: str) 
     return sku_official
 
 
+def _emp_warehouses(emp_df: pd.DataFrame) -> str | None:
+    """รหัสคลังของพนักงานหนึ่งคน (ไม่ซ้ำ เรียงตามตัวอักษร) — ไม่มีคอลัมน์/ว่างทั้งหมด = None"""
+    if "warehouse_code" not in emp_df.columns:
+        return None
+    codes = sorted({
+        str(v).strip() for v in emp_df["warehouse_code"].tolist()
+        if str(v).strip() and str(v).strip().lower() != "nan"
+    })
+    return ", ".join(codes) or None
+
+
 def _c(ws, row, col, value=None, font=None, fill=None, align=None, border=None, num_fmt=None):
     cell = ws.cell(row=row, column=col, value=value)
     if font:    cell.font      = font
@@ -297,7 +308,8 @@ def _write_allocation_sheet(
         _c(ws, current_row, 1, idx, font=NORM, fill=BLUE_FILL, align=CTR, border=THIN_BRD)
         _c(ws, current_row, 2, emp, font=BOLD_BLK, fill=BLUE_FILL, align=CTR, border=THIN_BRD)
         _c(ws, current_row, 3, None, fill=BLUE_FILL, border=THIN_BRD)
-        _c(ws, current_row, 4, None, fill=BLUE_FILL, border=THIN_BRD)
+        # W/H: คลังของพนักงานคนนี้ (คนแยกคลังมีหลายคลัง คั่นด้วยจุลภาค) — เดิมว่างเสมอ (QA L11)
+        _c(ws, current_row, 4, _emp_warehouses(emp_df), font=NORM, fill=BLUE_FILL, align=CTR, border=THIN_BRD)
         _c(ws, current_row, 5, "เป้า", font=BOLD_BLK, fill=GREEN_FILL, align=CTR, border=THIN_BRD)
         for i, sku in enumerate(skus):
             row_emp = emp_df[emp_df["sku"] == sku]
