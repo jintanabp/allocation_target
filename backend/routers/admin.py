@@ -2419,8 +2419,16 @@ def admin_deep_health(
         try:
             periods = targetsun_read.fetch_targetsun_periods_overview()
             out["targetsun_read"]["ms"] = int((time.perf_counter() - t2) * 1000)
-            out["targetsun_read"]["ok"] = isinstance(periods, list)
-            out["targetsun_read"]["detail"] = f"periods: {len(periods)}"
+            # fetch_targetsun_periods_overview ไม่ raise — error ของแต่ละ division×หน่วยอยู่ในรายการ
+            # เดิมดูแค่ว่าได้ list กลับมา ต่อไม่ได้/หมดเวลาก็ขึ้น「เชื่อมได้」(QA 21 ต.ค. 2026 M8)
+            rows = periods if isinstance(periods, list) else []
+            errors = [str(p.get("error")) for p in rows if isinstance(p, dict) and p.get("error")]
+            n_ok = len(rows) - len(errors)
+            out["targetsun_read"]["ok"] = bool(rows) and not errors
+            detail = f"อ่านได้ {n_ok}/{len(rows)} ชุด (division × หน่วย)"
+            if errors:
+                detail += f" · ผิดพลาด: {errors[0]}"
+            out["targetsun_read"]["detail"] = detail
         except Exception as e:
             out["targetsun_read"]["ms"] = int((time.perf_counter() - t2) * 1000)
             out["targetsun_read"]["detail"] = str(e)
