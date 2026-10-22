@@ -47,6 +47,7 @@ from ..deps import (
 )
 from ..services import admin_capabilities, admin_permissions_store
 from ..services.access_hierarchy import parse_region_from_position
+from ..services.error_explain import fabric_error_for_screen
 from ..services.demo_data import DEMO_REGION, is_demo_supervisor
 from ..services.access_control import (
     ADMIN_SCOPE_ALL,
@@ -1051,7 +1052,7 @@ def preview_sku_link(
             before_ly = _hist_totals_for_sku(df_ly_canon, canon)
             after_ly = _hist_totals_for_sku(df_ly_merged, canon)
         except Exception as e:
-            fabric_error = str(e)
+            fabric_error = fabric_error_for_screen(e)
             logger.warning("sku-links preview fabric failed: %s", e)
 
     return {
@@ -1417,7 +1418,7 @@ def sku_link_catalog(
                 )
             hint = f"งวดกระจายเป้า {month:02d}/{year} · แหล่ง {src_label} · {len(skus)} SKU มีเป้าหีบ > 0"
     except Exception as e:
-        fabric_error = str(e)
+        fabric_error = fabric_error_for_screen(e)
         logger.warning("sku-links catalog fabric failed: %s", e)
         if not hint:
             hint = "ดึงรายการสินค้าจาก Fabric ไม่สำเร็จ — กด「โหลดใหม่」อีกครั้ง"

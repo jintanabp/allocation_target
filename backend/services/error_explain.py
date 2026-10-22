@@ -316,3 +316,23 @@ def explain_http(e: Any) -> dict[str, Any]:
     if not code and status == 504:
         code = "timeout"
     return explain(code or f"http_{status}", d)
+
+
+def fabric_error_for_screen(exc: BaseException | str) -> str:
+    """
+    ข้อความสั้นภาษาไทยแทน error ดิบของ Fabric บนหน้าจอ (QA 21 ต.ค. 2026 L2)
+
+    เดิมส่ง str(e) ขึ้นจอตรง ๆ — มี URL เต็มและ tenant id อ่านไม่รู้เรื่องและไม่ควรโชว์
+    รายละเอียดเต็มยังอยู่ใน log ของ server (ผู้เรียกต้อง logger ไว้เอง)
+    """
+    raw = str(exc or "")
+    low = raw.lower()
+    if any(k in low for k in ("timed out", "timeout")):
+        return "Fabric ตอบช้าเกินเวลา — ลองใหม่อีกครั้ง"
+    if any(k in low for k in ("aadsts", "unauthorized", "invalid_client", "401", "403", "forbidden")):
+        return "สิทธิ์เข้า Fabric ไม่ถูกต้อง — แจ้ง dev ตรวจค่าการเชื่อมต่อ Fabric"
+    if any(k in low for k in ("entitynotfound", "404", "not found")):
+        return "หาโมเดลข้อมูลใน Fabric ไม่เจอ — แจ้ง dev ตรวจค่าการเชื่อมต่อ Fabric"
+    if any(k in low for k in ("connection", "name or service", "max retries", "network", "resolve")):
+        return "เชื่อมต่อ Fabric ไม่ได้ (เครือข่าย) — ลองใหม่อีกครั้ง"
+    return "ดึงข้อมูลจาก Fabric ไม่สำเร็จ — ลองใหม่อีกครั้ง ถ้ายังไม่ได้ให้แจ้ง dev (รายละเอียดอยู่ใน log ของ server)"

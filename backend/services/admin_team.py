@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from ..core.atomic_io import atomic_write_csv, read_locked
 from ..core.employee_filter import drop_van_employees
 from ..core.paths import emp_cache_path
+from .error_explain import fabric_error_for_screen
 from .access_hierarchy import load_hierarchy_payload, parse_hierarchy_metadata
 
 logger = logging.getLogger("target_allocation")
@@ -156,7 +157,7 @@ def load_supervisor_team(
                 "cached_at": cached_at,
                 "fetched_at": None,
                 "cache_path": cache_path,
-                "fabric_error": str(e),
+                "fabric_error": fabric_error_for_screen(e),
             }
         logger.error("ดึงพนักงานจาก Fabric ไม่ได้ (%s): %s", sc, e)
         raise HTTPException(status_code=503, detail="ดึงรายชื่อพนักงานจาก Fabric ไม่ได้ชั่วคราว — ลองใหม่อีกครั้ง") from e

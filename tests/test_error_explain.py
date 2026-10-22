@@ -108,5 +108,27 @@ class TestLogsCarryExplanations(unittest.TestCase):
         self.assertIn('class="log-explain"', src)
 
 
+
+class TestFabricErrorForScreen(unittest.TestCase):
+    """QA 21 ต.ค. 2026 L2: error ดิบของ Fabric (URL + tenant id) เคยขึ้นจอแอดมินตรง ๆ"""
+
+    def test_raw_details_never_reach_the_screen(self):
+        from backend.services.error_explain import fabric_error_for_screen
+
+        raw = ("HTTPSConnectionPool(host='login.microsoftonline.com', port=443): Max retries exceeded "
+               "with url: /0f1e2d3c-1111-2222-3333-444455556666/oauth2/v2.0/token")
+        msg = fabric_error_for_screen(RuntimeError(raw))
+        self.assertNotIn("microsoftonline", msg)
+        self.assertNotIn("0f1e2d3c", msg)
+        self.assertIn("Fabric", msg)
+
+    def test_common_causes_get_a_specific_hint(self):
+        from backend.services.error_explain import fabric_error_for_screen as f
+
+        self.assertIn("ช้าเกินเวลา", f("Read timed out. (read timeout=60)"))
+        self.assertIn("สิทธิ์", f("AADSTS7000215: Invalid client secret provided"))
+        self.assertIn("หาโมเดล", f("PowerBIEntityNotFound"))
+        self.assertIn("ลองใหม่", f("something odd"))
+
 if __name__ == "__main__":
     unittest.main()
