@@ -3817,6 +3817,10 @@ async function loadManagers(force = false) {
         const j = await res.json();
         if (j.detail) d = j.detail;
       } catch (_) { /* ignore */ }
+      if (S.viewAsEmail) {
+        S.role = "none";
+        updateViewAsBanner();
+      }
       populateLoginSupervisorSelect([], d);
       showLoginError(`❌ ${d}`);
       return;
@@ -3857,7 +3861,9 @@ async function loadManagers(force = false) {
         S.isAdmin = !!data.is_admin && !S.viewAsEmail;
       }
       if (typeof data.is_marketing === "boolean") {
-        S.isMarketing = !!data.is_marketing && !S.viewAsEmail;
+        // view-as: backend ส่ง is_marketing ของ "บัญชีที่กำลังดู" — ใช้ตรง ๆ เหมือน role
+        // เดิมบังคับเป็น false → ดูแบบบัญชี Marketing แล้วค้างที่หน้าล็อกอิน (QA L13)
+        S.isMarketing = !!data.is_marketing;
       } else {
         S.isMarketing = false;
       }
@@ -3877,7 +3883,7 @@ async function loadManagers(force = false) {
       syncLoginFormReady();
       syncLakehouseButton();
       syncStep3LiveTargetsBtn();
-      if (S.isMarketing && !S.isAdmin && !S.viewAsEmail) {
+      if (S.isMarketing && !S.isAdmin) {
         _disableLoginScrollLock();
         const login = document.getElementById("loginView");
         const dash = document.getElementById("dashboardView");
@@ -17388,7 +17394,7 @@ function updateAdminNavVisibility() {
   // โหมดดูสิทธิ์: ถ้าบัญชีที่กำลังดูมีสิทธิ์ผู้ดูแล (ระดับใดก็ได้) หรือ dev ปุ่มต้องโผล่
   // เหมือนที่บัญชีนั้นเห็นจริง — บัญชีธรรมดาเท่านั้นที่ไม่มีปุ่ม
   const simAdmin = S.isAdminRole || S.role === "dev";
-  const adminUi = (S.isAdmin || simAdmin || S.isMarketing) && (!S.viewAsEmail || simAdmin);
+  const adminUi = (S.isAdmin || simAdmin || S.isMarketing) && (!S.viewAsEmail || simAdmin || S.isMarketing);
   if (topBtn) {
     topBtn.style.display = adminUi && !onLogin && !inAdmin ? "inline-flex" : "none";
     // ผู้ดูแลทุกระดับใช้คำเดียวกัน — ระดับสิทธิ์ต่างกันที่ "เข้าไปแล้วเห็นอะไร" ไม่ใช่ชื่อปุ่ม
@@ -17421,6 +17427,12 @@ function updateViewAsBanner() {
       ? "สิทธิ์แอดมินตามบัญชีนั้น"
       : S.role === "dev"
         ? "สิทธิ์ dev ตามบัญชีนั้น"
+        : S.role === "marketing"
+        ? "สิทธิ์ Marketing (ทีมพนักงาน) ตามบัญชีนั้น"
+        : S.role === "none"
+        ? "ไม่พบบัญชีนี้ในระบบ / ไม่มีสิทธิ์ใช้งาน"
+        : !S.role
+        ? "กำลังตรวจสิทธิ์…"
         : "ไม่มีสิทธิ์แอดมิน";
     txt.textContent = `โหมดทดสอบ: กำลังดูสิทธิ์แบบ ${S.viewAsEmail} (${roleLabel})`;
     bar.style.display = "flex";
@@ -17512,7 +17524,7 @@ function openAdminView(opts = {}) {
   // (backend จำกัดขอบเขตข้อมูลตามบัญชีนั้นให้แล้ว — ดูแบบผู้ใช้ธรรมดายังเข้าไม่ได้)
   const simAdmin = S.isAdminRole || S.role === "dev";
   if (!(S.isAdmin || simAdmin || S.isMarketing)) return;
-  if (S.viewAsEmail && !simAdmin) return;
+  if (S.viewAsEmail && !simAdmin && !S.isMarketing) return;
   const av = document.getElementById("adminView");
   const dash = document.getElementById("dashboardView");
   const login = document.getElementById("loginView");
@@ -23226,6 +23238,14 @@ async function adminStartViewAs(email) {
   // X-View-As-Email — dev เป็นคนกดเท่านั้น สิทธิ์มีแต่แคบลง ไม่มีทางกว้างขึ้น)
   S.viewAsEmail = (email || "").trim().toLowerCase();
   S.isAdmin = false;
+  // ล้าง role ของ dev เอง — เดิมป้ายขึ้น「สิทธิ์ dev」ค้างไว้เมื่อบัญชีที่ดูไม่มีในระบบ (/managers ตอบ 403) (QA L13)
+  S.role = null;
+  S.isMarketing = false;
+  S.isRegionAdmin = false;
+  S.isHeadAdmin = false;
+  S.isAdminRole = false;
+  // แท็บที่บัญชีก่อนหน้าเข้าได้ ห้ามติดมา — เดิมดู Marketing แล้วต่อด้วยแอดมิน ได้แค่แท็บทีมพนักงาน
+  _adminTabsFromServer = null;
   S.managers = [];
   _resetViewForIdentityChange();
   updateViewAsBanner();
@@ -23244,6 +23264,7 @@ async function adminStartViewAs(email) {
 
 async function exitViewAsMode() {
   S.viewAsEmail = null;
+  _adminTabsFromServer = null;
   _resetViewForIdentityChange();
   updateViewAsBanner();
 
@@ -23270,6 +23291,14 @@ async function exitViewAsMode() {
   const login = document.getElementById("loginView");
   if (dash) dash.style.display = "none";
   if (login) login.style.display = "none";
+  // ดูแบบบัญชีผู้ดูแล/Marketing อยู่ในหน้าแอดมิน — ปิดก่อน ไม่งั้นค้างทับหน้าล็อกอิน
+  // (บัญชีจริงเป็น dev จะถูกเปิดหน้าแอดมินให้ใหม่ด้านล่าง) (QA L13)
+  const av = document.getElementById("adminView");
+  if (av && av.style.display !== "none") {
+    av.style.display = "none";
+    av.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("is-admin");
+  }
   document.body.classList.remove("is-login");
   _setPageScrollLocked(false);
   const totalEl = document.getElementById("totalTargetDisplay");
