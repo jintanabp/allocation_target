@@ -15226,9 +15226,14 @@ function adminPermsRender() {
             + escH("มอบสิทธิ์นี้ให้" + r.label + "ไม่ได้") + "\">–</span></td>";
         }
         const on = (d.roles[r.key] || []).includes(cap.key);
+        const viewOnly = (ADMIN_PERM_VIEW_ONLY[cap.key] || []).includes(r.key);
         return "<td class=\"perms-cell\"><input type=\"checkbox\" " + (on ? "checked " : "")
           + "onchange=\"adminPermsToggle('" + cap.key + "','" + r.key + "',this.checked)\" "
-          + "aria-label=\"" + escH(cap.label + " สำหรับ" + r.label) + "\" /></td>";
+          + "aria-label=\"" + escH(cap.label + " สำหรับ" + r.label) + "\" />"
+          + (viewOnly
+            ? "<div class=\"perms-viewonly\" title=\"" + escH(ADMIN_PERM_VIEW_ONLY_TIP[r.key] || "") + "\">ดูอย่างเดียว</div>"
+            : "")
+          + "</td>";
       }).join("");
       const badge = cap.grantable
         ? ""
@@ -15242,6 +15247,18 @@ function adminPermsRender() {
   }
   body.innerHTML = html;
 }
+
+/* ติ๊กแล้ว "เข้าแท็บได้" แต่ backend ไม่ให้แก้ — เดิมไม่บอก ผู้ใช้กดแก้แล้วได้ 403 (QA L14)
+   ตรงกับ backend: ผูกรหัส SKU แก้ได้เฉพาะหัวหน้าแอดมิน/dev (_require_head_admin_for_company_wide)
+   · ผูกรหัส SL แก้ได้เฉพาะผู้ดูแล (require_admin_scoped_cap) */
+const ADMIN_PERM_VIEW_ONLY = {
+  sku_links: ["admin", "marketing"],
+  sl_links: ["marketing"],
+};
+const ADMIN_PERM_VIEW_ONLY_TIP = {
+  admin: "แอดมินเปิดดูรายการได้ — การผูกรหัส SKU มีผลทั้งบริษัท แก้ได้เฉพาะหัวหน้าแอดมิน",
+  marketing: "Marketing เปิดดูรายการได้อย่างเดียว — แก้ไม่ได้",
+};
 
 function adminPermsToggle(cap, role, on) {
   if (!_adminPermsData) return;
@@ -22839,8 +22856,27 @@ async function adminSetSystemRole(email, role, adminScope, opts = {}) {
   }
 }
 
+/**
+ * แถวที่ผู้ดูแล (ไม่ใช่ dev) แก้/ลบ/เปิดปิดสิทธิ์ส่งไม่ได้ — กติกาเดียวกับ backend ensure_can_edit_user_rows
+ * เดิมโชว์ปุ่มให้กดแล้วได้ 403 ทุกครั้ง (QA 21 ต.ค. 2026 L14) · คืน "" = แก้ได้
+ * (ปุ่มเป็นแค่ความสะดวก backend ยังกันจริงอยู่)
+ */
+function _adminRowLockReason(r) {
+  if (S.isAdmin || S.role === "dev") return "";
+  const em = String(r?.email || "").trim().toLowerCase();
+  const me = String(S.viewAsEmail || S.userEmail || "").trim().toLowerCase();
+  if (me && em === me) return "แก้ข้อมูลสิทธิ์ของตัวเองไม่ได้ — ให้ Dev เป็นคนแก้";
+  const privileged = (S.adminRows || []).some(
+    (x) => String(x.email || "").trim().toLowerCase() === em && String(x.system_role || "").trim()
+  );
+  if (privileged) return "บัญชีนี้เป็นผู้ดูแลระบบ — ข้อมูลผู้ใช้ของบัญชีนี้ต้องให้ Dev เป็นคนแก้";
+  return "";
+}
+
 function _adminRenderTableRowView(tr, r) {
   const role = _adminRoleLabel(r);
+  const lockReason = _adminRowLockReason(r);
+  const lockAttr = lockReason ? ` disabled title="${escapeHtml(lockReason)}"` : "";
   const unitRaw = (r.acc_unit || "").trim();
   const unit = unitRaw
     ? `<span class="admin-unit-pill admin-unit-pill--${escapeHtml(unitRaw)}">${escapeHtml(unitRaw)}</span>`
@@ -22870,10 +22906,10 @@ function _adminRenderTableRowView(tr, r) {
         ? `<input type="text" class="admin-cell-input admin-cell-input--note admin-note-inline" value="${escapeHtml(r.note || "")}" title="${escapeHtml(r.note || "")}" placeholder="หมายเหตุ" aria-label="หมายเหตุ" />`
         : _adminNoteCellHtml(r.note, false, r)
     }</td>
-    <td class="admin-td-ts"><input type="checkbox" class="admin-ts-check" ${tsChecked} aria-label="Target Sun" /></td>
+    <td class="admin-td-ts"><input type="checkbox" class="admin-ts-check" ${tsChecked} aria-label="Target Sun"${lockAttr} /></td>
     <td class="admin-td-actions">
       <div class="admin-action-group">
-        <button type="button" class="admin-action admin-action--edit">แก้ไข</button>
+        <button type="button" class="admin-action admin-action--edit"${lockAttr}>แก้ไข</button>
         ${
           // "ดูแบบนี้" = สวมสิทธิ์เข้าไปเห็นข้อมูลของคนอื่น — สงวนไว้ให้ dev เท่านั้น
           // ผู้ดูแลจัดการรายชื่อ/แก้ไข/ลบได้ แต่ไม่ควรเข้าไปดูข้อมูลขายของทีมใคร
@@ -22882,7 +22918,7 @@ function _adminRenderTableRowView(tr, r) {
             ? '<button type="button" class="admin-action admin-action--view">ดูแบบนี้</button>'
             : ""
         }
-        <button type="button" class="admin-action admin-action--del admin-btn-del">ลบ</button>
+        <button type="button" class="admin-action admin-action--del admin-btn-del"${lockAttr}>ลบ</button>
       </div>
     </td>`;
   tr.querySelector(".admin-system-role")?.addEventListener("change", (e) => {
@@ -22927,7 +22963,11 @@ function _adminRenderTableRowEdit(tr, edit) {
   tr.className = "admin-tr--editing";
   tr.innerHTML = `
     <td class="admin-td-email-stack">
-      <input type="email" class="admin-cell-input" data-f="email" value="${escapeHtml(d.email)}" />
+      <input type="email" class="admin-cell-input" data-f="email" value="${escapeHtml(d.email)}"${
+        S.isAdmin || S.role === "dev"
+          ? ""
+          : ' readonly title="เปลี่ยนอีเมลของผู้ใช้ไม่ได้ — ให้ลบแล้วเพิ่มใหม่ หรือให้ Dev เป็นคนแก้"'
+      } />
       <div class="admin-inline-visible admin-vis-subrow admin-vis-subrow--edit" data-f="visible" aria-live="polite">${_adminRenderVisibleChipsInner(edit.visible || [])}</div>
     </td>
     <td><input type="text" class="admin-cell-input admin-cell-input--code" data-f="userpl" value="${escapeHtml(d.userpl)}" /></td>

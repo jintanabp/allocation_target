@@ -1380,6 +1380,13 @@ select.field-input:disabled,
   accent-color: var(--accent);
   cursor: pointer;
 }
+.perms-viewonly {
+  font-size: 9px;
+  color: var(--text-3);
+  margin-top: 2px;
+  white-space: nowrap;
+  cursor: help;
+}
 .perms-na {
   display: inline-block;
   min-width: 22px;
