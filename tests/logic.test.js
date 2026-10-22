@@ -223,3 +223,13 @@ test("shareTotalByWeights — wholeBaht ปัดบาทเต็ม ผลร
   assert.deepEqual(out.slice(1), [333, 333]);
   assert.equal(Math.round(out.reduce((a, b) => a + b, 0) * 100), 100050);
 });
+
+test("maxBoxesForCell — ช่องเดียวห้ามเกินเป้า SKU ของขอบเขต (QA M6)", () => {
+  assert.equal(L.maxBoxesForCell(420, 0), 420);
+  // ช่องอื่นที่ล็อกไว้กินเป้าไปแล้ว
+  assert.equal(L.maxBoxesForCell(420, 300), 120);
+  // ล็อกเกินเป้าอยู่แล้ว — ช่องนี้ใส่เพิ่มไม่ได้เลย ไม่ติดลบ
+  assert.equal(L.maxBoxesForCell(420, 500), 0);
+  // เป้าไม่ใช่ตัวเลข = 0
+  assert.equal(L.maxBoxesForCell(undefined, 0), 0);
+});

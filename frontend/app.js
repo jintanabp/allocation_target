@@ -9051,6 +9051,31 @@ function onResultEdit(el) {
     return;
   }
 
+  // ห้ามใส่เกินเป้า SKU ของขอบเขตที่ทำอยู่ (ผู้ใช้ตัดสิน 22 ต.ค. 2026 · QA M6)
+  // เดิมรับค่าได้ แล้วตัวเกลี่ยดึงหีบของทุกคนใน SKU นั้นลงเป็น 0 เตือนแค่ ⚠ ที่แถวล่าง และ
+  // autosave ขึ้น server ทันที — ไปรู้ตัวตอนคำนวณใหม่/ส่งที่ได้ 400
+  // ทีมเดียว = เป้าทีม · รวมภาค/หน่วย = เป้ารวม (ซุปคนหนึ่งเกินเป้าทีมตัวเองได้ เพราะโยกข้ามซุปได้)
+  if (val > (prev || 0)) {
+    const limit = _skuTargetForEditLimit(sku);
+    if (limit != null) {
+      const otherLocked = S.allocations
+        .filter((a) => a !== alloc && String(a.sku) === String(sku) && a.is_edited)
+        .reduce((s, a) => s + (Number(a.allocated_boxes) || 0), 0);
+      const maxVal = AppLogic.maxBoxesForCell(limit, otherLocked);
+      if (val > maxVal) {
+        el.textContent = (prev || 0).toLocaleString("th-TH");
+        const scopeLbl = S.aggregateMode ? "เป้ารวมของขอบเขตนี้" : "เป้าทีม";
+        toast(
+          `ใส่ ${val.toLocaleString("th-TH")} หีบไม่ได้ — สินค้า ${sku} ${scopeLbl} ${limit.toLocaleString("th-TH")} หีบ` +
+            (otherLocked > 0 ? ` · ช่องที่ล็อกไว้แล้ว ${otherLocked.toLocaleString("th-TH")} หีบ` : "") +
+            ` · ช่องนี้ใส่ได้สูงสุด ${maxVal.toLocaleString("th-TH")} หีบ`,
+          "amber",
+        );
+        return;
+      }
+    }
+  }
+
   // จำค่าที่ระบบกระจายให้ครั้งแรก — ใช้ตอนกดคืนค่าเฉพาะช่องนี้
   // (บันทึกครั้งเดียวเท่านั้น แก้ซ้ำหลายรอบต้องยังคืนไปที่ค่าของระบบ ไม่ใช่ค่าก่อนหน้า)
   if (alloc && alloc._engine_boxes == null && !wasEdited) {
@@ -9423,6 +9448,19 @@ function _rebalanceTargetOverride() {
     }
   }
   return Object.keys(out).length ? out : null;
+}
+
+/**
+ * เป้า SKU ที่ตัวเกลี่ย (autoRebalance) ใช้ — ใช้กันการแก้ช่องเกินเป้า (QA M6)
+ * คืน null เมื่อไม่รู้เป้า (ไม่รู้จัก SKU) — ไม่กันในกรณีนั้น ให้ด่านเดิมทำงานตามปกติ
+ */
+function _skuTargetForEditLimit(sku) {
+  const key = String(sku || "").trim();
+  const override = _rebalanceTargetOverride();
+  if (override) return key in override ? Number(override[key]) || 0 : null;
+  const info = (S.skus || []).find((x) => String(x.sku).trim() === key);
+  if (!info) return null;
+  return Number(info.supervisor_target_boxes) || 0;
 }
 
 function autoRebalance(silent = false, opts = {}) {

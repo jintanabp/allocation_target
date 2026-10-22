@@ -273,7 +273,21 @@
     return partC.map((c) => c / 100);
   }
 
+  /**
+   * หีบสูงสุดที่ช่องหนึ่งใส่ได้ในขอบเขตที่กำลังทำ (QA 21 ต.ค. 2026 M6)
+   *
+   * skuTarget = เป้า SKU ของขอบเขตนั้น (ทีมเดียว = เป้าทีม · รวมภาค/หน่วย = เป้ารวมทุกทีม
+   * เพราะโยกหีบข้ามซุปได้) · otherLockedBoxes = หีบของช่องอื่นใน SKU เดียวกันที่ล็อก/แก้มือไว้
+   * ช่องที่ยังไม่ล็อกถูกตัวเกลี่ยดึงลงได้ถึง 0 จึงไม่นับ
+   */
+  function maxBoxesForCell(skuTarget, otherLockedBoxes) {
+    const t = Math.round(Number(skuTarget) || 0);
+    const used = Math.round(Number(otherLockedBoxes) || 0);
+    return Math.max(0, t - used);
+  }
+
   const AppLogic = {
+    maxBoxesForCell,
     shareTotalByWeights,
     allocRulePushMultipleError,
     nightlyReasonText,
