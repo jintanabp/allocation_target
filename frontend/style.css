@@ -7596,6 +7596,11 @@ code {
   white-space: nowrap;
   cursor: help;
 }
+/* กติกาครอบแค่บางคน/บางหน่วย — เส้นประให้ต่างจากแบบทั้ง SKU */
+.badge-wh-pin--partial {
+  border-style: dashed;
+  font-weight: 700;
+}
 
 th.sku-th--fresh {
   background: var(--fresh-bg);

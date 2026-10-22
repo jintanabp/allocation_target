@@ -5903,10 +5903,49 @@ function _skuTierBadgeHtml(sku) {
   return `<span class="tiered-badge tiered-badge--strict" title="SKU รอง — ยึดสัดส่วนประวัติแน่น ±12%">รอง</span>`;
 }
 
+/**
+ * สรุปกติกาบังคับคลังต่อ SKU จากแถวผลกระจาย → Map(sku → {whs: [คลัง], partial})
+ * partial = กติกาไม่ครอบทุกแถวที่มีหีบ (บางคน/บางหน่วย/บางภาค) หรือ backend บอกว่าครอบแค่บางขา
+ * แถวหีบ 0 ที่ไม่โดนกติกาไม่นับ — ไม่มีหีบไปคลังอื่นอยู่แล้ว · แสดงผลอย่างเดียว ไม่แตะตัวเลข
+ */
+function _skuWhPinSummary(allocs) {
+  const acc = new Map();
+  const unpinned = new Set();
+  for (const a of allocs || []) {
+    const sku = String(a?.sku || "").trim();
+    if (!sku) continue;
+    const wh = String(a.wh_pin_forced || "").trim();
+    if (!wh) {
+      if ((Number(a.allocated_boxes) || 0) > 0) unpinned.add(sku);
+      continue;
+    }
+    let e = acc.get(sku);
+    if (!e) {
+      e = { whs: new Set(), partial: false };
+      acc.set(sku, e);
+    }
+    e.whs.add(wh);
+    if (a.wh_pin_partial) e.partial = true;
+  }
+  const out = new Map();
+  for (const [sku, e] of acc) {
+    out.set(sku, { whs: [...e.whs].sort(), partial: e.partial || unpinned.has(sku) });
+  }
+  return out;
+}
+
 function _skuWhPinBadgeHtml(sku, pinBySku) {
-  const wh = pinBySku?.get(String(sku || "").trim());
-  if (!wh) return "";
-  return `<span class="badge-wh-pin" title="SKU นี้มีกติกาบังคับคลังเดียว — ไม่ว่าตารางนี้จะโชว์แบ่งคลังยังไง เป้าทั้งหมดจะถูกรวมไปที่คลัง ${escH(wh)} เพียงคลังเดียวตอนส่งเข้า Target Sun">🔒 ${escH(wh)}</span>`;
+  const pin = pinBySku?.get(String(sku || "").trim());
+  if (!pin || !pin.whs?.length) return "";
+  const whTxt = pin.whs.length > 2 ? `${pin.whs.slice(0, 2).join(", ")} …` : pin.whs.join(", ");
+  const whAll = escH(pin.whs.join(", "));
+  if (pin.partial) {
+    return `<span class="badge-wh-pin badge-wh-pin--partial" title="SKU นี้มีกติกาบังคับคลังกับบางคน/บางหน่วย/บางภาคเท่านั้น — ตอนส่งเข้า Target Sun เฉพาะแถวเป้าที่ตรงกติกาจะถูกรวมไปที่คลัง ${whAll} ส่วนที่เหลือส่งตามคลังเดิม">🔒 ${escH(whTxt)} บางส่วน</span>`;
+  }
+  if (pin.whs.length > 1) {
+    return `<span class="badge-wh-pin" title="SKU นี้มีกติกาบังคับคลังทุกแถว แต่คลังต่างกันตามพนักงาน/หน่วย — ตอนส่งเข้า Target Sun แต่ละแถวจะถูกรวมไปคลังตามกติกาของตัวเอง (${whAll})">🔒 ${escH(whTxt)}</span>`;
+  }
+  return `<span class="badge-wh-pin" title="SKU นี้มีกติกาบังคับคลังเดียว — ไม่ว่าตารางนี้จะโชว์แบ่งคลังยังไง เป้าทั้งหมดจะถูกรวมไปที่คลัง ${whAll} เพียงคลังเดียวตอนส่งเข้า Target Sun">🔒 ${whAll}</span>`;
 }
 
 function _skuLineValue(s) {
@@ -7739,12 +7778,9 @@ function renderResult(allocs) {
   const _freshSkuSet = new Set(
     (S.recentReallocSkus || []).map((x) => String(x || "").trim()).filter(Boolean)
   );
-  // SKU ที่โดนกติกาบังคับคลังเดียว (มาจาก backend ต่อแถว emp×sku — พอเจอตัวแรกที่มีค่า
-  // ก็พอ เพราะกติกาผูกกับ sku+ภาค+division ของทีมนี้ ไม่ใช่รายพนักงาน)
-  const pinBySku = new Map();
-  for (const a of allocs) {
-    if (a.wh_pin_forced && !pinBySku.has(a.sku)) pinBySku.set(a.sku, a.wh_pin_forced);
-  }
+  // SKU ที่โดนกติกาบังคับคลัง (backend ส่งมาต่อแถว emp×sku) — กติกาจำกัดหน่วย/พนักงานได้ และโหมด
+  // รวมภาคมีหลายภาค จึงต้องดูทุกแถว: เดิมเอาแถวแรกแล้วบอกว่า "เป้าทั้งหมด" ไปคลังนั้น (QA 22 ต.ค. 2026)
+  const pinBySku = _skuWhPinSummary(allocs);
   // แถบหัวกลุ่ม — อยู่ในเซลล์หัวเดิม (ไม่เพิ่มแถว thead ใหม่ จะได้ไม่ชนตำแหน่งหัวตารางที่ค้างบนจอ)
   const _grpOf = new Map(skusObjArr.map(o => [o.sku, o.brand]));
   const _grpStart = new Set();
@@ -13027,6 +13063,9 @@ function _slimAllocationsForDraft(allocs) {
     // (ยอมรับ _engine_boxes ของเก่าด้วย เผื่อแถวที่ถูกแตะก่อนกระจายรอบใหม่)
     const eng = a.engine_boxes != null ? a.engine_boxes : a._engine_boxes;
     if (eng != null) row.engine_boxes = Number(eng) || 0;
+    // ป้าย 🔒 กติกาบังคับคลัง — เดิมตัดทิ้ง โหลดร่างกลับแล้วป้ายหาย (แสดงผลอย่างเดียว)
+    if (a.wh_pin_forced) row.wh_pin_forced = String(a.wh_pin_forced);
+    if (a.wh_pin_partial) row.wh_pin_partial = true;
     return row;
   });
 }

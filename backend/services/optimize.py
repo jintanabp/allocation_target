@@ -287,6 +287,35 @@ def _pin_wh_for_rows(df: pd.DataFrame, rules: dict) -> pd.Series:
     return out
 
 
+def _pin_label_from_legs(df: pd.DataFrame, legs: pd.DataFrame, rules: dict) -> tuple[pd.Series, pd.Series]:
+    """ป้าย 🔒 ต่อแถวผล Step 3 จาก "ทุกขา" ในไฟล์เป้าของพนักงาน×สินค้านั้น — คืน (คลัง, บางส่วน)
+
+    คลัง = คลังที่กติกาบังคับ ("" = ไม่โดนกติกาเลย) · บางส่วน = กติกาครอบแค่บางขา หรือขาต่าง ๆ
+    ถูกบังคับไปคนละคลัง — ตอนส่งจริง lakehouse ย้ายเฉพาะขาที่ตรงกติกา (ตรวจทีละขา) ป้ายต้องบอกให้ตรง
+    ใช้แสดงผลอย่างเดียว ไม่แตะตัวเลข · แถวที่ไม่มีขาในไฟล์เป้า = ไม่โดนกติกา (เหมือนเดิม)
+    """
+    forced = pd.Series("", index=df.index, dtype="object")
+    partial = pd.Series(False, index=df.index, dtype="bool")
+    if df.empty or legs is None or legs.empty:
+        return forced, partial
+    lg = legs.reset_index(drop=True).copy()
+    lg["_pin"] = _pin_wh_for_rows(lg, rules)
+    by_pair: dict[tuple[str, str], tuple[str, bool]] = {}
+    for (emp, sku), pins in lg.groupby(["_join_emp", "sku"])["_pin"]:
+        vals = set(pins)
+        wh = sorted(v for v in vals if v)
+        if not wh:
+            continue
+        by_pair[(emp, str(sku).strip())] = (wh[0], len(vals) > 1)
+    if not by_pair:
+        return forced, partial
+    keys = list(zip(df["emp_id"].astype(str).map(norm_emp_code), df["sku"].astype(str).str.strip()))
+    hit = [by_pair.get(k, ("", False)) for k in keys]
+    forced[:] = [h[0] for h in hit]
+    partial[:] = [h[1] for h in hit]
+    return forced, partial
+
+
 def _apply_wh_pin_preview(
     df_final: pd.DataFrame,
     sup_id: str,
@@ -322,9 +351,11 @@ def _apply_wh_pin_preview(
     if df_final is None or df_final.empty:
         if df_final is not None:
             df_final["wh_pin_forced"] = pd.Series(dtype="object")
+            df_final["wh_pin_partial"] = pd.Series(dtype="bool")
         return df_final
     df_final = df_final.copy()
     df_final["wh_pin_forced"] = ""
+    df_final["wh_pin_partial"] = False
     try:
         rules = rules_by_key()
         if not rules:
@@ -379,6 +410,9 @@ def _apply_wh_pin_preview(
         # ใช้คีย์ join แบบ normalize แยกต่างหาก ไม่แก้ emp_id ตัวจริงใน df_final —
         # คอลัมน์นี้ถูกคืนกลับไปให้ frontend ตรง ๆ (df_final.to_dict) ห้ามเปลี่ยนรูปแบบ
         dg["_join_emp"] = dg["emp_id"].map(norm_emp_code)
+        # ทุกแถวเป้า (ขา) ของพนักงาน×สินค้า — ใช้ทำป้าย 🔒 ข้างล่าง · คนเดียวมีได้หลายขา (คนละหน่วย/
+        # คนละภาค) ซึ่งกติกาอาจครอบแค่บางขา — เดิมดูแค่ขาแรก ป้ายเลยไม่ตรงของที่ส่งจริง (QA 22 ต.ค. 2026)
+        dg_legs = dg.drop_duplicates(subset=["_join_emp", "sku", "areacode", "divisioncode", "salestype"])
         dg = dg.drop_duplicates(subset=["_join_emp", "sku"])
         # salestype ใช้จับคู่กติกาที่จำกัดหน่วย (เครดิต/รถเงินสด) — df_final ปกติไม่มีคอลัมน์นี้
         # ถ้าวันหนึ่งมีมาแล้วให้ใช้ของเดิม ไม่ merge ทับ (กันชื่อชน _x/_y แบบที่เคยพังเงียบ)
@@ -433,7 +467,7 @@ def _apply_wh_pin_preview(
                     sup_id, switched,
                 )
         df_final = pd.concat([df_single, df_multi], ignore_index=True)
-        df_final["wh_pin_forced"] = _pin_wh_for_rows(df_final, rules)
+        df_final["wh_pin_forced"], df_final["wh_pin_partial"] = _pin_label_from_legs(df_final, dg_legs, rules)
         df_final = df_final.drop(
             columns=["areacode", "divisioncode"] + (["salestype"] if _added_st else [])
         )
@@ -441,6 +475,7 @@ def _apply_wh_pin_preview(
     except Exception as e:
         logger.warning("wh pin preview skipped: %s", e)
         df_final["wh_pin_forced"] = ""
+        df_final["wh_pin_partial"] = False
         return df_final
 
 
@@ -494,6 +529,8 @@ def _apply_wh_pin_preview_guarded(
         )
         if "wh_pin_forced" not in df_final.columns:
             df_final["wh_pin_forced"] = ""
+        if "wh_pin_partial" not in df_final.columns:
+            df_final["wh_pin_partial"] = False
         # รายละเอียด (ข้อความ error + traceback) อยู่ใน log server แล้ว — ไม่ส่งกลับในคำตอบ /optimize
         # ซึ่งผู้ใช้ทุกคนเห็นได้ (มี path ของ server) · ผลตรวจ 7 ต.ค. 2026 ค
         return df_final, {
