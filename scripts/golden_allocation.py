@@ -208,15 +208,19 @@ def cmd_compare(verbose: bool) -> int:
     print("\n" + "=" * 70)
     changed = 0
     data_changed = 0
+    # เคสใหม่ / เคสหาย = ข้อมูลในเครื่องนี้ไม่เหมือนตอน capture (เช่นไม่มีแคชทีมจริง) — ไม่ใช่ผลต่าง
+    # เดิมนับรวมกับ changed แล้วสรุปว่า "ผลต่างโดยข้อมูลเข้าเหมือนเดิม" ซึ่งไม่จริง (QA 21 ต.ค. 2026 L15)
+    added = 0
+    missing = 0
     for key in sorted(set(old) | set(new)):
         o, n = old.get(key), new.get(key)
         if o is None:
             print(f"[เคสใหม่]  {key}")
-            changed += 1
+            added += 1
             continue
         if n is None:
-            print(f"[เคสหาย]   {key}")
-            changed += 1
+            print(f"[เคสหาย]   {key}  (เครื่องนี้ไม่มีข้อมูลของเคสนี้ — ข้าม)")
+            missing += 1
             continue
         o_cells, n_cells = o.get("cells", {}), n.get("cells", {})
         if o_cells == n_cells and o.get("fallback") == n.get("fallback"):
@@ -254,16 +258,21 @@ def cmd_compare(verbose: bool) -> int:
                     print(f"      {k}: {a} -> {b}")
 
     print("\n" + "=" * 70)
+    if missing or added:
+        print(f"เคสหาย {missing} · เคสใหม่ {added} — ข้อมูลในเครื่องนี้ไม่ตรงกับตอน capture (ไม่นับเป็นผลต่าง)")
     if data_changed:
         print(f"{data_changed} เคส: ข้อมูลใน data/ เปลี่ยนไปจากตอน capture — เทียบผลลัพธ์ไม่ได้")
         print("   รัน `python scripts/golden_allocation.py capture` ใหม่เพื่อตั้งฐานใหม่")
     if changed:
         print(f"มี {changed} เคสที่ผลต่างโดยข้อมูลเข้าเหมือนเดิม — ตรวจว่าอธิบายได้ด้วยข้อที่แก้")
-    elif not data_changed:
+    elif not (set(old) & set(new)):
+        print("ไม่มีเคสที่เทียบได้เลย — เครื่องนี้ไม่มีข้อมูลของเคสในไฟล์อ้างอิง")
+    elif not data_changed and not missing:
         print("ทุกเคสตรงกับไฟล์อ้างอิง — ไม่มีตัวเลขไหนขยับ")
     else:
         print("ไม่มีเคสไหนที่ผลต่างโดยข้อมูลเข้าเหมือนเดิม — โค้ดไม่ได้เปลี่ยนพฤติกรรม")
-    return 0
+    # exit 1 เฉพาะเมื่อผลต่างจริง (ข้อมูลเข้าเหมือนเดิม) — ใช้เป็นด่านได้ · เดิมคืน 0 เสมอ
+    return 1 if changed else 0
 
 
 def main() -> int:
