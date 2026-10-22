@@ -304,7 +304,13 @@ function _setControlsDisabled(disabled) {
     } else {
       if (el.matches && el.matches("button, input, select, textarea")) {
         const prev = el.dataset._busyPrevDisabled;
-        if (prev === "0") el.disabled = false;
+        // ระหว่างกรอบ「กำลังทำงาน」เปิด ตัวซิงก์สถานะปุ่ม (เช่น syncLakehouseButton) อาจเปลี่ยน
+        // สถานะที่ควรเป็นไปแล้ว — ถ้าปุ่มบอกไว้ด้วย aria-disabled ให้เชื่อค่านั้นแทนค่าที่จำไว้
+        // ตอนเปิดกรอบ เดิมปุ่มส่ง Target Sun กลับมากดได้ทั้งที่ยังเป็นสีเทา (QA 21 ต.ค. 2026 M4)
+        const aria = el.getAttribute && el.getAttribute("aria-disabled");
+        if (aria === "true") el.disabled = true;
+        else if (aria === "false") el.disabled = false;
+        else if (prev === "0") el.disabled = false;
         delete el.dataset._busyPrevDisabled;
       }
       if (el.dataset && Object.prototype.hasOwnProperty.call(el.dataset, "_busyPrevContentEditable")) {
