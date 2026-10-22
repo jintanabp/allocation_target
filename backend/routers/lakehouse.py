@@ -347,6 +347,8 @@ def upload_to_lakehouse(
     `_build_tga_upload_dataframe` ตัวเดียวกับเส้นทางส่งจริง
     """
     ensure_supervisor_allowed(user, req.sup_id)
+    # ทีมสาธิตห้ามออกนอกระบบทุกเส้นทาง — เส้นอื่นกันครบแล้ว เหลือเส้นนี้ (QA 21 ต.ค. 2026 Q14)
+    ensure_demo_team_not_sent(req.sup_id)
     out = upload_allocations_to_lakehouse(req)
     try:
         log_from_user(

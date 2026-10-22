@@ -330,12 +330,31 @@ class TestDemoCannotBeSent(unittest.TestCase):
     def test_guard_is_wired_into_every_send_entry_point(self):
         with open(os.path.join(REPO, "backend", "routers", "lakehouse.py"), encoding="utf-8") as fh:
             src = fh.read()
-        for route in ("prepare-targetsun", "import-targetsun", "verify-send-batch"):
+        # lakehouse/upload (OneLake) เพิ่ม 21 ต.ค. 2026 — QA Q14
+        for route in ("prepare-targetsun", "import-targetsun", "verify-send-batch", '"/lakehouse/upload"'):
             with self.subTest(route=route):
                 idx = src.index(route)
                 nxt = src.find("@router.", idx)
                 body = src[idx: nxt if nxt > 0 else len(src)]
                 self.assertIn("ensure_demo_team_not_sent", body)
+
+
+class TestDemoCannotGoToOneLake(unittest.TestCase):
+    """QA 21 ต.ค. 2026 Q14: /lakehouse/upload เป็นเส้นออกนอกระบบเส้นเดียวที่ยังไม่กันทีมสาธิต"""
+
+    def test_upload_refuses_demo_team_before_writing(self):
+        from unittest import mock
+
+        from backend.routers import lakehouse as lh_router
+        from backend.schemas import LakehouseUploadRequest
+
+        req = LakehouseUploadRequest(sup_id="SLDEMO1", target_month=11, target_year=2026, allocations=[])
+        dev = {"role": "dev", "is_admin": True, "admin_scope": None, "auth_disabled": True}
+        with mock.patch.object(lh_router, "upload_allocations_to_lakehouse") as up, \
+                self.assertRaises(HTTPException) as cm:
+            lh_router.upload_to_lakehouse(req, user=dev)
+        self.assertEqual(cm.exception.status_code, 403)
+        up.assert_not_called()
 
 
 class TestDemoDoesNotLeakToRealUsers(unittest.TestCase):
