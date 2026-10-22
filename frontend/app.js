@@ -3309,12 +3309,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("yearSelect").addEventListener("change", onMonthYearChange);
   loadAppBuildInfo();
 
-  document.querySelectorAll('[name="strategy"]').forEach(r => {
-    r.addEventListener("change", () => {
-      document.querySelectorAll(".s-pill").forEach(p => p.classList.remove("active"));
-      r.closest(".s-pill").classList.add("active");
-    });
-  });
+  // ไฮไลต์ปุ่มวิธีกระจายอยู่ที่ตัวจัดการ change ระดับ document (เลือกได้หลายวิธี) ตัวเดียว —
+  // เดิมมีตัวจัดการรุ่นปุ่มเลือกได้อันเดียวค้างอยู่ตรงนี้ด้วย ล้างไฮไลต์ทุกปุ่มแล้วไฮไลต์แค่ปุ่มที่
+  // เพิ่งกด ไฮไลต์จึงไม่ตรงกับช่องที่ติ๊ก (QA 21 ต.ค. 2026 M5)
   syncHistAllocNote();
 
   window.addEventListener("beforeunload", e => {
@@ -17003,16 +17000,15 @@ function _brandMappingComplete() {
 document.addEventListener("change", (e) => {
   const t = e.target;
   if (t && t.matches && t.matches('input[name="strategy"]')) {
-    const pill = t.closest(".s-pill");
-    if (pill) pill.classList.toggle("active", t.checked);
     const any = document.querySelectorAll('input[name="strategy"]:checked').length;
     if (any === 0) {
       const def = document.querySelector('input[name="strategy"][value="L3M"]');
-      if (def) {
-        def.checked = true;
-        def.closest(".s-pill")?.classList.add("active");
-      }
+      if (def) def.checked = true;
     }
+    // ไฮไลต์ตามช่องที่ติ๊กจริงทุกปุ่ม ไม่ใช่แค่ปุ่มที่เพิ่งกด
+    document.querySelectorAll('input[name="strategy"]').forEach((cb) => {
+      cb.closest(".s-pill")?.classList.toggle("active", cb.checked);
+    });
     _renderBrandStrategyPanel();
     syncHistAllocNote();
   }
