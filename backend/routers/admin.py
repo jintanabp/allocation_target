@@ -2281,10 +2281,17 @@ def admin_export_usage_summary_xlsx(
 
 
 @router.get("/user-access/export")
-def admin_export_user_access(_admin: dict = Depends(require_admin_user)):
-    """ดาวน์โหลด user_access.json สำหรับสำรอง"""
-    rows = read_user_access_rows()
-    fname = "user_access.json"
+def admin_export_user_access(admin: dict = Depends(require_admin_scoped_cap("users"))):
+    """
+    ดาวน์โหลด user_access.json สำหรับสำรอง
+
+    เดิม dev เท่านั้น ทั้งที่ปุ่มขึ้นให้แอดมิน และคู่มือสั่งให้แอดมินดาวน์โหลดทุกครั้งที่แก้ — กดแล้ว
+    ได้ 403 (QA 21 ต.ค. 2026 Q12) · ตอนนี้ผู้มีสิทธิ์แท็บผู้ใช้ดาวน์โหลดได้ เฉพาะแถวในขอบเขต
+    ตัวเอง (เท่ากับที่เห็นบนจออยู่แล้ว) · ชุดไม่ครบทั้งบริษัทตั้งชื่อไฟล์ต่างให้รู้ว่าเอาไปทับทั้งไฟล์ไม่ได้
+    """
+    all_rows = read_user_access_rows()
+    rows = _scope_rows(admin, all_rows)
+    fname = "user_access.json" if len(rows) == len(all_rows) else "user_access_partial.json"
     return JSONResponse(
         content=rows,
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},

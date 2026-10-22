@@ -20654,8 +20654,16 @@ async function adminExportUserAccess() {
     const res = await fetchWithTimeout(`${API_BASE_URL}/admin/user-access/export`, {}, 30000);
     if (!res.ok) throw new Error("ส่งออกไม่สำเร็จ");
     const blob = await res.blob();
-    dl(blob, "user_access.json");
-    toast("ดาวน์โหลดไฟล์สำรองรายชื่อผู้ใช้แล้ว (user_access.json)", "green");
+    // แอดมินรายภาคได้เฉพาะแถวในขอบเขต — server ตั้งชื่อ user_access_partial.json ให้รู้ว่าไม่ครบทั้งบริษัท (QA Q12)
+    const cd = res.headers.get("Content-Disposition") || "";
+    const name = (cd.match(/filename="?([^";]+)"?/i) || [])[1] || "user_access.json";
+    dl(blob, name);
+    toast(
+      name === "user_access.json"
+        ? "ดาวน์โหลดไฟล์สำรองรายชื่อผู้ใช้แล้ว (user_access.json)"
+        : `ดาวน์โหลดไฟล์สำรองเฉพาะผู้ใช้ในขอบเขตของคุณแล้ว (${name})`,
+      "green",
+    );
   } catch (e) {
     toast(e.message, "red");
   }
