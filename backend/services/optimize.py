@@ -2206,10 +2206,9 @@ def run_optimization_service(
         "allocations": df_final.to_dict(orient="records"),
         # คู่ที่ยังไม่มีแถวใน Target Sun = แถวใหม่ตอนส่ง (None = ไม่มี grain ให้เทียบ) — OPEN_ITEMS 9.4 ง
         "new_target_sun_pairs": new_ts_pairs,
-        # ชั่วคราวเพื่อ debug (22 ก.ย. 2026) — เข้า data/app.log บนเซิร์ฟเวอร์ไม่ได้เลย จึงฝัง
-        # รายละเอียด error (ถ้ามี) มาใน response ตรงนี้แทน ดูได้จาก DevTools Network tab
-        # ลบทิ้งได้เมื่อเจอสาเหตุแล้ว
-        "wh_pin_debug": wh_pin_debug,
+        # ขั้นบังคับคลังของพรีวิวไม่สำเร็จ (ถอยไปใช้ผลดิบ) — ฝังสถานะมาให้ดูจาก DevTools ได้
+        # (เข้า data/app.log บนเซิร์ฟเวอร์ไม่ได้ · 22 ก.ย. 2026) · รอบปกติไม่ส่ง (QA L16)
+        **({"wh_pin_debug": wh_pin_debug} if wh_pin_debug.get("stage") != "ok" else {}),
         "sku_total_checks": sku_checks,
         "hist_window_months": hist_months,
         "new_products_even_mode": new_products_even_mode,

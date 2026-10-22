@@ -334,5 +334,16 @@ class WhPinPreviewGuardedTest(unittest.TestCase):
         self.assertEqual(int(out["allocated_boxes"].sum()), 10)
         self.assertEqual(out.iloc[0]["wh_pin_forced"], "")
 
+
+class TestDebugOnlyWhenSomethingWentWrong(unittest.TestCase):
+    """QA 21 ต.ค. 2026 L16: wh_pin_debug เคยติดไปกับทุก response ของ /optimize"""
+
+    def test_response_includes_debug_only_when_not_ok(self):
+        import inspect
+
+        src = inspect.getsource(opt.run_optimization_service)
+        self.assertIn('**({"wh_pin_debug": wh_pin_debug} if wh_pin_debug.get("stage") != "ok" else {})', src)
+        self.assertNotIn('"wh_pin_debug": wh_pin_debug,\n', src)
+
 if __name__ == "__main__":
     unittest.main()
