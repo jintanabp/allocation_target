@@ -65,6 +65,16 @@ def _warn_if_ssl_verification_off() -> None:
         )
 
 
+
+def _api_docs_enabled() -> bool:
+    """ENABLE_API_DOCS=1/0 ชนะเสมอ · ไม่ตั้ง = เปิดเฉพาะตอนปิดล็อกอิน (เครื่อง dev)"""
+    raw = (os.environ.get("ENABLE_API_DOCS") or "").strip().lower()
+    if raw in ("1", "true", "yes"):
+        return True
+    if raw in ("0", "false", "no"):
+        return False
+    return not auth_entra.auth_enabled()
+
 def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(app_: FastAPI):
@@ -90,7 +100,18 @@ def create_app() -> FastAPI:
         start_nightly_scheduler()
         yield
 
-    app = FastAPI(title="Target Allocation API", version="3.0", lifespan=lifespan)
+    # หน้าเอกสาร API (/docs /redoc /openapi.json) เปิดได้โดยไม่ล็อกอิน — บน server เท่ากับแจก
+    # แผนที่ทุก endpoint ให้ใครก็ได้ที่เข้า URL (OPEN_ITEMS 10.6 · QA 21 ต.ค. 2026 L1)
+    # เปิดเองเฉพาะเครื่อง dev ที่ปิดล็อกอิน (ฟังแค่ localhost อยู่แล้ว) หรือตั้ง ENABLE_API_DOCS=1
+    docs_on = _api_docs_enabled()
+    app = FastAPI(
+        title="Target Allocation API",
+        version="3.0",
+        lifespan=lifespan,
+        docs_url="/docs" if docs_on else None,
+        redoc_url="/redoc" if docs_on else None,
+        openapi_url="/openapi.json" if docs_on else None,
+    )
 
     if auth_entra.auth_enabled():
         n_admin = len(parse_allocation_admin_emails())

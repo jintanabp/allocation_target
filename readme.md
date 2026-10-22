@@ -186,6 +186,7 @@ allocation_target/
 | `ALLOC_ZERO_BASELINE_CAP` | ปิด | เปิดเพดานหีบสำหรับ **คนที่ไม่มีประวัติขาย SKU นั้น** (`ceil(เป้า ÷ จำนวนคน × cap)`) — วัดกับข้อมูลจริงแล้วเปิดจะทำให้หีบย้ายที่ราว 2–3.5% ต่อทีม จึงต้องเปิดเอง |
 | `ALLOC_REQUIRE_IF_MATCH` | ปิด | บังคับให้ทุก client ส่ง `if_match_version` ตอนบันทึกผลกระจาย (กันเขียนทับ) — เปิดหลังยืนยันว่าไม่มี `save_allocation_no_precondition` ใน usage log แล้ว |
 | `ENABLE_DEBUG_ENDPOINTS` | ปิด | ตั้งเป็น `1` / `true` / `yes` เพื่อเปิด `GET /debug/fabric` (ใช้เฉพาะตอนวินิจฉัย) |
+| `ENABLE_API_DOCS` | ปิดเมื่อเปิดล็อกอิน | หน้าเอกสาร API `/docs` `/redoc` `/openapi.json` — ไม่ตั้ง = เปิดเฉพาะเครื่อง dev ที่ปิดล็อกอิน · `1` บังคับเปิด · `0` บังคับปิด |
 | `USE_LEGACY_TARGET_CSV` | ปิด | **dev เท่านั้น** — ตั้ง `1` ถ้ามี `data/target_boxes.csv` + `target_sun.csv` วางมือเองแทนการดึงเป้าจาก Fabric (ไม่มี UI อัปโหลดในแอป) |
 | `TGA_TABLE_NAME`, `TGA_COL_*`, **`TGA_EFFECTIVE_IMPLIED_TARGET`** (`same`\|`next`), `TGA_ENFORCE_EFFECTIVE_WINDOW`, `TGA_COL_EFFECTIVE_FALLBACK` | `fabric_dax_connector.py`, `backend/core/tga_period.py`, `config/.env.example` | เป้า TGA และกติกางวดจาก **EFFECTIVEDATE** (ค่าเริ่มต้น `same` = งวดเป้าตรงเดือนเดียวกับวันที่อ้างอิง; `next` = เดือนถัดจากวันที่เหมือนพฤติกรรมเก่า); fallback `UPDATEDATE` เมื่อ EFFECTIVEDATE ว่าง |
 | **Target Sun Read/Send URL** | `backend/services/targetsun_endpoints.py`, `config/app_runtime.json` | **ไม่ใช่ .env** — อ่านเป้า (Read) กับส่งผล (Import) แยก host ได้; สลับ preset จากแอดมิน (ทดสอบ: อ่าน Prod · ส่ง UAT) |
