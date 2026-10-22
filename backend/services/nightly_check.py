@@ -389,8 +389,18 @@ def latest_diff(sup_id: str, month: int, year: int) -> dict | None:
 # ── ตัวตั้งเวลาในแอป ────────────────────────────────────────────────────
 
 
+# restart / deploy ตรงชั่วโมงที่ตั้งไว้ (เช่น 02:00–02:59) เดิมทำให้วันนั้นไม่มีรอบเลย เพราะเช็คแค่
+# now.hour == hour · ตอนนี้ไล่ทันภายใน 6 ชั่วโมงหลังเวลาที่ตั้ง (QA 21 ต.ค. 2026 L7)
+# ไม่ใช้ "เลยเวลาแล้วรันเลย" — ไม่งั้นแอดมินเปิดตอนบ่ายแล้วระบบอ่าน Target Sun ทุกทีมทันที
+_CATCH_UP_HOURS = 6
+
+
+def _in_window(now: datetime, hour: int) -> bool:
+    return 0 <= now.hour - int(hour) < _CATCH_UP_HOURS
+
+
 def _due(settings: dict, state: dict, now: datetime) -> bool:
-    return (settings["enabled"] and now.hour == settings["hour"]
+    return (settings["enabled"] and _in_window(now, settings["hour"])
             and state.get("last_run_date") != now.strftime("%Y-%m-%d"))
 
 
@@ -399,7 +409,8 @@ def _is_last_day_of_month(now: datetime) -> bool:
 
 
 def _closing_due(settings: dict, state: dict, now: datetime) -> bool:
-    return (settings["enabled"] and _is_last_day_of_month(now) and now.hour == settings["closing_hour"]
+    # รอบปิดงวดต้องอยู่ในวันสุดท้ายของเดือนเท่านั้น — ไล่ทันได้ถึงเที่ยงคืนของวันนั้น
+    return (settings["enabled"] and _is_last_day_of_month(now) and now.hour >= int(settings["closing_hour"])
             and state.get("last_closing_date") != now.strftime("%Y-%m-%d"))
 
 

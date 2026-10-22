@@ -160,7 +160,12 @@ class TestScheduler(_Base):
         self.assertTrue(nc._due(s, {}, now))
         self.assertFalse(nc._due(s, {"last_run_date": "2026-09-20"}, now))
         self.assertFalse(nc._due({**s, "enabled": False}, {}, now))
-        self.assertFalse(nc._due(s, {}, now.replace(hour=3)))
+        # restart ช่วงตี 2 แล้วกลับมาตี 3 = ยังไล่ทันในวันเดียวกัน (QA L7) · ไม่เกิน 6 ชั่วโมง
+        self.assertTrue(nc._due(s, {}, now.replace(hour=3)))
+        self.assertTrue(nc._due(s, {}, now.replace(hour=7, minute=55)))
+        self.assertFalse(nc._due(s, {}, now.replace(hour=8)), "เลย 6 ชั่วโมง = รอพรุ่งนี้ ไม่รันกลางวัน")
+        self.assertFalse(nc._due(s, {}, now.replace(hour=1)), "ก่อนเวลาที่ตั้ง")
+        self.assertFalse(nc._due(s, {"last_run_date": "2026-09-20"}, now.replace(hour=3)), "ไล่ทันแล้วไม่ซ้ำ")
 
     def test_closing_due_only_on_last_day_at_closing_hour_once(self):
         s = {**nc.DEFAULTS, "enabled": True}
@@ -170,6 +175,8 @@ class TestScheduler(_Base):
         self.assertFalse(nc._closing_due(s, {"last_closing_date": "2026-09-30"}, last))
         self.assertFalse(nc._closing_due(s, {}, last.replace(day=29)))
         self.assertFalse(nc._closing_due(s, {}, last.replace(hour=22)))
+        # restart ช่วง 23:xx ยังทันในคืนเดียวกัน (closing_hour ตั้งต่ำกว่า 23 ได้) — QA L7
+        self.assertTrue(nc._closing_due({**s, "closing_hour": 21}, {}, last))
         self.assertFalse(nc._closing_due({**s, "enabled": False}, {}, last))
         self.assertTrue(nc._closing_due(s, {}, datetime(2028, 2, 29, 23, 0, tzinfo=TZ)), "ก.พ. ปีอธิกสุรทิน")
         self.assertFalse(nc._closing_due(s, {}, datetime(2028, 2, 28, 23, 0, tzinfo=TZ)))
