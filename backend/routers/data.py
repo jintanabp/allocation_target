@@ -326,6 +326,10 @@ class AllocationSnapshotBody(BaseModel):
     # กฎของปุ่มปรับยอดอัตโนมัติในหน้าเว็บ ณ รอบกระจายล่าสุด (§4.1-7) — ไปกับ engine_yellow
     never_sold_zero_keys: list[str] | None = None
     force_min_one: bool | None = None
+    # ป้าย SKU หลัก/รอง ของรอบกระจายล่าสุด — ไปกับ engine_yellow · ใช้แสดงผลอย่างเดียว ไม่มีผลกับตัวเลข
+    # เดิมไม่เก็บ โหลดร่างกลับแล้วทุก SKU ขึ้น「รอง」(QA 21 ต.ค. 2026 L8)
+    tier_flex_skus: list[str] | None = Field(default=None, max_length=5000)
+    tier_strict_sku_count: int | None = Field(default=None, ge=0)
     # โหมด「ตั้งตามประวัติ」ของเป้าเงิน (3m/6m/12m/ly) — โหลดกลับแล้วป้ายเตือนคนไม่มีประวัติยังอยู่ (7.15)
     yellow_source: str | None = None
     # version ที่ client เห็นตอนโหลด — ไม่ส่งมา = เขียนทับแบบเดิม (tab เก่าจึงไม่พัง)
@@ -443,6 +447,8 @@ def _team_only_yellow(sid: str, body, payload: dict, prev: dict | None) -> None:
         payload["engine_run_at"] = (prev or {}).get("engine_run_at")
         payload["never_sold_zero_keys"] = (prev or {}).get("never_sold_zero_keys")
         payload["force_min_one"] = (prev or {}).get("force_min_one")
+        payload["tier_flex_skus"] = (prev or {}).get("tier_flex_skus")
+        payload["tier_strict_sku_count"] = (prev or {}).get("tier_strict_sku_count")
 
 
 class SplitBrandsBody(BaseModel):

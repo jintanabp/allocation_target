@@ -72,6 +72,14 @@ class TestFrontendRebalanceRules(unittest.TestCase):
         self.assertIn("body.never_sold_zero_keys = [...(S.neverSoldZeroKeys || [])]",
                       _fn(self.src, "saveServerAllocationSnapshot"))
 
+    def test_tier_labels_survive_draft_reload(self):
+        """QA L8: ป้ายหลัก/รองหายหลังโหลดร่างกลับ (ขึ้นรองทุก SKU)"""
+        self.assertIn("tierFlexSkus: [...(S.tierFlexSkus || [])]", _fn(self.src, "saveDraft"))
+        self.assertIn("body.tier_flex_skus = [...(S.tierFlexSkus || [])]",
+                      _fn(self.src, "saveServerAllocationSnapshot"))
+        self.assertIn("S.tierFlexSkus = new Set(snap.tier_flex_skus", self.src)
+        self.assertIn("S.tierFlexSkus = new Set(draftData.tierFlexSkus", self.src)
+
 
 CRLF, LF = chr(13) + chr(10), chr(10)
 
@@ -165,6 +173,15 @@ class TestSnapshotKeepsRebalanceRules(unittest.TestCase):
         snap = self._put(yellow={"A1": 6})
         self.assertEqual(snap["never_sold_zero_keys"], ["A1|X"])
         self.assertTrue(snap["force_min_one"])
+
+    def test_tier_labels_saved_and_kept(self):
+        """QA L8: ป้ายหลัก/รองเก็บไปกับรอบกระจาย และบันทึกถัดไปที่ไม่ได้กระจายใหม่ไม่ลบทิ้ง"""
+        snap = self._put(engine_yellow={"A1": 5}, tier_flex_skus=["X", " "], tier_strict_sku_count=3)
+        self.assertEqual(snap["tier_flex_skus"], ["X"])
+        self.assertEqual(snap["tier_strict_sku_count"], 3)
+        snap = self._put(yellow={"A1": 6})
+        self.assertEqual(snap["tier_flex_skus"], ["X"])
+        self.assertEqual(snap["tier_strict_sku_count"], 3)
 
 
 if __name__ == "__main__":

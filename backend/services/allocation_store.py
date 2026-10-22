@@ -117,6 +117,14 @@ def _validate_body(body: dict[str, Any]) -> dict[str, Any]:
         out["never_sold_zero_keys"] = [str(k) for k in zero_keys]
     if body.get("force_min_one") is not None:
         out["force_min_one"] = bool(body.get("force_min_one"))
+    # ป้าย SKU หลัก/รอง ของรอบกระจายล่าสุด — แสดงผลอย่างเดียว (QA L8)
+    flex = body.get("tier_flex_skus")
+    if isinstance(flex, list):
+        out["tier_flex_skus"] = [str(s).strip() for s in flex if str(s).strip()]
+        try:
+            out["tier_strict_sku_count"] = max(0, int(body.get("tier_strict_sku_count") or 0))
+        except (TypeError, ValueError):
+            out["tier_strict_sku_count"] = 0
     # โหมด「ตั้งตามประวัติ」(7.15) — รับเฉพาะค่าที่รู้จัก
     ysrc = str(body.get("yellow_source") or "").strip()
     if ysrc in ("3m", "6m", "12m", "ly"):

@@ -13313,6 +13313,9 @@ async function saveServerAllocationSnapshot(status = "draft", opts = {}) {
       // กฎของปุ่มปรับยอดอัตโนมัติ ต้องรอดข้ามการโหลดร่างกลับ (§4.1-7)
       body.never_sold_zero_keys = [...(S.neverSoldZeroKeys || [])];
       body.force_min_one = !!S.lastForceMinOne;
+      // ป้าย SKU หลัก/รอง ต้องรอดข้ามการโหลดร่างกลับ — แสดงผลอย่างเดียว (QA L8)
+      body.tier_flex_skus = [...(S.tierFlexSkus || [])];
+      body.tier_strict_sku_count = Number(S.tierStrictSkuCount) || 0;
     }
     // กระจายทั้งภาคคือการตั้งใจทับทุกทีม (ผู้ใช้ยืนยันใน modal「กระจายใหม่ทั้งภาค」แล้ว)
     // จึงไม่ส่ง precondition — ไม่งั้นจะเด้ง modal ถามทีละทีมกลางลูป
@@ -14294,6 +14297,11 @@ async function _applyServerAllocationSnapshot(supId, opts = {}) {
     S.engineYellow = snap.engine_yellow && typeof snap.engine_yellow === "object" ? { ...snap.engine_yellow } : null;
     S.engineYellowCtx = S.engineYellow ? _engineYellowCtx() : null;
     S.engineRunAt = snap.engine_run_at || null;
+    // ป้าย SKU หลัก/รอง ของรอบกระจายที่บันทึกไว้ — ร่างเก่าที่ไม่มี field นี้คงค่าเดิมไว้ (QA L8)
+    if (Array.isArray(snap.tier_flex_skus)) {
+      S.tierFlexSkus = new Set(snap.tier_flex_skus.map((x) => String(x).trim()).filter(Boolean));
+      S.tierStrictSkuCount = Number(snap.tier_strict_sku_count) || 0;
+    }
   }
   S.activeBrand = "ALL";
   buildBrandTabs(S.allocations);
@@ -14396,6 +14404,9 @@ function saveDraft(silent = false) {
     neverSoldZeroKeys: [...(S.neverSoldZeroKeys || [])],
     lastForceMinOne: !!S.lastForceMinOne,
     yellowSource: S.yellowSource || null,
+    // ป้าย SKU หลัก/รอง — แสดงผลอย่างเดียว (QA L8)
+    tierFlexSkus: [...(S.tierFlexSkus || [])],
+    tierStrictSkuCount: Number(S.tierStrictSkuCount) || 0,
   };
   try {
     _persistDraftToLocal(draftKey, draftData);
@@ -14494,6 +14505,10 @@ function checkAndLoadDraft() {
       S.neverSoldZeroKeys = new Set(Array.isArray(draftData.neverSoldZeroKeys) ? draftData.neverSoldZeroKeys : []);
       S.recentReallocSkus = [];
       S.lastForceMinOne = !!draftData.lastForceMinOne;
+      if (Array.isArray(draftData.tierFlexSkus)) {
+        S.tierFlexSkus = new Set(draftData.tierFlexSkus.map((x) => String(x).trim()).filter(Boolean));
+        S.tierStrictSkuCount = Number(draftData.tierStrictSkuCount) || 0;
+      }
       _sanitizeYellowForEligibleOnly();
       S.allocations = _filterAllocationsEligibleOnly(_enrichDraftAllocations(draftData.allocations || []));
       {
