@@ -10188,27 +10188,15 @@ async function _pendingReallocateTeams() {
  *
  * โหมดรวมภาคมีคำเตือนนี้ในกล่องเลือกขอบเขตอยู่แล้ว แต่ทีมเดียวไม่มี — ซุปกระจายใหม่ได้เลย
  * ผลในแอปเปลี่ยนแต่เลขใน Target Sun ยังเป็นของเดิม สองฝั่งไม่ตรงกันจนกว่าจะส่งใหม่
- * อ่านสดทุกครั้ง (ไม่ใช้แคชสรุป 120 วิ ที่อาจยังไม่รู้ว่าเพิ่งส่ง) · ถามไม่สำเร็จ = ปล่อยผ่าน
+ * ใช้สรุปชุดเดียวกับโหมดรวมภาค (_sentToTargetSunTeams · แคชถูกล้างหลังส่งทุกครั้ง)
+ * อ่านไม่สำเร็จ / ไม่พบทีมในสรุป = ปล่อยผ่าน (คำเตือนหายดีกว่ากระจายไม่ได้)
  */
 async function _confirmSingleTeamSentBeforeRun() {
   const sid = String(S.supId || "").trim().toUpperCase();
   if (!sid || !S.targetMonth || !S.targetYear) return true;
-  let item = null;
-  try {
-    const q = new URLSearchParams({
-      target_month: String(S.targetMonth),
-      target_year: String(S.targetYear),
-      team: sid,
-    });
-    const res = await fetchWithTimeout(`${API_BASE_URL}/data/allocations/summary?${q}`, {}, 8000);
-    if (!res.ok) return true;
-    const data = await res.json();
-    item = (Array.isArray(data.items) ? data.items : []).find(
-      (it) => String(it?.sup_id || "").trim().toUpperCase() === sid,
-    );
-  } catch {
-    return true;
-  }
+  const item = (await _sentToTargetSunTeams()).find(
+    (it) => String(it?.sup_id || "").trim().toUpperCase() === sid,
+  );
   if (!item?.target_sun_sent_at) return true;
   const when = _formatAllocUpdatedAt(item.target_sun_sent_at);
   return await _confirmDialog(
