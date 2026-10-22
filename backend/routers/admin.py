@@ -34,12 +34,15 @@ from ..deps import (
     ensure_row_in_admin_scope,
     ensure_sup_in_admin_scope,
     ensure_userpl_in_admin_scope,
+    require_admin_or_marketing_cap,
     require_admin_or_marketing_team,
     require_admin_scoped,
+    require_admin_scoped_cap,
     require_admin_user,
     require_authenticated_user,
     require_capability,
     require_role_manager,
+    require_role_manager_cap,
 )
 from ..services import admin_capabilities, admin_permissions_store
 from ..services.demo_data import is_demo_supervisor
@@ -326,7 +329,7 @@ class TargetSunEmailBody(BaseModel):
 
 
 @router.get("/user-access")
-def list_user_access(admin: dict = Depends(require_admin_scoped)) -> dict[str, Any]:
+def list_user_access(admin: dict = Depends(require_admin_scoped_cap("users", "roles"))) -> dict[str, Any]:
     rows = _scope_rows(admin, enrich_user_access_rows())
     scope = admin.get("admin_scope") or {}
     return {
@@ -346,7 +349,7 @@ def preview_user_visible(
     acc_division: str = Query(""),
     acc_unit: str = Query(""),
     manager_level: str = Query(""),
-    _admin: dict = Depends(require_admin_scoped),
+    _admin: dict = Depends(require_admin_scoped_cap("users")),
 ) -> dict[str, Any]:
     """Preview รหัส SL ที่ดูได้ — ใช้ในฟอร์มแอดมิน"""
     row = {
@@ -365,7 +368,7 @@ def preview_user_visible(
 @router.post("/user-access")
 def create_user_access(
     body: UserAccessBody,
-    admin: dict = Depends(require_admin_scoped),
+    admin: dict = Depends(require_admin_scoped_cap("users")),
 ) -> dict[str, Any]:
     em = normalized_email(body.email)
     upl = normalize_userpl(body.userpl)
@@ -406,7 +409,7 @@ def create_user_access(
 @router.put("/user-access")
 def update_user_access(
     body: UserAccessUpdateBody,
-    admin: dict = Depends(require_admin_scoped),
+    admin: dict = Depends(require_admin_scoped_cap("users")),
 ) -> dict[str, Any]:
     em = normalized_email(body.email)
     upl = normalize_userpl(body.userpl)
@@ -472,7 +475,7 @@ def update_user_access(
 @router.delete("/user-access")
 def remove_user_access(
     body: UserAccessDeleteBody,
-    admin: dict = Depends(require_admin_scoped),
+    admin: dict = Depends(require_admin_scoped_cap("users")),
 ) -> dict[str, Any]:
     em = normalized_email(body.email)
     upl = normalize_userpl(body.userpl)
@@ -503,7 +506,7 @@ def remove_user_access(
 @router.put("/user-access/targetsun")
 def set_targetsun_for_email(
     body: TargetSunEmailBody,
-    admin: dict = Depends(require_admin_scoped),
+    admin: dict = Depends(require_admin_scoped_cap("users")),
 ) -> dict[str, Any]:
     em = normalized_email(body.email)
     target_rows: list[dict[str, Any]] = []
@@ -557,7 +560,7 @@ class UserRoleBody(BaseModel):
 @router.put("/user-access/role")
 def set_user_role(
     body: UserRoleBody,
-    admin: dict = Depends(require_role_manager),
+    admin: dict = Depends(require_role_manager_cap("roles")),
 ) -> dict[str, Any]:
     """
     ตั้ง/ถอด role (dev | head_admin | admin) — **dev หรือหัวหน้าแอดมิน**
@@ -757,7 +760,7 @@ def set_targetsun_bulk(
 
 
 @router.get("/supervisor-codes")
-def admin_supervisor_codes(user: dict = Depends(require_admin_or_marketing_team)) -> dict[str, Any]:
+def admin_supervisor_codes(user: dict = Depends(require_admin_or_marketing_cap("team"))) -> dict[str, Any]:
     codes = list_supervisor_codes()
     if user.get("role") in ADMIN_ROLES:
         allowed = {
@@ -779,7 +782,7 @@ def admin_supervisor_team(
     year: int = Query(..., ge=2000, le=2100),
     month: int = Query(..., ge=1, le=12),
     force_refresh: int = Query(0, ge=0, le=1),
-    user: dict = Depends(require_admin_or_marketing_team),
+    user: dict = Depends(require_admin_or_marketing_cap("team")),
 ) -> dict[str, Any]:
     # เดิมรับ super_code อะไรก็ได้ — ผู้ดูแลต้องดูได้เฉพาะทีมในขอบเขตตัวเอง
     if user.get("role") in ADMIN_ROLES:
@@ -825,7 +828,9 @@ def _sku_link_row_for_api(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _require_head_admin_for_company_wide(admin: dict = Depends(require_admin_scoped)) -> dict:
+def _require_head_admin_for_company_wide(
+    admin: dict = Depends(require_admin_scoped_cap("sku_links")),
+) -> dict:
     """
     ค่าที่มีผลทั้งบริษัท (ผูกรหัส SKU) — แก้ได้เฉพาะหัวหน้าแอดมินและ dev (ผู้ใช้ตัดสิน 8 ต.ค. 2026)
     เดิมแอดมินภาคแก้ได้ ทั้งที่การผูกรหัสเปลี่ยนประวัติขายที่ใช้กระจายของทุกทีมทุกภาค
@@ -840,7 +845,7 @@ def _require_head_admin_for_company_wide(admin: dict = Depends(require_admin_sco
 
 
 @router.get("/sku-links")
-def list_sku_links(_user: dict = Depends(require_admin_or_marketing_team)) -> dict[str, Any]:
+def list_sku_links(_user: dict = Depends(require_admin_or_marketing_cap("sku_links"))) -> dict[str, Any]:
     rows = [_sku_link_row_for_api(r) for r in read_links()]
     return {"links": rows, "count": len(rows)}
 
@@ -954,7 +959,7 @@ def preview_sku_link(
     canonical_sku: str = Query(..., min_length=1),
     year: int = Query(..., ge=2000, le=2100),
     month: int = Query(..., ge=1, le=12),
-    user: dict = Depends(require_admin_or_marketing_team),
+    user: dict = Depends(require_admin_or_marketing_cap("sku_links")),
 ) -> dict[str, Any]:
     """ทดสอบยอดประวัติ 3M / LY หลังรวม alias"""
     canon = normalize_sku(canonical_sku)
@@ -1053,7 +1058,7 @@ def _sl_link_row_for_api(row: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.get("/sl-links")
-def list_sl_links(_user: dict = Depends(require_admin_or_marketing_team)) -> dict[str, Any]:
+def list_sl_links(_user: dict = Depends(require_admin_or_marketing_cap("sl_links"))) -> dict[str, Any]:
     try:
         rows = [_sl_link_row_for_api(r) for r in read_sl_links()]
     except (ValueError, PermissionError) as e:
@@ -1076,7 +1081,7 @@ def _ensure_sl_link_in_scope(admin: dict, old: str, new_sls: list[str]) -> None:
 @router.post("/sl-links")
 def create_sl_link(
     body: SlLinkBody,
-    admin: dict = Depends(require_admin_scoped),
+    admin: dict = Depends(require_admin_scoped_cap("sl_links")),
 ) -> dict[str, Any]:
     ensure_not_demo_for_global_write(admin)
     old, new_sls = _sl_body_old_new(body)
@@ -1106,7 +1111,7 @@ def create_sl_link(
 @router.put("/sl-links")
 def update_sl_link(
     body: SlLinkUpdateBody,
-    admin: dict = Depends(require_admin_scoped),
+    admin: dict = Depends(require_admin_scoped_cap("sl_links")),
 ) -> dict[str, Any]:
     ensure_not_demo_for_global_write(admin)
     old, new_sls = _sl_body_old_new(body)
@@ -1155,7 +1160,7 @@ def update_sl_link(
 @router.delete("/sl-links")
 def remove_sl_link(
     body: SlLinkDeleteBody,
-    admin: dict = Depends(require_admin_scoped),
+    admin: dict = Depends(require_admin_scoped_cap("sl_links")),
 ) -> dict[str, Any]:
     ensure_not_demo_for_global_write(admin)
     old = normalize_sl(body.old_sl or body.canonical_sl)
@@ -1214,7 +1219,7 @@ def sku_link_catalog(
     year: int | None = Query(None, ge=2000, le=2100),
     month: int | None = Query(None, ge=1, le=12),
     super_code: str | None = Query(default=None, description="ไม่บังคับ — ใช้ cache ทีมเดียวถ้าระบุ"),
-    user: dict = Depends(require_admin_or_marketing_team),
+    user: dict = Depends(require_admin_or_marketing_cap("sku_links")),
 ) -> dict[str, Any]:
     """รายการสินค้าที่มีเป้าในงวดปัจจุบัน — เฉพาะ SKU ที่มีเป้าหีบ > 0 (ไม่แสดงรหัสเก่าที่ไม่มีเป้าในงวดนี้)"""
     from ..core.tga_period import expected_allocation_period_ce
@@ -1471,7 +1476,7 @@ def _alloc_export_basename(
 
 @router.get("/allocations")
 def admin_list_allocations(
-    admin: dict = Depends(require_admin_scoped),
+    admin: dict = Depends(require_admin_scoped_cap("allocations")),
     target_month: int | None = Query(None, ge=1, le=12),
     target_year: int | None = Query(None, ge=2020, le=2100),
 ):
@@ -1528,7 +1533,7 @@ class NoTargetBody(BaseModel):
 
 @router.get("/no-target-employees")
 def admin_list_no_target_employees(
-    user: dict = Depends(require_admin_or_marketing_team),
+    user: dict = Depends(require_admin_or_marketing_cap("team")),
     super_code: str | None = Query(None),
 ) -> dict[str, Any]:
     """
@@ -1555,7 +1560,7 @@ def admin_list_no_target_employees(
 @router.put("/no-target-employees")
 def admin_set_no_target_employees(
     body: NoTargetBody,
-    admin: dict = Depends(require_admin_scoped),
+    admin: dict = Depends(require_admin_scoped_cap("team")),
 ) -> dict[str, Any]:
     """
     แทนที่รายชื่อของทีมเดียวทั้งชุด — หน้าแอดมินส่งสถานะทั้งทีมมาทีเดียว
@@ -1602,7 +1607,7 @@ def admin_set_no_target_employees(
 
 @router.get("/target-baseline")
 def admin_get_target_baseline(
-    admin: dict = Depends(require_admin_scoped),
+    admin: dict = Depends(require_admin_scoped_cap("allocations")),
     sup_id: str = Query(..., min_length=1),
     target_month: int = Query(..., ge=1, le=12),
     target_year: int = Query(..., ge=2020, le=2100),
@@ -1633,7 +1638,7 @@ def admin_get_target_baseline(
 
 @router.get("/target-baseline/export")
 def admin_export_target_baseline(
-    admin: dict = Depends(require_admin_scoped),
+    admin: dict = Depends(require_admin_scoped_cap("allocations")),
     sup_id: str = Query(..., min_length=1),
     target_month: int = Query(..., ge=1, le=12),
     target_year: int = Query(..., ge=2020, le=2100),
@@ -1653,7 +1658,7 @@ def admin_export_target_baseline(
 
 @router.get("/target-baseline/row-snapshots")
 def admin_list_row_snapshots(
-    admin: dict = Depends(require_admin_scoped),
+    admin: dict = Depends(require_admin_scoped_cap("allocations")),
     sup_id: str = Query(..., min_length=1),
     target_month: int = Query(..., ge=1, le=12),
     target_year: int = Query(..., ge=2020, le=2100),
@@ -1671,7 +1676,7 @@ def admin_list_row_snapshots(
 
 @router.get("/target-baseline/restore-file")
 def admin_download_restore_file(
-    admin: dict = Depends(require_admin_scoped),
+    admin: dict = Depends(require_admin_scoped_cap("allocations")),
     sup_id: str = Query(..., min_length=1),
     target_month: int = Query(..., ge=1, le=12),
     target_year: int = Query(..., ge=2020, le=2100),
@@ -1731,7 +1736,7 @@ def admin_download_restore_file(
 
 @router.get("/sent-ledger")
 def admin_get_sent_ledger(
-    admin: dict = Depends(require_admin_scoped),
+    admin: dict = Depends(require_admin_scoped_cap("allocations")),
     sup_id: str = Query(..., min_length=1),
     target_month: int = Query(..., ge=1, le=12),
     target_year: int = Query(..., ge=2020, le=2100),
@@ -1762,7 +1767,7 @@ def admin_get_sent_ledger(
 
 @router.get("/sent-ledger/export")
 def admin_export_sent_ledger(
-    admin: dict = Depends(require_admin_scoped),
+    admin: dict = Depends(require_admin_scoped_cap("allocations")),
     sup_id: str = Query(..., min_length=1),
     target_month: int = Query(..., ge=1, le=12),
     target_year: int = Query(..., ge=2020, le=2100),
@@ -1841,7 +1846,7 @@ def admin_restore_target_baseline(
 
 @router.get("/allocations/export")
 def admin_export_allocation(
-    admin: dict = Depends(require_admin_scoped),
+    admin: dict = Depends(require_admin_scoped_cap("allocations")),
     sup_id: str = Query(..., min_length=1),
     target_month: int = Query(..., ge=1, le=12),
     target_year: int = Query(..., ge=2020, le=2100),
@@ -1947,7 +1952,7 @@ _ALLOC_ANALYSIS_FIELDS = (
 
 @router.get("/allocations/export-all")
 def admin_export_all_allocations(
-    admin: dict = Depends(require_admin_scoped),
+    admin: dict = Depends(require_admin_scoped_cap("allocations")),
     target_month: int = Query(..., ge=1, le=12),
     target_year: int = Query(..., ge=2020, le=2100),
     full: bool = Query(False, description="เอาทุกฟิลด์ (ชื่อสินค้า/แบรนด์) มาด้วย — ไฟล์ใหญ่ขึ้นราว 4 เท่า"),
@@ -2032,7 +2037,7 @@ def admin_allocations_edit_report(
 
 @router.get("/allocations/export-xlsx")
 def admin_export_allocations_xlsx(
-    admin: dict = Depends(require_admin_scoped),
+    admin: dict = Depends(require_admin_scoped_cap("allocations")),
     target_month: int | None = Query(None, ge=1, le=12),
     target_year: int | None = Query(None, ge=2020, le=2100),
     q: str | None = Query(None, max_length=100),
@@ -2138,7 +2143,7 @@ def _build_usage_summary_or_503(admin: dict, month: int, year: int, force: bool)
 
 @router.get("/usage-summary")
 def admin_usage_summary(
-    admin: dict = Depends(require_admin_scoped),
+    admin: dict = Depends(require_admin_scoped_cap("usage_summary")),
     target_month: int = Query(..., ge=1, le=12),
     target_year: int = Query(..., ge=2020, le=2100),
     force: bool = Query(False),
@@ -2180,7 +2185,7 @@ _USAGE_SUMMARY_SHEETS = (
 
 @router.get("/usage-summary/export-xlsx")
 def admin_export_usage_summary_xlsx(
-    admin: dict = Depends(require_admin_scoped),
+    admin: dict = Depends(require_admin_scoped_cap("usage_summary")),
     target_month: int = Query(..., ge=1, le=12),
     target_year: int = Query(..., ge=2020, le=2100),
 ):
@@ -2428,7 +2433,7 @@ def admin_deep_health(
 
 @router.get("/usage-logs")
 def admin_get_usage_logs(
-    admin: dict = Depends(require_admin_scoped),
+    admin: dict = Depends(require_admin_scoped_cap("usage_logs")),
     date: str | None = Query(None, description="YYYY-MM-DD (ถ้าไม่ส่งงวด)"),
     target_month: int | None = Query(None, ge=1, le=12),
     target_year: int | None = Query(None, ge=2020, le=2100),
@@ -2567,7 +2572,7 @@ def admin_targetsun_row_count_checks(
 
 @router.get("/usage-logs/export-xlsx")
 def admin_export_usage_logs_xlsx(
-    admin: dict = Depends(require_admin_scoped),
+    admin: dict = Depends(require_admin_scoped_cap("usage_logs")),
     date: str | None = Query(None, description="YYYY-MM-DD (ถ้าไม่ส่งงวด)"),
     target_month: int | None = Query(None, ge=1, le=12),
     target_year: int | None = Query(None, ge=2020, le=2100),

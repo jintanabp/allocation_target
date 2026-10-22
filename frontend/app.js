@@ -17446,7 +17446,9 @@ function openAdminView(opts = {}) {
   }
   _adminShowTablePlaceholder("กำลังโหลดรายการ…");
   adminSwitchTab("users");
-  adminLoadRows();
+  // บทบาทที่ไม่มีสิทธิ์ users ถูกพาไปแท็บแรกที่มีสิทธิ์แล้ว — API ตอนนี้กันตามตารางสิทธิ์จริง
+  // ถ้ายังโหลดรายชื่อผู้ใช้จะได้ 403 ทุกครั้งที่เปิดหน้าแอดมิน
+  if (_adminActiveTab === "users") adminLoadRows();
 }
 
 /** ผูกรหัส SL/SKU — dev และผู้ดูแลทุกระดับทำได้ (ฝั่ง server ตรวจขอบเขตอีกชั้น) */

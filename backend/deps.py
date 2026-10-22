@@ -516,6 +516,65 @@ def require_capability(capability: str):
     return _dep
 
 
+def ensure_any_capability(ctx: dict, capabilities: tuple[str, ...]) -> dict:
+    """
+    ผ่านเมื่อบทบาทใน ctx มีสิทธิ์อย่างน้อยหนึ่งตัวใน capabilities (dev มีทุกสิทธิ์)
+
+    ตาราง「สิทธิ์หน้าแอดมิน」เคยแค่ซ่อนแท็บ — endpoint ที่ใช้ require_admin_scoped /
+    require_role_manager / require_admin_or_marketing_team ไม่อ่านตารางนี้ คนที่ถูกถอดสิทธิ์
+    จึงยังเรียก API ตรงได้ (QA 21 ต.ค. 2026 H2) · ขอบเขตข้อมูลยังตรวจแยกเหมือนเดิม
+    """
+    granted = set(capabilities_for_role(ctx.get("role") or ""))
+    if granted.intersection(capabilities):
+        return ctx
+    names = " / ".join(capabilities)
+    raise HTTPException(
+        status_code=403,
+        detail=f"บทบาทนี้ไม่มีสิทธิ์ '{names}' — ให้ dev เปิดให้ในหน้า「สิทธิ์หน้าแอดมิน」",
+    )
+
+
+def require_admin_scoped_cap(*capabilities: str):
+    """require_admin_scoped + ต้องมีสิทธิ์อย่างน้อยหนึ่งตัวในตารางสิทธิ์หน้าแอดมิน"""
+
+    def _dep(
+        authorization: Annotated[str | None, Header()] = None,
+        x_view_as_email: Annotated[str | None, Header(alias="X-View-As-Email")] = None,
+    ) -> dict:
+        ctx = require_admin_scoped(authorization=authorization, x_view_as_email=x_view_as_email)
+        return ensure_any_capability(ctx, capabilities)
+
+    return _dep
+
+
+def require_role_manager_cap(*capabilities: str):
+    """require_role_manager + ต้องมีสิทธิ์อย่างน้อยหนึ่งตัวในตารางสิทธิ์หน้าแอดมิน"""
+
+    def _dep(
+        authorization: Annotated[str | None, Header()] = None,
+        x_view_as_email: Annotated[str | None, Header(alias="X-View-As-Email")] = None,
+    ) -> dict:
+        ctx = require_role_manager(authorization=authorization, x_view_as_email=x_view_as_email)
+        return ensure_any_capability(ctx, capabilities)
+
+    return _dep
+
+
+def require_admin_or_marketing_cap(*capabilities: str):
+    """require_admin_or_marketing_team + ต้องมีสิทธิ์อย่างน้อยหนึ่งตัวในตารางสิทธิ์หน้าแอดมิน"""
+
+    def _dep(
+        authorization: Annotated[str | None, Header()] = None,
+        x_view_as_email: Annotated[str | None, Header(alias="X-View-As-Email")] = None,
+    ) -> dict:
+        ctx = require_admin_or_marketing_team(
+            authorization=authorization, x_view_as_email=x_view_as_email
+        )
+        return ensure_any_capability(ctx, capabilities)
+
+    return _dep
+
+
 def ensure_demo_team_not_sent(sup_id) -> None:
     """
     ทีมสาธิตส่งเข้า Target Sun ไม่ได้เด็ดขาด

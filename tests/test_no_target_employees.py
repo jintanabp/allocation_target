@@ -299,7 +299,8 @@ class TestWiring(unittest.TestCase):
         from backend.routers import admin as admin_router
 
         src = inspect.getsource(admin_router.admin_list_no_target_employees)
-        self.assertIn("require_admin_or_marketing_team", src)
+        # marketing ยังอ่านได้ — ด่านตอนนี้ตรวจสิทธิ์ team ในตารางสิทธิ์หน้าแอดมินด้วย (QA H2)
+        self.assertIn('require_admin_or_marketing_cap("team")', src)
         self.assertIn("admin_scope", src)
 
 
