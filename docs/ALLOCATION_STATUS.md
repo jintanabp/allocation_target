@@ -35,6 +35,14 @@
 `target_sun_sent_at` ถูกรักษาไว้ **ฝั่ง server** (`allocation_store.write_snapshot`) ไม่พึ่ง client
 ส่งกลับมา — ไม่งั้น client เก่าที่ไม่รู้จัก field นี้จะลบประวัติทิ้ง
 
+**2.1 "ส่งแล้ว" ต้องมีหลักฐานฝั่ง server (QA 21 ต.ค. 2026 L5)**
+
+- `PUT /data/allocations` ที่ขอ `status=sent_targetsun` ต้องมี sent ledger ของทีม × งวดนั้น (ปลายทางปัจจุบัน
+  ไม่นับที่ล้ม) — ไม่มี = บันทึกเป็น `draft`/`optimized` ตาม `is_edited` และไม่รับ `target_sun_sent_at` จาก client
+  (`routers/data._verify_sent_claim`) · มี = ใช้เวลาจาก ledger
+- ตารางสรุป: ledger ใหม่กว่า `updated_at` ของ snapshot แต่สถานะยังไม่ใช่ส่งแล้ว (คำสั่งประทับจากหน้าเว็บล้ม)
+  → แสดงเป็น「ส่ง Target Sun แล้ว」 (`allocation_store.list_summaries`) — แก้แค่การแสดง ไม่เขียนไฟล์
+
 **3. โหมดรวมภาค — snapshot ต้องลงทีมเจ้าของจริงเท่านั้น**
 
 `saveRegionalAllocationSnapshots()` แยกแถวตาม `supervisor_code` แล้วบันทึกทีละทีม

@@ -377,6 +377,36 @@ def _refuse_other_teams_rows(user: dict, sid: str, body) -> None:
     )
 
 
+def _verify_sent_claim(user: dict, sid: str, body, payload: dict) -> None:
+    """
+    「ส่ง Target Sun แล้ว」ต้องมีหลักฐานฝั่ง server (sent ledger) — ไม่เชื่อหน้าเว็บอย่างเดียว (QA L5)
+
+    เดิม PUT รับ status=sent_targetsun + target_sun_sent_at อะไรก็ได้ ตอบ 200 → ทีมที่ไม่เคยส่ง
+    ขึ้นว่าส่งแล้วได้ · ไม่มี ledger = ลดเป็นสถานะตามการแก้มือ (draft/optimized) และไม่รับเวลาส่ง
+    จาก client · มี ledger = ใช้เวลาจาก ledger · เวลาส่งเดิมใน snapshot ยังคงอยู่ (write_snapshot)
+    """
+    from ..services.allocation_store import ledger_last_sent_at
+    from ..services.usage_log_store import log_from_user
+
+    ledger_at = ledger_last_sent_at(sid, body.target_month, body.target_year)
+    if ledger_at:
+        if payload.get("status") == "sent_targetsun" or payload.get("target_sun_sent_at"):
+            payload["target_sun_sent_at"] = ledger_at
+        return
+    payload["target_sun_sent_at"] = None
+    if payload.get("status") != "sent_targetsun":
+        return
+    edited = any(bool(a.get("is_edited")) for a in (body.allocations or []) if isinstance(a, dict))
+    payload["status"] = "draft" if edited else "optimized"
+    log_from_user(
+        user, level="warn", sup_id=sid, action="save_allocation",
+        message="หน้าเว็บขอประทับ「ส่ง Target Sun แล้ว」แต่ไม่มีบันทึกการส่งจริง — บันทึกเป็น"
+                + ("แบบร่าง" if edited else "กระจายแล้ว"),
+        detail=f"งวด {body.target_year}-{body.target_month:02d}",
+        target_month=body.target_month, target_year=body.target_year,
+    )
+
+
 def _yellow_emp(key: Any) -> str:
     from ..services.lakehouse import norm_emp_code
 
@@ -525,6 +555,7 @@ def put_allocation_snapshot(
     if acting:
         payload["updated_by_acting_admin"] = acting
     _team_only_yellow(sid, body, payload, read_snapshot(sid, body.target_month, body.target_year))
+    _verify_sent_claim(user, sid, body, payload)
 
     if expected_version is None and read_snapshot(sid, body.target_month, body.target_year):
         # แยกสามกรณีออกจากกัน — เดิมเหมาว่าเป็น "client เก่า" ทั้งหมด ซึ่งไม่จริง

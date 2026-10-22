@@ -59,6 +59,68 @@ class TestSummarySentFromLedger(unittest.TestCase):
         [row] = allocation_store.list_summaries(["SLZZS"], 11, 2026)
         self.assertEqual(row, {"sup_id": "SLZZS", "has_snapshot": False})
 
+    # ── QA 21 ต.ค. 2026 L5 ─────────────────────────────────────────────
+    def _save(self, status="optimized", edited=False):
+        allocation_store.write_snapshot({
+            "sup_id": "SLZZS", "target_month": 11, "target_year": 2026, "status": status,
+            "allocations": [{"emp_id": "E1", "sku": "A", "allocated_boxes": 5, "is_edited": edited}],
+        })
+
+    def test_sent_but_mark_put_failed_still_shows_sent(self):
+        """ส่งสำเร็จ (ledger จดแล้ว) แต่คำสั่งประทับ「ส่งแล้ว」จากหน้าเว็บล้ม — ต้องขึ้นว่าส่งแล้ว"""
+        self._save("optimized")
+        import time
+        time.sleep(1.1)  # updated_at ละเอียดระดับวินาที
+        sent_ledger.record_send("SLZZS", 11, 2026, [ROW], token="t", send_status="ok", import_url="U")
+        [row] = allocation_store.list_summaries(["SLZZS"], 11, 2026)
+        self.assertEqual(row["status"], "sent_targetsun")
+
+    def test_edited_after_send_keeps_draft(self):
+        sent_ledger.record_send("SLZZS", 11, 2026, [ROW], token="t", send_status="ok", import_url="U")
+        import time
+        time.sleep(1.1)
+        self._save("draft", edited=True)
+        [row] = allocation_store.list_summaries(["SLZZS"], 11, 2026)
+        self.assertEqual(row["status"], "draft")
+        self.assertTrue(row.get("target_sun_sent_at"))
+
+
+class TestSentClaimNeedsLedger(unittest.TestCase):
+    """PUT /data/allocations: หน้าเว็บอ้าง「ส่งแล้ว」ได้เฉพาะเมื่อมี sent ledger (QA L5)"""
+
+    setUp = TestSummarySentFromLedger.setUp
+    tearDown = TestSummarySentFromLedger.tearDown
+
+    def _claim(self, *, edited=False, sent_at="2026-01-01T00:00:00Z"):
+        from backend.routers import data as data_router
+
+        body = data_router.AllocationSnapshotBody(
+            sup_id="SLZZS", target_month=11, target_year=2026, status="sent_targetsun",
+            allocations=[{"emp_id": "E1", "sku": "A", "allocated_boxes": 5, "is_edited": edited}],
+            target_sun_sent_at=sent_at,
+        )
+        payload = body.model_dump()
+        with unittest.mock.patch("backend.services.usage_log_store.log_from_user"):
+            data_router._verify_sent_claim({}, "SLZZS", body, payload)
+        return payload
+
+    def test_claim_without_ledger_is_downgraded(self):
+        p = self._claim()
+        self.assertEqual(p["status"], "optimized")
+        self.assertIsNone(p["target_sun_sent_at"])
+        self.assertEqual(self._claim(edited=True)["status"], "draft")
+
+    def test_claim_with_ledger_uses_server_time(self):
+        sent_ledger.record_send("SLZZS", 11, 2026, [ROW], token="t", send_status="ok", import_url="U")
+        p = self._claim()
+        self.assertEqual(p["status"], "sent_targetsun")
+        self.assertNotEqual(p["target_sun_sent_at"], "2026-01-01T00:00:00Z")
+        self.assertTrue(str(p["target_sun_sent_at"]).endswith("Z"))
+
+    def test_failed_send_is_not_evidence(self):
+        sent_ledger.record_send("SLZZS", 11, 2026, [ROW], token="t", send_status="failed", import_url="U")
+        self.assertEqual(self._claim()["status"], "optimized")
+
 
 
 class TestStrictModeAllowsIntentionalUnconditional(unittest.TestCase):

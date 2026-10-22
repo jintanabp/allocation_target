@@ -423,6 +423,11 @@ def _ledger_last_sent_at(sup_id: str, month: int, year: int) -> str | None:
         return None
 
 
+def ledger_last_sent_at(sup_id: str, month: int, year: int) -> str | None:
+    """หลักฐานฝั่ง server ว่าทีมนี้ส่งเข้า Target Sun (ปลายทางปัจจุบัน) แล้ว — ใช้ตรวจคำขอ「ส่งแล้ว」จากหน้าเว็บ"""
+    return _ledger_last_sent_at(_normalize_sup(sup_id), int(month), int(year))
+
+
 def list_summaries(
     sup_ids: list[str],
     month: int,
@@ -442,11 +447,21 @@ def list_summaries(
             out.append(row)
             continue
         allocs = snap.get("allocations") or []
+        status = snap.get("status")
+        # ส่งสำเร็จแล้ว (ledger จดฝั่ง server) แต่คำสั่งประทับ「ส่งแล้ว」จากหน้าเว็บที่ตามมาล้ม
+        # (เน็ตหลุด/ปิดหน้า) — snapshot ไม่ถูกแก้หลังส่ง จึงเป็นชุดที่ส่งไปจริง แสดงเป็นส่งแล้ว
+        # ถ้าแก้ต่อหลังส่ง updated_at ใหม่กว่า → คงสถานะของ snapshot (แบบร่าง · เคยส่งแล้ว) (QA L5)
+        if (
+            status != "sent_targetsun"
+            and ledger_sent_at
+            and _snapshot_updated_ts({"updated_at": ledger_sent_at}) >= _snapshot_updated_ts(snap)
+        ):
+            status = "sent_targetsun"
         out.append(
             {
                 "sup_id": snap.get("sup_id") or norm,
                 "has_snapshot": True,
-                "status": snap.get("status"),
+                "status": status,
                 "updated_at": snap.get("updated_at"),
                 "updated_by": snap.get("updated_by"),
                 "target_sun_sent_at": snap.get("target_sun_sent_at") or ledger_sent_at,
