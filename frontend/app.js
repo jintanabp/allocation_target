@@ -6901,6 +6901,8 @@ async function runOptimization() {
       // ขอบเขต + คำเตือน "ทับผลเดิม" อยู่ในใบเดียวกัน — ผู้ใช้เห็นก่อนเริ่มคำนวณเสมอ
       const ok = await openAllocScopeModal({ run: true });
       if (!ok) return;
+    } else if (!S.aggregateMode && !S.compositeAllocView) {
+      if (!(await _confirmSingleTeamSentBeforeRun())) return;
     }
     // เป้าเหลืองรวมไม่เท่ามูลค่าหีบรวม → เครื่องจะดันเป้าทุกคนตามสัดส่วนก่อนกระจาย
     // ต้องถามก่อน ไม่ใช่ปล่อยให้เห็นตอนผลออกมาแล้วงงว่าเลขมาจากไหน
@@ -10181,6 +10183,42 @@ async function _pendingReallocateTeams() {
  * ใช้ `target_sun_sent_at` เป็นตัวชี้ ไม่ใช่สถานะ — เพราะทีมที่ส่งแล้วกลับมาแก้ต่อ
  * สถานะจะกลายเป็น "แบบร่าง" แต่ของที่อยู่ใน Target Sun ยังเป็นของจริงที่ทับได้อยู่ดี
  */
+/**
+ * โหมดทีมเดียว: ทีมนี้ส่งเข้า Target Sun งวดนี้ไปแล้วหรือยัง — ถามก่อนกระจายใหม่ (QA 21 ต.ค. 2026 L6)
+ *
+ * โหมดรวมภาคมีคำเตือนนี้ในกล่องเลือกขอบเขตอยู่แล้ว แต่ทีมเดียวไม่มี — ซุปกระจายใหม่ได้เลย
+ * ผลในแอปเปลี่ยนแต่เลขใน Target Sun ยังเป็นของเดิม สองฝั่งไม่ตรงกันจนกว่าจะส่งใหม่
+ * อ่านสดทุกครั้ง (ไม่ใช้แคชสรุป 120 วิ ที่อาจยังไม่รู้ว่าเพิ่งส่ง) · ถามไม่สำเร็จ = ปล่อยผ่าน
+ */
+async function _confirmSingleTeamSentBeforeRun() {
+  const sid = String(S.supId || "").trim().toUpperCase();
+  if (!sid || !S.targetMonth || !S.targetYear) return true;
+  let item = null;
+  try {
+    const q = new URLSearchParams({
+      target_month: String(S.targetMonth),
+      target_year: String(S.targetYear),
+      team: sid,
+    });
+    const res = await fetchWithTimeout(`${API_BASE_URL}/data/allocations/summary?${q}`, {}, 8000);
+    if (!res.ok) return true;
+    const data = await res.json();
+    item = (Array.isArray(data.items) ? data.items : []).find(
+      (it) => String(it?.sup_id || "").trim().toUpperCase() === sid,
+    );
+  } catch {
+    return true;
+  }
+  if (!item?.target_sun_sent_at) return true;
+  const when = _formatAllocUpdatedAt(item.target_sun_sent_at);
+  return await _confirmDialog(
+    `ทีม ${sid} ส่งเข้า Target Sun งวดนี้ไปแล้วเมื่อ ${when}\n` +
+      "ถ้ากระจายใหม่ ผลในแอปจะเปลี่ยน แต่เลขใน Target Sun ยังเป็นของเดิม — " +
+      "สองฝั่งจะไม่ตรงกันจนกว่าจะกดส่งใหม่",
+    { title: "ทีมนี้ส่งแล้ว — กระจายใหม่?", okLabel: "กระจายใหม่", cancelLabel: "ยกเลิก" },
+  );
+}
+
 async function _sentToTargetSunTeams() {
   try {
     const items = await _getAllocSummaryItems();
@@ -15030,6 +15068,9 @@ async function runReAllocationKeepEdits() {
         if (bannerBtn) { bannerBtn.disabled = false; bannerBtn.textContent = "🔄 กระจายหีบใหม่ (คงตัวเลขที่แก้เอง)"; }
         return;
       }
+    } else if (!S.aggregateMode && !S.compositeAllocView && !(await _confirmSingleTeamSentBeforeRun())) {
+      if (bannerBtn) { bannerBtn.disabled = false; bannerBtn.textContent = "🔄 กระจายหีบใหม่ (คงตัวเลขที่แก้เอง)"; }
+      return;
     }
 
     // เด้งลงหา progress bar ก่อน
