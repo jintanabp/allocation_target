@@ -362,6 +362,54 @@ def _merge_calendar_year_cache(path: str, df_new: pd.DataFrame, fetched_skus: se
     return pd.concat([keep, new], ignore_index=True)
 
 
+_SALES_UNIT_TH = {"S": "เครดิต", "C": "รถเงินสด"}
+
+
+def emp_sales_unit_mismatch_warning(sales_unit: str, df_grain: pd.DataFrame | None,
+                                    emp_records: list[dict]) -> dict | None:
+    """
+    พนักงานที่แถวเป้าใน Target Sun เป็นคนละหน่วยกับทีม (เครดิต S / รถเงินสด C) — QA 21 ต.ค. 2026 Q7
+
+    มักเป็นคนที่ย้ายจากทีมรถเงินสดมาทีมเครดิต (หรือกลับกัน): เป้าเงินขั้นที่ 2 คิดด้วยราคาของหน่วยทีมนี้
+    แต่ตอนส่งหีบลงแถวหน่วยเดิมของเขาใน Target Sun · เตือนอย่างเดียว ไม่แตะตัวเลข · ผิดพลาด = ไม่เตือน
+    """
+    try:
+        from .lakehouse import norm_emp_code
+
+        unit = str(sales_unit or "").strip().upper()[:1]
+        if unit not in _SALES_UNIT_TH or df_grain is None or df_grain.empty:
+            return None
+        if "salestype" not in df_grain.columns or "emp_id" not in df_grain.columns:
+            return None
+        g = df_grain[["emp_id", "salestype"]].copy()
+        g["emp"] = g["emp_id"].map(norm_emp_code)
+        g["unit"] = g["salestype"].fillna("").astype(str).str.strip().str.upper().str[:1]
+        in_team = {norm_emp_code(r.get("emp_id")) for r in emp_records or [] if str(r.get("emp_id") or "").strip()}
+        other = g[g["emp"].isin(in_team) & g["unit"].isin(list(_SALES_UNIT_TH)) & g["unit"].ne(unit)]
+        if other.empty:
+            return None
+        by_emp = other.groupby("emp")["unit"].agg(lambda s: sorted(set(s)))
+        names = {norm_emp_code(r.get("emp_id")): str(r.get("emp_name") or "").strip() for r in emp_records or []}
+        listing = ", ".join(
+            f"{e}{f' ({names[e]})' if names.get(e) else ''} = หน่วย{'/'.join(_SALES_UNIT_TH[u] for u in us)}"
+            for e, us in list(by_emp.items())[:20]
+        )
+        return {
+            "type": "emp_sales_unit_mismatch",
+            "sku": "",
+            "brand": "",
+            "message": (
+                f"⚠️ พนักงาน {len(by_emp)} คนมีแถวเป้าใน Target Sun เป็นคนละหน่วยกับทีมนี้ "
+                f"(ทีมนี้หน่วย{_SALES_UNIT_TH[unit]}) — มักเป็นคนที่ย้ายทีมมา: {listing} "
+                f"· เป้าเงินขั้นที่ 2 คิดด้วยราคาหน่วย{_SALES_UNIT_TH[unit]} แต่หีบจะลงแถวหน่วยเดิมของเขาใน Target Sun "
+                "ให้ตรวจกับแอดมินว่าถูกต้อง"
+            ),
+        }
+    except Exception as e:
+        logger.warning("ตรวจหน่วยขายของพนักงานไม่สำเร็จ: %s", e)
+        return None
+
+
 def emp_in_two_teams_warning(sup_id: str, target_month: int, target_year: int,
                              emp_records: list[dict]) -> dict | None:
     """
@@ -1557,6 +1605,9 @@ def load_employees_payload(
             ),
         })
     _w = emp_in_two_teams_warning(sup_id, target_month, target_year, emp_records)
+    if _w:
+        sku_warnings.append(_w)
+    _w = emp_sales_unit_mismatch_warning(sales_unit, df_tga_granular, emp_records)
     if _w:
         sku_warnings.append(_w)
     if price_credit_only and str(sales_unit or "").strip().upper()[:1] == "C":

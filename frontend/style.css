@@ -3937,6 +3937,21 @@ td.alloc-summary-status--none { color: var(--text-3); opacity: 0.7; }
   margin-bottom: 8px;
 }
 
+.lakehouse-mismatch-warn {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--red, #b42318);
+  background: var(--red-bg, #fef3f2);
+  border: 1px solid var(--red-brd, #fecdca);
+}
+.lakehouse-mismatch-warn span {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-2);
+}
 .lakehouse-brand-warn {
   margin: 8px 0 0;
   font-size: 12px;

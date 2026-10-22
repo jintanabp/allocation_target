@@ -34,6 +34,7 @@ vm.runInContext(`
   function _isStep2ReadOnlyView() { return false; }
   function parseMoney(v) { return { value: Number(String(v).replace(/,/g, "")) || 0, invalid: false }; }
   function fmt(v) { return String(v); }
+  function fmtMoneyInput(v) { return String(v); }
   function toast() {} function renderYellowTable() {} function updateValidation() {}
   function qs() { return null; }
   function _histFillSource() { return null; }

@@ -1013,6 +1013,8 @@ let S = {
   /** จากผล optimize ล่าสุด — ป้ายหลัก/รอง ในตารางผล */
   tierFlexSkus: new Set(),
   tierStrictSkuCount: 0,
+  /** วิธีที่ติ๊กไว้ตอนกดคำนวณสำเร็จครั้งล่าสุด — ใช้อธิบายผลในแผง「ขอให้รีเช็ค」(QA Q10) */
+  lastRunStrategies: [],
   /** สเกลเป้าเงินที่ backend ใช้ (มูลค่าหีบรวม ÷ sum เป้าเหลือง) */
   revenueScale: 1,
   /** LP ใช้ไม่ได้ — backend เกลี่ยแบบสัดส่วนแทน */
@@ -1111,6 +1113,12 @@ function baht(n) {
 function fmt(n) {
   if (n == null || Number.isNaN(Number(n))) return "—";
   return Number(n).toLocaleString("th-TH");
+}
+/** เป้าเงินในช่องกรอกขั้นที่ 2 — ไม่เกิน 2 ตำแหน่ง (เดิม fmt ขึ้นได้ 3 ตำแหน่งหลังเกลี่ย · QA Q1)
+ *  แสดงผลอย่างเดียว ค่าที่เก็บใน S.yellow ไม่ถูกปัด */
+function fmtMoneyInput(n) {
+  if (n == null || Number.isNaN(Number(n))) return "—";
+  return Number(n).toLocaleString("th-TH", { maximumFractionDigits: 2 });
 }
 const sumYellow = () => {
   let total = 0;
@@ -5064,6 +5072,7 @@ function _applyDataPayloadInner(data) {
     S.revenueScale = 1;
     S.tierFlexSkus = new Set();
     S.tierStrictSkuCount = 0;
+    S.lastRunStrategies = [];
     S.optimizationFallback = false;
     S.optimizationFallbackSups = [];
     S.lpTimeLimitedSups = [];
@@ -6265,7 +6274,7 @@ function _yellowRowHtml(e, opts = {}) {
     : `<td class="r">
         <input class="cell-input" type="text" inputmode="numeric"
           style="${isLocked ? 'color:var(--amber); border-color:var(--amber);' : ''}"
-          value="${fmt(y)}"
+          value="${fmtMoneyInput(y)}"
           data-alloc-key="${escH(akey)}"
           onfocus="this.value = this.value.replace(/,/g, '')"
           onblur="onYellowChange(this)"/>
@@ -6401,8 +6410,10 @@ function onYellowChange(input) {
 
   // คลิกเข้าช่องแล้วออกโดยไม่แก้เลข ต้องไม่นับเป็นการ "ล็อก" — เดิมล็อกทุกครั้งที่ออกจากช่อง
   // แถวคนไม่มีประวัติที่ผู้ใช้แค่คลิกดู จึงหลุดป้ายเตือน + กล่องถามก่อนกระจาย ทั้งที่ยังเป็น 0
-  if (!parsed.invalid && Math.abs((Number(S.yellow[akey]) || 0) - val) < 0.005) {
-    input.value = fmt(val);
+  // เทียบกับค่าที่ "แสดงอยู่" (ปัด 2 ตำแหน่ง) ไม่ใช่ค่าเต็มที่เก็บไว้ — ไม่งั้นช่องที่โชว์ปัดแล้วถูกนับว่าแก้
+  const shown = Math.round((Number(S.yellow[akey]) || 0) * 100) / 100;
+  if (!parsed.invalid && Math.abs(shown - val) < 0.001) {
+    input.value = fmtMoneyInput(Number(S.yellow[akey]) || 0);
     return;
   }
   // เรียก _allocEligibleEmployees() ครั้งเดียว (เดิมเรียกซ้ำ) — แบ่ง locked/unlocked จากชุดเดียวกัน
@@ -6993,6 +7004,7 @@ async function runOptimization() {
       S.allocations = displayAllocs;
 
       const strategyLabel = _strategySummaryTh(_getSelectedStrategies());
+      S.lastRunStrategies = _getSelectedStrategies();
       _showOptimizeSuccessUi(strategyLabel);
 
       S.activeBrand = "ALL";
@@ -8353,7 +8365,53 @@ function _neverSoldReviewLines() {
     ].filter(Boolean).join(" และ ");
     out.push(`เฉลี่ยให้ทุกคนเท่า ๆ กัน ${evened.length} สินค้า — ${why} (ใช้ประวัติตัดสินไม่ได้)`);
   }
+  const shortPeople = _neverSoldShortPeople();
+  if (shortPeople.length) {
+    const list = shortPeople
+      .slice(0, 6)
+      .map((x) => `${x.key} (${x.pct >= 0 ? "+" : ""}${x.pct.toFixed(0)}%)`)
+      .join(" · ");
+    out.push(
+      `พนักงาน ${shortPeople.length.toLocaleString("th-TH")} คนได้หีบน้อยกว่าเป้าเงินมาก เพราะไม่เคยขายสินค้าส่วนใหญ่`
+      + `ในรอบ 12 เดือน (มักเป็นพนักงานใหม่) จึงได้แค่สินค้าที่เฉลี่ยให้ทุกคน: ${list}`
+      + (shortPeople.length > 6 ? ` … และอีก ${shortPeople.length - 6} คน` : "")
+      + " — เป็นผลของกติกา ไม่ใช่ข้อผิดพลาด ถ้าต้องการให้คนเหล่านี้ได้เป้าเพิ่ม ปรับหีบในตารางเองได้"
+    );
+  }
   return out;
+}
+
+/**
+ * คนที่ยอดเงินห่างเป้ามากเพราะกติกา「ไม่เคยขาย = ไม่มีเป้า」ตัดสินค้าส่วนใหญ่เป็น 0 (QA Q5)
+ * ใช้ข้อมูลจริงจาก backend (never_sold_zero_pairs) ไม่เดาจากประวัติบนจอ · เกณฑ์ห่างเป้าเดียวกับตาราง (1,000 บาท)
+ * แสดงผลอย่างเดียว ไม่แตะตัวเลข
+ */
+function _neverSoldShortPeople() {
+  const zero = S.neverSoldZeroKeys;
+  if (!(zero instanceof Set) || !zero.size || !S.allocations?.length) return [];
+  const priceOf = new Map((S.skus || []).map((s) => [String(s.sku).trim(), Number(s.price_per_box) || 0]));
+  const per = new Map();
+  for (const a of S.allocations) {
+    const k = _allocResultKey(a);
+    let t = per.get(k);
+    if (!t) {
+      t = { value: 0, rows: 0, zeroed: 0 };
+      per.set(k, t);
+    }
+    const sku = String(a.sku || "").trim();
+    const p = priceOf.has(sku) ? priceOf.get(sku) : Number(a.price_per_box) || 0;
+    t.value += (Number(a.allocated_boxes) || 0) * p;
+    t.rows += 1;
+    if (zero.has(_neverSoldZeroKeyOf(a))) t.zeroed += 1;
+  }
+  const out = [];
+  for (const [key, t] of per) {
+    if (!t.zeroed || t.zeroed * 2 < t.rows) continue;
+    const y = _effectiveYellowTarget(key);
+    if (y <= 0 || t.value - y >= -1000) continue;
+    out.push({ key, pct: ((t.value - y) / y) * 100 });
+  }
+  return out.sort((a, b) => a.pct - b.pct);
 }
 
 /** แบนเนอร์ขอให้รีเช็ค — LP fallback, เกลี่ยหีบค้าง, SKU เบี่ยงประวัติ */
@@ -8449,6 +8507,17 @@ function syncStep3ReviewNotes() {
   const neg = _negGrowthOffenders();
   if (neg.length) {
     lines.push(`พนักงานที่ตั้งเป้าเติบโตติดลบ ${neg.length} คน — ตรวจเหตุผลที่บันทึกไว้`);
+  }
+  // PUSH / EVEN ไม่ได้เกลี่ยหีบให้ยอดเงินรายคนใกล้เป้าเงิน — ป้าย「ขาด/เกินเป้า」(เกณฑ์ ±1,000 บาท) จึงขึ้นได้
+  // เป็นหมื่นบาทโดยไม่ใช่ข้อผิดพลาด (QA Q10 · ทดสอบได้ห่าง ~31,700 / ~14,900 บาท) — อธิบายอย่างเดียว ไม่แตะตัวเลข
+  const loose = (S.lastRunStrategies || []).filter((k) => k === "PUSH" || k === "EVEN");
+  if (loose.length && S.allocations?.length) {
+    const names = loose.map((k) => STRATEGY_LABELS[k]?.long || k).join(" / ");
+    lines.push(
+      `วิธี「${names}」กระจายตามหลักของวิธีนั้น ไม่ได้เกลี่ยให้ยอดเงินรายคนใกล้เป้าเงิน — `
+      + "ป้าย「ขาด/เกินเป้า」ในคอลัมน์มูลค่ารวม (เกณฑ์ ±1,000 บาท) จึงขึ้นได้มากเป็นปกติ "
+      + "ยอดหีบต่อสินค้ายังตรงเป้าครบ"
+    );
   }
   lines.push(..._neverSoldReviewLines());
   if (!lines.length) {
@@ -10013,6 +10082,7 @@ function showLakehouseUploadModal(opts = {}) {
       </div>
 
       ${_lakehouseSendScopeSectionHtml()}
+      ${_lakehouseMismatchPreviewHtml()}
 
       <div class="lakehouse-summary" aria-label="สรุปก่อนส่ง">
         <div class="lakehouse-stat">
@@ -11872,6 +11942,37 @@ function _batchTargetMismatches(supIds, brand) {
  * ฝั่ง server ตรวจซ้ำอีกชั้นเสมอ ตรงนี้แค่บอกผู้ใช้ให้เร็ว ก่อนเริ่มเตรียมไฟล์
  * คืน {proceed}
  */
+/**
+ * เตือนในหน้าต่างส่งตั้งแต่เปิด ว่ากดส่งแล้วจะติดด่าน "ยอดไม่ตรงเป้า" (QA Q6)
+ * ใช้ตัวตรวจเดียวกับ _confirmTargetMismatchBeforeSend (ทุกแบรนด์) — แค่บอกล่วงหน้า ด่านเดิมไม่เปลี่ยน
+ * เคสหลัก: กระจายแบบรวมภาค (ย้ายหีบข้ามทีมได้ตามกฎ I7) แล้วมาส่งจากมุมมองทีมเดียว ซึ่งเทียบเป้าทีม
+ */
+function _lakehouseMismatchPreviewHtml() {
+  let supIds = [];
+  let issues = [];
+  try {
+    supIds = _lakehouseSupIdsForExport();
+    issues = supIds.length > 1 ? _batchTargetMismatches(supIds, "ALL") : _supTargetMismatches(supIds, "ALL");
+  } catch (e) {
+    console.warn("_lakehouseMismatchPreviewHtml:", e);
+    return "";
+  }
+  if (!issues.length) return "";
+  const skus = [...new Set(issues.map((it) => it.sku))];
+  const list = skus.slice(0, 6).map(escH).join(", ") + (skus.length > 6 ? " …" : "");
+  const single = supIds.length <= 1;
+  const hint = single
+    ? "ถ้าเพิ่งกระจายแบบ<strong>รวมภาค/รวมหน่วย</strong> หีบอาจถูกย้ายข้ามทีม ยอดรายทีมจึงไม่เท่าเป้าทีม — "
+      + "ให้สลับไปมุมมองรวมภาคแล้วส่งจากที่นั่น (ระบบตรวจยอดรวมทั้งภาคแทน) หรือกด「คำนวณใหม่」ในมุมมองทีมนี้"
+    : "ตรวจช่องที่แก้มือไว้ หรือกด「คำนวณใหม่」ให้ยอดรวมกลับมาตรงเป้า";
+  return `
+      <div class="lakehouse-mismatch-warn" role="alert">
+        <strong>⚠ กดส่งตอนนี้จะไม่ผ่าน</strong> — ยอดหีบ ${skus.length.toLocaleString("th-TH")} SKU
+        ไม่เท่ากับเป้า${single ? "ของทีม" : "รวมของทุกทีม"} (${list})<br>
+        <span>${hint}</span>
+      </div>`;
+}
+
 async function _confirmTargetMismatchBeforeSend(supIds, brand) {
   let issues = [];
   try {
@@ -15157,6 +15258,7 @@ async function runReAllocationKeepEdits() {
     let keptAllocs = _filterAllocationsEligibleOnly(allocs);
     if (!keptAllocs.length) keptAllocs = allocs;
     S.allocations = keptAllocs;
+    S.lastRunStrategies = _getSelectedStrategies();
 
     qs("#runEmoji").textContent = "✅";
     qs("#runTitle").textContent = "กระจายหีบใหม่สำเร็จ";

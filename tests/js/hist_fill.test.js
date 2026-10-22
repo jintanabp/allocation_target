@@ -50,6 +50,7 @@ vm.runInContext(`
   function _isStep2ReadOnlyView() { return false; }
   function parseMoney(v) { return { value: Number(String(v).replace(/,/g, "")) || 0, invalid: false }; }
   function fmt(v) { return String(v); }
+  function fmtMoneyInput(v) { return String(v); }
   function toast(m) { globalThis.toasts.push(String(m)); }
   function renderYellowTable() {} function updateValidation() {} function _updateNegGrowthReasonState() {}
   function qs() { return null; }
@@ -101,6 +102,11 @@ const eq = (got, want, msg) => { if (JSON.stringify(got) !== JSON.stringify(want
   ctx.edit("C", "0");
   eq(!!S.yellowLocked.C, false, "คลิกแล้วออกไม่แก้ = ไม่ล็อก");
   eq(ctx.flagged(), ["C"], "ป้ายเตือนยังอยู่หลังคลิกดู");
+  // ค่าเต็มมีทศนิยมเกิน 2 ตำแหน่ง (หลังเกลี่ย) — ช่องโชว์ปัดแล้ว คลิกออกเฉย ๆ ต้องไม่ล็อก (QA Q1)
+  S.yellow.B = 1234.5678;
+  ctx.edit("B", "1234.57");
+  eq(!!S.yellowLocked.B, false, "ค่าที่โชว์ปัด 2 ตำแหน่ง คลิกแล้วออก = ไม่ล็อก");
+  eq(S.yellow.B, 1234.5678, "ค่าเต็มไม่ถูกปัดทิ้ง");
   ctx.edit("C", "1000");
   eq(ctx.flagged(), [], "กรอกเลขแล้วป้ายหาย");
   eq(Math.round(ctx.sumOf(["A", "B", "C"]) * 100) / 100, 10001, "กรอกเองแล้วยอดรวมคงเดิม");
