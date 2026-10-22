@@ -24,6 +24,7 @@ sys.path.insert(0, REPO)
 from backend.schemas import LakehouseUploadRequest  # noqa: E402
 from backend.services import targetsun_import as tsi  # noqa: E402
 from backend.services import targetsun_read as tsr  # noqa: E402
+from tests._runtime_preset import use_same_system_endpoints  # noqa: E402
 
 logging.disable(logging.CRITICAL)
 
@@ -205,6 +206,7 @@ class ImportRechecksFreshnessTest(unittest.TestCase):
         os.chdir(self._tmp.name)
         os.makedirs("data", exist_ok=True)
         tsi._import_in_flight_tokens.clear()
+        use_same_system_endpoints(self)
 
     def tearDown(self):
         os.chdir(self._cwd)

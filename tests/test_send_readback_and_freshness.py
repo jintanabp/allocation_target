@@ -26,6 +26,7 @@ sys.path.insert(0, REPO)
 from fastapi import HTTPException  # noqa: E402
 
 from backend.services import lakehouse as lh  # noqa: E402
+from tests._runtime_preset import use_same_system_endpoints  # noqa: E402
 from backend.services import targetsun_read as tsr  # noqa: E402
 
 logging.disable(logging.CRITICAL)
@@ -228,6 +229,9 @@ class TestBuilderStaysOffline(unittest.TestCase):
 
 
 class TestReadbackAfterSend(unittest.TestCase):
+    def setUp(self):
+        use_same_system_endpoints(self)
+
     def _verify(self, live, sent, emp=("E1",)):
         with patch.object(lh, "_live_target_boxes_by_sku", return_value=live):
             return lh.verify_after_send(

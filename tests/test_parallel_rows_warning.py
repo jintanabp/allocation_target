@@ -28,6 +28,7 @@ from fastapi import HTTPException  # noqa: E402
 
 from backend.schemas import LakehouseUploadRequest  # noqa: E402
 from backend.services import lakehouse as lh  # noqa: E402
+from tests._runtime_preset import use_same_system_endpoints  # noqa: E402
 from backend.services.send_alerts import row_count_alert  # noqa: E402
 
 logging.disable(logging.CRITICAL)
@@ -41,6 +42,9 @@ def _key(sku, emp, wh):
 
 
 class TestParallelRows(unittest.TestCase):
+    def setUp(self):
+        use_same_system_endpoints(self)
+
     def test_new_warehouse_for_existing_pair_is_flagged(self):
         old = _key("X", "E1", "")
         new = _key("X", "E1", "R001")

@@ -19,6 +19,7 @@ REPO = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, REPO)
 
 from backend.services import lakehouse as lh  # noqa: E402
+from tests._runtime_preset import use_same_system_endpoints  # noqa: E402
 from backend.services import targetsun_read as tsr  # noqa: E402
 
 logging.disable(logging.CRITICAL)
@@ -89,6 +90,9 @@ class TestLiveTargetSnapshot(unittest.TestCase):
 
 class TestRowCountAfterSend(unittest.TestCase):
     """verify_row_count_after_send — ตัวจับแถวซ้ำหลักของฟีเจอร์นี้"""
+
+    def setUp(self):
+        use_same_system_endpoints(self)
 
     def _verify(self, *, before, after, file_keys, emp=("E1",)):
         with patch.object(lh, "_live_target_snapshot", return_value=after):
