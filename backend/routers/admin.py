@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from datetime import datetime, timezone
 from typing import Annotated, Any, Literal
@@ -45,7 +46,8 @@ from ..deps import (
     require_role_manager_cap,
 )
 from ..services import admin_capabilities, admin_permissions_store
-from ..services.demo_data import is_demo_supervisor
+from ..services.access_hierarchy import parse_region_from_position
+from ..services.demo_data import DEMO_REGION, is_demo_supervisor
 from ..services.access_control import (
     ADMIN_SCOPE_ALL,
     ADMIN_SCOPE_LABELS,
@@ -318,6 +320,43 @@ def _audit_admin(
         pass
 
 
+# ภาคที่ใช้ได้ (ตรงกับที่ลำดับชั้นสิทธิ์และขอบเขตแอดมินเทียบ) — พิมพ์ผิดแล้วผู้ใช้หลุดจากภาคเงียบ ๆ
+_VALID_REGIONS = ("กรุงเทพ", "กลาง", "อีสาน", "เหนือ", "ใต้")
+_USERPL_RE = re.compile(r"SL[0-9A-Z]+")
+
+
+def _check_new_userpl(upl: str) -> None:
+    """
+    รหัสทีมที่กรอกใหม่ต้องเป็นรูปแบบ SL + ตัวเลข/ตัวอักษร ไม่มีช่องว่าง (QA 21 ต.ค. 2026 L4)
+    เดิม "sl 999x" ถูกบันทึกเป็น "SL 999X" แล้วผู้ใช้หาทีมตัวเองไม่เจอ · "NONE" = แถวแอดมินอย่างเดียว
+    """
+    if upl == "NONE" or _USERPL_RE.fullmatch(upl):
+        return
+    raise HTTPException(
+        status_code=400,
+        detail=f"รหัสทีม「{upl}」ไม่ถูกรูปแบบ — ต้องขึ้นต้นด้วย SL ตามด้วยตัวเลข ไม่มีช่องว่าง เช่น SL397",
+    )
+
+
+def _clean_region(raw: str | None) -> str | None:
+    """
+    ภาคต้องเป็นหนึ่งในชุดที่ใช้จริง — รับคำที่ใกล้เคียง (ภาคอีสาน / กทม) แล้วเก็บเป็นชื่อมาตรฐาน
+    พิมพ์ผิด (อิสาน) = 400 พร้อมรายการที่ใช้ได้ (QA L4) · None = ไม่ได้แก้ช่องนี้ · ว่าง = ล้างค่า
+    """
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s or s in _VALID_REGIONS or s == DEMO_REGION:
+        return s
+    mapped = parse_region_from_position(s)
+    if mapped:
+        return mapped
+    raise HTTPException(
+        status_code=400,
+        detail=f"ภาค「{s}」ไม่รู้จัก — ใช้ได้: {' / '.join(_VALID_REGIONS)}",
+    )
+
+
 class UserAccessDeleteBody(BaseModel):
     email: str
     userpl: str
@@ -374,6 +413,8 @@ def create_user_access(
     upl = normalize_userpl(body.userpl)
     if "@" not in em or not upl:
         raise HTTPException(status_code=400, detail="อีเมลหรือ USERPL ไม่ถูกต้อง")
+    _check_new_userpl(upl)
+    body.acc_region = _clean_region(body.acc_region)
     new_row: dict[str, Any] = {
         "email": em,
         "userpl": upl,
@@ -415,6 +456,10 @@ def update_user_access(
     upl = normalize_userpl(body.userpl)
     new_em = normalized_email(body.new_email) if body.new_email else em
     new_upl = normalize_userpl(body.new_userpl) if body.new_userpl else upl
+    # ตรวจเฉพาะค่าที่เปลี่ยน — แถวเก่าที่รูปแบบเพี้ยนอยู่แล้วยังแก้หมายเหตุ/ตำแหน่งได้ (QA L4)
+    if new_upl != upl:
+        _check_new_userpl(new_upl)
+    body.acc_region = _clean_region(body.acc_region)
 
     # อ่านแถวเดิม + ตรวจ + เขียน ใต้ล็อกเดียว (mutate_rows) — แก้จากแถว "ล่าสุด" เสมอ
     # ไม่ใช่สำเนาที่อ่านไว้ก่อนแอดมินอีกคนบันทึก (ไม่งั้นการแก้ของเขาหายเงียบ ๆ)
