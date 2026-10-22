@@ -1073,9 +1073,35 @@ def _ensure_sl_link_in_scope(admin: dict, old: str, new_sls: list[str]) -> None:
     """
     if admin.get("auth_disabled") or admin.get("role") == ROLE_DEV:
         return
-    for code in [old, *(new_sls or [])]:
-        if str(code or "").strip():
-            ensure_sup_in_admin_scope(admin, code)
+    # ผู้ใช้ตัดสิน 22 ต.ค. 2026 (QA M1): แอดมินผูกได้ · แอดมินภาคได้เฉพาะภาคตัวเอง
+    # แอดมินขอบเขตทั้งระบบดูแลทุกทีมอยู่แล้ว — ผูกได้ทุกรหัส
+    if str((admin.get("admin_scope") or {}).get("breadth") or "") == ADMIN_SCOPE_ALL:
+        return
+    # รหัสหลัก (ทีมเดิม) ต้องอยู่ในภาคตัวเองเสมอ
+    ensure_sup_in_admin_scope(admin, old)
+    # รหัสที่ผูกเพิ่ม: ถ้าเป็นทีมที่มีอยู่ในทะเบียนแล้วต้องอยู่ในภาคตัวเอง (ห้ามดึงทีมภาคอื่นมาผูก)
+    # รหัสใหม่ที่ยังไม่มีในทะเบียน (ซุปเพิ่งเปลี่ยนรหัส) ผูกได้ — เดิมทุกรหัสต้องอยู่ใน sl_codes
+    # ซึ่งนับจากแถวซุปในทะเบียนเท่านั้น รหัสใหม่จึงถูกปฏิเสธ「อยู่นอกภาค」ทุกครั้ง
+    known = {
+        str(r.get("userpl") or "").strip().upper()
+        for r in read_user_access_rows()
+        if str(r.get("userpl") or "").strip()
+    }
+    for code in new_sls or []:
+        c = str(code or "").strip().upper()
+        if c and c in known:
+            ensure_sup_in_admin_scope(admin, c)
+
+
+def _mutate_sl_links_or_409(fn):
+    """
+    mutate_sl_links + แปลง ValueError จากตัวตรวจไฟล์ (รหัสผูกกับกลุ่มอื่นอยู่แล้ว ฯลฯ) เป็น 409
+    พร้อมเหตุผล — เดิมหลุดเป็น 500「ระบบขัดข้อง」 แอดมินไม่รู้ว่าทำผิดตรงไหน (QA M2)
+    """
+    try:
+        return mutate_sl_links(fn)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
 
 
 @router.post("/sl-links")
@@ -1102,7 +1128,7 @@ def create_sl_link(
             updated_by=_editor_label(admin),
         ), None
 
-    saved, _ = mutate_sl_links(_apply)
+    saved, _ = _mutate_sl_links_or_409(_apply)
     row = find_sl_link(old, saved)
     _audit_admin(admin, "admin_sl_link_create", f"ผูกรหัส SL {old}", f"→ {', '.join(new_sls) or '-'}")
     return {"ok": True, "row": _sl_link_row_for_api(row or {})}
@@ -1151,7 +1177,7 @@ def update_sl_link(
                 out.append(dict(row))
         return out, None
 
-    saved, _ = mutate_sl_links(_apply)
+    saved, _ = _mutate_sl_links_or_409(_apply)
     row = find_sl_link(new_old, saved)
     _audit_admin(admin, "admin_sl_link_update", f"แก้ผูกรหัส SL {old}→{new_old}", f"→ {', '.join(new_sls) or '-'}")
     return {"ok": True, "row": _sl_link_row_for_api(row or {})}
@@ -1176,7 +1202,7 @@ def remove_sl_link(
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
 
-    mutate_sl_links(_apply)
+    _mutate_sl_links_or_409(_apply)
     _audit_admin(admin, "admin_sl_link_delete", f"ลบผูกรหัส SL {old}", level="warn")
     return {"ok": True}
 

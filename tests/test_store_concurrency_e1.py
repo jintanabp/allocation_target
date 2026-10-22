@@ -218,7 +218,10 @@ class TestSlLinksLostUpdate(_EnvTmp):
 
         sl_link_store.write_links([{"old_sl": "SL100", "new_sls": ["SL101"]}])
         scoped = {"role": "admin", "email": "a@example.invalid", "admin_scope": {"sl_codes": {"SL100"}}}
-        with self.assertRaises(HTTPException) as cm:
+        # SL101 เป็นทีมที่มีอยู่ในทะเบียน (ภาคอื่น) — รหัสใหม่ที่ไม่มีในทะเบียนผูกได้ตั้งแต่ QA M1
+        known = [{"userpl": "SL100"}, {"userpl": "SL101"}]
+        with self.assertRaises(HTTPException) as cm, \
+                mock.patch.object(admin_router, "read_user_access_rows", return_value=known):
             admin_router.remove_sl_link(admin_router.SlLinkDeleteBody(old_sl="SL100"), admin=scoped)
         self.assertEqual(cm.exception.status_code, 403)
         self.assertEqual([r["old_sl"] for r in sl_link_store.read_links()], ["SL100"])
