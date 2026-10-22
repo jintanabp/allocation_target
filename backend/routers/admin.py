@@ -2193,10 +2193,13 @@ def _usage_summary_scope(admin: dict) -> set[str] | None:
     """
     if admin.get("role") == ROLE_DEV or admin.get("auth_disabled"):
         return None
-    return {
-        str(c).strip().upper()
-        for c in ((admin.get("admin_scope") or {}).get("sl_codes") or set())
-    }
+    scope = admin.get("admin_scope") or {}
+    # แอดมินขอบเขตทั้งระบบดูแลทุกทีมอยู่แล้ว — เดิมกรองด้วย sl_codes ซึ่งนับเฉพาะแถวซุป
+    # หัวหน้าแอดมินจึงเห็น 65 ทีม (dev เห็น 87 เพราะรวมทีมของผู้จัดการ) และได้ป้าย「ผู้ดูแลรายภาค」
+    # (QA 21 ต.ค. 2026 Q11) · แอดมินรายภาคยังกรองตามภาคเหมือนเดิม
+    if str(scope.get("breadth") or "") == ADMIN_SCOPE_ALL:
+        return None
+    return {str(c).strip().upper() for c in (scope.get("sl_codes") or set())}
 
 
 def _build_usage_summary_or_503(admin: dict, month: int, year: int, force: bool) -> dict:

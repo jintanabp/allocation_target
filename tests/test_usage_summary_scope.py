@@ -147,5 +147,25 @@ class TestScope(unittest.TestCase):
         self.assertEqual(narrow["teams"]["total"], 2)
 
 
+
+
+class TestAllScopeAdminSeesEverything(unittest.TestCase):
+    """
+    QA 21 ต.ค. 2026 Q11: หัวหน้าแอดมิน (ขอบเขตทั้งระบบ) เห็น 65 ทีม ขณะที่ dev เห็น 87 —
+    sl_codes นับเฉพาะแถวซุป ทีมของผู้จัดการหลุด · ขอบเขตทั้งระบบต้องไม่ถูกกรอง
+    """
+
+    def test_all_scope_is_not_filtered(self):
+        from backend.routers import admin as admin_router
+
+        ctx = {"role": "head_admin", "admin_scope": {"breadth": "all", "sl_codes": {"SL100"}}}
+        self.assertIsNone(admin_router._usage_summary_scope(ctx))
+
+    def test_regional_scope_is_still_filtered(self):
+        from backend.routers import admin as admin_router
+
+        ctx = {"role": "admin", "admin_scope": {"breadth": "division_region", "sl_codes": {"sl100"}}}
+        self.assertEqual(admin_router._usage_summary_scope(ctx), {"SL100"})
+
 if __name__ == "__main__":
     unittest.main()
