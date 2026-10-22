@@ -16192,7 +16192,7 @@ const MANUAL_STEPS = [
 <li>เลือกได้ <strong>มากกว่า 1 วิธี</strong> — L3M, L6M, LY, ผลักดันพนักงาน (PUSH)</li>
 <li>ถ้าเลือกหลายวิธี — กำหนด <strong>แบรนด์ → วิธี</strong> ใน panel ด้านล่าง</li>
 <li>แบ่งหีบตามประวัติ แล้วปรับเป้าเงินรายคน (±1,000 บ.)</li>
-<li>หีบต่อ (คน × SKU) ไม่เกิน <strong>±20% จากประวัติเก่า</strong></li>
+<li>หีบต่อ (คน × SKU) อยู่ในกรอบรอบประวัติเก่า — สินค้ากลุ่มหลัก <strong>±35%</strong> · กลุ่มรอง <strong>±12%</strong> (ผ่อนได้เมื่อจำเป็นเพื่อให้ยอดหีบตรงเป้า)</li>
 <li>กด <strong>เริ่มคำนวณ</strong> — รอ progress 4 ขั้น · เสร็จแล้วปุ่มเป็น <strong>คำนวณใหม่</strong></li>
 <li>อ่านแบนเนอร์ <strong>ขอให้รีเช็ค</strong> ถ้ามี (เช่น LP ใช้ไม่ได้, SKU เบี่ยงประวัติ)</li>
 </ul>
@@ -16217,7 +16217,7 @@ const MANUAL_STEPS = [
       <text x="30" y="114" font-family="Sarabun" font-size="11" fill="#0F172A">แบรนด์ B</text>
       <text x="150" y="114" font-family="Sarabun" font-size="11" font-weight="700" fill="#4F46E5">LY ▾</text>
       <rect x="22" y="124" width="176" height="20" rx="5" fill="#FFFFFF" stroke="#E2E8F0"/>
-      <text x="30" y="138" font-family="Sarabun" font-size="11" fill="#0F172A">±20% จากประวัติเก่า</text>
+      <text x="30" y="138" font-family="Sarabun" font-size="11" fill="#0F172A">กรอบ: หลัก ±35% · รอง ±12%</text>
     </svg>`
   },
   {
@@ -16232,8 +16232,8 @@ const MANUAL_STEPS = [
 <p class="manual-lead" style="margin-top:12px;">แถบ 📐 หีบ vs ประวัติเก่า (±20%)</p>
 <ul class="manual-list">
 <li>แสดง <strong>ทุกครั้ง</strong> หลังคำนวณ — อยู่เหนือตาราง</li>
-<li>กดปุ่ม <strong>◆</strong> — กรองเฉพาะ SKU ที่อยู่ในช่วง ±20% ของประวัติเก่า</li>
-<li>กดปุ่ม <strong>⚠</strong> — กรอง SKU ที่เกินช่วง ±20% (มักจากแก้มือ)</li>
+<li>กดปุ่ม <strong>◆</strong> — กรอง SKU ที่หีบใกล้ขอบ (ห่างจากประวัติเก่า 15–20%)</li>
+<li>กดปุ่ม <strong>⚠</strong> — กรอง SKU ที่ห่างเกิน 20% (มักจากแก้มือ) · แถบนี้ใช้ ±20% เป็นเกณฑ์อ้างอิงเดียวกันทุกสินค้า ไม่ใช่กรอบที่ระบบใช้คำนวณ</li>
 <li>ตัวเลขเป็น 0 — ปุ่มกดไม่ได้ · ทั้งคู่เป็น 0 = ปกติหลังคำนวณ</li>
 <li>คลิกซ้ำหรือ <strong>แสดงทั้งหมด</strong> — ยกเลิกกรอง</li>
 </ul>
@@ -16558,7 +16558,8 @@ function _getSelectedStrategies() {
 }
 
 const _HIST_BALANCE_LP_STRATEGIES = new Set(["L3M", "L6M", "LY", "LP"]);
-/** ค่าคงที่ — UI ไม่ให้เลือกแล้ว; ช่วง ±20% เป็นตัวจำกัดหลัก */
+/** ค่าคงที่ — UI ไม่ให้เลือกแล้ว · ±20% = เกณฑ์อ้างอิงของแถบ ◆/⚠ เท่านั้น
+ *  กรอบที่ตัวคำนวณใช้จริงคือแบบขั้น กลุ่มหลัก ±35% / กลุ่มรอง ±12% (OR_engine._TIER_*) */
 const _DEFAULT_HIST_BALANCE = 0.85;
 const _TIERED_HIST_BALANCE = 0.35;
 const _HIST_BAND_PCT = 20;
@@ -16605,7 +16606,8 @@ function _histDevFlagHtml(status, pct, baseline) {
   if (status === "far") {
     return `<span class="hist-dev-flag hist-dev-far" title="เบี่ยงจากประวัติเก่า ${word} ${absPct}% (${baseline} หีบ) — เกินช่วง ±${_HIST_BAND_PCT}% ของประวัติเก่า">⚠</span>`;
   }
-  return `<span class="hist-dev-flag hist-dev-near" title="อยู่ในช่วง ±${_HIST_BAND_PCT}% ของประวัติเก่า — ${word}ประวัติ ${absPct}% (${baseline} หีบ)">◆</span>`;
+  // ◆ = ใกล้ขอบ (≥75% ของเกณฑ์) ไม่ใช่ "อยู่ในช่วง" — ช่องที่อยู่ในช่วงสบาย ๆ ไม่ติดสัญลักษณ์ (QA Q9)
+  return `<span class="hist-dev-flag hist-dev-near" title="ใกล้ขอบ ±${_HIST_BAND_PCT}% ของประวัติเก่า — ${word}ประวัติ ${absPct}% (${baseline} หีบ)">◆</span>`;
 }
 
 function _histDevLineHtml(status, pct, baseline) {
@@ -16684,14 +16686,14 @@ function _renderHistDevSummary(allocs, visibleSkuCount) {
         ${nearDisabled ? "disabled" : `onclick="setHistDevFilter('near')"`}
         aria-pressed="${active === "near"}" title="${nearDisabled ? "ไม่มีช่อง ◆ ในผลนี้" : "กรอง SKU ที่มี ◆"}">
         <span class="hist-dev-flag hist-dev-near" aria-hidden="true">◆</span>
-        <span class="hist-dev-filter__label">อยู่ในช่วง ±${_HIST_BAND_PCT}% ของประวัติเก่า</span>
+        <span class="hist-dev-filter__label">ใกล้ขอบ (ห่างจากประวัติเก่า ${Math.round(_HIST_BAND_PCT * 0.75)}–${_HIST_BAND_PCT}%)</span>
         <span class="hist-dev-filter__count">${near.toLocaleString("th-TH")}</span>
       </button>
       <button type="button" class="hist-dev-filter hist-dev-filter--far${active === "far" ? " is-active" : ""}${farDisabled ? " is-disabled" : ""}"
         ${farDisabled ? "disabled" : `onclick="setHistDevFilter('far')"`}
         aria-pressed="${active === "far"}" title="${farDisabled ? "ไม่มีช่อง ⚠ ในผลนี้" : "กรอง SKU ที่มี ⚠"}">
         <span class="hist-dev-flag hist-dev-far" aria-hidden="true">⚠</span>
-        <span class="hist-dev-filter__label">เกินช่วง ±${_HIST_BAND_PCT}% ของประวัติเก่า</span>
+        <span class="hist-dev-filter__label">ห่างเกิน ${_HIST_BAND_PCT}% จากประวัติเก่า</span>
         <span class="hist-dev-filter__count">${far.toLocaleString("th-TH")}</span>
       </button>
     </div>
