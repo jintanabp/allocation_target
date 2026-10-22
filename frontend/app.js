@@ -13141,6 +13141,10 @@ async function _handleSnapshotConflict(httpStatus, j, supId, status, opts) {
         reject(e);
       }
     };
+    const reloadLatest = settle(async () => {
+      await _reloadServerAllocationSnapshot(sid);
+      return null;
+    });
     _showInfoModal({
       title: "มีคนบันทึกทับไปแล้ว",
       bodyHtml:
@@ -13149,13 +13153,15 @@ async function _handleSnapshotConflict(httpStatus, j, supId, status, opts) {
            <li>ล่าสุดโดย: <strong>${escH(who)}</strong></li>
            <li>เมื่อ: <strong>${escH(when)}</strong></li>
          </ul>
-         <p style="margin:12px 0 0;color:var(--text-3);font-size:12px;">「เขียนทับ」จะลบงานของอีกคน · 「โหลดใหม่」จะทิ้งการแก้ของคุณและดึงของล่าสุดมา</p>`,
-      // สำคัญ: _showInfoModal เรียก onSecondary ทั้งตอนกดปุ่มปิดและตอนคลิกพื้นหลัง
-      // ช่อง secondary จึงต้องเป็น "ทางที่ปลอดภัย" เสมอ — ห้ามเอา「เขียนทับ」ไปไว้ตรงนั้น
-      // ไม่งั้นแค่ปิดกล่องก็ลบงานเพื่อนทิ้ง (ธรรมเนียมเดียวกับ _confirmIfServerSnapshotStale)
-      primaryLabel: "เขียนทับ",
-      secondaryLabel: "โหลดใหม่",
-      onPrimary: settle(async () => {
+         <p style="margin:12px 0 0;color:var(--text-3);font-size:12px;">「โหลดใหม่」จะทิ้งการแก้ของคุณที่ยังไม่ได้บันทึกและดึงของล่าสุดมา · 「เขียนทับงานของอีกคน」จะลบงานที่เขาบันทึกไว้</p>`,
+      // ปุ่มหลักถูกโฟกัสอัตโนมัติ (Enter = กดปุ่มหลัก) และกล่องนี้เด้งจาก autosave ระหว่างที่
+      // ผู้ใช้กำลังพิมพ์ — ปุ่มหลักจึงต้องเป็นทางปลอดภัย「โหลดใหม่」 เดิมเป็น「เขียนทับ」
+      // กด Enter ครั้งเดียวงานของอีกคนหายทันที (QA 21 ต.ค. 2026 M7)
+      // Esc / คลิกนอกกรอบ = โหลดใหม่เหมือนกัน · เขียนทับได้เฉพาะคลิกปุ่มนั้นตรง ๆ
+      primaryLabel: "โหลดใหม่",
+      secondaryLabel: "เขียนทับงานของอีกคน",
+      onPrimary: reloadLatest,
+      onSecondary: settle(async () => {
         // ส่ง version ล่าสุดของ server กลับไป = ตั้งใจเขียนทับ
         return await saveServerAllocationSnapshot(status, {
           ...opts,
@@ -13163,10 +13169,7 @@ async function _handleSnapshotConflict(httpStatus, j, supId, status, opts) {
           autoResolve: "reload",
         });
       }),
-      onSecondary: settle(async () => {
-        await _reloadServerAllocationSnapshot(sid);
-        return null;
-      }),
+      onDismiss: reloadLatest,
     });
   });
 }
