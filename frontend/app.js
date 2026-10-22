@@ -1058,6 +1058,8 @@ let S = {
   compositeAllocView: false,
   /** SL → 'snapshot' | 'targetsun' */
   allocSourceBySup: {},
+  /** SL ที่เพิ่งกระจายสดในเซสชันนี้ (บันทึกแล้วจึงเป็น 'snapshot' ด้วย) — ใช้เลือกป้ายแถวรวมทีม (QA L10) */
+  allocFreshSups: new Set(),
   /** เป้า SKU สำหรับ footer เมื่อดูทีมอื่น (peer) */
   resultFooterSkuMap: null,
   resultFooterScopeSup: null,
@@ -1520,6 +1522,7 @@ async function loadRegionalCompositeAllocationView(gen = null) {
   if (!supOrder.length) return false;
 
   S.allocSourceBySup = {};
+  S.allocFreshSups = new Set();
   // เวอร์ชันผลกระจายของแต่ละทีมที่ผู้จัดการเห็นตอนโหลด — ใช้กันบันทึก/ส่งทับงานที่ซุปเพิ่งแก้
   // (ตรวจก่อนใช้จริง 12 ต.ค. 2026) · 0 = ทีมยังไม่มีผลกระจายบน server ตอนโหลด
   S.regionalKnownVersion = {};
@@ -4223,6 +4226,7 @@ function _doLogout() {
     buiDeductions: {}, buiColumnOpen: false, negGrowthReason: "", yellowSource: null, brandStrategyMap: {},
     splitBrands: [], sectionNames: {},
     tierFlexSkus: new Set(), tierStrictSkuCount: 0,
+    allocFreshSups: new Set(),
     revenueScale: 1,
   canImportTargetSun: true,
   /** emp_id ที่ขยายกลุ่ม WH อยู่ (แบบ B) */
@@ -6968,6 +6972,7 @@ async function runOptimization() {
           const saved = await saveRegionalAllocationSnapshots(displayAllocs, "optimized", { overwriteAll: true });
           for (const supId of saved || []) {
             S.allocSourceBySup[supId] = "snapshot";
+            if (S.allocFreshSups instanceof Set) S.allocFreshSups.add(supId);
           }
           syncCompositeAllocLegend();
           _updateCompositeRegionalBanner();
@@ -8465,7 +8470,8 @@ function _supSubtotalLabelHtml(supId, diffSkuCount) {
   if (diffSkuCount <= 0) {
     return `<span class="sup-subtotal-ok">ตรงเป้าทีมทุก SKU</span>`;
   }
-  if (src === "snapshot") {
+  // ทีมที่เพิ่งกระจายสดถูกตั้งเป็น snapshot หลังบันทึก — ไม่ใช่ "ผลที่บันทึกไว้" เก่า (QA L10)
+  if (src === "snapshot" && !S.allocFreshSups?.has?.(String(supId || "").trim().toUpperCase())) {
     return `<span class="sup-subtotal-warn">ผลที่บันทึกไว้ต่างจากเป้าปัจจุบัน ${diffSkuCount} SKU</span>`;
   }
   return `<span class="sup-subtotal-warn">ต่างจากเป้าทีม ${diffSkuCount} SKU</span>`;
@@ -15132,6 +15138,7 @@ async function runReAllocationKeepEdits() {
         .then((saved) => {
           for (const supId of saved || []) {
             S.allocSourceBySup[supId] = "snapshot";
+            if (S.allocFreshSups instanceof Set) S.allocFreshSups.add(supId);
           }
           syncCompositeAllocLegend();
           _updateCompositeRegionalBanner();
