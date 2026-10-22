@@ -59,6 +59,42 @@ class TestLpTimeLimitedFlag(unittest.TestCase):
         out = self._run(pulp.LpSolutionOptimal)
         self.assertFalse(out.attrs.get("lp_time_limited"))
 
+    def _run_status(self, status):
+        def solve(self, *a, **k):
+            _real_solve(self, *a, **k)
+            self.status = status  # แกล้งว่า CBC จบด้วยสถานะนี้
+            return status
+
+        with mock.patch.object(pulp.LpProblem, "solve", solve):
+            return allocate_boxes(*_inputs(), strategy="L3M", tiered_allocation=True)
+
+    def test_not_solved_fallback_is_marked_as_timeout(self):
+        """QA M9: CBC หมดเวลาก่อนเจอคำตอบ ("Not Solved") ต้องแยกจากโจทย์ขัดกันเอง"""
+        out = self._run_status(pulp.LpStatusNotSolved)
+        self.assertTrue(out.attrs.get("optimization_fallback"))
+        self.assertTrue(out.attrs.get("lp_fallback_timeout"))
+        self.assertEqual(out.groupby("sku")["allocated_boxes"].sum().to_dict(), {"A": 100, "B": 50})
+
+    def test_infeasible_fallback_is_not_a_timeout(self):
+        out = self._run_status(pulp.LpStatusInfeasible)
+        self.assertTrue(out.attrs.get("optimization_fallback"))
+        self.assertFalse(out.attrs.get("lp_fallback_timeout"))
+
+    def test_usage_log_says_timeout_instead_of_no_answer(self):
+        from backend.routers import optimize as opt_router
+
+        seen = []
+        req = mock.Mock(target_sup_ids=[], only_skus=[], strategy="L3M")
+        with mock.patch.object(opt_router, "log_from_user", lambda *a, **k: seen.append(k)):
+            opt_router._log_optimize_ok({}, req, "SLA", 11, 2026,
+                                        {"optimization_fallback": True, "lp_fallback_timeout": True}, 1.0)
+            opt_router._log_optimize_ok({}, req, "SLA", 11, 2026,
+                                        {"optimization_fallback": True, "lp_fallback_timeout": False}, 1.0)
+        self.assertIn("หมดเวลา", seen[0]["message"])
+        self.assertNotIn("หาคำตอบไม่ได้)", seen[0]["message"])
+        self.assertIn("หาคำตอบไม่ได้", seen[1]["message"])
+        self.assertTrue(seen[0]["context"]["lp_fallback_timeout"])
+
     def test_optimize_response_carries_flag(self):
         src = inspect.getsource(opt)
         self.assertIn('"lp_time_limited": lp_time_limited,', src)

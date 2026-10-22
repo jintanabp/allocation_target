@@ -364,7 +364,9 @@ def allocate_boxes(
 
     _LP_STRATEGIES = frozenset({"L3M", "L6M", "LY", "LP"})
     base_map: dict[tuple[str, str], int] = {}
-    opt_meta: dict[str, bool] = {"optimization_fallback": False, "lp_time_limited": False}
+    opt_meta: dict[str, bool] = {
+        "optimization_fallback": False, "lp_time_limited": False, "lp_fallback_timeout": False,
+    }
     # history_only=True: ข้ามชั้นเงินทั้งหมด (LP + greedy revenue balancer ด้านล่าง —
     # ตัวนั้นถูก gate ด้วย "if ... base_map" อยู่แล้ว จึงข้ามอัตโนมัติเมื่อ base_map
     # ไม่ถูกตั้งตรงนี้) กระจายด้วย _proportional ตรง ๆ ตามสัดส่วนประวัติล้วน ๆ
@@ -499,6 +501,7 @@ def allocate_boxes(
         )
     df_expanded.attrs["optimization_fallback"] = opt_meta.get("optimization_fallback", False)
     df_expanded.attrs["lp_time_limited"] = opt_meta.get("lp_time_limited", False)
+    df_expanded.attrs["lp_fallback_timeout"] = opt_meta.get("lp_fallback_timeout", False)
     # ส่งแผนกติกาไม่เคยขายกลับไปด้วย — โหมดหลายกลยุทธ์มีรอบเกลี่ยเงินอีกรอบหลังรวมผล
     # (`_post_merge_revenue_balance`) ถ้าไม่บอกมัน มันจะยกหีบกลับเข้าช่องที่เพิ่งตัดไป
     df_expanded.attrs["never_sold_zero_pairs"] = never_sold_zero_pairs
@@ -2054,6 +2057,10 @@ def _lp_optimize(
             band_pct * 100,
             baseline_strategy,
         )
+        # "Not Solved" = CBC หมดเวลาก่อนเจอคำตอบที่ใช้ได้ (ไม่ใช่โจทย์ขัดกันเอง) — แยกให้ log บอกได้
+        # เดิมทั้งสองกรณีขึ้น「LP หาคำตอบไม่ได้」 แยกไม่ออกว่าเครื่องช้าหรือโจทย์ผิด (QA 21 ต.ค. 2026 M9)
+        if _meta is not None and last_status == "Not Solved":
+            _meta["lp_fallback_timeout"] = True
         return _fallback_prop()
 
     results = [

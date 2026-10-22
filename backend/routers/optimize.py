@@ -80,7 +80,12 @@ def _log_optimize_ok(user, req, sup_id, target_month, target_year, out, seconds:
         multi = len(req.target_sup_ids or []) > 1
         notes = []
         if fallback:
-            notes.append("ใช้การเกลี่ยตามสัดส่วนแทน (LP หาคำตอบไม่ได้)")
+            # หมดเวลา ≠ หาคำตอบไม่ได้ — ตอนย้ายเครื่อง ถ้าขึ้นแบบแรกบ่อยแปลว่าเครื่องช้า (QA M9)
+            notes.append(
+                "ใช้การเกลี่ยตามสัดส่วนแทน (LP หมดเวลาก่อนหาคำตอบได้)"
+                if res.get("lp_fallback_timeout")
+                else "ใช้การเกลี่ยตามสัดส่วนแทน (LP หาคำตอบไม่ได้)"
+            )
         if time_limited:
             notes.append("คำนวณไม่ทันเวลา ได้คำตอบที่ดีที่สุดเท่าที่หาได้")
         log_from_user(
@@ -103,6 +108,7 @@ def _log_optimize_ok(user, req, sup_id, target_month, target_year, out, seconds:
                 "strategy": getattr(req, "strategy", None),
                 "optimization_fallback": fallback,
                 "lp_time_limited": time_limited,
+                "lp_fallback_timeout": bool(res.get("lp_fallback_timeout")),
                 "target_sup_ids": list(req.target_sup_ids or [])[:50],
                 "only_skus_count": len(getattr(req, "only_skus", None) or []),
                 "rows": len(res.get("allocations") or []),
