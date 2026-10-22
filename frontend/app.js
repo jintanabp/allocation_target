@@ -6710,6 +6710,8 @@ function updateValidation() {
     icon.textContent = "×";
     text.textContent = `ยอดรวมยังไม่ตรง ส่วนต่าง ${baht(diff)} บาท`;
     fill.style.background = "var(--red)";
+    // รายชื่อคนเป้าติดลบต้องตามเป้าเงินล่าสุดแม้ยอดรวมยังไม่ตรง — เดิมค้างรายชื่อเก่า (QA L9)
+    _updateNegGrowthReasonState();
     btn.disabled = true;
   }
 
@@ -16478,6 +16480,8 @@ function _negGrowthOffenders() {
   return offenders;
 }
 
+var _negGrowthSyncing = false;
+
 function _updateNegGrowthReasonState() {
   const wrap = document.getElementById("negGrowthNoteWrap");
   const list = document.getElementById("negGrowthList");
@@ -16548,7 +16552,11 @@ function _updateNegGrowthReasonState() {
       runSub.textContent = "ตรวจสอบยอดรวมก่อนกดเริ่ม";
       delete runSub.dataset.negGrowthLock;
     }
-    try { updateValidation(); } catch (_) {}
+    // กันวนเรียกกันเอง: updateValidation → _updateNegGrowthReasonState → updateValidation …
+    if (!_negGrowthSyncing) {
+      _negGrowthSyncing = true;
+      try { updateValidation(); } catch (_) {} finally { _negGrowthSyncing = false; }
+    }
   }
 }
 
