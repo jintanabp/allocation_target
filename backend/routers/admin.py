@@ -48,7 +48,7 @@ from ..deps import (
 from ..services import admin_capabilities, admin_permissions_store
 from ..services.access_hierarchy import parse_region_from_position
 from ..services.error_explain import fabric_error_for_screen
-from ..services.demo_data import DEMO_REGION, is_demo_supervisor
+from ..services.demo_data import DEMO_REGION, is_demo_email, is_demo_supervisor
 from ..services.access_control import (
     ADMIN_SCOPE_ALL,
     ADMIN_SCOPE_LABELS,
@@ -339,6 +339,18 @@ def _check_new_userpl(upl: str) -> None:
     )
 
 
+def _check_demo_pairing(email: str, upl: str) -> None:
+    """
+    ทีมสาธิตผูกได้เฉพาะบัญชีสาธิต (QA 21 ต.ค. 2026 L3) — เดิม demoadmin เพิ่มแถว SLDEMO3 ให้อีเมล
+    ผู้ใช้จริงได้ แล้ว dropdown ของคนจริงมีทีมสาธิตปน (ส่งไม่ได้อยู่แล้ว แต่ผู้ใช้งง)
+    """
+    if is_demo_supervisor(upl) and not is_demo_email(email):
+        raise HTTPException(
+            status_code=400,
+            detail=f"รหัส {upl} เป็นทีมสาธิต — ผูกได้เฉพาะบัญชีสาธิต (demosuper@ / demoadmin@ / demosuperwithadmin@)",
+        )
+
+
 def _clean_region(raw: str | None) -> str | None:
     """
     ภาคต้องเป็นหนึ่งในชุดที่ใช้จริง — รับคำที่ใกล้เคียง (ภาคอีสาน / กทม) แล้วเก็บเป็นชื่อมาตรฐาน
@@ -415,6 +427,7 @@ def create_user_access(
     if "@" not in em or not upl:
         raise HTTPException(status_code=400, detail="อีเมลหรือ USERPL ไม่ถูกต้อง")
     _check_new_userpl(upl)
+    _check_demo_pairing(em, upl)
     body.acc_region = _clean_region(body.acc_region)
     new_row: dict[str, Any] = {
         "email": em,
@@ -475,6 +488,8 @@ def update_user_access(
 
         if "@" not in new_em or not new_upl:
             raise HTTPException(status_code=400, detail="อีเมลหรือ USERPL ใหม่ไม่ถูกต้อง")
+        if (new_em, new_upl) != (em, upl):
+            _check_demo_pairing(new_em, new_upl)
 
         if (new_em, new_upl) != (em, upl):
             if any(

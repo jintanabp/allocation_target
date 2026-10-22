@@ -52,5 +52,18 @@ class TestRegion(unittest.TestCase):
         self.assertEqual(admin_router._clean_region(""), "")
 
 
+
+class TestDemoTeamsOnlyForDemoAccounts(unittest.TestCase):
+    """QA 21 ต.ค. 2026 L3: demoadmin เคยเพิ่มแถว SLDEMO3 ให้อีเมลผู้ใช้จริงได้"""
+
+    def test_demo_team_on_real_email_is_refused(self):
+        with self.assertRaises(HTTPException) as cm:
+            admin_router._check_demo_pairing("amata.p@sahapat.co.th", "SLDEMO3")
+        self.assertEqual(cm.exception.status_code, 400)
+
+    def test_demo_team_on_demo_email_and_real_team_on_real_email_pass(self):
+        admin_router._check_demo_pairing("demosuper@sahapat.co.th", "SLDEMO1")
+        admin_router._check_demo_pairing("amata.p@sahapat.co.th", "SL397")
+
 if __name__ == "__main__":
     unittest.main()
