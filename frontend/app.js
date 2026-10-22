@@ -10588,6 +10588,19 @@ function _lakehouseAllocationsFromStep3(filterSupId = null, brand = null, skuFil
       }
     }
   }
+  /* แถวผลที่มีหีบแต่ไม่มีแถวพนักงานรองรับ — คนแยกคลังที่กติกาบังคับคลังย้ายหีบไปคลังที่เขาไม่มี
+     (ขั้นที่ 3 สร้างแถว "D408|W9" ให้) เดิมลูปข้างบนวนตามแถวพนักงาน (W1/W2/ว่าง) จึงไม่มีใครหยิบ
+     หีบหายจากข้อมูลส่ง ยอดไม่ตรงเป้า ส่งทีมนั้นไม่ได้ ทั้งที่บนจอตรง (พบ 22 ต.ค. 2026)
+     ส่งออกไปตามที่จอเห็น — server ย้ายเข้าคลังตามกติกาและส่ง 0 ทับคลังเดิมเองอยู่แล้ว */
+  const scopedEmpSet = new Set(scopedEmpRows.map((e) => String(e.emp_id || "").trim()));
+  const scopedSkuSet = new Set([...scopedSkus].map((x) => String(x || "").trim()));
+  for (const hit of new Set(byKey.values())) {
+    if (emitted.has(hit) || (Number(hit.allocated_boxes) || 0) <= 0) continue;
+    if (!scopedEmpSet.has(String(hit.emp_id || "").trim())) continue;
+    if (!scopedSkuSet.has(String(hit.sku || "").trim())) continue;
+    emitted.add(hit);
+    out.push(hit);
+  }
   return out;
 }
 
