@@ -9,6 +9,7 @@ _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from . import _netguard  # noqa: E402
+from . import _isolation, _netguard  # noqa: E402
 
 _netguard.install()
+_isolation.install()

@@ -172,9 +172,11 @@ def main(argv: list[str] | None = None) -> int:
 
     # กันเทสต์ยิงเน็ตขึ้นระบบจริง — ต้องติดตั้งก่อนโหลดเทสต์
     # (unittest discover โหลดไฟล์ในโฟลเดอร์ tests แบบ top-level จึงไม่ผ่าน tests/__init__.py)
-    from tests import _netguard
+    from tests import _isolation, _netguard
 
     _netguard.install()
+    # แคช Manager ไปไฟล์ชั่วคราว — ไม่งั้นเทสที่อ่านลำดับชั้นทางอ้อมเขียนทับ data/managers_cache.json
+    _isolation.install()
 
     suite = build_suite(args.module)
     protected_before = _snapshot_protected()
