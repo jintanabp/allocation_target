@@ -2898,6 +2898,8 @@ def _sup_attrs() -> dict[str, dict[str, str]]:
 #: ป้ายงวดของคนที่มาจากทะเบียนบริษัท — ไม่ผูกงวด จึงไม่ใช่ "YYYY-MM"
 #: เทียบ string กับงวดจริงแล้วต้องแพ้เสมอ (ค่าว่างน้อยกว่าทุกอย่าง) ของจากแคชไฟล์จึงชนะ
 _ROSTER_STAMP = ""
+# คนที่มีแค่ในไฟล์การย้าย (แคชยังไม่มี) — ไม่ผูกงวดเหมือนกัน แต่ต้องแยกจากทะเบียนบริษัท
+_MOVES_STAMP = "moves"
 
 
 def _company_roster_status() -> dict:
@@ -2996,8 +2998,21 @@ def _employee_directory(roster: dict | None = None) -> list[dict]:
             added_from_roster,
         )
 
-    attrs = _sup_attrs()
     moves = {r["emp_id"]: r for r in emp_assignment_store.read_rows()}
+    # แหล่งที่ 4: การย้ายที่ตั้งไว้แล้ว — คนที่ถูกย้ายต้องโผล่เสมอ แม้แคชทั้งสามแหล่งยังไม่มีเขา
+    # (เพิ่ง deploy / แคชหมดอายุ / ยังไม่เคยดึงทะเบียน) เดิมแถวหายไปทั้งที่การย้ายยังมีผลอยู่
+    # แอดมินเห็นว่า「ไม่มีใครถูกย้าย」แล้วอาจตั้งซ้ำ (QA 21 ต.ค. 2026 M3) · ไฟล์การย้ายเก็บ
+    # from_sup + ชื่อไว้แล้ว จึงไม่ต้องออกเน็ต
+    for emp, mv in moves.items():
+        home = str(mv.get("from_sup") or "").strip().upper()
+        if emp in newest or not home:
+            continue
+        nm = str(mv.get("emp_name") or "").strip()
+        if nm:
+            names.setdefault(emp, nm)
+        newest[emp] = (_MOVES_STAMP, home)
+
+    attrs = _sup_attrs()
     out: list[dict] = []
     for emp, (stamp, sup) in sorted(newest.items()):
         a = attrs.get(sup, {})
@@ -3012,7 +3027,9 @@ def _employee_directory(roster: dict | None = None) -> list[dict]:
             "home_region": a.get("region", ""),
             "home_unit": a.get("unit", ""),
             # คนจากทะเบียนบริษัทไม่ผูกงวด — บอกที่มาแทนที่จะโชว์ค่าว่าง
-            "seen_period": stamp or "ทะเบียนบริษัท",
+            "seen_period": (
+                "รายการย้าย" if stamp == _MOVES_STAMP else (stamp or "ทะเบียนบริษัท")
+            ),
             "from_roster": stamp == _ROSTER_STAMP,
             "to_sup": to_sup,
             "to_division": b.get("division", ""),

@@ -66,7 +66,8 @@ class EmpMovesSeesEveryoneTest(unittest.TestCase):
         ทะเบียนเป็นตัวเติม ไม่ใช่ตัวทับ — ถ้าทับ คนที่ทะเบียนบอกว่าย้ายทีมแล้ว
         แต่แอปยังคำนวณด้วยทีมเดิม จะแสดงต้นทางผิด แล้วแอดมินกดย้ายจากทีมที่ไม่ใช่
         """
-        base = self._dir([])
+        # เฉพาะแถวที่มาจากแคชไฟล์จริง (มีงวดกำกับ) — แถวจากไฟล์การย้ายไม่ใช่แคชไฟล์ (QA M3)
+        base = [r for r in self._dir([]) if r["seen_period"] not in ("รายการย้าย", "ทะเบียนบริษัท")]
         if not base:
             self.skipTest("เครื่องนี้ไม่มีแคชไฟล์ให้เทียบ")
         first = base[0]
@@ -130,3 +131,38 @@ def _read(rel: str) -> str:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EmpMovesAlwaysShowsExistingMovesTest(unittest.TestCase):
+    """
+    QA 21 ต.ค. 2026 M3: คนที่ถูกย้ายไว้แล้วต้องโผล่ในหน้านี้เสมอ แม้แคชทั้งสามแหล่ง
+    (emp_cache / tga_lines / ทะเบียนบริษัท) ยังไม่มีเขา — เดิม S516 (SL372→SL359) หายไปทั้งที่
+    การย้ายยังมีผล แอดมินเห็นว่า「ไม่มีใครถูกย้าย」
+    """
+
+    MOVES = [{"emp_id": "ZZMOVE1", "emp_name": "ย้าย ทดสอบ", "from_sup": "SLZZFROM",
+              "to_sup": "SLZZTO", "note": "ขายชายแดน"}]
+
+    def _dir(self, roster, moves):
+        with mock.patch.object(
+            company_roster, "get_company_roster",
+            return_value={"available": False, "rows": roster, "row_count": len(roster)},
+        ), mock.patch.object(admin_router.emp_assignment_store, "read_rows", return_value=moves):
+            return {r["emp_id"]: r for r in admin_router._employee_directory()}
+
+    def test_moved_person_missing_from_every_cache_still_shows(self):
+        rows = self._dir([], self.MOVES)
+        self.assertIn("ZZMOVE1", rows)
+        r = rows["ZZMOVE1"]
+        self.assertEqual(r["home_sup"], "SLZZFROM")
+        self.assertEqual(r["to_sup"], "SLZZTO")
+        self.assertEqual(r["emp_name"], "ย้าย ทดสอบ")
+        self.assertEqual(r["note"], "ขายชายแดน")
+        self.assertEqual(r["seen_period"], "รายการย้าย")
+        self.assertFalse(r["from_roster"])
+
+    def test_roster_still_wins_over_the_move_file_for_home_team(self):
+        roster = [{"emp_id": "ZZMOVE1", "emp_name": "", "super_code": "SLZZROSTER"}]
+        rows = self._dir(roster, self.MOVES)
+        self.assertEqual(rows["ZZMOVE1"]["home_sup"], "SLZZROSTER")
+        self.assertEqual(rows["ZZMOVE1"]["to_sup"], "SLZZTO")
