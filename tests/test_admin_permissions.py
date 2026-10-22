@@ -291,3 +291,33 @@ class TestWiring(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestResetButtonDefaults(unittest.TestCase):
+    """
+    QA 21 ต.ค. 2026 M10: ปุ่ม「คืนค่าตั้งต้น」ในหน้าสิทธิ์เคยติ๊กกลับเป็นชุดก่อนมีตารางสิทธิ์
+    ถ้ากดบันทึก head_admin เสียแท็บ feedback / กติกาการเกลี่ย / กติกาบังคับคลัง / ย้ายพนักงาน /
+    รายงานแก้มือ ทั้งที่ใช้อยู่จริง — ชุดของปุ่มต้องตรงกับไฟล์ที่ track ใน git
+    """
+
+    def test_recommended_set_matches_the_tracked_config(self):
+        import json
+
+        path = os.path.join(REPO, "config", "admin_permissions.json")
+        with open(path, encoding="utf-8") as f:
+            tracked = json.load(f)["roles"]
+        rec = store.recommended_roles()
+        self.assertEqual(set(rec), set(tracked))
+        for role in tracked:
+            with self.subTest(role=role):
+                self.assertEqual(set(rec[role]), set(tracked[role]))
+
+    def test_recommended_set_passes_validation(self):
+        store.validate_roles(store.recommended_roles())
+
+    def test_permissions_api_offers_the_recommended_set_to_the_reset_button(self):
+        from backend.routers import admin as admin_router
+
+        out = admin_router.admin_get_permissions(_admin={})
+        self.assertEqual(out["defaults"], store.recommended_roles())
+        self.assertIn("feedback", out["defaults"]["head_admin"])

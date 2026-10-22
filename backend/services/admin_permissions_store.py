@@ -18,6 +18,7 @@ from ..core.atomic_io import atomic_write_text
 from .admin_capabilities import (
     CONFIGURABLE_ROLES,
     DEFAULT_ROLE_CAPABILITIES,
+    RECOMMENDED_ROLE_CAPABILITIES,
     all_capability_keys,
     can_grant,
     is_grantable,
@@ -44,6 +45,11 @@ def admin_permissions_json_path() -> str:
 
 def default_roles() -> dict[str, list[str]]:
     return {role: list(caps) for role, caps in DEFAULT_ROLE_CAPABILITIES.items()}
+
+
+def recommended_roles() -> dict[str, list[str]]:
+    """ชุดของปุ่ม「คืนค่าตั้งต้น」ในหน้าสิทธิ์ — ไม่ใช่ fallback ตอนไฟล์หาย (ดู admin_capabilities)"""
+    return {role: list(caps) for role, caps in RECOMMENDED_ROLE_CAPABILITIES.items()}
 
 
 def validate_roles(roles: Any) -> dict[str, list[str]]:

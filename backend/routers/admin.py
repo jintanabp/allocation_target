@@ -3051,7 +3051,8 @@ def admin_get_permissions(_admin: dict = Depends(require_admin_user)):
     return {
         "capabilities": admin_capabilities.registry_for_api(),
         "roles": admin_permissions_store.read_roles(),
-        "defaults": admin_permissions_store.default_roles(),
+        # ปุ่ม「คืนค่าตั้งต้น」ใช้ชุดที่บริษัทใช้จริง ไม่ใช่ชุดก่อนมีตารางสิทธิ์ (QA M10)
+        "defaults": admin_permissions_store.recommended_roles(),
         "configurable_roles": [
             {"key": r, "label": admin_capabilities.ROLE_LABELS.get(r, r)}
             for r in admin_capabilities.CONFIGURABLE_ROLES

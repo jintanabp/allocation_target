@@ -154,6 +154,27 @@ DEFAULT_ROLE_CAPABILITIES: dict[str, tuple[str, ...]] = {
 }
 
 
+# ชุดที่ปุ่ม「คืนค่าตั้งต้น」ในหน้าสิทธิ์ติ๊กกลับไปให้ (QA 21 ต.ค. 2026 M10)
+#
+# ต่างจาก DEFAULT_ROLE_CAPABILITIES ข้างบน (ชุดก่อนมีตารางสิทธิ์ ใช้เฉพาะตอนไฟล์หาย และจงใจ
+# ไม่ใส่สิทธิ์ที่เพิ่มทีหลัง) — เดิมปุ่มใช้ชุดนั้น กดแล้วบันทึก head_admin เสียแท็บ feedback /
+# กติกาการเกลี่ย / กติกาบังคับคลัง / ย้ายพนักงาน / รายงานแก้มือ ทั้งที่ใช้อยู่จริง
+# ชุดนี้ต้องตรงกับ config/admin_permissions.json ที่ track ใน git (มีเทสกันไม่ให้หลุด)
+RECOMMENDED_ROLE_CAPABILITIES: dict[str, tuple[str, ...]] = {
+    "head_admin": (
+        "users", "roles", "sl_links", "sku_links",
+        "allocations", "usage_logs", "usage_summary", "team",
+        "emp_moves", "feedback", "alloc_rules", "warehouse_pin_rules", "edit_report",
+    ),
+    "admin": (
+        "users", "sl_links", "sku_links",
+        "allocations", "usage_logs", "usage_summary", "team",
+        "emp_moves", "edit_report",
+    ),
+    "marketing": ("team", "sku_links", "sl_links"),
+}
+
+
 def all_capability_keys() -> tuple[str, ...]:
     return tuple(CAPABILITIES.keys())
 
