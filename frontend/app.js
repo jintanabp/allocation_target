@@ -2482,11 +2482,15 @@ function updateManagerViewControlsUI() {
       modeSel.value = S.managerViewMode;
       const allOpt = modeSel.querySelector('option[value="all"]');
       const regOpt = modeSel.querySelector('option[value="region"]');
-      if (allOpt) allOpt.textContent = "รวมทั้งหมด";
+      // ตัวเลือกที่ปิด: Chrome ซ่อนให้ (hidden) แต่บางเบราว์เซอร์ (เช่น Safari) ยังโชว์เป็นสีเทา
+      // โดยไม่บอกเหตุผล — ต่อท้ายเหตุผลไว้ในชื่อ (QA 21 ต.ค. 2026 Q15) · ไม่เปลี่ยนว่าใครเลือกได้
+      const offWhy = isSupRegion ? " — เฉพาะผู้จัดการ" : " — ไม่มีในขอบเขตของบัญชีนี้";
+      if (allOpt) allOpt.textContent = "รวมทั้งหมด" + (modes.includes("all") ? "" : offWhy);
       if (regOpt) {
-        regOpt.textContent = isSupRegion
+        regOpt.textContent = (isSupRegion
           ? "ทั้งภาค"
-          : (opts.scope_kind === "division" ? "รวมตามภาค" : "ทั้งภาค");
+          : (opts.scope_kind === "division" ? "รวมตามภาค" : "ทั้งภาค"))
+          + (modes.includes("region") ? "" : offWhy);
       }
     }
   }
