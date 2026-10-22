@@ -764,7 +764,12 @@ def admin_supervisor_codes(user: dict = Depends(require_admin_or_marketing_team)
             str(c).strip().upper()
             for c in ((user.get("admin_scope") or {}).get("sl_codes") or set())
         }
-        codes = [c for c in codes if str(c.get("code") if isinstance(c, dict) else c).strip().upper() in allowed]
+        # แถวจาก list_supervisor_codes ใช้คีย์ supervisor_code — เดิมอ่าน "code" ซึ่งไม่มี
+        # แอดมินทุกคน (ยกเว้น dev) จึงได้รายการว่าง แท็บทีมพนักงาน/ไม่ต้องตั้งเป้าใช้ไม่ได้ (QA 21 ต.ค. 2026)
+        codes = [
+            c for c in codes
+            if str(c.get("supervisor_code") if isinstance(c, dict) else c).strip().upper() in allowed
+        ]
     return {"supervisors": codes, "count": len(codes)}
 
 
