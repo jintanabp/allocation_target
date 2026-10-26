@@ -16,7 +16,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=2026102102" />
+  <link rel="stylesheet" href="style.css?v=2026102601" />
 </head>
 
 <body>
@@ -1420,6 +1420,26 @@
             เขต ดิวิชัน และหน่วยขายในแถวเป้าของพนักงานยังเป็นของเขาเองทุกประการ
             ตอนส่งกลับ Target Sun จึงลงแถวเดิม ไม่ผิดเขต
           </p>
+          <details class="moves-manual" id="empManualBox">
+            <summary>➕ เพิ่มรหัสที่ไม่มีในทะเบียนพนักงาน (เช่น หน่วยส่งออก)</summary>
+            <p class="admin-card__note">
+              ใช้กับรหัสที่ไม่มีตัวเซลในระบบพนักงาน แต่มีเป้าใน Target Sun ·
+              เป้า เขต หน่วยขาย และคลัง ดึงจาก Target Sun ตามรหัสนี้ ·
+              ถ้างวดไหน Target Sun ยังไม่มีเป้าของรหัสนี้ จะเห็นในรายชื่อแต่ตั้งเป้าไม่ได้
+            </p>
+            <div class="moves-manual__form">
+              <input type="text" id="empManualId" class="field-input field-input--sm"
+                     placeholder="รหัส เช่น S005" maxlength="20" aria-label="รหัสที่จะเพิ่ม" />
+              <input type="text" id="empManualName" class="field-input field-input--sm"
+                     placeholder="ชื่อ เช่น หน่วยส่งออก" aria-label="ชื่อที่หัวหน้าทีมจะเห็น" />
+              <select id="empManualTo" class="field-input field-input--sm" data-empty-label="— เลือกทีม —"
+                      onfocus="_empMoveFillOptions(this)" onmousedown="_empMoveFillOptions(this)"
+                      aria-label="ทีมที่จะเกลี่ยเป้าให้"><option value="">— เลือกทีม —</option></select>
+              <input type="text" id="empManualNote" class="field-input field-input--sm"
+                     placeholder="หมายเหตุ" aria-label="หมายเหตุ" />
+              <button type="button" class="admin-btn-primary admin-btn-primary--sm" onclick="addManualEmp()">เพิ่ม</button>
+            </div>
+          </details>
           <div id="empMovesBody" class="admin-inventory"></div>
         </section>
       </div>
@@ -2222,8 +2242,8 @@
   <script src="vendor/msal-browser.min.js"></script>
   <!-- ตรรกะล้วน (ตัวแปลงเลข/คณิตการเกลี่ย) — ต้องมาก่อน app.js
        ไฟล์นี้มีเทสจริงด้วย node --test tests/logic.test.js -->
-  <script src="logic.js?v=2026102102"></script>
-  <script src="app.js?v=2026102102"></script>
+  <script src="logic.js?v=2026102601"></script>
+  <script src="app.js?v=2026102601"></script>
 </body>
 
 </html>

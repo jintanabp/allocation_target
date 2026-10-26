@@ -41,6 +41,8 @@ def filter_employees_for_display(
 ) -> tuple[pd.DataFrame, int, int]:
     """
     Keep employees with a TGA target this period OR same-month-last-year sales.
+    รหัสที่แอดมินเพิ่มเอง (manual_added) แสดงเสมอ — ไม่มีประวัติขายให้พึ่ง ถ้างวดนี้
+    Target Sun ยังไม่มีเป้าของเขา ต้องเห็นว่า "อยู่ในทีมแต่ไม่มีเป้า" ไม่ใช่หายเงียบ
 
     Returns (visible_df, hidden_count, ly_only_without_target_count).
     """
@@ -53,6 +55,8 @@ def filter_employees_for_display(
     has_target = df["has_tga_rows"].map(_truthy) & (target_sun > 0)
     has_ly = ly_vals > 0
     visible = has_target | has_ly
+    if "manual_added" in df.columns:
+        visible = visible | df["manual_added"].map(_truthy)
     hidden = int((~visible).sum())
     ly_only = int((~has_target & has_ly).sum())
     return df.loc[visible].copy(), hidden, ly_only

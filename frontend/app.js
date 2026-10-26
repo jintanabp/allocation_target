@@ -4909,6 +4909,14 @@ function _noTargetSpareBaht() {
  */
 function _empMovedBadgeHtml(e, opts = {}) {
   const from = String(e?.reassigned_from || "").trim();
+  if (!from && e?.manual_added) {
+    // รหัสที่แอดมินเพิ่มเอง (เช่นหน่วยส่งออก) — ไม่มีประวัติขาย ไม่มีทีมต้นทาง
+    const title = "แอดมินเพิ่มรหัสนี้เอง (ไม่มีในทะเบียนพนักงาน) — เป้า/เขต/คลังมาจาก Target Sun";
+    if (opts.compact) {
+      return `<span class="emp-moved-star" title="${escH(title)}" aria-label="${escH(title)}">*</span>`;
+    }
+    return `<span class="emp-moved-chip" title="${escH(title)}">เพิ่มโดยแอดมิน</span>`;
+  }
   if (!from) return "";
   const title = `ย้ายมาจากทีม ${from} — เกลี่ยเป้ากับทีมนี้ แต่เขต/หน่วยขายยังเป็นของเดิม`;
   if (opts.compact) {
@@ -15500,7 +15508,7 @@ function _empMoveFillOptions(sel) {
   const sups = (_empMoveData && _empMoveData.supervisors) || [];
   const cur = sel.value;
   sel.innerHTML =
-    `<option value="">— อยู่ทีมจริง —</option>` +
+    `<option value="">${escH(sel.dataset.emptyLabel || "— อยู่ทีมจริง —")}</option>` +
     sups
       .map((sv) => {
         const label = `${sv.code} · ${_empMoveScopeText(sv.division, sv.region, sv.unit)}`;
@@ -15508,7 +15516,8 @@ function _empMoveFillOptions(sel) {
       })
       .join("");
   sel.value = cur;
-  sel.dataset.full = "1";
+  // ยังไม่มีรายชื่อทีม (แตะก่อนโหลดเสร็จ) — อย่าจำว่าเติมแล้ว ไม่งั้นได้ select ว่างถาวร
+  if (sups.length) sel.dataset.full = "1";
 }
 
 function _empMoveRestoreUnsaved() {
@@ -15547,7 +15556,8 @@ function renderEmpMoves() {
       // ต้องรวม "หน่วย" ทั้งรหัสดิบ (credit/van) และคำไทยที่โชว์บนจอ (เครดิต/รถเงินสด)
       // เดิมพิมพ์คำที่เห็นอยู่ตรงหน้าแล้วได้ 0 แถว
       [r.emp_id, r.emp_name, r.home_sup, r.home_division, r.home_region, r.home_unit,
-       r.to_sup, _empMoveScopeText(r.home_division, r.home_region, r.home_unit)]
+       r.to_sup, _empMoveScopeText(r.home_division, r.home_region, r.home_unit),
+       r.manual ? "เพิ่มเอง" : ""]
         .join(" ").toLowerCase().includes(q)
     );
   }
@@ -15567,8 +15577,8 @@ function renderEmpMoves() {
   // เดิมสร้าง <option> ครบทุกทีม (91 ตัว) ให้ทุกแถว (300 แถว) = 27,300 node
   // คิดเป็น 84% ของ DOM ทั้งหน้า วาดตารางครั้งหนึ่ง 459ms และพิมพ์ค้นหาตัวที่สอง
   // หน่วง 784ms · ตอนนี้ใส่มาแค่ตัวที่เลือกอยู่ แล้วเติมรายการเต็มตอนผู้ใช้แตะครั้งแรก
-  const opts = (cur) => {
-    const head = `<option value="">— อยู่ทีมจริง —</option>`;
+  const opts = (cur, emptyLabel = "— อยู่ทีมจริง —") => {
+    const head = `<option value="">${escH(emptyLabel)}</option>`;
     if (!cur) return head;
     const sv = sups.find((x) => x.code === cur);
     return head + `<option value="${escH(cur)}" selected>${escH(
@@ -15616,18 +15626,22 @@ function renderEmpMoves() {
     shown
       .map((r) => {
         const moved = !!r.to_sup && r.to_sup !== r.home_sup;
+        // รหัสที่เพิ่มเองไม่มีทีมจริง — ค่าว่างใน select แปลว่า "เอาออก" ไม่ใช่ "กลับทีมจริง"
+        const emptyLabel = r.manual ? "— เอาออกจากทีม —" : "— อยู่ทีมจริง —";
         return `<tr${moved ? ' class="row-moved"' : ""}>
           <td>
             <code>${escH(r.emp_id)}</code>
+            ${r.manual ? `<span class="moves-manual-chip" title="ไม่มีในทะเบียนพนักงาน — แอดมินเพิ่มเอง">เพิ่มเอง</span>` : ""}
             <span class="moves-emp-name">${escH(r.emp_name || "—")}</span>
           </td>
-          <td><code>${escH(r.home_sup)}</code></td>
-          <td class="admin-muted">${escH(_empMoveScopeText(r.home_division, r.home_region, r.home_unit))}</td>
+          <td>${r.manual ? `<span class="admin-muted">ไม่มีในทะเบียน</span>` : `<code>${escH(r.home_sup)}</code>`}</td>
+          <td class="admin-muted">${escH(r.manual ? "—" : _empMoveScopeText(r.home_division, r.home_region, r.home_unit))}</td>
           <td>
             <select class="field-input field-input--sm" id="empMoveTo_${escH(r.emp_id)}"
+                    data-empty-label="${escH(emptyLabel)}"
                     onfocus="_empMoveFillOptions(this)" onmousedown="_empMoveFillOptions(this)"
                     onchange="_empMoveTouched('${escH(r.emp_id)}')"
-                    aria-label="ทีมที่จะเกลี่ยเป้าแทนสำหรับ ${escH(r.emp_id)}">${opts(r.to_sup)}</select>
+                    aria-label="ทีมที่จะเกลี่ยเป้าแทนสำหรับ ${escH(r.emp_id)}">${opts(r.to_sup, emptyLabel)}</select>
             ${moved ? `<span class="moves-to-scope">→ ${escH(_empMoveScopeText(r.to_division, r.to_region, r.to_unit))}</span>` : ""}
           </td>
           <td><input type="text" class="field-input field-input--sm" id="empMoveNote_${escH(r.emp_id)}"
@@ -15663,6 +15677,15 @@ async function saveEmpMove(empId) {
     toast("ทีมปลายทางเป็นทีมเดิมอยู่แล้ว", "amber");
     return;
   }
+  // รหัสที่เพิ่มเองไม่มีทีมจริงให้กลับ — เอาออกแล้วเป้าของรหัสนี้ไม่มีทีมไหนเกลี่ยให้เลย
+  if (row?.manual && !toSup) {
+    const ok = await _confirmDialog(
+      `เอา ${emp} ${row.emp_name || ""} ออกจากทีม ${row.to_sup}\n\n`
+      + "รหัสนี้ไม่มีในทะเบียนพนักงาน — เอาออกแล้วจะไม่โผล่ในทีมไหนเลย และเป้าของรหัสนี้จะไม่ถูกเกลี่ย",
+      { title: "เอารหัสที่เพิ่มเองออก", okLabel: "เอาออก", cancelLabel: "ยกเลิก" }
+    );
+    if (!ok) return;
+  }
   // ย้ายข้ามภาค/ดิวิชันได้โดยตั้งใจ (แอดมินย้ายได้ทุกทีมเหมือน dev) แต่ต้องเห็นก่อนว่า
   // กำลังข้ามอะไร — การย้าย 1 คนเปลี่ยนยอดรวมของทั้งทีมต้นทางและทีมปลายทางในงวดนั้น
   if (row && toSup) {
@@ -15697,6 +15720,7 @@ async function saveEmpMove(empId) {
           from_sup: row?.home_sup || "",
           emp_name: row?.emp_name || "",
           note,
+          manual: !!row?.manual,
         }),
       },
       60000
@@ -15709,13 +15733,56 @@ async function saveEmpMove(empId) {
     toast(
       toSup
         ? `✅ ${emp} จะไปเกลี่ยเป้ากับทีม ${toSup} — ล้างแคชให้แล้ว ${j.payload_cache_cleared || 0} ไฟล์`
-        : `✅ ปลดการย้ายของ ${emp} แล้ว — กลับไปอยู่ทีมจริง`,
+        : row?.manual
+          ? `✅ เอา ${emp} ออกแล้ว`
+          : `✅ ปลดการย้ายของ ${emp} แล้ว — กลับไปอยู่ทีมจริง`,
       "green"
     );
     delete _empMoveDraft[emp];   // บันทึกแล้ว ไม่ใช่ค่าค้างอีกต่อไป
     await loadEmpMoves();
   } catch (e) {
     toast("❌ " + _userFacingError(e, "บันทึกการย้ายไม่สำเร็จ"), "red");
+  }
+}
+
+/* เพิ่มรหัสที่ไม่มีในทะเบียนพนักงาน (เช่น S005 หน่วยส่งออกของ SL532)
+   ใช้ endpoint เดียวกับการย้าย แค่ไม่มีทีมต้นทาง — เซิร์ฟเวอร์ตรวจซ้ำว่ารหัสนี้
+   ไม่มีทีมจริงอยู่แล้ว (ถ้ามี ต้องไปย้ายจากตารางแทน) */
+async function addManualEmp() {
+  const val = (id) => String(document.getElementById(id)?.value || "").trim();
+  const emp = val("empManualId").toUpperCase();
+  const name = val("empManualName");
+  const toSup = val("empManualTo");
+  const note = val("empManualNote");
+  if (!emp || !name || !toSup) {
+    toast("กรอกรหัส ชื่อ และเลือกทีมให้ครบ", "amber");
+    return;
+  }
+  try {
+    const res = await fetchWithTimeout(
+      `${API_BASE_URL}/admin/emp-assignments`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ emp_id: emp, emp_name: name, to_sup: toSup, note, manual: true }),
+      },
+      60000
+    );
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(_formatApiErrorDetail(j) || "เพิ่มไม่สำเร็จ");
+    }
+    toast(`✅ เพิ่ม ${emp} เข้าทีม ${toSup} แล้ว — หัวหน้าทีมกด「โหลด」ใหม่จะเห็น`, "green");
+    for (const id of ["empManualId", "empManualName", "empManualNote"]) {
+      const el = document.getElementById(id);
+      if (el) el.value = "";
+    }
+    // ให้เห็นแถวที่เพิ่งเพิ่มทันที — ตัวกรอง「เฉพาะที่ย้ายแล้ว」ครอบรหัสที่เพิ่มเองอยู่แล้ว
+    const search = document.getElementById("empMoveSearch");
+    if (search) search.value = emp;
+    await loadEmpMoves();
+  } catch (e) {
+    toast("❌ " + _userFacingError(e, "เพิ่มรหัสไม่สำเร็จ"), "red");
   }
 }
 

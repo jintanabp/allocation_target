@@ -109,6 +109,7 @@ from ..services.target_baseline import (
     restore_baseline_to_target_files,
 )
 from ..core.targets import load_target_csv_for
+from ..core.employee_filter import is_van_employee_id
 from ..services.usage_log_store import append_log, read_logs
 # ใช้ตัวเดียวกับที่ log_from_user ใช้เดา role ของผู้ใช้ธรรมดา —
 # dict ของผู้ใช้ทั่วไปไม่มีคีย์ "role" (มีแต่ของแอดมิน) จะอ่านตรง ๆ ไม่ได้
@@ -2946,6 +2947,8 @@ class EmpAssignmentBody(BaseModel):
     from_sup: str = ""
     emp_name: str = ""
     note: str = ""
+    """True = เพิ่มรหัสที่ไม่มีใน Dim_Salesman เอง (เช่นหน่วยส่งออก) — ไม่มีทีมต้นทาง"""
+    manual: bool = False
 
 
 def _sup_attrs() -> dict[str, dict[str, str]]:
@@ -2971,6 +2974,8 @@ def _sup_attrs() -> dict[str, dict[str, str]]:
 _ROSTER_STAMP = ""
 # คนที่มีแค่ในไฟล์การย้าย (แคชยังไม่มี) — ไม่ผูกงวดเหมือนกัน แต่ต้องแยกจากทะเบียนบริษัท
 _MOVES_STAMP = "moves"
+# รหัสที่แอดมินเพิ่มเอง (ไม่มีทีมต้นทาง) — ไม่มีในแคชไหนเลยจนกว่าทีมปลายทางจะถูกเปิด
+_MANUAL_STAMP = "manual"
 
 
 def _company_roster_status() -> dict:
@@ -3076,12 +3081,12 @@ def _employee_directory(roster: dict | None = None) -> list[dict]:
     # from_sup + ชื่อไว้แล้ว จึงไม่ต้องออกเน็ต
     for emp, mv in moves.items():
         home = str(mv.get("from_sup") or "").strip().upper()
-        if emp in newest or not home:
+        if emp in newest:
             continue
         nm = str(mv.get("emp_name") or "").strip()
         if nm:
             names.setdefault(emp, nm)
-        newest[emp] = (_MOVES_STAMP, home)
+        newest[emp] = (_MOVES_STAMP, home) if home else (_MANUAL_STAMP, "")
 
     attrs = _sup_attrs()
     out: list[dict] = []
@@ -3089,6 +3094,11 @@ def _employee_directory(roster: dict | None = None) -> list[dict]:
         a = attrs.get(sup, {})
         mv = moves.get(emp)
         to_sup = mv["to_sup"] if mv else ""
+        # รหัสที่เพิ่มเองโผล่ในแคชแถวเป้าของทีมปลายทางได้ (หลังทีมนั้นถูกเปิด) — นั่นไม่ใช่
+        # ทีมจริงของเขา ถ้าโชว์เป็นทีมจริง แถวจะดูเหมือน "ไม่ได้ย้าย" และแอดมินไม่รู้ว่าเพิ่มเอง
+        if emp_assignment_store.is_manual(mv) and sup in ("", to_sup):
+            stamp, sup = _MANUAL_STAMP, ""
+            a = {}
         b = attrs.get(to_sup, {}) if to_sup else {}
         out.append({
             "emp_id": emp,
@@ -3099,9 +3109,12 @@ def _employee_directory(roster: dict | None = None) -> list[dict]:
             "home_unit": a.get("unit", ""),
             # คนจากทะเบียนบริษัทไม่ผูกงวด — บอกที่มาแทนที่จะโชว์ค่าว่าง
             "seen_period": (
-                "รายการย้าย" if stamp == _MOVES_STAMP else (stamp or "ทะเบียนบริษัท")
+                "รายการย้าย" if stamp == _MOVES_STAMP
+                else "เพิ่มเอง" if stamp == _MANUAL_STAMP
+                else (stamp or "ทะเบียนบริษัท")
             ),
             "from_roster": stamp == _ROSTER_STAMP,
+            "manual": stamp == _MANUAL_STAMP,
             "to_sup": to_sup,
             "to_division": b.get("division", ""),
             "to_region": b.get("region", ""),
@@ -3203,6 +3216,40 @@ def admin_emp_assignments(_admin: dict = Depends(require_capability("emp_moves")
     }
 
 
+_MANUAL_EMP_RE = re.compile(r"[A-Z0-9][A-Z0-9_-]{0,19}")
+
+
+def _check_manual_employee(emp: str, emp_name: str, prev: dict | None) -> None:
+    """
+    ด่านของ "เพิ่มรหัสเอง" — รหัสผิดรูปหรือรหัสที่มีทีมจริงอยู่แล้ว ต้องไม่ผ่าน
+
+    รหัสที่มีใน Dim_Salesman แล้วต้องไปทางย้ายปกติ (มีทีมต้นทาง) ไม่งั้นทีมต้นทางไม่ถูก
+    บันทึก แอดมินคนถัดไปไม่รู้ว่าเขามาจากไหน · รหัส V ถูกตัดทิ้งทุกจอ (drop_van_employees)
+    ถ้ายอมให้เพิ่ม จะบันทึกสำเร็จแต่ไม่โผล่ที่ไหนเลย
+    """
+    if not _MANUAL_EMP_RE.fullmatch(emp):
+        raise HTTPException(400, detail="รหัสพนักงานใช้ได้แค่ตัวอักษรอังกฤษ ตัวเลข - และ _ (ไม่เกิน 20 ตัว)")
+    if is_van_employee_id(emp):
+        raise HTTPException(400, detail=f"รหัสขึ้นต้นด้วย V ({emp}) ถูกตัดออกจากทุกหน้าจอ — เพิ่มไม่ได้")
+    if not str(emp_name or "").strip():
+        raise HTTPException(400, detail="ต้องใส่ชื่อ (เช่น หน่วยส่งออก) — หัวหน้าทีมจะเห็นชื่อนี้ในรายชื่อ")
+    if prev and not emp_assignment_store.is_manual(prev):
+        raise HTTPException(
+            400,
+            detail=f"{emp} ถูกย้ายจากทีม {prev.get('from_sup')} อยู่แล้ว — แก้ที่แถวของเขาในตารางแทน",
+        )
+    home = next(
+        (r.get("home_sup") for r in _employee_directory()
+         if r.get("emp_id") == emp and r.get("home_sup") and not r.get("manual")),
+        "",
+    )
+    if home:
+        raise HTTPException(
+            400,
+            detail=f"{emp} มีในทะเบียนพนักงานแล้ว อยู่ทีม {home} — ค้นหาเขาในตารางแล้วเลือกทีมแทน",
+        )
+
+
 @router.post("/emp-assignments")
 def admin_set_emp_assignment(
     body: EmpAssignmentBody,
@@ -3223,6 +3270,9 @@ def admin_set_emp_assignment(
     from_sup = emp_assignment_store.norm_sup(body.from_sup) or (
         prev.get("from_sup") if prev else ""
     )
+    if body.manual and to_sup:
+        _check_manual_employee(emp, body.emp_name, prev)
+        from_sup = ""
     if to_sup and to_sup == from_sup:
         raise HTTPException(400, detail="ทีมปลายทางเป็นทีมเดิมอยู่แล้ว")
     if to_sup:
@@ -3264,20 +3314,27 @@ def admin_set_emp_assignment(
     )
     # ต้องลง audit ด้วย ไม่ใช่แค่ logger — การย้ายเปลี่ยนยอดรวมของทั้งทีมต้นทางและปลายทาง
     # และตอนนี้แอดมิน (ไม่ใช่แค่ dev) ย้ายได้แล้ว จึงต้องตามรอยได้จากหน้าแอดมิน
+    manual = emp_assignment_store.is_manual({"from_sup": from_sup})
+    if to_sup:
+        title = f"เพิ่มรหัส {emp} เข้าทีม {to_sup} (ไม่มีในทะเบียน)" if manual else f"ย้ายพนักงาน {emp} → {to_sup}"
+    else:
+        title = f"เอารหัสที่เพิ่มเอง {emp} ออก" if manual else f"ปลดการย้ายพนักงาน {emp}"
     _audit_admin(
         admin,
         "admin_emp_assignment",
-        (f"ย้ายพนักงาน {emp} → {to_sup}" if to_sup else f"ปลดการย้ายพนักงาน {emp}"),
+        title,
         f"จากทีม {from_sup or '-'} · ล้างแคช {cleared} ไฟล์",
         level="warn",
         # ผูกทีมปลายทาง (หรือทีมต้นทางเมื่อปลดการย้าย) — แอดมินที่มีขอบเขตจะเห็นรายการนี้ในบันทึก (ข12)
-        sup_id=to_sup or from_sup or "",
-        context={"emp_id": emp, "from_sup": from_sup, "to_sup": to_sup},
+        # รหัสที่เพิ่มเองไม่มีทีมต้นทาง ตอนเอาออกจึงผูกกับทีมที่เคยอยู่แทน
+        sup_id=to_sup or from_sup or (prev or {}).get("to_sup") or "",
+        context={"emp_id": emp, "from_sup": from_sup, "to_sup": to_sup, "manual": manual},
     )
     return {
         "status": "ok",
         "emp_id": emp,
         "to_sup": to_sup,
+        "manual": manual,
         "assignments": rows,
         "payload_cache_cleared": cleared,
     }

@@ -13,6 +13,12 @@
 
 อยู่ถาวรจนกว่าจะปลด (ไม่ผูกกับงวด) — งวดที่กระจายไปแล้วไม่ย้อนไปแก้ ผลกระจายเก่า
 เก็บอยู่ในไฟล์ผลของงวดนั้นตามเดิม
+
+**แถวที่ from_sup ว่าง = แอดมินเพิ่มเอง** (26 ต.ค. 2026) — รหัสที่ไม่มีใน Dim_Salesman
+เลย เช่น S005 หน่วยส่งออกของ SL532 ที่ไม่มีตัวเซลแต่มีเป้าใน Target Sun · ใช้กลไก
+เดียวกับการย้าย: ใส่รหัสเข้ารายชื่อทีมปลายทาง แล้วเป้าดึงจาก Target Sun ตามรหัส
+(เขต/หน่วยขาย/คลังมาจากแถวเป้าของรหัสนั้นเอง) ถ้าวันหนึ่ง Dim_Salesman มีรหัสนี้
+ขึ้นมา มันจะกลายเป็นการย้ายธรรมดาเอง ไม่โผล่สองทีม
 """
 
 from __future__ import annotations
@@ -180,6 +186,11 @@ def set_assignment(
         return write_rows(rows)
 
 
+def is_manual(row: dict[str, Any] | None) -> bool:
+    """แถวที่แอดมินเพิ่มรหัสเอง (ไม่มีทีมต้นทางใน Dim_Salesman)"""
+    return bool(row) and not norm_sup(row.get("from_sup"))
+
+
 def assignment_for_emp(emp_id: str) -> dict[str, Any] | None:
     emp = norm_emp(emp_id)
     for r in read_rows():
@@ -243,6 +254,10 @@ def apply_to_employee_list(sup_id: str, rows: list[dict[str, Any]]) -> tuple[lis
             #  กับเพื่อนร่วมทีม — ต้องรู้ตั้งแต่แรกว่าทำไม)
             "reassigned_from": a.get("from_sup") or "",
         }
+        if is_manual(a):
+            # ไม่มีทีมต้นทางให้บอก — ติดธงแยก ให้หน้าจอขึ้นป้าย "เพิ่มโดยแอดมิน" และ
+            # ไม่ถูกซ่อนแม้งวดนี้ยังไม่มีเป้า (ดู filter_employees_for_display)
+            row["manual_added"] = True
         if a.get("emp_name"):
             row["emp_name"] = a["emp_name"]
         kept.append(row)

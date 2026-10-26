@@ -4734,6 +4734,33 @@ td.alloc-summary-status--none { color: var(--text-3); opacity: 0.7; }
   color: var(--text-3);
   margin-top: 4px;
 }
+/* ฟอร์มเพิ่มรหัสที่ไม่มีในทะเบียน — พับไว้ เพราะใช้นาน ๆ ครั้ง ตารางย้ายยังเป็นตัวหลัก */
+.moves-manual {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+.moves-manual > summary { cursor: pointer; font-weight: 600; }
+.moves-manual .admin-card__note { margin: 8px 0; }
+.moves-manual__form {
+  display: grid;
+  grid-template-columns: 9rem minmax(10rem, 1fr) minmax(12rem, 1.4fr) minmax(8rem, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+@media (max-width: 760px) {
+  .moves-manual__form { grid-template-columns: 1fr; }
+}
+.moves-manual-chip {
+  display: inline-block;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--amber-bg);
+  color: var(--amber);
+  white-space: nowrap;
+}
 
 .brand-chip {
   display: inline-block;
