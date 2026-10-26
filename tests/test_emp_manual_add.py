@@ -242,6 +242,37 @@ class TestAdminEndpoint(_TempDir):
         self.assertIn("SL777", cm.exception.detail)
         self.assertIsNone(store.assignment_for_emp(UNIT))
 
+    def test_the_check_uses_the_roster_not_a_full_cache_scan(self):
+        """
+        ไล่ CSV ทุกทีม ~10 วินาทีบนเซิร์ฟเวอร์ — ผู้ใช้กด「เพิ่ม」แล้วเห็นว่า "ไม่มีอะไรเกิด"
+        (26 ต.ค. 2026) · มีทะเบียนแล้วต้องไม่เรียก _employee_directory
+        """
+        with mock.patch.object(admin_router, "_employee_directory",
+                               side_effect=AssertionError("ห้ามไล่แคชไฟล์")):
+            res, _ = self._post([{"emp_id": "S041", "emp_name": "", "super_code": TEAM}],
+                                emp_id=UNIT, emp_name="หน่วยส่งออก", to_sup=TEAM, manual=True)
+        self.assertTrue(res["manual"])
+
+    def test_without_a_roster_it_falls_back_to_the_file_caches(self):
+        pd.DataFrame([{"emp_id": UNIT, "sku": "A", "qty": 1}]).to_csv(
+            "data/tga_lines_SL777_2026_11.csv", index=False)
+        with mock.patch.object(company_roster, "get_company_roster",
+                               return_value={"available": False, "rows": []}):
+            self.assertIsNone(admin_router._registry_home_team(UNIT))
+        audits = []
+        with self.assertRaises(HTTPException) as cm, \
+             mock.patch.object(admin_router, "ensure_not_demo_for_global_write"), \
+             mock.patch.object(admin_router, "_sup_attrs",
+                               return_value={TEAM: {"login_kind": "supervisor_acc"}}), \
+             mock.patch.object(admin_router, "_audit_admin", side_effect=audits.append), \
+             mock.patch.object(company_roster, "get_company_roster",
+                               return_value={"available": False, "rows": []}):
+            admin_router.admin_set_emp_assignment(
+                admin_router.EmpAssignmentBody(emp_id=UNIT, emp_name="x", to_sup=TEAM, manual=True),
+                admin=self.ADMIN,
+            )
+        self.assertIn("SL777", cm.exception.detail)
+
     def test_an_already_moved_employee_cannot_be_re_added_as_manual(self):
         store.set_assignment("S516", "SL359", from_sup="SL372")
         with self.assertRaises(HTTPException):
@@ -296,6 +327,24 @@ class TestTheScreen(unittest.TestCase):
     def test_it_posts_the_manual_flag(self):
         i = self.js.index("async function addManualEmp()")
         self.assertIn("manual: true", self.js[i:i + 2500])
+
+    def test_the_button_shows_it_is_working(self):
+        """ผู้ใช้กดแล้วเห็นว่า "ไม่มีอะไรเกิด" — ต้องเปลี่ยนข้อความ/ปิดปุ่มระหว่างรอ แล้วคืนเสมอ"""
+        self.assertIn('id="empManualAddBtn"', self.html)
+        i = self.js.index("async function addManualEmp()")
+        block = self.js[i:self.js.index("\n}\n", i)]
+        self.assertIn("กำลังเพิ่ม", block)
+        self.assertIn("btn.disabled = true", block)
+        self.assertIn("finally", block)
+
+    def test_clicking_before_the_list_loads_says_so(self):
+        i = self.js.index("async function addManualEmp()")
+        self.assertIn("if (!_empMoveData)", self.js[i:i + 1200])
+
+    def test_no_second_full_reload_after_adding(self):
+        i = self.js.index("async function addManualEmp()")
+        block = self.js[i:self.js.index("\n}\n", i)]
+        self.assertNotIn("loadEmpMoves()", block)
 
     def test_the_team_screens_label_it(self):
         i = self.js.index("function _empMovedBadgeHtml")

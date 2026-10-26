@@ -3190,6 +3190,60 @@ def admin_my_permissions(user: dict = Depends(require_admin_or_marketing_team)):
     }
 
 
+_MANUAL_EMP_RE = re.compile(r"[A-Z0-9][A-Z0-9_-]{0,19}")
+
+
+def _registry_home_team(emp: str) -> str | None:
+    """
+    ทีมจริงของรหัสนี้จากทะเบียนพนักงานทั้งบริษัท (แคช) — "" = ไม่มีในทะเบียน · None = ยังไม่มีทะเบียน
+
+    ทะเบียนคือ Dim_Salesman ทั้งบริษัท จึงตอบได้ครบว่ารหัสนี้ "มีตัวเซล" หรือไม่ ·
+    เดิมไล่ _employee_directory ซึ่งอ่าน CSV ทุกทีมใน data/ (~10 วินาทีบนเซิร์ฟเวอร์)
+    ระหว่างนั้นปุ่ม「เพิ่ม」ดูเหมือนกดแล้วไม่มีอะไรเกิด (ผู้ใช้เจอจริง 26 ต.ค. 2026)
+    """
+    roster = _company_roster_status()
+    if not roster.get("available"):
+        return None
+    for r in roster.get("rows") or []:
+        if str(r.get("emp_id") or "").strip().upper() == emp:
+            return str(r.get("super_code") or "").strip().upper()
+    return ""
+
+
+def _check_manual_employee(emp: str, emp_name: str, prev: dict | None) -> None:
+    """
+    ด่านของ "เพิ่มรหัสเอง" — รหัสผิดรูปหรือรหัสที่มีทีมจริงอยู่แล้ว ต้องไม่ผ่าน
+
+    รหัสที่มีใน Dim_Salesman แล้วต้องไปทางย้ายปกติ (มีทีมต้นทาง) ไม่งั้นทีมต้นทางไม่ถูก
+    บันทึก แอดมินคนถัดไปไม่รู้ว่าเขามาจากไหน · รหัส V ถูกตัดทิ้งทุกจอ (drop_van_employees)
+    ถ้ายอมให้เพิ่ม จะบันทึกสำเร็จแต่ไม่โผล่ที่ไหนเลย
+    """
+    if not _MANUAL_EMP_RE.fullmatch(emp):
+        raise HTTPException(400, detail="รหัสพนักงานใช้ได้แค่ตัวอักษรอังกฤษ ตัวเลข - และ _ (ไม่เกิน 20 ตัว)")
+    if is_van_employee_id(emp):
+        raise HTTPException(400, detail=f"รหัสขึ้นต้นด้วย V ({emp}) ถูกตัดออกจากทุกหน้าจอ — เพิ่มไม่ได้")
+    if not str(emp_name or "").strip():
+        raise HTTPException(400, detail="ต้องใส่ชื่อ (เช่น หน่วยส่งออก) — หัวหน้าทีมจะเห็นชื่อนี้ในรายชื่อ")
+    if prev and not emp_assignment_store.is_manual(prev):
+        raise HTTPException(
+            400,
+            detail=f"{emp} ถูกย้ายจากทีม {prev.get('from_sup')} อยู่แล้ว — แก้ที่แถวของเขาในตารางแทน",
+        )
+    home = _registry_home_team(emp)
+    if home is None:
+        # ยังไม่เคยดึงทะเบียนทั้งบริษัท — ถอยไปไล่แคชไฟล์ทั้งหมด (ช้า ~10 วินาที แต่ครบ)
+        home = next(
+            (r.get("home_sup") for r in _employee_directory()
+             if r.get("emp_id") == emp and r.get("home_sup") and not r.get("manual")),
+            "",
+        )
+    if home:
+        raise HTTPException(
+            400,
+            detail=f"{emp} มีในทะเบียนพนักงานแล้ว อยู่ทีม {home} — ค้นหาเขาในตารางแล้วเลือกทีมแทน",
+        )
+
+
 @router.get("/emp-assignments")
 def admin_emp_assignments(_admin: dict = Depends(require_capability("emp_moves"))):
     """รายชื่อพนักงาน + ทีมที่สังกัดจริง + ทีมที่ย้ายไปเกลี่ยเป้าด้วย (ถ้ามี)"""
@@ -3214,40 +3268,6 @@ def admin_emp_assignments(_admin: dict = Depends(require_capability("emp_moves")
             and not is_demo_supervisor(c)
         ],
     }
-
-
-_MANUAL_EMP_RE = re.compile(r"[A-Z0-9][A-Z0-9_-]{0,19}")
-
-
-def _check_manual_employee(emp: str, emp_name: str, prev: dict | None) -> None:
-    """
-    ด่านของ "เพิ่มรหัสเอง" — รหัสผิดรูปหรือรหัสที่มีทีมจริงอยู่แล้ว ต้องไม่ผ่าน
-
-    รหัสที่มีใน Dim_Salesman แล้วต้องไปทางย้ายปกติ (มีทีมต้นทาง) ไม่งั้นทีมต้นทางไม่ถูก
-    บันทึก แอดมินคนถัดไปไม่รู้ว่าเขามาจากไหน · รหัส V ถูกตัดทิ้งทุกจอ (drop_van_employees)
-    ถ้ายอมให้เพิ่ม จะบันทึกสำเร็จแต่ไม่โผล่ที่ไหนเลย
-    """
-    if not _MANUAL_EMP_RE.fullmatch(emp):
-        raise HTTPException(400, detail="รหัสพนักงานใช้ได้แค่ตัวอักษรอังกฤษ ตัวเลข - และ _ (ไม่เกิน 20 ตัว)")
-    if is_van_employee_id(emp):
-        raise HTTPException(400, detail=f"รหัสขึ้นต้นด้วย V ({emp}) ถูกตัดออกจากทุกหน้าจอ — เพิ่มไม่ได้")
-    if not str(emp_name or "").strip():
-        raise HTTPException(400, detail="ต้องใส่ชื่อ (เช่น หน่วยส่งออก) — หัวหน้าทีมจะเห็นชื่อนี้ในรายชื่อ")
-    if prev and not emp_assignment_store.is_manual(prev):
-        raise HTTPException(
-            400,
-            detail=f"{emp} ถูกย้ายจากทีม {prev.get('from_sup')} อยู่แล้ว — แก้ที่แถวของเขาในตารางแทน",
-        )
-    home = next(
-        (r.get("home_sup") for r in _employee_directory()
-         if r.get("emp_id") == emp and r.get("home_sup") and not r.get("manual")),
-        "",
-    )
-    if home:
-        raise HTTPException(
-            400,
-            detail=f"{emp} มีในทะเบียนพนักงานแล้ว อยู่ทีม {home} — ค้นหาเขาในตารางแล้วเลือกทีมแทน",
-        )
 
 
 @router.post("/emp-assignments")

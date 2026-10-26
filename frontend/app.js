@@ -15754,9 +15754,34 @@ async function addManualEmp() {
   const name = val("empManualName");
   const toSup = val("empManualTo");
   const note = val("empManualNote");
+  // กดตอนตารางยังโหลดไม่เสร็จ (~10 วินาที) — รายชื่อทีมใน select ยังว่าง เลือกทีมไม่ได้
+  if (!_empMoveData) {
+    toast("รอรายชื่อโหลดเสร็จก่อน (ประมาณ 10 วินาที) แล้วกดอีกครั้ง", "amber");
+    return;
+  }
   if (!emp || !name || !toSup) {
     toast("กรอกรหัส ชื่อ และเลือกทีมให้ครบ", "amber");
     return;
+  }
+  // มีทีมจริงในรายชื่อที่โหลดไว้แล้ว — บอกทันทีและพาไปที่แถวของเขา ไม่ต้องรอเซิร์ฟเวอร์ปฏิเสธ
+  const known = (_empMoveData.employees || []).find(
+    (r) => r.emp_id === emp && !r.manual && r.home_sup
+  );
+  if (known) {
+    toast(`${emp} มีในทะเบียนแล้ว อยู่ทีม ${known.home_sup} — เลือกทีมที่แถวของเขาในตารางแทน`, "amber");
+    const search = document.getElementById("empMoveSearch");
+    if (search) search.value = emp;
+    const only = document.getElementById("empMoveOnlyMoved");
+    if (only) only.checked = false;
+    renderEmpMoves();
+    return;
+  }
+  // เซิร์ฟเวอร์ตอบช้าได้หลายวินาที — ต้องเห็นว่ากำลังทำงาน และกันกดซ้ำ
+  const btn = document.getElementById("empManualAddBtn");
+  const btnText = btn ? btn.textContent : "";
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "กำลังเพิ่ม…";
   }
   try {
     const res = await fetchWithTimeout(
@@ -15777,12 +15802,27 @@ async function addManualEmp() {
       const el = document.getElementById(id);
       if (el) el.value = "";
     }
-    // ให้เห็นแถวที่เพิ่งเพิ่มทันที — ตัวกรอง「เฉพาะที่ย้ายแล้ว」ครอบรหัสที่เพิ่มเองอยู่แล้ว
+    // ใส่แถวลงตารางเลย ไม่โหลดทั้งรายชื่อใหม่ (อีก ~10 วินาทีที่หน้าจอว่าง)
+    // ค่าที่ใส่ตรงกับที่เซิร์ฟเวอร์จะตอบ — กด「โหลดใหม่」เมื่อไรก็ได้ของเดิม
+    const dest = (_empMoveData.supervisors || []).find((sv) => sv.code === toSup) || {};
+    const rows = (_empMoveData.employees || []).filter((r) => r.emp_id !== emp);
+    rows.push({
+      emp_id: emp, emp_name: name, home_sup: "", manual: true, seen_period: "เพิ่มเอง",
+      to_sup: toSup, to_division: dest.division || "", to_region: dest.region || "",
+      to_unit: dest.unit || "", note,
+    });
+    _empMoveData.employees = rows;
+    delete _empMoveDraft[emp];
     const search = document.getElementById("empMoveSearch");
     if (search) search.value = emp;
-    await loadEmpMoves();
+    renderEmpMoves();
   } catch (e) {
     toast("❌ " + _userFacingError(e, "เพิ่มรหัสไม่สำเร็จ"), "red");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = btnText || "เพิ่ม";
+    }
   }
 }
 
