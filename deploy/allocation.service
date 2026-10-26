@@ -1,0 +1,23 @@
+# systemd unit ของ Target Allocation Dashboard
+# install.sh แทน __APP_USER__ / __APP_DIR__ ให้แล้ววางที่ /etc/systemd/system/allocation.service
+#
+# - ฟังแค่ 127.0.0.1 — ข้างนอกเข้าผ่าน nginx (HTTPS) เท่านั้น
+# - --workers 1 ห้ามเพิ่ม: ล็อกไฟล์ใน data/ ใช้ได้เฉพาะโปรเซสเดียว (docs/CONCURRENCY.md)
+# - --proxy-headers ให้แอปเห็นว่าผู้ใช้เข้ามาทาง https จาก nginx
+
+[Unit]
+Description=Target Allocation Dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__APP_USER__
+WorkingDirectory=__APP_DIR__
+ExecStart=__APP_DIR__/.venv/bin/uvicorn backend.main:app --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
