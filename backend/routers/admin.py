@@ -1744,6 +1744,112 @@ def admin_export_target_baseline(
     )
 
 
+@router.get("/target-baseline/export-xlsx")
+def admin_export_target_baseline_xlsx(
+    admin: dict = Depends(require_admin_scoped_cap("allocations")),
+    sup_id: str = Query(..., min_length=1),
+    target_month: int = Query(..., ge=1, le=12),
+    target_year: int = Query(..., ge=2020, le=2100),
+) -> Response:
+    """
+    เป้าตั้งต้นเป็น Excel 2 ชีต (เป้าหีบราย SKU · เป้าเงินรายคน) — **อ่านอย่างเดียว**
+
+    ผู้ใช้ขอ 27 ต.ค. 2026: เดิมกล่องเป้าตั้งต้นโชว์แค่สรุป + รายการที่ต่าง ไม่มีทางเห็นทั้งชุด
+    อ่านไฟล์เป้าตั้งต้น + ไฟล์เป้าปัจจุบัน + แคชรายชื่อ (ชื่อสินค้า/ชื่อคน) ไม่เขียนอะไรเลย
+    ไม่แตะ Target Sun / Fabric · ไม่ถอยไปไฟล์ global (อาจเป็นของทีมอื่น)
+    """
+    sid = sup_id.strip().upper()
+    ensure_sup_in_admin_scope(admin, sid)
+    base = read_baseline(sid, target_month, target_year)
+    if not base:
+        raise HTTPException(status_code=404, detail="ยังไม่มีเป้าตั้งต้นของงวดนี้")
+
+    cur_sku, cur_sun = load_target_csv_for(sid, target_month, target_year, allow_legacy_fallback=False)
+    sku_info: dict[str, dict] = {}
+    if cur_sku is not None and not cur_sku.empty:
+        for _, r in cur_sku.iterrows():
+            sku_info[str(r.get("sku") or "").strip()] = r.to_dict()
+    cur_money: dict[str, float] = {}
+    if cur_sun is not None and not cur_sun.empty:
+        for _, r in cur_sun.iterrows():
+            cur_money[str(r.get("emp_id") or "").strip()] = float(r.get("target_sun") or 0.0)
+    emp_names: dict[str, str] = {}
+    try:
+        from ..core.paths import emp_cache_path
+
+        p = emp_cache_path(sid, target_month, target_year)
+        if os.path.isfile(p):
+            df_e = pd.read_csv(p, dtype=str, keep_default_na=False)
+            emp_names = {str(e).strip(): str(n).strip()
+                         for e, n in zip(df_e.get("emp_id", []), df_e.get("emp_name", []))}
+    except Exception as e:                      # ไม่มีชื่อก็ยังดาวน์โหลดได้
+        logger.warning("อ่านชื่อพนักงานสำหรับไฟล์เป้าตั้งต้นไม่ได้ (%s): %s", sid, e)
+    for a in emp_assignment_store.read_rows():
+        if a.get("emp_name"):
+            emp_names.setdefault(a["emp_id"], a["emp_name"])
+
+    def _num(v) -> float:
+        try:
+            return float(v or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    sku_rows = []
+    for s in base.get("skus") or []:
+        sku = str(s.get("sku") or "").strip()
+        info = sku_info.get(sku, {})
+        boxes = int(_num(s.get("supervisor_target_boxes")))
+        price = _num(s.get("price_per_box"))
+        now = int(_num(info.get("supervisor_target_boxes"))) if info else None
+        sku_rows.append({
+            "sku": sku,
+            "name": str(info.get("product_name_thai") or info.get("product_name_english") or ""),
+            "brand": str(info.get("brand_name_thai") or info.get("brand_name_english") or ""),
+            "boxes": boxes,
+            "price": round(price, 2),
+            "money": round(boxes * price, 2),
+            "now": "" if now is None else now,
+            "delta": "" if now is None else now - boxes,
+        })
+    emp_rows = []
+    for e in base.get("employees") or []:
+        emp = str(e.get("emp_id") or "").strip()
+        money = round(_num(e.get("target_sun")), 2)
+        now = cur_money.get(emp)
+        emp_rows.append({
+            "emp": emp,
+            "name": emp_names.get(emp, ""),
+            "money": money,
+            "now": "" if now is None else round(now, 2),
+            "delta": "" if now is None else round(now - money, 2),
+        })
+
+    _audit_admin(
+        admin,
+        "target_baseline_export_xlsx",
+        f"ดาวน์โหลดเป้าตั้งต้น {sid} งวด {target_month:02d}/{target_year} (Excel)",
+        f"{len(sku_rows)} SKU · {len(emp_rows)} คน",
+        level="info",
+        sup_id=sid,
+        target_month=target_month,
+        target_year=target_year,
+    )
+    return _xlsx_response_multi(
+        [
+            ("เป้าหีบราย SKU", sku_rows, [
+                ("sku", "รหัสสินค้า"), ("name", "ชื่อสินค้า"), ("brand", "แบรนด์"),
+                ("boxes", "เป้าตั้งต้น (หีบ)"), ("price", "ราคา/หีบ"), ("money", "เป้าตั้งต้น (บาท)"),
+                ("now", "เป้าปัจจุบัน (หีบ)"), ("delta", "ต่าง (หีบ)"),
+            ]),
+            ("เป้าเงินรายคน", emp_rows, [
+                ("emp", "รหัสพนักงาน"), ("name", "ชื่อ"), ("money", "เป้าตั้งต้น (บาท)"),
+                ("now", "เป้าปัจจุบัน (บาท)"), ("delta", "ต่าง (บาท)"),
+            ]),
+        ],
+        f"target_baseline_{sid}_{target_year}_{target_month:02d}",
+    )
+
+
 @router.get("/target-baseline/row-snapshots")
 def admin_list_row_snapshots(
     admin: dict = Depends(require_admin_scoped_cap("allocations")),

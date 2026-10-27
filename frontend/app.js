@@ -20681,6 +20681,10 @@ async function adminShowTargetBaseline(supId, month, year) {
     `<span class="tchange-chip">${(base.employees || []).length} คน</span>` +
     (Number(base.revision) > 1 ? `<span class="tchange-chip">รุ่นที่ ${Number(base.revision)}</span>` : "") +
     `</div>` +
+    // ทั้งชุด (กล่องนี้โชว์แค่สรุป + รายการที่ต่าง) — อ่านอย่างเดียว ไม่แตะเป้าหรือ Target Sun
+    `<p style="margin:0 0 10px;font-size:13px;color:var(--text-2);">` +
+    `<button type="button" class="admin-action" id="adminBaselineXlsxDl">⬇ ดาวน์โหลด Excel เป้าตั้งต้น</button> ` +
+    `เป้าหีบราย SKU + เป้าเงินรายคน เทียบกับเป้าปัจจุบัน</p>` +
     // รุ่นก่อนหน้า — เป้าใน Target Sun เปลี่ยนก่อนส่งครั้งแรก (HQ ลงเป้าทีละส่วน) ระบบเก็บชุดใหม่ให้เอง (OPEN_ITEMS 10.4)
     (Array.isArray(base.previous_revisions) && base.previous_revisions.length
       ? `<p style="margin:0 0 10px;line-height:1.7;font-size:13px;color:var(--text-2);">` +
@@ -20726,6 +20730,8 @@ async function adminShowTargetBaseline(supId, month, year) {
       btn.addEventListener("click", () =>
         _adminDownloadRestoreFile(supId, month, year, btn.getAttribute("data-restore-snap"), btn));
     });
+    document.getElementById("adminBaselineXlsxDl")?.addEventListener("click", (ev) =>
+      _adminDownloadFile(`/admin/target-baseline/export-xlsx?${q}`, `target_baseline_${supId}_${year}_${String(month).padStart(2, "0")}.xlsx`, ev.currentTarget));
     document.getElementById("adminSentLedgerDl")?.addEventListener("click", (ev) =>
       _adminDownloadFile(`/admin/sent-ledger/export?${q}`, `sent_ledger_${supId}_${year}_${String(month).padStart(2, "0")}.xlsx`, ev.currentTarget));
   }, 0);
