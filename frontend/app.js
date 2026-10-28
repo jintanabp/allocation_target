@@ -2340,6 +2340,25 @@ function _supervisorRegionPeersView() {
     && S.peerSupervisorCodes.length > 0;
 }
 
+/**
+ * ทีมที่จะเปิดแทนเมื่อทีมของซุปเองไม่มีพนักงานเลย — "" = ไม่ถอย
+ *
+ * ถอยเฉพาะ 404「ไม่พบพนักงานใต้ SuperCode」 เท่านั้น ความผิดพลาดอื่น (ไม่มีเป้า, งวดผิด,
+ * เชื่อม server ไม่ได้) ต้องโชว์ตามเดิม ไม่งั้นซุปที่ทีมตัวเองมีปัญหาจริงจะถูกพาไป
+ * ทีมคนอื่นเงียบ ๆ แล้วเข้าใจผิดว่าเป็นทีมตัวเอง
+ */
+function _supervisorEmptyTeamFallback() {
+  const fail = S._lastLoadFail;
+  if (S.loginRole !== "supervisor" || !fail || fail.status !== 404) return "";
+  if (!String(fail.detail || "").includes("ไม่พบพนักงานใต้")) return "";
+  const own = String(S.supId || "").trim().toUpperCase();
+  const peer = (S.peerSupervisorCodes || [])
+    .map((c) => String(c).trim().toUpperCase())
+    .filter((c) => c && c !== own)
+    .sort()[0];
+  return peer || "";
+}
+
 function _syncSupervisorRegionViewOptions() {
   if (!_supervisorRegionPeersView()) {
     if (S.loginRole === "supervisor") {
@@ -4120,6 +4139,23 @@ async function handleLogin() {
       }
     } else {
       ok = await loadData(S.supId, S.targetMonth, S.targetYear);
+      // ซุปที่ทีมตัวเองยังไม่มีพนักงานในระบบ (บัญชีใหม่ เช่น SL545) แต่ดูทีมอื่นในหน่วยได้
+      // — เดิมล็อกอินหยุดตรงนี้ ไม่มีทางไปถึงตัวสลับทีม · เปิดทีมแรกในหน่วยแทน
+      // กติกาเดียวกับผู้จัดการที่ไม่มีพนักงานสังกัดรหัสตัวเอง (SL372)
+      const fallback = !ok ? _supervisorEmptyTeamFallback() : "";
+      if (fallback) {
+        const own = S.supId;
+        S.supId = fallback;
+        ok = await loadData(S.supId, S.targetMonth, S.targetYear);
+        if (ok) {
+          const err = document.getElementById("loginError");
+          if (err) err.style.display = "none";
+          setTimeout(() => toast(
+            `ทีม ${own} ยังไม่มีพนักงานในระบบ — เปิดทีม ${fallback} ในหน่วยเดียวกันให้แทน (สลับทีมได้ที่ด้านบน)`,
+            "amber"
+          ), 0);
+        }
+      }
     }
 
     if (!ok) {
@@ -5272,6 +5308,7 @@ async function loadData(supId, targetMonth, targetYear, refresh = false) {
   S.aggregateSupIds = [];
   S.targetBoxesBySup = {};
   _clearCompositeAllocState();
+  S._lastLoadFail = null;
   setBusyStatus("loading");
   try {
     const q = new URLSearchParams({
@@ -5292,6 +5329,8 @@ async function loadData(supId, targetMonth, targetYear, refresh = false) {
       } catch (_) {
         j = null;
       }
+      // ให้ผู้เรียกแยกได้ว่า "ทีมนี้ไม่มีพนักงานเลย" — ล็อกอินซุปใช้ถอยไปทีมในหน่วยเดียวกัน
+      S._lastLoadFail = { status: res.status, detail: String(detail || "") };
       _logClientError("load_employees", _userFacingError(detail), `sup=${supId} status=${res.status}`);
 
       // ไม่มีเป้าในงวดที่เลือก (กรอง EFFECTIVEDATE แล้วว่าง)
