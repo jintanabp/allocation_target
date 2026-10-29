@@ -58,7 +58,7 @@ vm.runInContext(`
   ${grabLine("const YELLOW_TOTAL_TOLERANCE_OK_BAHT")}
   ${grabLine("const YELLOW_TOTAL_TOLERANCE_WARN_BAHT")}
   ${grabLine("var _negGrowthSyncing")}
-  ${["_negGrowthOffenders", "_updateNegGrowthReasonState"].map(grab).join("\n")}
+  ${["_negGrowthOffenders", "_updateNegGrowthReasonState", "_noPriceSkus"].map(grab).join("\n")}
   ${grab("updateValidation").replace("function updateValidation() {", "function updateValidation() { globalThis.calls++;")}
   globalThis.setup = (yellow, total, reason) => {
     S = {

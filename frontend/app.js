@@ -6778,6 +6778,13 @@ async function fillYellowFromHistory(key) {
 /* ══════════════════════════════════════════════
    VALIDATION
 ══════════════════════════════════════════════ */
+/** SKU ที่มีเป้าหีบแต่หาราคาไม่ได้ (ขั้นที่ 1 ขึ้น「ไม่มีราคา」) — มูลค่าเป็น 0 ในเป้ารวมของแอป */
+function _noPriceSkus() {
+  return (S.skus || []).filter(
+    (s) => (Number(s.supervisor_target_boxes) || 0) > 0 && !((Number(s.price_per_box) || 0) > 0)
+  );
+}
+
 function updateValidation() {
   const ySum = sumYellow();
   const diff = S.totalTarget - ySum;
@@ -6809,6 +6816,20 @@ function updateValidation() {
     bar.classList.add("warn");
     icon.textContent = "!";
     text.textContent = `ส่วนต่าง ${baht(Math.abs(diff))} บาท (ไม่เกิน ${YELLOW_TOTAL_TOLERANCE_WARN_BAHT} บาท) — กดกระจายหีบได้`;
+    fill.style.background = "var(--amber)";
+    btn.disabled = false;
+    _updateNegGrowthReasonState();
+  } else if (diff < 0 && _noPriceSkus().length) {
+    // เป้ารวมในแอปขาดมูลค่าสินค้าที่หาราคาไม่ได้ จึงต่ำกว่ายอดบาทจริงใน Target Sun
+    // (ผู้ใช้เจอ 29 ต.ค. 2026: ต้องกระจายด่วนแต่ราคาสินค้าใหม่ยังไม่เข้า Fabric)
+    // ให้ตั้งเป้าเกินเป้ารวมได้ — เครื่องใช้เป้าเงินเป็นสัดส่วน แล้วปรับทุกคนเท่ากันก่อนกระจาย
+    // (กล่อง _confirmRevenueScaleBeforeRun บอกก่อนเริ่ม) · ต่ำกว่าเป้ารวมยังห้ามเหมือนเดิม
+    // เพราะทิศนั้นไม่ได้มาจากราคาที่หายไป
+    bar.classList.add("warn");
+    icon.textContent = "!";
+    text.textContent =
+      `เกินเป้ารวม ${baht(Math.abs(diff))} บาท — มีสินค้า ${_noPriceSkus().length} รายการไม่มีราคา `
+      + `(เป้ารวมในแอปไม่รวมมูลค่าส่วนนี้) · กดกระจายได้ ระบบจะปรับเป้าเงินทุกคนตามสัดส่วน`;
     fill.style.background = "var(--amber)";
     btn.disabled = false;
     _updateNegGrowthReasonState();
@@ -6899,6 +6920,8 @@ async function _confirmRevenueScaleBeforeRun() {
   const word = gap > 0 ? "มากกว่า" : "น้อยกว่า";
   const dir = gap > 0 ? "ดันขึ้น" : "ลดลง";
   const conflict = (S.skuWarnings || []).find(w => w.type === "aggregate_price_conflict");
+  const noPrice = gap < 0 ? _noPriceSkus() : [];
+  const evenBox = document.getElementById("newProductsEvenBox");
 
   return new Promise((resolve) => {
     _showInfoModal({
@@ -6913,9 +6936,21 @@ async function _confirmRevenueScaleBeforeRun() {
         + `หีบต้องกระจายให้ครบทุกใบ ระบบจึง<strong>${dir}เป้าเงินของทุกคน ${pct.toFixed(1)}%</strong> `
         + `ก่อนคำนวณ ผลที่ได้จะไม่ตรงกับเป้าเหลืองที่ตั้งไว้`
         + `</p>`
+        + (noPrice.length
+            ? `<p style="margin:0 0 10px;line-height:1.7;">`
+              + `สาเหตุ: มีสินค้า <strong>${noPrice.length} รายการไม่มีราคา</strong> มูลค่าหีบในแอปจึงไม่รวมส่วนนี้ · `
+              + `สัดส่วนเป้าเงินระหว่างคนยังเป็นตามที่ตั้งไว้ · หีบที่ส่งเข้า Target Sun ไม่ได้รับผลจากราคาที่หาย</p>`
+              + (evenBox && !evenBox.checked
+                  ? `<p style="margin:0 0 10px;line-height:1.7;color:var(--amber);">`
+                    + `แนะนำติ๊ก「SKU ใหม่แบ่งเท่ากัน」ก่อน — สินค้าไม่มีราคาและไม่มีประวัติขาย `
+                    + `ไม่มีหลักให้ระบบตัดสินว่าหีบควรไปที่ใคร</p>`
+                  : "")
+            : "")
         + (conflict
             ? `<p style="margin:0 0 10px;line-height:1.7;color:var(--amber);">`
               + `${escapeHtml(conflict.message)}</p>`
+            : noPrice.length
+            ? ""
             : `<p style="margin:0 0 10px;font-size:12px;color:var(--text-3);line-height:1.6;">`
               + `ปกติสองยอดนี้ตรงกันพอดี เพราะมาจากเป้า Target Sun ก้อนเดียวกัน — `
               + `ต่างกันแปลว่ามีทีมที่ข้อมูลเก่าค้างอยู่ หรือเป้าเหลืองถูกแก้จนผลรวมเปลี่ยน</p>`)
